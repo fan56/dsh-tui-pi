@@ -27,34 +27,39 @@ interface StreamingState {
 }
 
 interface ToolCard {
+  container: Container
   header: Text
   name: string
 }
 
-/** First text content of a tool result, truncated to one preview line. */
-function toolResultPreview(content: readonly { type: string; text?: string }[], limit = 160): string {
+/** First text content of a tool result, raw lines. */
+function resultTextLines(content: readonly { type: string; text?: string }[]): string[] {
   for (const block of content) {
     if (block.type === 'text' && block.text !== undefined) {
-      const flat = block.text.replace(/\s+/g, ' ').trim()
-      return flat.length > limit ? flat.slice(0, limit) + '…' : flat
+      return block.text.replace(/\s+$/u, '').split('\n')
     }
   }
-  return ''
+  return []
 }
 
-/** Compact one-line preview of raw tool-call arguments JSON. */
-function argsPreview(rawArguments: string, limit = 80): string {
+/** One-line summary of the call arguments, per common tool shape. */
+function callDetail(rawArguments: string, limit = 120): string {
   try {
     const parsed = JSON.parse(rawArguments) as Record<string, unknown>
-    for (const key of ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'description']) {
-      const value = parsed[key]
-      if (typeof value === 'string' && value.trim() !== '') {
-        const flat = value.replace(/\s+/g, ' ')
-        return flat.length > limit ? flat.slice(0, limit) + '…' : flat
-      }
+    const parts: string[] = []
+    if (typeof parsed.command === 'string') parts.push(`$ ${parsed.command}`)
+    if (typeof parsed.file_path === 'string') parts.push(parsed.file_path)
+    if (typeof parsed.path === 'string' && parts.length === 0) parts.push(parsed.path)
+    if (typeof parsed.pattern === 'string') parts.push(`pattern: ${parsed.pattern}`)
+    if (typeof parsed.query === 'string') parts.push(`query: ${parsed.query}`)
+    if (typeof parsed.url === 'string') parts.push(parsed.url)
+    if (typeof parsed.description === 'string' && parts.length === 0) parts.push(parsed.description)
+    if (parts.length === 0) {
+      const flat = rawArguments.replace(/\s+/g, ' ')
+      parts.push(flat)
     }
-    const flat = rawArguments.replace(/\s+/g, ' ')
-    return flat.length > limit ? flat.slice(0, limit) + '…' : flat
+    const joined = parts.join('  ').replace(/\n/g, ' ⏎ ')
+    return joined.length > limit ? joined.slice(0, limit) + '…' : joined
   } catch {
     return ''
   }
@@ -190,9 +195,12 @@ export class TranscriptRenderer {
         this.doc.addChild(state.reasoningComponent)
       }
       state.reasoning += delta
-      const preview = state.reasoning.replace(/\s+/g, ' ')
-      const line = preview.length > 200 ? preview.slice(0, 200) + '…' : preview
-      state.reasoningComponent.setText(this.theme.chat.thinkingText(`⟡ ${line}`))
+      // Live tail: header + last few lines, italic thinking color (pi style).
+      const lines = state.reasoning.trim().split('\n')
+      const tail = lines.slice(-5).join('\n')
+      state.reasoningComponent.setText(
+        this.theme.chat.thinkingText(`⟡ thinking\n${tail}`),
+      )
     }
     this.requestRender()
   }
@@ -223,8 +231,13 @@ export class TranscriptRenderer {
         this.doc.addChild(md)
         rendered = true
       } else if (block.type === 'reasoning' && block.text.trim() !== '') {
-        const chars = block.text.length
-        this.appendLine(this.theme.chat.thinkingText(`⟡ thinking (${chars} chars)`))
+        // Independent thinking display, pi-style: full block in italic
+        // thinking color, rendered as markdown.
+        const md = new Markdown(block.text.trim(), 1, 0, this.theme.markdown, {
+          color: text => ansiFg(this.theme.palette.thinking) + text + RESET,
+          italic: true,
+        })
+        this.doc.addChild(md)
         rendered = true
       }
       // tool-call blocks render through tool/call events — never duplicated here.
@@ -235,36 +248,55 @@ export class TranscriptRenderer {
 
   // ----------------------------------------------------------------- tools --
 
+  private toolHeader(status: 'pending' | 'success' | 'error', name: string): string {
+    const icon = status === 'pending' ? '⚙' : status === 'success' ? '✔' : '✘'
+    const color = status === 'pending'
+      ? this.theme.palette.fgMuted
+      : status === 'success'
+        ? this.theme.palette.success
+        : this.theme.palette.danger
+    return ansiFg(color) + ` ${icon} ${name} ` + RESET
+  }
+
   private addToolCard(callId: string, name: string, rawArguments: string): void {
-    const preview = argsPreview(rawArguments)
-    const header = new Text(
-      ansiFg(this.theme.palette.fgMuted) + `⚙ ${name}` + RESET +
-      (preview === '' ? '' : ansiFg(this.theme.palette.fgSubtle) + `  ${preview}` + RESET),
-      1, 0,
-    )
-    this.doc.addChild(header)
-    this.toolCards.set(callId, { header, name })
+    const container = new Container()
+    const header = new Text(this.toolHeader('pending', name), 1, 0, this.theme.chat.toolPendingBg)
+    container.addChild(header)
+    const detail = callDetail(rawArguments)
+    if (detail !== '') {
+      container.addChild(new Text(ansiFg(this.theme.palette.fgMuted) + `  ${detail}` + RESET, 1, 0))
+    }
+    this.doc.addChild(container)
+    this.toolCards.set(callId, { container, header, name })
     this.requestRender()
   }
 
   private settleToolCard(event: SessionEvent & { type: 'tool/result' }): void {
-    const card = this.toolCards.get(event.data.message.content[0]?.toolCallId ?? '')
-    if (card === undefined) return
-    this.toolCards.delete(event.data.message.content[0]!.toolCallId)
-
     const block = event.data.message.content[0]
-    const isError = event.data.error !== undefined || (block?.isError ?? false)
-    const preview = block === undefined ? '' : toolResultPreview(block.content)
+    const callId = block?.toolCallId ?? ''
+    const card = this.toolCards.get(callId)
+    if (card === undefined) return
+    this.toolCards.delete(callId)
 
-    const icon = isError ? '✘' : '✔'
-    const color = isError ? this.theme.palette.danger : this.theme.palette.success
-    const suffix = isError && event.data.error !== undefined
-      ? `  ${event.data.error.name}: ${event.data.error.code}`
-      : preview === '' ? '' : `  ${preview}`
-    card.header.setText(
-      ansiFg(color) + `${icon} ${card.name}` + RESET +
-      (suffix === '' ? '' : ansiFg(this.theme.palette.fgSubtle) + suffix + RESET),
-    )
+    const isError = event.data.error !== undefined || (block?.isError ?? false)
+    card.header.setText(this.toolHeader(isError ? 'error' : 'success', card.name))
+    card.header.setCustomBgFn(isError ? this.theme.chat.toolErrorBg : this.theme.chat.toolSuccessBg)
+
+    const body: string[] = []
+    if (event.data.error !== undefined) {
+      body.push(ansiFg(this.theme.palette.danger) + `  ${event.data.error.name}: ${event.data.error.code}` + RESET)
+    }
+    if (block !== undefined) {
+      const lines = resultTextLines(block.content)
+      const shown = lines.slice(0, 10)
+      for (const line of shown) {
+        body.push(ansiFg(this.theme.palette.fgMuted) + `  ${line}` + RESET)
+      }
+      if (lines.length > shown.length) {
+        body.push(ansiFg(this.theme.palette.fgSubtle) + `  … (+${lines.length - shown.length} lines)` + RESET)
+      }
+    }
+    if (body.length > 0) card.container.addChild(new Text(body.join('\n'), 1, 0))
     this.requestRender()
   }
 
