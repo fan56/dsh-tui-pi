@@ -10,7 +10,8 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 
@@ -41,7 +42,9 @@ export class DshSessionBridge {
   private creating: Promise<AgentHandle> | undefined
   private readonly disposers: Array<() => void> = []
   private sessionId: SessionId | undefined
-  private selection: { provider: string; model: string; reasoningEffort?: string } | undefined
+  private selection: ModelSelection | undefined
+  /** Mutable live selection installed into the agent; `/model` mutates `current`. */
+  private readonly selectionRef: ModelSelectionRef = { current: undefined, assembled: undefined }
   private readonly stats: BridgeStats = {
     inputTokens: 0,
     outputTokens: 0,
@@ -171,15 +174,26 @@ export class DshSessionBridge {
           model: selection.model,
           ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
         }
+    this.selectionRef.current = this.selection === undefined ? undefined : { ...this.selection }
     return this.ctx.agents.create({
       sessionId: SessionId(crypto.randomUUID()),
       meta: { cwd: process.cwd() },
       agentOptions: this.selection ?? {},
+      // Install the mutable selection so `/model` can live-switch the route.
+      setup: async agentCtx => {
+        installModelSelection(agentCtx, this.selectionRef)
+      },
     })
   }
 
-  /** The model selection this session was created with (footer display). */
-  getSelection(): { provider: string; model: string; reasoningEffort?: string } | undefined {
-    return this.selection
+  /** The model selection shown in the footer (live value after `/model`). */
+  getSelection(): ModelSelection | undefined {
+    return this.selectionRef.current ?? this.selection
+  }
+
+  /** Apply a live model switch (`/model` selector outcome). */
+  setSelection(next: ModelSelection): void {
+    this.selectionRef.current = { ...next }
+    this.selection = { ...next }
   }
 }

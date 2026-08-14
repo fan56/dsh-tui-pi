@@ -10,19 +10,23 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { Loader, Text } from '@earendil-works/pi-tui'
 import { CommandService } from './commands.ts'
 import { PowerlineFooter, type FooterDataSource } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
 import { TranscriptRenderer } from './messages.ts'
+import { pickModel } from './selectors.ts'
 import { DshSessionBridge } from './session.ts'
 import { ansiFg, RESET } from './theme/index.ts'
 import { startTui, type TuiHandle } from './tui.ts'
 
 export const name = 'dsh-tui-pi'
 
-/** The TUI drives the agent factory; compose over a profile that mounts agents. */
-export const inject = ['agents']
+/** The TUI drives the agent factory and registers slash commands. */
+export const inject = ['agents', 'commands']
 
 export function apply(ctx: Context): void {
   let handle: TuiHandle | undefined
@@ -69,6 +73,42 @@ export function apply(ctx: Context): void {
 
     const commands = new CommandService(ctx, bridge)
     ui.editor.setAutocompleteProvider(commands.autocompleteProvider())
+
+    // ------------------------------------------- TUI-owned slash commands --
+    // Web-surface parity: `model` is a browser client contribution there and
+    // `export` a web-only download plugin — the terminal gets native
+    // equivalents registered here, so the autocomplete catalog matches web.
+    ctx.effect(() => ctx.commands.register({
+      name: 'model',
+      description: 'Select the model for this conversation',
+      handler: async () => {
+        const picked = await pickModel(
+          ctx, ui.tui, ui.theme, bridge.getSelection(),
+          () => ui.tui.setFocus(ui.editor),
+        )
+        if (picked === undefined) return { kind: 'success' as const, text: 'Model unchanged.' }
+        const llm = ctx.get('llm')
+        if (llm !== undefined) {
+          await llm.resolveCallConfig({ provider: picked.provider, model: picked.model })
+        }
+        bridge.setSelection(picked)
+        return { kind: 'success' as const, text: `Model: ${picked.provider}/${picked.model}` }
+      },
+    }), 'dsh-tui-pi: /model')
+
+    ctx.effect(() => ctx.commands.register({
+      name: 'export',
+      description: 'Export this session log as JSONL',
+      input: { hint: '[path]' },
+      handler: async invocation => {
+        const events = invocation.agent.session.events
+        const fallback = join(homedir(), 'Downloads', `dsh-session-${String(invocation.agent.session.id).slice(0, 8)}.jsonl`)
+        const target = invocation.rawInput.trim() === '' ? fallback : resolve(invocation.rawInput.trim())
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(target, events.map(event => JSON.stringify(event)).join('\n') + '\n')
+        return { kind: 'success' as const, text: `Exported ${events.length} events → ${target}` }
+      },
+    }), 'dsh-tui-pi: /export')
 
     // ------------------------------------------------- powerline footer + git --
     const git = new GitBranchWatcher(process.cwd())
