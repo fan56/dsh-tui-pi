@@ -54,6 +54,17 @@ export class DshSessionBridge {
   constructor(ctx: Context, callbacks: BridgeCallbacks) {
     this.ctx = ctx
     this.callbacks = callbacks
+    // Footer shows provider/model from the very first frame — read the
+    // composed default selection eagerly; a session created later refreshes it.
+    const defaultModel = ctx.get('agentDefaultModel')
+    const sel = defaultModel?.currentSelection()
+    this.selection = sel === undefined
+      ? undefined
+      : {
+          provider: sel.provider,
+          model: sel.model,
+          ...sel.reasoningEffort === undefined ? {} : { reasoningEffort: sel.reasoningEffort },
+        }
     this.disposers.push(ctx.on('session/event', (session: Session, event: SessionEvent) => {
       if (this.sessionId === undefined || session.id !== this.sessionId) return
       this.applyEvent(event)

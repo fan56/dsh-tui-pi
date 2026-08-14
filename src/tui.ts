@@ -72,7 +72,9 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   })
 
   const status = new Container()
-  const editor = new CwdBorderEditor(tui, theme.editor, process.cwd())
+  const editor = new CwdBorderEditor(tui, theme.editor, process.cwd(), {
+    infoColor: text => ansiFg(theme.palette.fgMuted) + text + RESET,
+  })
   const lastRequest = new Container()
   const footer = new Container()
   let lastRequestText: Text | undefined
@@ -132,7 +134,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
           lastRequestText = new Text('', 1, 0)
           lastRequest.addChild(lastRequestText)
         }
-        lastRequestText.setText(ansiFg(theme.palette.fgSubtle) + ` ↳ ${display}` + RESET)
+        lastRequestText.setText(ansiFg(theme.palette.fgMuted) + ` ↳ ${display}` + RESET)
       }
       tui.requestRender()
     },

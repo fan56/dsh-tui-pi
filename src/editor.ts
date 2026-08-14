@@ -18,11 +18,20 @@ export function formatCwd(cwd: string): string {
 
 export class CwdBorderEditor extends Editor {
   private readonly sessionCwd: string
+  private readonly infoColor: (str: string) => string
   private branchProvider: () => string | undefined = () => undefined
 
-  constructor(tui: TUI, theme: EditorTheme, sessionCwd: string, options?: { paddingX?: number }) {
+  constructor(
+    tui: TUI,
+    theme: EditorTheme,
+    sessionCwd: string,
+    options?: { paddingX?: number; infoColor?: (str: string) => string },
+  ) {
     super(tui, theme, { paddingX: options?.paddingX ?? 0 })
     this.sessionCwd = sessionCwd
+    // The border dashes stay border-colored, but the cwd/branch info needs a
+    // readable foreground (border color is near-invisible on light themes).
+    this.infoColor = options?.infoColor ?? theme.borderColor
   }
 
   /** Live git-branch source (polled outside; the editor only reads it). */
@@ -52,7 +61,7 @@ export class CwdBorderEditor extends Editor {
 
     lines[0] =
       this.borderColor('─ ') +
-      this.borderColor(contentText) +
+      this.infoColor(contentText) +
       this.borderColor(' ') +
       this.borderColor('─'.repeat(fill))
     return lines
