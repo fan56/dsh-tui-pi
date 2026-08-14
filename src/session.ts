@@ -14,6 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type TokenUsage } from '@deepseek-ai/dsh-llm'
+import { settingsNamespace, SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 
 export interface BridgeCallbacks {
@@ -47,6 +48,8 @@ export class DshSessionBridge {
   private selection: ModelSelection | undefined
   /** Mutable live selection installed into the agent; `/model` mutates `current`. */
   private readonly selectionRef: ModelSelectionRef = { current: undefined, assembled: undefined }
+  /** Mirror of the agent's `agent/status`; `isRunning()` reads this. */
+  private running = false
   private readonly stats: BridgeStats = {
     inputTokens: 0,
     outputTokens: 0,
@@ -77,6 +80,7 @@ export class DshSessionBridge {
     }))
     this.disposers.push(ctx.on('agent/status', ({ agent, status }: { agent: { id: string }; status: 'idle' | 'running' }) => {
       if (this.handle === undefined || agent.id !== this.handle.agent.id) return
+      this.running = status === 'running'
       this.callbacks.onStatus(status)
     }))
   }
@@ -112,6 +116,36 @@ export class DshSessionBridge {
     return this.handle?.agent
   }
 
+  /** Whether the bridge's agent is mid-turn (mirror of `agent/status`). */
+  isRunning(): boolean {
+    return this.running
+  }
+
+  /**
+   * Abort the bridge's agent mid-turn, mirroring the web client's stop
+   * button: the host-side `session.cancel` handler calls
+   * `agent.cancel({ kind: 'user' }, { keepInbox: true })`
+   * (dsh-host-apiproxy), and that is exactly what the agent's public
+   * synchronous `cancel(cause, options)` API takes. `keepInbox` preserves
+   * queued prompts for a later turn; the active driver's AbortSignal fires
+   * and status converges to `idle` via the existing subscription. The API
+   * is fire-and-forget — the returned promise resolves once the call is
+   * made, not when the turn settles.
+   * @returns false when there is no agent or it is not running; true once
+   *   the cancellation was issued.
+   */
+  async cancelActiveTurn(): Promise<boolean> {
+    const agent = this.handle?.agent
+    if (agent === undefined || !this.running) return false
+    try {
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      return true
+    } catch {
+      // Cancellation must never take the input path down with it.
+      return false
+    }
+  }
+
   /** Dispose the live agent (if any) and stop event subscriptions. */
   async dispose(): Promise<void> {
     for (const dispose of this.disposers.splice(0)) {
@@ -120,6 +154,7 @@ export class DshSessionBridge {
     const handle = this.handle
     this.handle = undefined
     this.sessionId = undefined
+    this.running = false
     if (handle !== undefined) await handle.dispose()
   }
 
@@ -135,6 +170,7 @@ export class DshSessionBridge {
     const handle = this.handle
     this.handle = undefined
     this.sessionId = undefined
+    this.running = false
     this.stats.inputTokens = 0
     this.stats.outputTokens = 0
     this.stats.cacheReadTokens = 0
@@ -160,6 +196,7 @@ export class DshSessionBridge {
       const handle = this.handle
       this.handle = undefined
       this.sessionId = undefined
+      this.running = false
       if (handle !== undefined) await handle.dispose()
       // Same seeding rule as createSession: a live /model or /think choice
       // survives the resume; otherwise the composed default applies.
@@ -305,5 +342,63 @@ export class DshSessionBridge {
   setSelection(next: ModelSelection): void {
     this.selectionRef.current = { ...next }
     this.selection = { ...next }
+  }
+}
+
+/**
+ * Persist the default model selection. Preferred path: the
+ * `agent-default-model` service's `saveSelection`, the official API (a
+ * settings.replace, last-write-wins). The namespace is read live by that
+ * service — the change takes effect on the next lazy session creation
+ * (`/new` or the next prompt) and survives restarts. Without the service,
+ * fall back to a direct settings mutate (with one optimistic-concurrency
+ * retry). Best-effort: a deployment without a settings provider is skipped
+ * silently; a failed write returns its error message for the caller to
+ * surface.
+ * @returns undefined on success, the failure message otherwise.
+ */
+export async function persistDefaultModel(ctx: Context, selection: ModelSelection): Promise<string | undefined> {
+  const service = ctx.get('agentDefaultModel') as
+    | { saveSelection?: (next: ModelSelection) => unknown }
+    | undefined
+  if (service?.saveSelection !== undefined) {
+    try {
+      // The service API takes the whole selection and writes through
+      // settings.replace (last-write-wins, no revision check). It may be
+      // sync or async — awaiting covers both.
+      await service.saveSelection(selection)
+      return undefined
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+  }
+  const settings = ctx.get('settings')
+  if (settings === undefined) return undefined
+  const ns = settingsNamespace('agent-default-model')
+  // The descriptor carries the namespace's revision (optimistic-concurrency
+  // token for mutate) and proves the schema registration that validates the
+  // field names below; the write itself rejects when the namespace is
+  // unregistered (no descriptor either).
+  const ops: SettingsPathOp[] = [
+    { op: 'set', path: ['provider'], value: selection.provider },
+    { op: 'set', path: ['model'], value: selection.model },
+  ]
+  if (selection.reasoningEffort === undefined) {
+    // Unset so a stale override is dropped from the stored yaml document too.
+    ops.push({ op: 'unset', path: ['reasoningEffort'] })
+  } else {
+    ops.push({ op: 'set', path: ['reasoningEffort'], value: selection.reasoningEffort })
+  }
+  // One retry after a concurrent writer moved the namespace (fresh revision);
+  // a second conflict surfaces the raw error for the caller.
+  for (let attempt = 0; ; attempt++) {
+    const descriptor = settings.describe().find(d => d.ns === ns)
+    try {
+      await settings.mutate(ns, ops, descriptor?.revision)
+      return undefined
+    } catch (error) {
+      if (attempt === 0 && error instanceof SettingsConflictError) continue
+      return error instanceof Error ? error.message : String(error)
+    }
   }
 }

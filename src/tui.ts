@@ -28,13 +28,15 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import { CwdBorderEditor } from './editor.ts'
-import { ansiFg, RESET, resolveTheme, type TuiTheme } from './theme/index.ts'
+import { ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 
 export interface StartTuiOptions {
   /** Submit handler for the editor. Defaults to a local echo (smoke-test mode). */
   onSubmit?: (text: string) => void
   /** Ctrl+C handler. Defaults to a plain exit (smoke-test mode). */
   onInterrupt?: () => void
+  /** Persisted theme preference; 'auto' falls back to terminal detection. */
+  themePreference?: ThemePreference
 }
 
 export interface TuiHandle {
@@ -61,7 +63,7 @@ export interface TuiHandle {
 export function startTui(options: StartTuiOptions = {}): TuiHandle {
   const terminal = new ProcessTerminal()
   const tui = new TuiAltScreen(terminal, true)
-  const theme = resolveTheme()
+  const theme = resolveTheme(process.env, options.themePreference ?? 'auto')
 
   // ------------------------------------------------------------- component tree --
   const transcript = new Container()
@@ -94,7 +96,6 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // -------------------------------------------------------------- placeholder UI --
   transcript.addChild(new Text(ansiFg(theme.palette.fgDefault) + 'dsh-tui-pi — pi-style TUI for DeepSeek Harness' + RESET, 1, 0))
   transcript.addChild(new Spacer(1))
-  footer.addChild(new Text(ansiFg(theme.palette.fgMuted) + '⌨ Enter: send · Ctrl+C: quit' + RESET, 1, 0))
 
   editor.onSubmit = (text: string) => {
     if (text.trim() === '') return

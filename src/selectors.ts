@@ -1,14 +1,14 @@
 /**
  * TUI overlays (pi SelectList style). Currently: the `/model` picker and the
  * reasoning effort picker — the terminal counterparts of the web UI's "model"
- * client contribution.
+ * client contribution — plus the `/theme` preference picker.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SelectList, type SelectItem, type TUI } from '@earendil-works/pi-tui'
-import type { TuiTheme } from './theme/index.ts'
+import type { ThemePreference, TuiTheme } from './theme/index.ts'
 
 interface ListedModel {
   provider: string
@@ -104,6 +104,42 @@ export async function pickEffort(
   const picked = await openEffortPicker(tui, theme, efforts, current.reasoningEffort, restoreFocus)
   if (picked === undefined) return { kind: 'cancelled' }
   return { kind: 'effort', effort: picked.effort }
+}
+
+/** Theme preference rows of the picker, matching the settings schema vocabulary. */
+const THEME_ITEMS: SelectItem[] = [
+  { value: 'auto', label: 'auto (terminal detection)', description: 'follow the terminal light/dark signal' },
+  { value: 'light', label: 'light', description: 'GitHub light palette' },
+  { value: 'dark', label: 'dark', description: 'GitHub dark palette' },
+]
+
+/**
+ * Open the theme preference picker overlay. Resolves with the picked
+ * preference, or `undefined` when cancelled. The row matching `current` is
+ * preselected; focus returns to `restoreFocus` on close.
+ */
+export function pickTheme(
+  tui: TUI,
+  theme: TuiTheme,
+  current: ThemePreference,
+  restoreFocus: () => void,
+): Promise<ThemePreference | undefined> {
+  return new Promise(resolve => {
+    const list = new SelectList(THEME_ITEMS, 12, theme.selectList)
+    const index = THEME_ITEMS.findIndex(item => item.value === current)
+    if (index >= 0) list.setSelectedIndex(index)
+
+    const overlay = tui.showOverlay(list, { width: '80%', maxHeight: '60%' })
+
+    const finish = (picked: ThemePreference | undefined): void => {
+      overlay.hide()
+      restoreFocus()
+      resolve(picked)
+    }
+
+    list.onSelect = item => finish(item.value as ThemePreference)
+    list.onCancel = () => finish(undefined)
+  })
 }
 
 /**

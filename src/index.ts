@@ -18,11 +18,17 @@ import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { PowerlineFooter, type FooterDataSource } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
 import { TranscriptRenderer } from './messages.ts'
-import { pickEffort, pickModel } from './selectors.ts'
-import { DshSessionBridge } from './session.ts'
+import { pickEffort, pickModel, pickTheme } from './selectors.ts'
+import { DshSessionBridge, persistDefaultModel } from './session.ts'
+import {
+  currentThemePreference,
+  readThemePreference,
+  registerThemeSettings,
+  writeThemePreference,
+} from './theme-settings.ts'
 import { openSettingsBrowser } from './settings.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
-import { ansiFg, RESET } from './theme/index.ts'
+import { ansiFg, RESET, type ThemePreference } from './theme/index.ts'
 import { startTui, type TuiHandle } from './tui.ts'
 
 export const name = 'dsh-tui-pi'
@@ -33,14 +39,63 @@ export const inject = ['agents', 'commands']
 export function apply(ctx: Context): void {
   let handle: TuiHandle | undefined
 
-  ctx.effect(() => {
+  ctx.effect(async () => {
+    // The theme bundle is built once at TUI startup and held by every
+    // component, so the persisted preference must land before startTui — the
+    // namespace registration rides the settings injection fiber and the read
+    // awaits it (bounded, degrades to 'auto' without a settings service).
+    registerThemeSettings(ctx)
+    const themePreference = await readThemePreference(ctx)
+    let disposer: (() => void) | undefined
+    try {
+      disposer = runTui(themePreference)
+    } catch (error) {
+      // An async-effect failure after startTui would otherwise orphan the
+      // terminal in raw mode — the disposer never registers, so nothing ever
+      // restores the TTY. Clean up and rethrow so cordis logs the error
+      // instead of silently leaking the TUI.
+      handle?.dispose()
+      handle = undefined
+      throw error
+    }
+    return disposer
+  }, 'dsh-tui-pi.render')
+
+  /**
+   * Build the TUI and its slash commands for the resolved theme preference.
+   * Declared as a hoisted function so the effect body stays a thin wrapper:
+   * the whole build runs inside the try/catch above, so any failure disposes
+   * the TUI handle before the error reaches cordis. Returns the effect
+   * disposer handed back to cordis on teardown.
+   */
+  function runTui(themePreference: ThemePreference): () => void {
+    // Graded Ctrl+C: while the agent is mid-turn the first press cancels the
+    // active turn (keepInbox preserves the queue) with on-screen feedback;
+    // any further press — or any press while idle — quits the TUI.
+    let cancelAttempted = false
+    let lastInterrupt = 0
+
     const ui = startTui({
       onSubmit: text => {
         void submit(text)
       },
       onInterrupt: () => {
-        void disposeAndExit(0)
+        if (bridge.isRunning() && !cancelAttempted && Date.now() - lastInterrupt > 1500) {
+          // First press mid-turn: cancel with on-screen feedback (mirrors the
+          // web client's stop button). The next press — of any kind — quits.
+          cancelAttempted = true
+          lastInterrupt = Date.now()
+          ui.transcript.addChild(new Text(ansiFg(ui.theme.palette.attention) + '⏹ canceling current turn…' + RESET, 1, 0))
+          ui.requestRender()
+          void bridge.cancelActiveTurn().then(cancelled => {
+            // Nothing was running (state raced idle): nothing to cancel — quit.
+            if (!cancelled) void disposeAndExit(0)
+          })
+        } else {
+          void disposeAndExit(0)
+        }
       },
+      themePreference,
     })
     handle = ui
 
@@ -97,12 +152,14 @@ export function apply(ctx: Context): void {
         await llm.resolveCallConfig({ provider: picked.provider, model: picked.model })
       }
       bridge.setSelection(picked)
+      const persistError = await persistDefaultModel(ctx, picked)
       ui.requestRender()
+      const modelText = picked.reasoningEffort === undefined
+        ? `Model: ${picked.provider}/${picked.model}`
+        : `Model: ${picked.provider}/${picked.model} · think ${String(picked.reasoningEffort)}`
       return {
         kind: 'success' as const,
-        text: picked.reasoningEffort === undefined
-          ? `Model: ${picked.provider}/${picked.model}`
-          : `Model: ${picked.provider}/${picked.model} · think ${String(picked.reasoningEffort)}`,
+        text: persistError === undefined ? modelText : `${modelText} · ⚠ not persisted: ${persistError}`,
       }
     }
     commands.registerLocal('model', modelHandler)
@@ -135,17 +192,29 @@ export function apply(ctx: Context): void {
       }
       if (result.kind === 'cancelled') return { kind: 'success' as const, text: 'Think level unchanged.' }
       if (result.effort === 'default') {
-        bridge.setSelection({ provider: current.provider, model: current.model })
+        const next = { provider: current.provider, model: current.model }
+        bridge.setSelection(next)
+        const persistError = await persistDefaultModel(ctx, next)
         ui.requestRender()
-        return { kind: 'success' as const, text: `Think: provider default (${current.provider}/${current.model}).` }
+        const thinkText = `Think: provider default (${current.provider}/${current.model}).`
+        return {
+          kind: 'success' as const,
+          text: persistError === undefined ? thinkText : `${thinkText} · ⚠ not persisted: ${persistError}`,
+        }
       }
-      bridge.setSelection({
+      const next = {
         provider: current.provider,
         model: current.model,
         reasoningEffort: result.effort,
-      })
+      }
+      bridge.setSelection(next)
+      const persistError = await persistDefaultModel(ctx, next)
       ui.requestRender()
-      return { kind: 'success' as const, text: `Think: ${String(result.effort)} (${current.provider}/${current.model}).` }
+      const thinkText = `Think: ${String(result.effort)} (${current.provider}/${current.model}).`
+      return {
+        kind: 'success' as const,
+        text: persistError === undefined ? thinkText : `${thinkText} · ⚠ not persisted: ${persistError}`,
+      }
     }
     commands.registerLocal('think', thinkHandler)
     ctx.effect(() => ctx.commands.register({
@@ -321,6 +390,29 @@ export function apply(ctx: Context): void {
       handler: invocation => settingsHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /settings')
 
+    // /theme: pick a color scheme. The choice is persisted to the dsh-tui
+    // settings namespace and applies after restart — the theme bundle is
+    // built once at startup, so a live switch is impossible. The settings
+    // guard mirrors /settings: without the service there is nowhere to write.
+    const themeHandler: LocalCommandHandler = async () => {
+      if (ctx.get('settings') === undefined) {
+        return { kind: 'error' as const, text: 'Settings service is not available.' }
+      }
+      // Preselect from the live settings value (which may have changed since
+      // startup via the /settings browser), not the startup snapshot.
+      const picked = await pickTheme(ui.tui, ui.theme, currentThemePreference(ctx), () => ui.tui.setFocus(ui.editor))
+      if (picked === undefined) return { kind: 'success' as const, text: 'Theme unchanged.' }
+      const writeError = await writeThemePreference(ctx, picked)
+      if (writeError !== undefined) return { kind: 'error' as const, text: writeError }
+      return { kind: 'success' as const, text: `Theme: ${picked} — applies after restart.` }
+    }
+    commands.registerLocal('theme', themeHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'theme',
+      description: 'Set the terminal color scheme (applies after restart)',
+      handler: invocation => themeHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /theme')
+
     // ------------------------------------------------- powerline footer + git --
     const git = new GitBranchWatcher(process.cwd())
     git.onChange = () => ui.requestRender()
@@ -355,6 +447,10 @@ export function apply(ctx: Context): void {
     }
     ui.footer.clear()
     ui.footer.addChild(new PowerlineFooter(footerSource))
+    // Keybinding hint, added *after* the clear above: the placeholder line in
+    // tui.ts used to be wiped before first render. paddingX 1 aligns the text
+    // with the powerline segment labels (each starts with a leading space).
+    ui.footer.addChild(new Text(ansiFg(ui.theme.palette.fgSubtle) + '⌨ Enter: send · Ctrl+C: cancel / double: quit' + RESET, 1, 0))
 
     // Live clock: the footer is the only thing that changes each second.
     const clockTimer = setInterval(() => ui.requestRender(), 1000)
@@ -367,7 +463,7 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead. Note /models shares the /model body but is its own name.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'models', 'think', 'session', 'resume'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'models', 'think', 'session', 'resume', 'theme'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {
@@ -430,5 +526,5 @@ export function apply(ctx: Context): void {
         handle = undefined
       })()
     }
-  }, 'dsh-tui-pi.render')
+  }
 }

@@ -52,6 +52,24 @@ test('resolveTheme follows COLORFGBG when no override', () => {
   assert.equal(resolveTheme({ COLORFGBG: '15;0' }).palette.name, 'github-dark')
 })
 
+test('resolveTheme honors an explicit light preference', () => {
+  assert.equal(resolveTheme({}, 'light').palette.name, 'github-light')
+})
+
+test('resolveTheme honors an explicit dark preference', () => {
+  assert.equal(resolveTheme({}, 'dark').palette.name, 'github-dark')
+})
+
+test('resolveTheme env override beats an explicit preference', () => {
+  assert.equal(resolveTheme({ DSH_TUI_THEME: 'dark' }, 'light').palette.name, 'github-dark')
+  assert.equal(resolveTheme({ DSH_TUI_THEME: 'light' }, 'dark').palette.name, 'github-light')
+})
+
+test('resolveTheme auto preference falls back to terminal detection', () => {
+  assert.equal(resolveTheme({}, 'auto').palette.name, 'github-dark')
+  assert.equal(resolveTheme({ COLORFGBG: '0;15' }, 'auto').palette.name, 'github-light')
+})
+
 test('buildTheme produces all pi-tui theme roles', () => {
   const theme = buildTheme(githubLight)
   assert.equal(typeof theme.editor.borderColor, 'function')

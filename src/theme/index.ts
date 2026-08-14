@@ -133,9 +133,20 @@ export function buildTheme(palette: Palette): TuiTheme {
 export const lightTheme: TuiTheme = buildTheme(githubLight)
 export const darkTheme: TuiTheme = buildTheme(githubDark)
 
-/** Resolve the active theme bundle (env override wins, else terminal detection). */
-export function resolveTheme(env: NodeJS.ProcessEnv = process.env): TuiTheme {
+/** Theme selection: 'auto' falls back to terminal detection. */
+export type ThemePreference = 'auto' | 'light' | 'dark'
+
+/**
+ * Resolve the active theme bundle: the DSH_TUI_THEME env override wins, then
+ * an explicit light/dark preference, then terminal detection for 'auto'.
+ */
+export function resolveTheme(
+  env: NodeJS.ProcessEnv = process.env,
+  preference: ThemePreference = 'auto',
+): TuiTheme {
   if (env.DSH_TUI_THEME === 'light') return lightTheme
   if (env.DSH_TUI_THEME === 'dark') return darkTheme
+  if (preference === 'light') return lightTheme
+  if (preference === 'dark') return darkTheme
   return detectDarkPalette(env) ? darkTheme : lightTheme
 }
