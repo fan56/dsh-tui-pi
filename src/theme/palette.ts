@@ -1,11 +1,12 @@
 /**
- * GitHub Primer color palettes for the dsh-tui-pi themes.
+ * GitHub palettes for the dsh-tui-pi themes, aligned with the user's terminal
+ * themes in ~/scripts/cmux-theme.sh ("GitHub Light" / "GitHub Dark" entries):
+ * the light canvas is the terminal background #f6f8fa (not pure white), and
+ * the 16-color roles (red/green/yellow/blue/purple) come from that palette.
  *
- * Light and dark follow the official GitHub Primer color tokens
- * (https://primer.style/foundations/color). Terminal truecolor cannot carry
- * the alpha channel Primer uses for its muted fills, so dark-mode muted
- * backgrounds are pre-blended at 20% tint over `canvas` (solid approximations
- * of the primer `-muted` tokens).
+ * Terminal truecolor cannot carry the alpha channel Primer uses for muted
+ * fills, so dark-mode muted backgrounds are pre-blended at 20% tint over
+ * `canvas` (solid approximations of the primer `-muted` tokens).
  */
 
 export interface Palette {
@@ -37,23 +38,24 @@ export interface Palette {
 
 export const githubLight: Palette = {
   name: 'github-light',
-  canvas: '#ffffff',
-  canvasSubtle: '#f6f8fa',
-  canvasInset: '#f6f8fa',
-  fgDefault: '#1f2328',
-  fgMuted: '#59636e',
-  fgSubtle: '#6e7781',
-  borderDefault: '#d1d9e0',
-  borderMuted: '#d1d9e0',
-  accent: '#0969da',
-  accentMuted: '#ddf4ff',
-  success: '#1a7f37',
+  // Terminal background per cmux-theme.sh; white reads as the raised surface.
+  canvas: '#f6f8fa',
+  canvasSubtle: '#ffffff',
+  canvasInset: '#ffffff',
+  fgDefault: '#24292f',
+  fgMuted: '#57606a',
+  fgSubtle: '#6a737d',
+  borderDefault: '#d0d7de',
+  borderMuted: '#d8dee4',
+  accent: '#0366d6',
+  accentMuted: '#dbedff',
+  success: '#22863a',
   successMuted: '#dafbe1',
-  danger: '#cf222e',
+  danger: '#d73a49',
   dangerMuted: '#ffebe9',
-  attention: '#9a6700',
-  attentionMuted: '#fff8c5',
-  thinking: '#59636e',
+  attention: '#b08800',
+  attentionMuted: '#fff5b1',
+  thinking: '#6f42c1',
 }
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/
@@ -75,19 +77,19 @@ export const githubDark: Palette = {
   canvasSubtle: '#161b22',
   canvasInset: '#010409',
   fgDefault: '#e6edf3',
-  fgMuted: '#9198a1',
+  fgMuted: '#8b949e',
   fgSubtle: '#6e7681',
   borderDefault: '#30363d',
   borderMuted: '#21262d',
-  accent: '#4493f8',
-  accentMuted: blend('#0d1117', '#1f6feb', 0.2),
+  accent: '#58a6ff',
+  accentMuted: blend('#0d1117', '#2f81f7', 0.2),
   success: '#3fb950',
   successMuted: blend('#0d1117', '#3fb950', 0.2),
-  danger: '#f85149',
-  dangerMuted: blend('#0d1117', '#f85149', 0.2),
+  danger: '#ff7b72',
+  dangerMuted: blend('#0d1117', '#ff7b72', 0.2),
   attention: '#d29922',
   attentionMuted: blend('#0d1117', '#d29922', 0.2),
-  thinking: '#9198a1',
+  thinking: '#bc8cff',
 }
 
 /**

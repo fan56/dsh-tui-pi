@@ -31,10 +31,10 @@ test('palette ids are stable', () => {
 })
 
 test('dark muted backgrounds are blended solids (20% tint over canvas)', () => {
-  // accentMuted = blend(#0d1117, #1f6feb, 0.2)
-  assert.equal(githubDark.accentMuted, '#112441')
+  // accentMuted = blend(#0d1117, #2f81f7, 0.2)
+  assert.equal(githubDark.accentMuted, '#142744')
   assert.equal(githubDark.successMuted, '#173322')
-  assert.equal(githubDark.dangerMuted, '#3c1e21')
+  assert.equal(githubDark.dangerMuted, '#3d2629')
   assert.equal(githubDark.attentionMuted, '#342c19')
 })
 
