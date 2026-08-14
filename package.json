@@ -27,9 +27,12 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-client-schema-form": "0.1.0-rc.6",
     "@earendil-works/pi-tui": "0.84.2"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-settings": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "3.18.1",
     "@types/node": "^24.0.0",
     "typescript": "~5.9.0"
   },

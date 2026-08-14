@@ -8,10 +8,16 @@
  * every command registered by dsh packages (plan, compact, feedback, export,
  * permission, goal, …) works here unchanged and future registrations appear
  * automatically.
+ *
+ * One exemption: TUI-owned commands that never touch the receiving agent
+ * (model pickers, settings browser, session info/resume) are dispatched
+ * locally when no live agent exists — dsh's execute path addresses an agent
+ * and would mint a throwaway session just to run them.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { parseCommand, type CommandDescriptor } from '@deepseek-ai/dsh-commands'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { parseCommand, type CommandDescriptor, type CommandResult } from '@deepseek-ai/dsh-commands'
 import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from '@earendil-works/pi-tui'
 import type { DshSessionBridge } from './session.ts'
 
@@ -27,13 +33,28 @@ function tokenAtCursor(line: string, cursorCol: number): { token: string; start:
   return { token: upto.slice(start), start }
 }
 
+/** A TUI-owned command body that needs no receiving agent. */
+export type LocalCommandHandler =
+  (rawInput: string, signal: AbortSignal) => CommandResult | Promise<CommandResult>
+
 export class CommandService {
   private readonly ctx: Context
   private readonly bridge: DshSessionBridge
+  /** TUI-owned command bodies, dispatchable without a live agent. */
+  private readonly local = new Map<string, LocalCommandHandler>()
 
   constructor(ctx: Context, bridge: DshSessionBridge) {
     this.ctx = ctx
     this.bridge = bridge
+  }
+
+  /**
+   * Register a local command body (the same handler the ctx.commands
+   * registration wraps). It is dispatched directly when no live agent
+   * exists, avoiding a throwaway session for agentless commands.
+   */
+  registerLocal(name: string, handler: LocalCommandHandler): void {
+    this.local.set(name, handler)
   }
 
   /**
@@ -49,8 +70,30 @@ export class CommandService {
     const commands = this.ctx.get('commands')
     if (commands === undefined) return { handled: false }
 
+    // Agentless local commands never warm the session — /resume or /session
+    // on a fresh TUI must not mint a session just to run.
+    const localHandler = this.local.get(parsed.name)
+    if (localHandler !== undefined && this.bridge.getAgent() === undefined) {
+      try {
+        const result = await localHandler(parsed.rawInput, signal)
+        if (result.kind === 'error') return { handled: true, error: result.text }
+        return { handled: true, ...result.text === undefined ? {} : { text: result.text } }
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { handled: true, error: message }
+      }
+    }
+
     // Commands address a live agent; warm the session when it does not exist.
-    const agent = await this.bridge.ensureAgent()
+    let agent: Agent
+    try {
+      agent = await this.bridge.ensureAgent()
+    } catch (error: unknown) {
+      // Warm-up failed (e.g. provider not configured) — surface instead of
+      // rejecting into an unhandled promise rejection.
+      const message = error instanceof Error ? error.message : String(error)
+      return { handled: true, error: message }
+    }
     if (commands.find(agent, parsed.name) === undefined) {
       // Syntactically a command but unregistered → treat as ordinary text so
       // the model still sees it (matches "unknown command" falling through).

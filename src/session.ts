@@ -7,6 +7,7 @@
  * - session-event subscription filtered to the bridge's session
  * - O(1) incremental stats maintained as events arrive (footer reads these —
  *   never re-scans the session log, per the pi-turbo findings)
+ * - resume of persisted sessions (log replay into stats + transcript)
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -40,6 +41,7 @@ export class DshSessionBridge {
   private readonly callbacks: BridgeCallbacks
   private handle: AgentHandle | undefined
   private creating: Promise<AgentHandle> | undefined
+  private resuming: Promise<AgentHandle> | undefined
   private readonly disposers: Array<() => void> = []
   private sessionId: SessionId | undefined
   private selection: ModelSelection | undefined
@@ -121,6 +123,90 @@ export class DshSessionBridge {
     if (handle !== undefined) await handle.dispose()
   }
 
+  /**
+   * Detach the live agent WITHOUT tearing down the event subscriptions —
+   * `/new` wants a fresh session while the renderer keeps receiving events.
+   * The agent handle is disposed, the session id cleared, and the
+   * incremental stats zeroed (the footer must not carry the old session's
+   * numbers); the disposers stay installed, and the session-id filter
+   * re-binds on the next lazy creation.
+   */
+  async detachCurrent(): Promise<void> {
+    const handle = this.handle
+    this.handle = undefined
+    this.sessionId = undefined
+    this.stats.inputTokens = 0
+    this.stats.outputTokens = 0
+    this.stats.cacheReadTokens = 0
+    this.stats.cacheWriteTokens = 0
+    this.stats.msgCount = 0
+    this.stats.toolCallCount = 0
+    this.stats.latestCacheHitRate = undefined
+    if (handle !== undefined) await handle.dispose()
+  }
+
+  /**
+   * Resume a persisted session: tear down the live agent (disposers are kept —
+   * the session-id filter re-binds to the resumed id) and load the persisted
+   * session in its place. The caller replays `handle.agent.session.events`
+   * through `replay()` to rebuild stats/transcript — clear the transcript
+   * BEFORE replaying (the renderer's echo dedupe must not see replayed user
+   * messages next to a stale local echo). Serialized: concurrent calls share
+   * the single in-flight resume.
+   */
+  async resume(sessionId: SessionId): Promise<AgentHandle> {
+    if (this.resuming !== undefined) return this.resuming
+    const task = (async () => {
+      const handle = this.handle
+      this.handle = undefined
+      this.sessionId = undefined
+      if (handle !== undefined) await handle.dispose()
+      // Same seeding rule as createSession: a live /model or /think choice
+      // survives the resume; otherwise the composed default applies.
+      this.seedSelectionFromDefault()
+      const resumed = await this.ctx.agents.resume({
+        resumeSessionId: sessionId,
+        agentOptions: this.selection ?? {},
+        // Install the mutable selection so `/model` can live-switch the route.
+        setup: async agentCtx => {
+          installModelSelection(agentCtx, this.selectionRef)
+        },
+      })
+      this.handle = resumed
+      this.sessionId = sessionId
+      return resumed
+    })()
+    this.resuming = task
+    try {
+      return await task
+    } finally {
+      this.resuming = undefined
+    }
+  }
+
+  /**
+   * Replay a persisted session log into the transcript and stats — the second
+   * half of a resume (call after `resume()`). Stats are rebuilt from zero so
+   * the footer reflects the resumed session only; replaying the same log
+   * twice is idempotent. `assistant/chunk` events are skipped: the finalized
+   * `assistant/message` carries the full text, and replaying chunks would
+   * re-run the quadratic streaming assembly for every historical step.
+   */
+  replay(events: readonly SessionEvent[]): void {
+    this.stats.inputTokens = 0
+    this.stats.outputTokens = 0
+    this.stats.cacheReadTokens = 0
+    this.stats.cacheWriteTokens = 0
+    this.stats.msgCount = 0
+    this.stats.toolCallCount = 0
+    this.stats.latestCacheHitRate = undefined
+    for (const event of events) {
+      if (event.type === 'assistant/chunk') continue
+      this.applyEvent(event)
+      this.callbacks.onEvent(event)
+    }
+  }
+
   /** Update incremental stats from one event — one pass over the event only. */
   private applyEvent(event: SessionEvent): void {
     switch (event.type) {
@@ -150,6 +236,17 @@ export class DshSessionBridge {
   }
 
   private async ensureSession(): Promise<AgentHandle> {
+    // A resume in flight would otherwise race this check: the handle is only
+    // set when resume completes, so a prompt fired mid-resume must not start
+    // a second agent creation. Await it — on success the handle is ready for
+    // reuse; on failure fall through to the normal creation path.
+    if (this.resuming !== undefined) {
+      try {
+        await this.resuming
+      } catch {
+        // Resume failed — fall through to create a fresh session.
+      }
+    }
     if (this.handle !== undefined) return this.handle
     if (this.creating !== undefined) return this.creating
     const creation = this.createSession()
@@ -163,8 +260,16 @@ export class DshSessionBridge {
     }
   }
 
-  /** Create the agent with the composed default model selection. */
-  private async createSession(): Promise<AgentHandle> {
+  /**
+   * Seed `selection`/`selectionRef` from the composed default — without
+   * clobbering a live user choice: `/model`/`/think` before the first prompt
+   * write the ref, and that choice must survive session creation.
+   */
+  private seedSelectionFromDefault(): void {
+    if (this.selectionRef.current !== undefined) {
+      this.selection = { ...this.selectionRef.current }
+      return
+    }
     const defaultModel = this.ctx.get('agentDefaultModel')
     const selection = defaultModel?.currentSelection()
     this.selection = selection === undefined
@@ -175,6 +280,11 @@ export class DshSessionBridge {
           ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
         }
     this.selectionRef.current = this.selection === undefined ? undefined : { ...this.selection }
+  }
+
+  /** Create the agent with the composed default model selection. */
+  private createSession(): Promise<AgentHandle> {
+    this.seedSelectionFromDefault()
     return this.ctx.agents.create({
       sessionId: SessionId(crypto.randomUUID()),
       meta: { cwd: process.cwd() },
