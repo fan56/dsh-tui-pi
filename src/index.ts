@@ -110,6 +110,20 @@ export function apply(ctx: Context): void {
       },
     }), 'dsh-tui-pi: /export')
 
+    // /new: dispose the live agent (and clear the on-screen transcript) so
+    // the next prompt opens a brand-new session. The escape hatch for
+    // "current session has images in history, the next model doesn't accept
+    // them" — and any other case where the user wants a clean slate.
+    ctx.effect(() => ctx.commands.register({
+      name: 'new',
+      description: 'Start a new session',
+      handler: async () => {
+        try { await bridge.dispose() } catch { /* contained */ }
+        renderer.clear()
+        return { kind: 'success' as const, text: 'New session started.' }
+      },
+    }), 'dsh-tui-pi: /new')
+
     // ------------------------------------------------- powerline footer + git --
     const git = new GitBranchWatcher(process.cwd())
     git.onChange = () => ui.requestRender()

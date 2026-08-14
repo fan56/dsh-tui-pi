@@ -135,6 +135,15 @@ export class TranscriptRenderer {
     }
   }
 
+  /** Drop everything rendered so far (`/new`). The next prompt opens a fresh agent. */
+  clear(): void {
+    this.streaming = undefined
+    this.toolCards.clear()
+    this.todoContainer = undefined
+    this.lastEcho = undefined
+    this.doc.clear()
+  }
+
   // ------------------------------------------------------------------ user --
 
   private renderUserMessage(event: SessionEvent & { type: 'user/message' }): void {
