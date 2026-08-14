@@ -21,4 +21,14 @@
 
 ## 进度记录
 
-- Phase A：进行中
+- Phase A：✅ check/test 0 error，LICENSE、.gitignore、错误边界、无死代码
+- Phase B：✅ TuiAltScreen + VStack；dock 固定，transcript 独立滚动（tmux 18 条消息验证）
+- Phase C：✅ 真实 prompt → 流式回复 → markdown；bash 工具卡 ✔；Ctrl+C 树级退出
+- Phase D：✅ `/` 补全（5 个注册命令）；`/compact`、`/plan` 执行成功；未知命令回落模型
+- Phase E：✅ powerline 全分段实时（provider/model+thinking/context/CH%/msgs/tools/clock）；
+  editor 顶边框 📁 cwd（git 仓库内加 ⎇ branch）；`↳ last-request`；统计全 O(1)
+- Phase F：✅ `link:` 与 tarball 两种本地安装在全新 profile 验证启动；`npm pack` 35 文件
+- 最终审核：✅ 完成（2026-08-14），交付物 = `dsh --profile tui`（用户 tui profile 已装 link: 版）
+
+> 交付调整：用户决定不发布 GitHub（本地使用），git 安装路径不做；空仓库
+> `fan56/dsh-tui-pi` 留待用户自行删除。
