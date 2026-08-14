@@ -1,0 +1,9 @@
+# dsh-tui-pi bundle patch: mounts the pi-style TUI plugin over the profile's
+# base bundle under the stable plugin id `tui-pi`. The plugin renders the
+# terminal UI in-process with @earendil-works/pi-tui and talks to the dsh tree
+# directly (ctx.agents / ctx.commands / session events), keeping dsh's slash
+# commands untouched.
+
+- insert:
+    - id: tui-pi
+      name: 'dsh-tui-pi'
