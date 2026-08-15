@@ -32,6 +32,11 @@
  * the buffered operations against the new theme. Streaming, tool cards and
  * todos rebuild exactly as they were applied, so an in-flight stream simply
  * continues `setText` on its rebuilt component.
+ *
+ * Welcome banner: the first replay op, pushed at construction (the doc is
+ * cleared first, replacing tui.ts's startup placeholder). It stays at the
+ * top of the doc — the event flow appends below it, and every rebuild
+ * (relayout/setTheme) reproduces it first with the current theme.
  */
 
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
@@ -40,6 +45,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
+import { buildWelcomeBanner } from './welcome.ts'
 
 /**
  * Configurable think/tool panel height. Fixed values are the total panel row
@@ -156,9 +162,12 @@ interface ToolCard {
  * One applied transcript operation, buffered for the theme-switch rebuild.
  * Events cover the session flow; prompt/command echoes and notices are direct
  * renders (no matching session event) and are buffered alongside so a rebuild
- * reproduces the transcript exactly as it stood.
+ * reproduces the transcript exactly as it stood. The welcome banner is the
+ * first op, pushed at construction, so every rebuild starts with it and the
+ * event flow always appends below it.
  */
 type ReplayOp =
+  | { kind: 'welcome' }
   | { kind: 'event'; event: SessionEvent }
   | { kind: 'promptEcho'; text: string }
   | { kind: 'commandEcho'; line: string; error?: string; text?: string }
@@ -265,6 +274,13 @@ export class TranscriptRenderer {
     this.theme = theme
     this.requestRender = requestRender
     this.panelHeight = panelHeight
+    // The welcome banner is the first operation: render it now (replacing the
+    // startup placeholder line startTui added — the banner is the new startup
+    // screen) and buffer it as the first replay op, so relayout/setTheme
+    // rebuild it at the top of the doc while events keep appending after it.
+    this.replay.push({ kind: 'welcome' })
+    this.doc.clear()
+    this.renderWelcome()
   }
 
   /**
@@ -386,8 +402,10 @@ export class TranscriptRenderer {
    * the fixed-height panels. Clear and re-apply the buffered operations
    * exactly like a theme switch: an in-flight stream keeps its accumulated
    * text (the replay rebuilds its Text and later chunks continue setText on
-   * it), tool cards keep their settle state, todos reappear. No-op when
-   * nothing was rendered — the startup placeholder stays untouched.
+   * it), tool cards keep their settle state, todos reappear. No-op when the
+   * replay is empty — that guards the doc emptied by /new (clear()), which
+   * must stay empty until the next prompt: the welcome banner is the startup
+   * screen of a TUI run and must not resurrect here.
    */
   relayout(): void {
     if (this.replay.length === 0) return
@@ -397,7 +415,11 @@ export class TranscriptRenderer {
     this.requestRender()
   }
 
-  /** Drop everything rendered so far (`/new`). The next prompt opens a fresh agent. */
+  /**
+   * Drop everything rendered so far (`/new`). The next prompt opens a fresh
+   * agent; the welcome banner goes with the rest — it is the startup screen
+   * of a TUI run, not persistent transcript chrome.
+   */
   clear(): void {
     this.streaming = undefined
     this.toolCards.clear()
@@ -410,6 +432,9 @@ export class TranscriptRenderer {
   /** Re-apply one buffered operation against the current theme. */
   private applyOp(op: ReplayOp): void {
     switch (op.kind) {
+      case 'welcome':
+        this.renderWelcome()
+        break
       case 'event':
         this.applyEvent(op.event)
         break
@@ -423,6 +448,21 @@ export class TranscriptRenderer {
         this.renderNotice(op.text, op.level)
         break
     }
+  }
+
+  // ---------------------------------------------------------------- banner --
+
+  /**
+   * The startup welcome banner (whale pixel art + wordmark) as the doc's
+   * first child, followed by a spacer that matches the message-block rhythm.
+   * The whale keeps its brand blue across themes; the wordmark color follows
+   * the current theme (half-block gaps stay transparent over the terminal
+   * default background — see welcome.ts).
+   */
+  private renderWelcome(): void {
+    this.doc.addChild(new Text(buildWelcomeBanner(this.theme), 1, 0))
+    this.doc.addChild(new Spacer(1))
+    this.requestRender()
   }
 
   // ------------------------------------------------------------------ user --

@@ -195,12 +195,6 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       if (lastRequestDisplay !== undefined && lastRequestText !== undefined) {
         lastRequestText.setText(ansiFg(themeRef.palette.fgMuted) + ` ↳ ${lastRequestDisplay}` + RESET)
       }
-      // The renderer's setTheme wipes the doc (including the placeholder);
-      // restore the startup line when nothing was replayed into it.
-      if (transcript.children.length === 0) {
-        transcript.addChild(new Text(ansiFg(themeRef.palette.fgDefault) + PLACEHOLDER + RESET, 1, 0))
-        transcript.addChild(new Spacer(1))
-      }
       tui.requestRender()
     },
     setEditorAutocompleteProvider(provider: AutocompleteProvider) {

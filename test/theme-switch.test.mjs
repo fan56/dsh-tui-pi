@@ -119,7 +119,11 @@ test('in-flight stream continues on the rebuilt component after setTheme', () =>
   assert.ok(text.includes('Hi there!'), 'accumulated stream text survives the switch')
   const styled = renderDocStyled(doc)
   assert.ok(styled.includes(ansiFg(githubLight.fgDefault)), 'streaming text painted with the light fg')
-  const textChildren = doc.children.filter(child => child.constructor.name === 'Text')
+  // Count only the content Texts — the welcome banner Text is identified by
+  // its wordmark content rather than assumed to be the first child.
+  const textChildren = doc.children.filter(child =>
+    child.constructor.name === 'Text' && !child.render(200).join('').includes('DSH TUI')
+  )
   assert.equal(textChildren.length, 1, 'one streaming text component — no duplicates after the switch')
 })
 
