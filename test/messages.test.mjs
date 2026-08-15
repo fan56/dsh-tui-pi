@@ -11,9 +11,11 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { wrapTextWithAnsi } from '@earendil-works/pi-tui'
-import { clipPanelLine, panelBodyText, panelBoxWidth, panelLineCap } from '../lib/messages.js'
+import { Container, wrapTextWithAnsi } from '@earendil-works/pi-tui'
+import { clipPanelLine, panelBodyText, panelBoxWidth, panelLineCap, toolSubject, TranscriptRenderer } from '../lib/messages.js'
+import { ansiFg, darkTheme, lightTheme } from '../lib/theme/index.js'
 import { visibleWidth } from '../lib/text.js'
+import { WHALE_COLOR } from '../lib/welcome.js'
 
 const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
 
@@ -159,4 +161,60 @@ test("panelBodyText 'all' keeps every line and closes the box", () => {
   const empty = panelBodyText([], 20, borderFg, 'all')
   assert.equal(empty.split('\n').length, 1, 'no pad rows in all mode')
   assert.match(stripAnsi(empty), /^└─+┘$/, 'bottom border closes the empty box')
+})
+
+// ------------------------------------------------------- tool subject ----
+
+test('toolSubject picks the argument\'s first word — file for read/write, command word for cli', () => {
+  assert.equal(toolSubject('{"path": "src/welcome.ts"}'), 'src/welcome.ts')
+  assert.equal(toolSubject('{"file_path": "lib/messages.js", "content": "x"}'), 'lib/messages.js')
+  assert.equal(toolSubject('{"command": "python train.py --epochs 3"}'), 'python')
+  assert.equal(toolSubject('{"command": "git status"}'), 'git')
+  assert.equal(toolSubject('{"query": "whale migration routes"}'), 'whale')
+  assert.equal(toolSubject('{"nested": {"a": 1}}'), '', 'no string argument → no subject')
+  assert.equal(toolSubject('not json'), '', 'model-controlled garbage → no subject')
+  assert.equal(toolSubject('{"path": "   "}'), '', 'blank strings are skipped, not trimmed into noise')
+})
+
+test('tool card header shows name + subject (read → file path, cli → command word)', () => {
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+  renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'a', name: 'read', arguments: '{"path": "src/welcome.ts"}' }, ts: 0, seq: 1 })
+  renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'b', name: 'cli', arguments: '{"command": "python train.py"}' }, ts: 0, seq: 2 })
+  const out = doc.children.map(c => c.render(200).map(stripAnsi).join('\n')).join('\n')
+  assert.ok(out.includes('⚙ read src/welcome.ts'), 'pending read header carries the file path')
+  assert.ok(out.includes('⚙ cli python'), 'pending cli header carries the command word')
+
+  renderer.applyEvent({
+    type: 'tool/result',
+    data: { turn: 0, step: 0, callId: 'a', message: { content: [{ toolCallId: 'a', isError: false, content: [{ type: 'text', text: 'ok' }] }] } },
+    ts: 0, seq: 3,
+  })
+  const settled = doc.children.map(c => c.render(200).map(stripAnsi).join('\n')).join('\n')
+  assert.ok(settled.includes('✔ read src/welcome.ts'), 'settled header keeps the subject, swaps icon/status')
+})
+
+// ------------------------------------------------------- whale avatar ----
+
+test('the whale 🐳 precedes the assistant\'s formal answer, once per message', () => {
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+  renderer.applyEvent({
+    type: 'assistant/message',
+    data: { turn: 0, step: 0, message: { content: [
+      { type: 'reasoning', text: 'hmm' },
+      { type: 'text', text: 'hello there' },
+    ] } },
+    ts: 0, seq: 1,
+  })
+  const rendered = doc.children.map(c => c.render(200).join('\n')).join('\n')
+  assert.ok(rendered.includes(ansiFg(WHALE_COLOR) + '🐳'), 'brand-blue whale icon line')
+  const plain = stripAnsi(rendered)
+  assert.ok(plain.indexOf('🐳') < plain.indexOf('hello there'), 'icon above the answer text')
+  assert.equal((plain.match(/🐳/g) ?? []).length, 1, 'one whale per message, not per text block')
+
+  renderer.setTheme(darkTheme)
+  const after = doc.children.map(c => c.render(200).join('\n')).join('\n')
+  assert.ok(stripAnsi(after).includes('🐳'), 'whale survives the theme rebuild (replayed with the message)')
+  assert.ok(after.includes(ansiFg(WHALE_COLOR) + '🐳'), 'still brand blue — theme-independent like the banner')
 })

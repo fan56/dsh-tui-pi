@@ -45,7 +45,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
-import { buildWelcomeBanner } from './welcome.ts'
+import { buildWelcomeBanner, WHALE_COLOR } from './welcome.ts'
 import { formatDailyQuote, pickDailyQuote } from './quotes.ts'
 
 /**
@@ -155,6 +155,8 @@ interface ToolCard {
   header: Text
   body: Text
   name: string
+  /** The header's subject word (see toolSubject), kept for the settle rebuild. */
+  subject: string
   /** Styled detail lines captured at creation, rebuilt into the body on settle. */
   detailLines: string[]
 }
@@ -222,6 +224,30 @@ function resultTextLines(content: readonly { type: string; text?: string }[]): s
     }
   }
   return []
+}
+
+/**
+ * The tool header's subject word: the file path for read/write-style tools,
+ * the command's first word for cli-style tools ('git', 'python') — the first
+ * whitespace token of the highest-priority string argument (same key
+ * priority as callDetail's summary). '' when the arguments carry no usable
+ * string (the header then shows the bare tool name).
+ */
+export function toolSubject(rawArguments: string): string {
+  const firstWord = (value: string): string => value.trim().split(/\s+/u)[0] ?? ''
+  try {
+    const parsed = JSON.parse(rawArguments) as Record<string, unknown>
+    for (const key of ['command', 'file_path', 'path', 'query', 'url', 'pattern', 'description']) {
+      const value = parsed[key]
+      if (typeof value === 'string' && value.trim() !== '') return firstWord(value)
+    }
+    for (const value of Object.values(parsed)) {
+      if (typeof value === 'string' && value.trim() !== '') return firstWord(value)
+    }
+  } catch {
+    // Model-controlled rawArguments; non-JSON yields no subject.
+  }
+  return ''
 }
 
 /** One-line summary of the call arguments, per common tool shape. */
@@ -657,8 +683,17 @@ export class TranscriptRenderer {
   private renderAssistantMessage(event: SessionEvent & { type: 'assistant/message' }): void {
     const message = event.data.message
     let rendered = false
+    // The whale speaks: one brand-blue 🐳 line above the first text block —
+    // the "formal answer" carries the whale avatar, thinking panels and tool
+    // cards do not. Theme-independent brand blue (same as the banner), so the
+    // replay rebuild is byte-identical across themes.
+    let whaleShown = false
     for (const block of message.content) {
       if (block.type === 'text' && block.text.trim() !== '') {
+        if (!whaleShown) {
+          this.doc.addChild(new Text(ansiFg(WHALE_COLOR) + '🐳' + RESET, 1, 0))
+          whaleShown = true
+        }
         const md = new Markdown(block.text, 1, 0, this.theme.markdown, {
           color: text => ansiFg(this.theme.palette.fgDefault) + text + RESET,
         })
@@ -681,18 +716,23 @@ export class TranscriptRenderer {
 
   // ----------------------------------------------------------------- tools --
 
-  /** Styled tool header content (icon + name, no box chrome, no trailing RESET). */
-  private toolHeader(status: 'pending' | 'success' | 'error', name: string): string {
+  /**
+   * Styled tool header content (icon + name + subject, no box chrome, no
+   * trailing RESET). The subject is the argument's first word — the file
+   * path for read/write, the command for cli (see toolSubject) — so the
+   * first line reads like "⚙ read src/welcome.ts" / "⚙ cli python".
+   */
+  private toolHeader(status: 'pending' | 'success' | 'error', name: string, subject: string): string {
     const icon = status === 'pending' ? '⚙' : status === 'success' ? '✔' : '✘'
     const color = status === 'pending'
       ? this.theme.palette.fgMuted
       : status === 'success'
         ? this.theme.palette.success
         : this.theme.palette.danger
-    // Clip the model-controlled name at the plain-text stage before styling
-    // (indent 2 = the icon + space): an unbounded name would outgrow the
-    // header row's budget and wrap, breaking the fixed-height panel.
-    const clipped = clipPanelLine(name, 2)
+    // Clip the model-controlled name+subject at the plain-text stage before
+    // styling (indent 2 = the icon + space): an unbounded line would outgrow
+    // the header row's budget and wrap, breaking the fixed-height panel.
+    const clipped = clipPanelLine(subject === '' ? name : `${name} ${subject}`, 2)
     // No trailing RESET: the card bg function terminates the row so the
     // background covers the full header width.
     return ansiFg(color) + `${icon} ${clipped}`
@@ -700,7 +740,8 @@ export class TranscriptRenderer {
 
   private addToolCard(callId: string, name: string, rawArguments: string): void {
     const { boxWidth, borderFg } = this.panelBox()
-    const header = new Text(this.panelTop(boxWidth, borderFg, this.toolHeader('pending', name)), 1, 0, this.theme.chat.toolPendingBg)
+    const subject = toolSubject(rawArguments)
+    const header = new Text(this.panelTop(boxWidth, borderFg, this.toolHeader('pending', name, subject)), 1, 0, this.theme.chat.toolPendingBg)
     const body = new Text('', 1, 0, this.theme.chat.toolBodyBg)
     const container = new Container()
     container.addChild(header)
@@ -711,7 +752,7 @@ export class TranscriptRenderer {
     const detailLines = detail === '' ? [] : [ansiFg(this.theme.palette.fgMuted) + `  ${clipPanelLine(detail, 2)}`]
     body.setText(panelBodyText(detailLines, boxWidth, borderFg, this.panelBodyRows()))
     this.doc.addChild(container)
-    this.toolCards.set(callId, { header, body, name, detailLines })
+    this.toolCards.set(callId, { header, body, name, subject, detailLines })
     this.requestRender()
   }
 
@@ -727,7 +768,7 @@ export class TranscriptRenderer {
     // Rebuild both header Text lines: the top border (unchanged chrome) and
     // the swapped-status header row; the status bg fn repaints the border
     // row too, so the whole box top takes the success/error tint.
-    card.header.setText(this.panelTop(boxWidth, borderFg, this.toolHeader(isError ? 'error' : 'success', card.name)))
+    card.header.setText(this.panelTop(boxWidth, borderFg, this.toolHeader(isError ? 'error' : 'success', card.name, card.subject)))
     card.header.setCustomBgFn(isError ? this.theme.chat.toolErrorBg : this.theme.chat.toolSuccessBg)
 
     const bodyLines: string[] = [...card.detailLines]
