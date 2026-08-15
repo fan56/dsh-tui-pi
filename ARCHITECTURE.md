@@ -165,6 +165,17 @@ gets the tree-chrome headroom, and the agent name (provider + label) is split
 from a shared budget measured against the actual chrome width, so no row ever
 wraps inside the box.
 
+**Model-side guidance** (instructions.ts): because `todo/write` is a
+whole-list snapshot and models rarely clear it, the TUI also teaches the
+lifecycle through dsh's native instruction channel — the user-global
+`~/.dsh/AGENTS.md` (dsh-agent-instructions reads it for every session,
+`$DSH_HOME` or `~/.dsh`). `ensureTodoLifecycleInstructions` is idempotent
+(marker `<!-- dsh-tui-pi:todo-lifecycle -->`): creates the file when absent,
+appends the section when the marker is missing, leaves a marked file
+untouched; atomic (tmp + rename) and best-effort, fired at plugin startup
+without blocking it. The panel-side all-completed hide remains the fallback
+when the model ignores the convention.
+
 ### Bridge (session.ts)
 
 `DshSessionBridge` is the only session-facing component:
