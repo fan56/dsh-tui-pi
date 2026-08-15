@@ -23,7 +23,7 @@ import { TranscriptRenderer } from '../lib/messages.js'
 import { ansiBg, ansiFg, BOLD, darkTheme, lightTheme, POWERLINE, RESET } from '../lib/theme/index.js'
 import { githubDark, githubLight } from '../lib/theme/palette.js'
 import { visibleWidth } from '../lib/text.js'
-import { buildWelcomeBanner, PIXEL_FONT, WELCOME_FULL_WIDTH, WHALE_ART, WHALE_COLOR, WORDMARK } from '../lib/welcome.js'
+import { buildWelcomeBanner, PIXEL_FONT, renderPixelGlyph, WELCOME_FULL_WIDTH, WHALE_ART, WHALE_COLOR, WORDMARK } from '../lib/welcome.js'
 
 const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
 const execFileAsync = promisify(execFile)
@@ -40,57 +40,55 @@ function letterRunCount(r) {
 }
 
 /**
- * The wordmark letter grids — the spec's D/S/H glyphs (see PIXEL_FONT in
- * welcome.ts), '#' stroke, '.' empty: letters from the classic Adafruit
- * GFX 5×7 bitmap font (glcdfont.c, public domain), rendered at the
- * whale's own 28 columns × 10 rows (4-column strokes, 2-row horizontal
- * bars, a 2-cell padding column on each side), spaced 2 columns apart
- * into an 88-column letter block. Pinned here as the golden for the
- * letter block, so a glyph regression fails even when it keeps the run
+ * The wordmark letter grids — the D/S/H glyphs of PIXEL_FONT (see
+ * welcome.ts) rendered through renderPixelGlyph's half-block mapping, 28
+ * columns × 10 rows each: 3-pixel strokes, D's bowl and S's spine stepping
+ * diagonally in 2-pixel staircase corners. Pinned here as the golden for
+ * the letter block, so a glyph regression fails even when it keeps the run
  * structure intact.
  */
-const D_GRID = [
-  '..########################..',
-  '..########################..',
-  '..####................####..',
-  '..####................####..',
-  '..####................####..',
-  '..####................####..',
-  '..####................####..',
-  '..####................####..',
-  '..########################..',
-  '..########################..',
+const D_ROWS = [
+  '█████████████████████       ',
+  '███▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█▄▄     ',
+  '███                 ▀▀█▄▄   ',
+  '███                   ▀▀█▄▄ ',
+  '███                     ███ ',
+  '███                     ███ ',
+  '███                   ▄▄█▀▀ ',
+  '███                 ▄▄█▀▀   ',
+  '███▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█▀▀     ',
+  '█████████████████████       ',
 ]
 
-const S_GRID = [
-  '..########################..',
-  '..########################..',
-  '..####......................',
-  '..####......................',
-  '..########################..',
-  '..########################..',
-  '......................####..',
-  '......................####..',
-  '..########################..',
-  '..########################..',
+const S_ROWS = [
+  '    ███████████████████████ ',
+  '▄▄▄ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ',
+  '███                         ',
+  '███▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄    ',
+  '████████████████████████    ',
+  '▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄▄ ',
+  '                        ███ ',
+  '                        ███ ',
+  '▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ ▀▀▀ ',
+  '███████████████████████     ',
 ]
 
-const H_GRID = [
-  '..####................####..',
-  '..####................####..',
-  '..####................####..',
-  '..####................####..',
-  '..########################..',
-  '..########################..',
-  '..####................####..',
-  '..####................####..',
-  '..####................####..',
-  '..####................####..',
+const H_ROWS = [
+  '███                     ███ ',
+  '███                     ███ ',
+  '███                     ███ ',
+  '███                     ███ ',
+  '███████████████████████████ ',
+  '███████████████████████████ ',
+  '███                     ███ ',
+  '███                     ███ ',
+  '███                     ███ ',
+  '███                     ███ ',
 ]
 
-/** One row of the 88-column letter block: D + 2 gaps + S + 2 gaps + H (28 + 2 + 28 + 2 + 28), strokes as '█'. */
+/** One row of the 88-column letter block: D + 2 gaps + S + 2 gaps + H (28 + 2 + 28 + 2 + 28). */
 function letterBlockRow(r) {
-  return [D_GRID, S_GRID, H_GRID].map(grid => grid[r].replaceAll('#', '█').replaceAll('.', ' ')).join('  ')
+  return [D_ROWS[r], S_ROWS[r], H_ROWS[r]].join('  ')
 }
 
 /**
@@ -129,20 +127,30 @@ test('WHALE_ART is the 10-row × 28-column grid of documented glyphs', () => {
   }
 })
 
-test('PIXEL_FONT: 28-column × 10-row glyphs — every letter as wide and tall as the whale', () => {
+test('PIXEL_FONT: 28×20 pixel bitmaps — every letter at the whale\'s own resolution', () => {
   assert.deepEqual(Object.keys(PIXEL_FONT).sort(), ['D', 'H', 'S'], 'glyphs for every letter of "DSH"')
   const glyphWidths = { D: 28, S: 28, H: 28 }
   for (const [ch, glyph] of Object.entries(PIXEL_FONT)) {
-    assert.equal(glyph.length, WHALE_ART.length, `${ch}: as many rows as the whale (top-aligned)`)
+    assert.equal(glyph.length, 2 * WHALE_ART.length, `${ch}: two pixel rows per banner row (20 — folds into the whale's 10)`)
     const widths = [...new Set(glyph.map(row => row.length))]
-    assert.deepEqual(widths, [glyphWidths[ch]], `${ch}: every row is exactly ${glyphWidths[ch]} columns — the whale's width`)
+    assert.deepEqual(widths, [glyphWidths[ch]], `${ch}: every pixel row is exactly ${glyphWidths[ch]} columns — the whale's width`)
     for (const row of glyph) {
-      assert.match(row, /^[#.]+$/, `${ch}: only stroke (#) and empty (.) cells`)
-      assert.ok(row.includes('#'), `${ch}: every row carries a stroke — no fully blank letter row`)
+      assert.match(row, /^[#.]+$/, `${ch}: only pixel (#) and empty (.) cells`)
+      assert.ok(row.includes('#'), `${ch}: every pixel row carries a stroke — no fully blank letter row`)
     }
   }
   assert.equal(Object.values(PIXEL_FONT).reduce((width, glyph) => width + glyph[0].length, 0), 84,
     'wordmark letters total: 28 (D) + 28 (S) + 28 (H) = 84 — each letter spans the whale\'s width')
+})
+
+test('renderPixelGlyph folds pixel pairs into half-block cells — the whale\'s own mapping', () => {
+  // One cell row, four columns — one per pixel combination.
+  assert.deepEqual(renderPixelGlyph(['##..', '#.#.']),
+    ['█▀▄ '], 'both→█, top→▀, bottom→▄, neither→space')
+  // PIXEL_FONT glyphs themselves fold into the pinned rendered goldens.
+  assert.deepEqual(renderPixelGlyph(PIXEL_FONT.D), D_ROWS, 'D bitmap renders to its pinned rows')
+  assert.deepEqual(renderPixelGlyph(PIXEL_FONT.S), S_ROWS, 'S bitmap renders to its pinned rows')
+  assert.deepEqual(renderPixelGlyph(PIXEL_FONT.H), H_ROWS, 'H bitmap renders to its pinned rows')
 })
 
 test('every WORDMARK letter has a PIXEL_FONT glyph', () => {
