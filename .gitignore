@@ -4,3 +4,8 @@ lib/
 *.tsbuildinfo
 .DS_Store
 node_modules
+
+# --- Secret / environment files (never commit) ---
+.env
+.env.*
+!.env.example

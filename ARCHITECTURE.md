@@ -145,7 +145,9 @@ thinking/tool panels, `borderDefault`). Show-when-content, clear-when-done:
 - `renderTodos(todos)` — `todo/write` events (routed from index.ts's
   `onEvent`, since the transcript no longer renders them): a boxed `● Todos
   (done/total)` header with `├─`/`└─` tree lines and `☐`/`◐`/`☑` status
-  icons. An empty snapshot (or `/new`) hides the panel.
+  icons. An empty snapshot (or `/new`) hides the panel — and so does an
+  **all-completed** list (the model writes the whole-list snapshot and rarely
+  clears it; all-done is the end-of-work signal).
 - `renderAgents(agents)` — the bridge's `onLive` fold: a boxed `● Agents`
   panel with one line per **running** child (spinner, provider + label,
   `↻retries≤max`, total tokens + context percent, elapsed, activity

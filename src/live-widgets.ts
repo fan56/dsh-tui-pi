@@ -104,10 +104,16 @@ export class LiveWidgets {
    * Rebuild the single widget Text: one bordered panel per present section
    * (Todos tree, running-agents board), stacked with no separator. When
    * nothing is left to show the Text is removed and the dock slot collapses.
+   * Clear-when-done: the Todos panel hides once every todo is completed (the
+   * model writes the whole-list snapshot and rarely clears it — an
+   * all-completed list is the signal the work is over); the Agents panel
+   * hides once no child is running.
    */
   private rebuild(): void {
     const panels: string[] = []
-    if (this.liveTodos.length > 0) panels.push(this.boxedPanel(this.todosHeader(), this.todoLines()))
+    if (this.liveTodos.some(todo => todo.status !== 'completed')) {
+      panels.push(this.boxedPanel(this.todosHeader(), this.todoLines()))
+    }
     const running = this.liveAgents.filter(view => view.outcome === undefined)
     if (running.length > 0) panels.push(this.boxedPanel('● Agents', this.agentLines(running)))
     if (panels.length === 0) {

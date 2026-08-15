@@ -92,6 +92,26 @@ test('empty todos render no panel; the widget collapses to zero rows', () => {
   assert.deepEqual(widgetRows(doc), [])
 })
 
+test('an all-completed todo list hides the panel (clear-when-done)', () => {
+  const { doc, widget } = makeWidget()
+  // Mixed list: the panel shows with the completion count.
+  widget.renderTodos([
+    { content: 'a', status: 'completed' },
+    { content: 'b', status: 'in_progress' },
+  ])
+  assert.deepEqual(panelBody(doc), ['● Todos (1/2)', '├─ ☑ a', '└─ ◐ b'])
+  // The model marks everything completed but never writes an empty list —
+  // the panel must still collapse (the LLM rarely clears the snapshot).
+  widget.renderTodos([
+    { content: 'a', status: 'completed' },
+    { content: 'b', status: 'completed' },
+  ])
+  assert.deepEqual(widgetRows(doc), [], 'all-completed todos hide the panel')
+  // A later todo/write with new work brings it back.
+  widget.renderTodos([{ content: 'c', status: 'pending' }])
+  assert.deepEqual(panelBody(doc), ['● Todos (0/1)', '└─ ☐ c'])
+})
+
 // ------------------------------------------------------------- agents panel ----
 
 test('running agent line: spinner, provider + label, meta and activity', () => {
