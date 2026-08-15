@@ -433,6 +433,12 @@ export class TranscriptRenderer {
   private applyOp(op: ReplayOp): void {
     switch (op.kind) {
       case 'welcome':
+        // Mirror applyEvent's self-push: relayout/setTheme replay would
+        // otherwise consume the welcome op on the first rebuild and freeze
+        // the banner at that width (it is width-dependent since the pixel
+        // letters — a narrowing resize would degrade, a widening one never
+        // restore, and later theme switches could not repaint it either).
+        this.replay.push({ kind: 'welcome' })
         this.renderWelcome()
         break
       case 'event':
@@ -453,14 +459,17 @@ export class TranscriptRenderer {
   // ---------------------------------------------------------------- banner --
 
   /**
-   * The startup welcome banner (whale pixel art + wordmark) as the doc's
-   * first child, followed by a spacer that matches the message-block rhythm.
-   * The whale keeps its brand blue across themes; the wordmark color follows
-   * the current theme (half-block gaps stay transparent over the terminal
-   * default background — see welcome.ts).
+   * The startup welcome banner (whale pixel art + pixel-letter wordmark) as
+   * the doc's first child, followed by a spacer that matches the
+   * message-block rhythm. The whale and the letters keep their brand blue
+   * across themes — the banner is theme-independent (gaps stay transparent
+   * over the terminal default background — see welcome.ts). The banner is
+   * built at the current terminal width: below 70 columns it degrades to
+   * the whale alone, and every rebuild (relayout/setTheme replay) reads the
+   * width afresh, so narrowing drops the wordmark and widening restores it.
    */
   private renderWelcome(): void {
-    this.doc.addChild(new Text(buildWelcomeBanner(this.theme), 1, 0))
+    this.doc.addChild(new Text(buildWelcomeBanner(process.stdout.columns), 1, 0))
     this.doc.addChild(new Spacer(1))
     this.requestRender()
   }

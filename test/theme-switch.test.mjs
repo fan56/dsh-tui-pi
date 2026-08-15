@@ -17,6 +17,7 @@ import {
 } from '../lib/messages.js'
 import { ansiBg, ansiFg, darkTheme, lightTheme } from '../lib/theme/index.js'
 import { githubDark, githubLight } from '../lib/theme/palette.js'
+import { WHALE_COLOR } from '../lib/welcome.js'
 
 const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
 
@@ -120,9 +121,9 @@ test('in-flight stream continues on the rebuilt component after setTheme', () =>
   const styled = renderDocStyled(doc)
   assert.ok(styled.includes(ansiFg(githubLight.fgDefault)), 'streaming text painted with the light fg')
   // Count only the content Texts — the welcome banner Text is identified by
-  // its wordmark content rather than assumed to be the first child.
+  // its whale-blue pixels rather than assumed to be the first child.
   const textChildren = doc.children.filter(child =>
-    child.constructor.name === 'Text' && !child.render(200).join('').includes('DSH TUI')
+    child.constructor.name === 'Text' && !child.render(200).join('').includes(ansiFg(WHALE_COLOR))
   )
   assert.equal(textChildren.length, 1, 'one streaming text component — no duplicates after the switch')
 })
