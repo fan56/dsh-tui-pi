@@ -6,8 +6,16 @@
  * schemastery schemas → resolved values) and renders it as nested
  * SettingsList overlays, one level per schema depth:
  *
- *   level 0   namespace list (searchable); description shows applies timing
- *   level 1+  schema walk, dispatched on node type:
+ *   level 0   category list (searchable): general / models / plugins / agent,
+ *             then `other` for unmapped namespaces. Namespace→category comes
+ *             from a static mapping (categorizeNamespaces) mirroring the web
+ *             settings page: the web client slots namespaces into categories
+ *             client-side and the data plane carries no category field, so
+ *             the mapping is maintained here by hand; `other` is hidden when
+ *             empty.
+ *   level 1   namespace list for the chosen category (searchable);
+ *             description shows applies timing
+ *   level 2+  schema walk, dispatched on node type:
  *             - object/dict → drill in (nested list; dicts get an add-key row)
  *             - boolean / all-literal union → Enter cycles the value
  *             - string/number/mixed union → inline Input editor
@@ -45,6 +53,70 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
+
+// ------------------------------------------------------- category mapping --
+
+export interface SettingsCategory {
+  id: string
+  label: string
+  namespaces: readonly string[]
+}
+
+/**
+ * Static namespace→category mapping, mirroring the web settings page's
+ * client-side slot structure (see the module header): the data plane carries
+ * no category field, so the slots are maintained here by hand. Namespaces not
+ * listed anywhere fall into the trailing `other` category.
+ *
+ * Labels are bilingual (Chinese + English): pi-tui's SettingsList search only
+ * matches the label, so the English half doubles as the search surface for
+ * English queries (model, shell, permission, …) while the Chinese half keeps
+ * Chinese searches working.
+ */
+export const CATEGORY_MAP: readonly SettingsCategory[] = [
+  { id: 'general', label: '通用 General', namespaces: ['permission', 'dsh-tui'] },
+  { id: 'models', label: '模型 Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
+  { id: 'plugins', label: '插件 Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
+  { id: 'agent', label: 'Agent 设置 Agent Presets', namespaces: ['agent-presets'] },
+]
+
+/** Cap for a category row's member-name description line. */
+export const CATEGORY_DESC_MAX = 60
+
+/**
+ * Group a describe() namespace list into ordered categories — general, models,
+ * plugins, agent, then `other` for everything unmapped. Categories with no
+ * members are dropped, including `other` when nothing falls into it.
+ *
+ * Defensive: duplicate namespaces in the input count once (a namespace
+ * registered twice must not be listed twice), and the `mapped` guard resolves
+ * CATEGORY_MAP overlap — a namespace listed in several categories goes to the
+ * first one, by category order.
+ */
+export function categorizeNamespaces(nses: string[]): SettingsCategory[] {
+  const categories: SettingsCategory[] = []
+  const mapped = new Set<string>()
+  const input = new Set(nses)
+  for (const def of CATEGORY_MAP) {
+    const members = [...new Set(def.namespaces)].filter(ns => input.has(ns) && !mapped.has(ns))
+    if (members.length === 0) continue
+    for (const ns of members) mapped.add(ns)
+    categories.push({ id: def.id, label: def.label, namespaces: members })
+  }
+  const others = [...input].filter(ns => !mapped.has(ns))
+  if (others.length > 0) categories.push({ id: 'other', label: '其他 Other', namespaces: others })
+  return categories
+}
+
+/**
+ * Description line for a category row: member names joined with ", ", capped at
+ * `max` chars — an exactly-`max` string is kept whole, anything longer is cut
+ * to `max - 1` chars with a trailing "…". Duplicate names are collapsed.
+ */
+export function categoryDescription(namespaces: readonly string[], max = 60): string {
+  const joined = [...new Set(namespaces)].join(', ')
+  return joined.length <= max ? joined : `${joined.slice(0, max - 1)}…`
+}
 
 // ----------------------------------------------------------------- pure helpers --
 
@@ -435,6 +507,7 @@ class SettingsBrowser {
   private readonly roots = new Map<string, SchemaNode>()
   private readonly changes = { value: 0 }
   private overlay: OverlayHandle | undefined
+  private catList: SettingsList | undefined
   private nsList: SettingsList | undefined
   private writeChain: Promise<void> = Promise.resolve()
   private closed: Promise<void>
@@ -463,9 +536,9 @@ class SettingsBrowser {
 
   async open(): Promise<number> {
     this.refresh()
-    if (this.descriptors.length === 0) return -1
-    const list = this.namespaceList()
-    this.nsList = list
+    if (this.categories().length === 0) return -1
+    const list = this.categoryList()
+    this.catList = list
     this.overlay = this.tui.showOverlay(list, { width: '80%', maxHeight: '70%' })
     await this.closed
     return this.changes.value
@@ -474,6 +547,7 @@ class SettingsBrowser {
   private close(): void {
     this.overlay?.hide()
     this.overlay = undefined
+    this.catList = undefined
     this.nsList = undefined
     this.restoreFocus()
     this.closeResolve()
@@ -498,6 +572,54 @@ class SettingsBrowser {
     return root
   }
 
+  // ------------------------------------------------------------ category level --
+
+  private categories(): SettingsCategory[] {
+    return categorizeNamespaces(this.descriptors.map(d => d.ns))
+  }
+
+  private categorySummary(cat: SettingsCategory): string {
+    return `${cat.namespaces.length} namespaces`
+  }
+
+  private categoryDescription(cat: SettingsCategory): string {
+    return categoryDescription(cat.namespaces, CATEGORY_DESC_MAX)
+  }
+
+  private categoryList(): SettingsList {
+    const items: SettingItem[] = this.categories().map(cat => ({
+      id: cat.id,
+      label: cat.label,
+      currentValue: this.categorySummary(cat),
+      description: this.categoryDescription(cat),
+      submenu: (_current, done) => {
+        const list = this.namespaceList(
+          this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
+          done,
+        )
+        this.nsList = list
+        return list
+      },
+    }))
+    const list = new SettingsList(
+      items,
+      10,
+      this.listTheme,
+      () => {},
+      () => this.close(),
+      { enableSearch: true },
+    )
+    return list
+  }
+
+  private refreshCategoryList(): void {
+    if (this.catList === undefined) return
+    this.refresh()
+    for (const cat of this.categories()) {
+      this.catList.updateValue(cat.id, this.categorySummary(cat))
+    }
+  }
+
   // ------------------------------------------------------------ namespace level --
 
   private nsSummary(desc: SettingsDescriptor): string {
@@ -514,8 +636,9 @@ class SettingsBrowser {
     return parts.join(' · ')
   }
 
-  private namespaceList(): SettingsList {
-    const items: SettingItem[] = this.descriptors.map(desc => ({
+  /** Namespace list for one category; Esc pops back to the category level. */
+  private namespaceList(descriptors: readonly SettingsDescriptor[], onExit: () => void): SettingsList {
+    const items: SettingItem[] = descriptors.map(desc => ({
       id: desc.ns,
       label: desc.ns,
       currentValue: this.nsSummary(desc),
@@ -533,7 +656,10 @@ class SettingsBrowser {
       10,
       this.listTheme,
       () => {},
-      () => this.close(),
+      () => {
+        this.refreshCategoryList()
+        onExit()
+      },
       { enableSearch: true },
     )
     return list

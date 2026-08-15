@@ -9,7 +9,7 @@
 - 启动：`dsh --profile tui`（`~/.zshrc` 已配别名 `dsh-tui`、`dst`）
 - Node：`>=22.19`，pnpm 10.33+，本机 node 在 `/opt/homebrew/bin`
 
-## 当前状态（2026-08-15，7 个 commit）
+## 当前状态（2026-08-15，10 个 commit）
 
 | Phase | 内容 | 状态 |
 |---|---|---|
@@ -28,8 +28,9 @@
 | I | `/session` 只读信息面板（id/cwd/created/model/think/status/messages/tokens/events/parent）+ `/resume`（list 过滤 subagent/当前会话 → inspect 预校验（损坏日志不动当前会话）→ detach+resume（保事件订阅）→ firstLiveSeq 切分种子回放、chunk 跳过；transcript/stats 从零重建） | ✅ |
 | J | 命令双通道分发（registerLocal：无 live agent 直发、不预热建会话）+ `/new` 改 detachCurrent（修 /new 后消息不渲染的阻断 bug）+ 两轮 review 修复（secret 空格误清除、pending 防重入、晚到 done once 化、row id JSON 编码、onCycle 失败回读、parseNumberInput decimal 白名单、/model stage-1 竞态、ensureSession 等 resuming、/export 守卫） | ✅ |
 | H | backlog 清理：/think /model 持久化（saveSelection）、/theme + dsh-tui namespace（重启生效）、Ctrl+C 分级中断、命令目录审计（无需补 bundle）、footer 提示可见性修复 | ✅ |
+| I | /settings 分类层级（通用/模型/插件/Agent 设置/其他，静态映射对齐 web 设置页；双语 label 保英文搜索） | ✅ |
 
-24 个单测全过（theme 15 + settings 9）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash）。
+33 个单测全过（theme 15 + settings 18）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级双语 label、英文 model / 中文 模型 搜索过滤、C-u 清空搜索框、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。
 
 ## 当前 backlog / 待办
 
@@ -40,13 +41,14 @@
 ## 用户偏好 & 上下文
 
 - **用户语言**：中文为主；commit/代码注释英文。
-- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，7 个 commit。
+- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，10 个 commit。
 - **配色**：严格对齐 `~/scripts/cmux-theme.sh` 里的 GitHub Light/Dark（不要用 Primer 默认色板）。
 - **安装方式**：用户明确说**不用推 GitHub**，纯本地用（`link:` + tarball）。
 - **goal 模式**：用户要"我只要结果，中间不要问我"——自主执行到底；只在关键决策点（切模型、是否做某功能）才反馈。
 - **dsh 版本**：`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh` 是 0.1.0-rc.6（运行），而 `~/deepseek-harness` 是 0.1.0-rc.5（monorepo 源码）。**所有 `@deepseek-ai/*` symlink 指向 rc.6 闭包**（`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/`）保证运行时模块实例一致。
 - **`~/.dsh/settings.yaml` 当前状态**：`agent-default-model: deepseek-official / deepseek-v4-flash / reasoningEffort: off`；`dsh-tui.theme: auto`（e2e 还原后的终态）。如果 `OPENCODE_GO_API_KEY` 在 dsh 启动 shell 里没设，第一条 prompt 会报 key 错——立刻改回 `minimax-cn / MiniMax-M3`（同样文字模型，已验证可用）。
 - **插件机制坑**（本次调研结论）：llm-deepseek 的 `thinking: disabled` 会让所有模型只暴露 `Off` 一个 effort（`/think` 列表只有 Off 的原因）；pi-tui SettingsList 的 submenu `done(undefined)` 只关不改。
+- **pi-tui SettingsList 搜索只匹配 label**：`applyFilter` 用 fuzzyFilter 且只喂 `item.label`（description 不参与）——顶层分类的 label 必须自带可搜索关键词（所以分类 label 是双语「通用 General」），别指望 description 兜底。搜索框清空：C-u（deleteToLineStart）有效；Esc 在搜索态会直接关闭整个列表（onCancel），不会只清搜索框。
 
 ## 关键文件导航
 
@@ -89,10 +91,14 @@ src/
                     resolveModelInfo 失败跳过 stage-2）
   settings.ts       `/settings` 浏览器：ctx.settings.describe() 枚举 namespace → schemastery
                     schema rehydrate（dsh-client-schema-form）→ SettingsList 多级钻入；
+                    分类层（level 0）：CATEGORY_MAP 静态映射（general/models/plugins/agent，
+                    对齐 web client 侧 settings.section slot）+ 双语 label（中文在前 + 空格 +
+                    英文，英文兼任搜索关键词）+ 未映射 ns 落「其他 Other」（空则隐藏）；
                     按节点类型分派：cycle 行（字面量 union）/ Input 行内编辑（secret 掩码、
                     空输入=保留）/ dict 加键 / ReadOnlyViewer（array/unknown）/ reset 确认；
                     写走 settings.mutate(ns, pathOps, revision) 串行链 + 失败回读服务真相；
-                    8 个导出纯函数（formatValue/unionLiterals/parseNumberInput/…）
+                    11 个导出纯函数（formatValue/unionLiterals/parseNumberInput/
+                    categorizeNamespaces/categoryDescription/…）
   sessions.ts       `/session` 只读信息面板（SessionInfoPanel，Esc 关闭）+ `/resume`
                     选择器（sessionPersistence.list() → 过滤 origin==='subagent' 与当前会话 →
                     SelectList；inspectPersistedSession 预校验供调用方在 detach 前验证）
@@ -105,10 +111,12 @@ src/
     palette.ts      githubLight（canvas #f6f8fa + 16 角色色对齐 cmux）+ githubDark
                     （canvas #0d1117 + 16 角色色）+ detectDarkPalette (COLORFGBG 7/15→light)
     index.ts        ansiFg/ansiBg + BOLD/RESET 常量 + buildTheme + resolveTheme
-test/theme.test.mjs    11 单测：ansiFg、dark blend 值、resolveTheme 优先级、buildTheme 完整性
-test/settings.test.mjs 9 单测：formatValue/displayValue/unionLiterals、parseNumberInput
+test/theme.test.mjs    15 单测：ansiFg、dark blend 值、resolveTheme 优先级、buildTheme 完整性
+test/settings.test.mjs 18 单测：formatValue/displayValue/unionLiterals、parseNumberInput
                     （decimal 白名单、拒 0x/0b/0o）、parseStringInput/parseUnionInput、
-                    defaultValueFor（dict 加键种子）、fieldDescription
+                    defaultValueFor（dict 加键种子）、fieldDescription、categorizeNamespaces
+                    （全量/未映射/空/顺序/去重/映射无重叠）、categoryDescription
+                    （60 边界截断、空成员、去重）
 ```
 
 ## 关键 API / 模式笔记
@@ -152,6 +160,15 @@ ctx.root.fiber.dispose()                                // 树级退出（Ctrl+C
 - `tui.showOverlay(component, { width, maxHeight })` 返回 OverlayHandle.hide()/focus()
 - `editor.setAutocompleteProvider(provider: AutocompleteProvider)` ——provider 异步 getSuggestions 返回 `{ items, prefix }`
 
+### LLM 层架构（本次调研结论，写给下个 session）
+- **两个 LLM 插件包**（dsh-base 同时挂载，id 空间不重叠）：
+  - `llm-deepseek` = 官方直连：唯一 provider `deepseek-official`（api.deepseek.com），静态 2 模型（v4-flash / pro），`thinking: disabled`（→ `/think` 只有 Off，见坑）。
+  - `llm-pi-ai` = pi-ai 通用适配器：依赖 `@earendil-works/pi-ai ^0.82.1`，内置 37 provider（opencode、minimax、anthropic、openai…），`llm-pi-ai.providers` 可自定义路由（provider/model 的覆写映射）；零路由时包休眠不干扰。
+  - **唯一冲突面**：两包共用 settings ns `llm-pi-ai`/`llm-deepseek`（不重叠），但 pi-ai 内部 providers 目录里若手写一个与内置同 id 的 provider → 报 DUPLICATE_ADAPTER（这是包内注册，不是跨包冲突）。
+- **用户当前路由示例**：`opencode-go / deepseek-v4-flash` 走 llm-pi-ai → opencode.ai 网关（配置 `thinkingFormat: deepseek` 才有 effort 语义）；`/model` 选择器的模型总数 = pi-ai 静态目录 + llm-deepseek 的 2 个。
+- **模型选择三张表**：web 模型页直接写 `llm-pi-ai` + `llm-deepseek` 两个 ns；会话内选择器走 `sessions.selectModel` RPC（**会话级**，不落 settings）；`agent-default-model` 只有 TUI 的 `persistDefaultModel` 在写（settings.replace last-write-wins）。
+- **web 设置分类机制**：分类在 client 侧 slot（`settings.section` 元数据：general order0 / models order10 / plugins order15 / agent-presets order20），**数据面（describe()）没有 category 字段** → TUI 用静态 `CATEGORY_MAP` 对齐，新上游 ns 自动落「其他 Other」；映射表维护责任在 TUI 侧，上游加 ns 时要回来补 CATEGORY_MAP。
+
 ### 关键设计铁律
 - **不重扫**：footer/stats 永远读 O(1) 维护值，绝不在 render 里跑 getBranch()/getEntries()（pi-turbo 的教训）。
 - **不重复渲染**：session 事件 user/message echo 与本地 echo 用 lastEcho 去重；streaming 用 setText 在原组件上改，不要 removeChild+addChild。
@@ -170,7 +187,7 @@ ctx.root.fiber.dispose()                                // 树级退出（Ctrl+C
 cd ~/github/dsh-tui-pi
 pnpm check                                    # tsc --noEmit
 pnpm build                                    # emit lib/
-pnpm test                                     # 24 单测（theme 15 + settings 9，pretest 自动 build）
+pnpm test                                     # 33 单测（theme 15 + settings 18，pretest 自动 build）
 pnpm pack                                     # → dsh-tui-pi-0.1.0.tgz
 npm pack | tail -1                            # tarball 路径
 
