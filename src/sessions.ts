@@ -133,6 +133,9 @@ export async function showSessionInfo(
 }
 
 // ------------------------------------------------------------- `/resume` picker --
+// Each row is labelled with the session's first-message preview (the first
+// direct human prompt) so sessions are distinguishable without opening them;
+// fallback rows show the header label (cwd basename · short id).
 
 /** The `sessionPersistence` service surface we use (registered by the profile). */
 interface SessionPersistence {
@@ -140,6 +143,93 @@ interface SessionPersistence {
   list(signal?: AbortSignal): Promise<SessionHeader[]>
   /** Full event log of one persisted session (damaged tails repaired on load). */
   inspect(id: SessionId, signal?: AbortSignal): Promise<{ meta: SessionHeader; events: readonly SessionEvent[] }>
+}
+
+/**
+ * How many of the most recent candidates get a first-message preview before
+ * the picker opens. Older sessions fall back to the header label, so the
+ * picker stays fast even with a long history.
+ */
+const PREVIEW_SESSION_CAP = 30
+
+/** Concurrent `inspect` calls while enriching previews. */
+const PREVIEW_CONCURRENCY = 6
+
+/** Hard character cap for a preview string; the list column clips it further. */
+const PREVIEW_MAX_CHARS = 140
+
+/** Join the text blocks of a message's content into one trimmed string. */
+function textOfContent(content: unknown): string {
+  if (typeof content === 'string') return content.trim()
+  if (!Array.isArray(content)) return ''
+  let text = ''
+  for (const block of content) {
+    if (block && typeof block === 'object' && (block as { type?: unknown }).type === 'text') {
+      const blockText = (block as { text?: unknown }).text
+      if (typeof blockText === 'string') text += blockText + ' '
+    }
+  }
+  return text.trim()
+}
+
+/**
+ * The session's "first sentence": the first direct human prompt, falling
+ * back to the first non-injected user-role text (goal/cron/recall prompts),
+ * then the first assistant message. Synthetic context injects (workspace
+ * instructions, runtime reminders) are skipped entirely — they precede the
+ * first real prompt and read as noise.
+ */
+export function previewOfEvents(events: readonly SessionEvent[]): string | undefined {
+  let fallbackUser: string | undefined
+  let fallbackAssistant: string | undefined
+  for (const event of events) {
+    if (event.type === 'user/message') {
+      const message = event.data as { role?: string; source?: { kind?: string }; content?: unknown }
+      const text = textOfContent(message?.content)
+      if (!text) continue
+      const kind = message?.source?.kind
+      if (kind === 'user') return text
+      if (kind === 'tool' || kind === 'plugin' || kind === 'agent-instructions') continue
+      if (fallbackUser === undefined) fallbackUser = text
+    } else if (event.type === 'assistant/message') {
+      const message = (event.data as { message?: { content?: unknown } }).message
+      const text = textOfContent(message?.content)
+      if (text && fallbackAssistant === undefined) fallbackAssistant = text
+    }
+  }
+  return fallbackUser ?? fallbackAssistant
+}
+
+/** Collapse control chars/whitespace and clip a raw message into a one-line preview. */
+export function normalizePreview(text: string, maxChars = PREVIEW_MAX_CHARS): string {
+  const oneLine = text.replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return oneLine.length <= maxChars ? oneLine : `${oneLine.slice(0, maxChars)}…`
+}
+
+/** Best-effort first-message preview per session id; failures map to undefined. */
+async function loadSessionPreviews(
+  persistence: SessionPersistence,
+  ids: readonly SessionId[],
+): Promise<Map<string, string | undefined>> {
+  const previews = new Map<string, string | undefined>()
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(PREVIEW_CONCURRENCY, ids.length) }, async () => {
+    while (cursor < ids.length) {
+      const index = cursor++
+      const id = ids[index]
+      let preview: string | undefined
+      try {
+        const { events } = await persistence.inspect(id)
+        const text = previewOfEvents(events)
+        if (text) preview = normalizePreview(text)
+      } catch {
+        preview = undefined
+      }
+      previews.set(String(id), preview)
+    }
+  })
+  await Promise.all(workers)
+  return previews
 }
 
 /**
@@ -196,14 +286,25 @@ export async function pickPersistedSession(
     .sort((a, b) => b.createdAt - a.createdAt)
   if (candidates.length === 0) return { kind: 'empty' }
 
-  const items: SelectItem[] = candidates.map(header => ({
-    value: String(header.id),
-    label: `${basename(header.cwd ?? '?')} · ${clipToWidth(String(header.id), 8)}`,
-    description: `${new Date(header.createdAt).toLocaleString()} · ${header.cwd ?? 'no cwd'}`,
-  }))
+  // Enrich the most recent candidates with their first-message preview so the
+  // rows are distinguishable at a glance; older ones fall back to the header
+  // label (cwd + short id).
+  const previews = await loadSessionPreviews(persistence, candidates.slice(0, PREVIEW_SESSION_CAP).map(header => header.id))
+
+  const items: SelectItem[] = candidates.map(header => {
+    const id = String(header.id)
+    const preview = previews.get(id)
+    return {
+      value: id,
+      label: preview ?? `${basename(header.cwd ?? '?')} · ${clipToWidth(id, 8)}`,
+      description: `${new Date(header.createdAt).toLocaleString()} · ${clipToWidth(id, 8)} · ${header.cwd ?? 'no cwd'}`,
+    }
+  })
 
   return new Promise<PickSessionResult>(resolve => {
-    const list = new SelectList(items, 12, theme.selectList)
+    // Wide primary column so previews (often CJK) get room before the time/cwd
+    // description column starts.
+    const list = new SelectList(items, 12, theme.selectList, { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 60 })
     list.setSelectedIndex(0)
 
     // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
