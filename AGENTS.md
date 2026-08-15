@@ -23,8 +23,9 @@ live-widgets.ts   LiveWidgets: bordered Todos/Agents panels above the chat
                   input (renderTodos/renderAgents/tickLive/setTheme;
                   show-when-content, clear-when-done)
 append-system.ts  APPEND_SYSTEM.md support (pi convention, dsh side
-                  ~/.dsh/APPEND_SYSTEM.md): section provider reads the file
-                  per assembly (hot-apply); the dsh-tui-pi:todo-lifecycle
+                  ~/.dsh/APPEND_SYSTEM.md — a RUNTIME user file, never
+                  shipped in this repo): section provider reads the file per
+                  assembly (hot-apply); the dsh-tui-pi:todo-lifecycle
                   section is ensured there (idempotent marker, atomic) and
                   migrated out of the legacy ~/.dsh/AGENTS.md
 commands.ts       CommandService: parse + dual-channel dispatch + autocomplete

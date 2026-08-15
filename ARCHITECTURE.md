@@ -168,11 +168,14 @@ wraps inside the box.
 **Model-side guidance** (append-system.ts): the TUI supports pi's
 `APPEND_SYSTEM.md` convention (dsh side: `~/.dsh/APPEND_SYSTEM.md`,
 `$DSH_HOME` or `~/.dsh`) — a user-editable file appended to the system
-prompt of every agent the TUI creates. A system-prompt section registered
-in the plugin's scope (`dsh-tui-pi:append-system`, order 200) uses a text
-**provider** that reads the file at each assembly (`readAppendSystem`), so
-edits apply to the next request with no restart and no watcher; an empty
-file contributes nothing (empty sections are dropped by the renderer).
+prompt of every agent the TUI creates. The file is a **runtime user
+artifact, never shipped with the source**: the repo contains no
+`APPEND_SYSTEM.md`; the plugin only creates it on first run and maintains
+its one marked section. A system-prompt section registered in the plugin's
+scope (`dsh-tui-pi:append-system`, order 200) uses a text **provider** that
+reads the file at each assembly (`readAppendSystem`), so edits apply to the
+next request with no restart and no watcher; an empty file contributes
+nothing (empty sections are dropped by the renderer).
 Because `todo/write` is a whole-list snapshot and models rarely clear it,
 the TUI's own `dsh-tui-pi:todo-lifecycle` guidance lives in the same file:
 `ensureTodoLifecycleInstructions` is idempotent (marker

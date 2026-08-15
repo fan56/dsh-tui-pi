@@ -96,6 +96,26 @@ Themes change live, no restart:
   by DSH_TUI_THEME=…` instead of claiming it applied.
 - The choice survives restarts (`auto` falls back to terminal detection).
 
+## APPEND_SYSTEM.md
+
+dsh-tui-pi supports pi's `APPEND_SYSTEM.md` convention on the dsh side:
+**`~/.dsh/APPEND_SYSTEM.md`** (`$DSH_HOME` or `~/.dsh`) is appended to the
+system prompt of every agent this TUI creates. The file is read at each
+prompt assembly, so **edits apply to the very next request** — no restart,
+no reload, no watcher.
+
+- **The file is not shipped with the source**: the repo contains no
+  `APPEND_SYSTEM.md` — it lives in your `~/.dsh` and is yours to edit freely
+  (identity, persona rules, UI conventions — anything you want the model to
+  know, e.g. pi-style `.pi/agent/APPEND_SYSTEM.md` content copied over).
+- On first run the TUI **creates** the file if missing and **maintains one
+  marked section** in it (`<!-- dsh-tui-pi:todo-lifecycle -->`, telling the
+  model to clear the todo list once everything is completed). Your own
+  content is never touched; the maintenance is idempotent, atomic
+  (tmp + rename) and best-effort.
+- An empty or missing file contributes nothing to the prompt (the section is
+  dropped by the prompt renderer).
+
 ## Install (local)
 
 ```sh
