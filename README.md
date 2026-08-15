@@ -143,6 +143,25 @@ dsh closure (`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules`);
 at runtime those imports resolve to the same module instances the running dsh
 uses. Those symlinks stay out of any tarball (`files` ships lib/bin/patch only).
 
+⚠️ `pnpm install` regenerates the three type-check symlinks
+(`dsh-settings`, `dsh-client-schema-form`, `schemastery`) into local `.pnpm`
+copies, splitting the cordis module identity and breaking `pnpm check` — after
+any install, re-link them:
+
+```sh
+ln -sfn /opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/{dsh-settings,dsh-client-schema-form,schemastery} node_modules/@deepseek-ai/
+```
+
+**pi-tui patch**: this plugin applies a small patch to the pinned
+`@earendil-works/pi-tui` 0.84.2 (`pnpm.patchedDependencies` in
+`pnpm-workspace.yaml`, patch in `patches/`): it adds an `unselectedText`
+SelectListTheme hook (full-row background on unselected rows), wires the
+previously dead `selectedPrefix` hook (accent arrow on the selected row), and
+frames the editor's slash-autocomplete list in a `│` box. The patch travels in
+the tarball (`files` includes `patches` + `pnpm-workspace.yaml`); the
+link:-mounted dev workflow uses the already-patched copy in this repo's
+`node_modules`.
+
 ## Layout
 
 ```

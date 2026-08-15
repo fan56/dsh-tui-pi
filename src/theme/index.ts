@@ -91,16 +91,20 @@ export function buildTheme(palette: Palette): TuiTheme {
   const bg = (hex: string) => (text: string) => ansiBg(hex) + text + RESET
   const bold = (text: string) => BOLD + text + RESET
 
-  // canvasSubtle backdrop behind every picker line. Caveat (pi-tui 0.84.2):
-  // SelectList renders unselected rows as raw `prefix + value` without a
-  // theme call (select-list.js renderItem), so only the selected row,
-  // descriptions, scroll info and no-match line get the backdrop.
+  // canvasSubtle backdrop behind every picker line. pi-tui 0.84.2 patched
+  // (see patches/@earendil-works__pi-tui.patch): SelectList renderItem now
+  // routes unselected rows through the optional `unselectedText` theme hook
+  // (they used to be raw `prefix + value` with no theme call), so every
+  // row — selected, unselected, description, scroll info — gets the
+  // backdrop. Editor-inline slash autocomplete shares this selectList
+  // theme, so its rows get the same full-row treatment.
   const selectList: SelectListTheme = {
     selectedPrefix: text => bg(palette.canvasSubtle)(fg(palette.accent)(bold(`▸ ${text}`))),
     selectedText: text => bg(palette.canvasSubtle)(fg(palette.fgDefault)(bold(text))),
     description: text => bg(palette.canvasSubtle)(fg(palette.fgSubtle)(text)),
     scrollInfo: text => bg(palette.canvasSubtle)(fg(palette.fgSubtle)(text)),
     noMatch: text => bg(palette.canvasSubtle)(fg(palette.danger)(text)),
+    unselectedText: text => bg(palette.canvasSubtle)(fg(palette.fgDefault)(text)),
   }
 
   const editor: EditorTheme = {

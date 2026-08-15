@@ -1,0 +1,72 @@
+diff --git a/dist/components/editor.js b/dist/components/editor.js
+index 4786b46932b65785cfbd2304610ca77ccead910a..e0e4e39c3be8e5d4d828621ad2d3d8768984add8 100644
+--- a/dist/components/editor.js
++++ b/dist/components/editor.js
+@@ -463,14 +463,20 @@ export class Editor {
+         else {
+             result.push(horizontal.repeat(width));
+         }
+-        // Add autocomplete list if active
++        // Add autocomplete list if active — inside a full box (┌─┐ rows)
+         if (this.autocompleteState && this.autocompleteList) {
+-            const autocompleteResult = this.autocompleteList.render(contentWidth);
++            const boxInnerWidth = Math.max(1, contentWidth - 2);
++            const autocompleteResult = this.autocompleteList.render(boxInnerWidth);
++            result.push(`${leftPadding}${this.borderColor(`┌${"─".repeat(boxInnerWidth)}┐`)}${rightPadding}`);
+             for (const line of autocompleteResult) {
+                 const lineWidth = visibleWidth(line);
+-                const linePadding = " ".repeat(Math.max(0, contentWidth - lineWidth));
+-                result.push(`${leftPadding}${line}${linePadding}${rightPadding}`);
++                const linePadding = " ".repeat(Math.max(0, boxInnerWidth - lineWidth));
++                // Strip trailing RESETs so the row's own backdrop SGR bleeds
++                // into the padding and the right side border (solid interior);
++                // the reset before rightPadding keeps the editor margin clear.
++                result.push(`${leftPadding}│${line.replace(/(?:\x1b\[0m)+$/, "")}${linePadding}│\x1b[0m${rightPadding}`);
+             }
++            result.push(`${leftPadding}${this.borderColor(`└${"─".repeat(boxInnerWidth)}┘`)}${rightPadding}`);
+         }
+         return result;
+     }
+diff --git a/dist/components/select-list.d.ts b/dist/components/select-list.d.ts
+index d507de4ebff8e7fbaacd089677099c63b4dfff6c..4b8a374cd1db0544a11082f8008f73f8eb8d7ede 100644
+--- a/dist/components/select-list.d.ts
++++ b/dist/components/select-list.d.ts
+@@ -10,6 +10,8 @@ export interface SelectListTheme {
+     description: (text: string) => string;
+     scrollInfo: (text: string) => string;
+     noMatch: (text: string) => string;
++    /** Style hook for unselected rows (plain rows render without any theme call upstream). */
++    unselectedText?: (text: string) => string;
+ }
+ export interface SelectListTruncatePrimaryContext {
+     text: string;
+diff --git a/dist/components/select-list.js b/dist/components/select-list.js
+index 2e9231150951c3d3f3e13ac8ae8d623f06d38d5d..d5c8859ecd08fe4eccdc3cfca8ac7a3226f8fcb5 100644
+--- a/dist/components/select-list.js
++++ b/dist/components/select-list.js
+@@ -101,18 +101,21 @@ export class SelectList {
+             if (remainingWidth > MIN_DESCRIPTION_WIDTH) {
+                 const truncatedDesc = truncateToWidth(descriptionSingleLine, remainingWidth, "");
+                 if (isSelected) {
+-                    return this.theme.selectedText(`${prefix}${truncatedValue}${spacing}${truncatedDesc}`);
++                    // selectedPrefix is otherwise dead in renderItem: style the
++                    // arrow accent, then the row text (concatenated, not nested —
++                    // nesting would let the prefix's RESETs clear the row style).
++                    return this.theme.selectedPrefix("") + this.theme.selectedText(`${truncatedValue}${spacing}${truncatedDesc}`);
+                 }
+                 const descText = this.theme.description(spacing + truncatedDesc);
+-                return prefix + truncatedValue + descText;
++                return (this.theme.unselectedText ?? ((t) => t))(prefix + truncatedValue) + descText;
+             }
+         }
+         const maxWidth = width - prefixWidth - 2;
+         const truncatedValue = this.truncatePrimary(item, isSelected, maxWidth, maxWidth);
+         if (isSelected) {
+-            return this.theme.selectedText(`${prefix}${truncatedValue}`);
++            return this.theme.selectedPrefix("") + this.theme.selectedText(`${truncatedValue}`);
+         }
+-        return prefix + truncatedValue;
++        return (this.theme.unselectedText ?? ((t) => t))(prefix + truncatedValue);
+     }
+     getPrimaryColumnWidth() {
+         const { min, max } = this.getPrimaryColumnBounds();

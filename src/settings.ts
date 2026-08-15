@@ -758,15 +758,12 @@ class SettingsBrowser {
     this.closed = new Promise<void>(resolve => { this.closeResolve = resolve })
     const p = options.theme.palette
     const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
-    // canvasSubtle backdrop for every browser line. Caveat (pi-tui 0.84.2,
-    // no theme hook for raw lines — accepted, recorded in full): the search
-    // Input row (first line with enableSearch) is pushed raw by
-    // settings-list.js; renderMainList pushes three bare "" separator lines
-    // (after the search row, before the description, before the hint);
-    // AddProviderFlow's title/blank lines and EditField's own title/subtitle/
-    // error/notice lines are raw styled strings — the popup is striped rather
-    // than one solid panel surface, and every such line stays on the
-    // terminal default background.
+    // canvasSubtle backdrop for every browser line. Raw lines (the search
+    // Input row, the bare "" separators from settings-list.js renderMainList,
+    // AddProviderFlow's title/blank lines, EditField's title/subtitle/error/
+    // notice rows) carry no theme styling of their own — the framed overlay
+    // (frame.ts fillLine) paints the full-width backdrop under them, so the
+    // popup stays one solid panel surface.
     const bg = (hex: string) => (text: string) => ansiBg(hex) + text + RESET
     this.listTheme = {
       label: (text, selected) => bg(p.canvasSubtle)(fg(p.fgDefault)(selected ? BOLD + text + RESET : text)),

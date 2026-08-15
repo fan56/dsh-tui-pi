@@ -17,6 +17,8 @@
     "lib",
     "bin",
     "cordis.patch.yml",
+    "patches",
+    "pnpm-workspace.yaml",
     "README.md",
     "LICENSE"
   ],

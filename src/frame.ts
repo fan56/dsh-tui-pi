@@ -1,23 +1,46 @@
 /**
- * Framed overlay chrome — the shared top/bottom border every pi SelectList /
+ * Framed overlay chrome — the shared full box (`┌─┐`) every pi SelectList /
  * SettingsList overlay gets, so a popup reads as one bounded surface instead
  * of panel rows floating directly on the chat canvas.
  *
- * Mirrors pi agent's DynamicBorder (full-width `─` lines in the palette
- * border color) but wraps the whole overlay root, so SettingsList submenus
- * stay framed too: the submenu swaps the list's own render while the frame
- * keeps both border rows in place. Width/height passed to `showOverlay`
- * are unaffected — the border lines simply follow the resolved overlay
- * width.
+ * Replaces pi agent's DynamicBorder (bare `─` lines) with a complete box:
+ * `┌───┐` top, `│   │` side-bordered content rows, `└───┘` bottom. Width
+ * passed to `showOverlay` is unchanged — the box is self-contained within it
+ * (child renders at width − 2).
+ *
+ * The frame also paints the panel backdrop: every row (borders, spacers, and
+ * each child line — including the raw separator/search rows pi's SettingsList
+ * pushes without any theme call) is laid on a full-width canvasSubtle
+ * background, so the popup reads as one solid rectangle instead of stripes
+ * of text-width highlight.
  */
 
 import type { Component } from '@earendil-works/pi-tui'
-import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
+import { ansiBg, ansiFg, RESET, type TuiTheme } from './theme/index.ts'
+import { visibleWidth } from './text.ts'
 
 /**
- * Border wrapper for one overlay component: one `─` line above and below
- * the child's content (each with a blank spacer row), colored
- * `palette.borderDefault` to sit on the panel's canvasSubtle backdrop.
+ * Paint one overlay row on the panel backdrop: `line` (which may carry its
+ * own SGR styling) is laid on a canvasSubtle background running the full
+ * overlay width. Theme fns nest RESETs (bold → fg → bg wrappers each append
+ * one), and a row can reset mid-line too (SettingsList's label/value split
+ * emits an empty styled value), so the backdrop is re-applied after every
+ * RESET — then the right-side padding is painted on the backdrop as well.
+ * Empty separator rows become plain full-width backdrop.
+ */
+function fillLine(theme: TuiTheme, line: string, width: number): string {
+  const pad = Math.max(0, width - visibleWidth(line))
+  const bg = ansiBg(theme.palette.canvasSubtle)
+  const content = line.replace(/\x1b\[0m/g, `\x1b[0m${bg}`)
+  return bg + content + bg + ' '.repeat(pad) + RESET
+}
+
+/**
+ * Full-box wrapper for one overlay component: `┌─┐` top border, `│`-bordered
+ * content rows, `└─┘` bottom border — each with a blank spacer row inside
+ * the box for breathing room, colored `palette.borderDefault` on the panel's
+ * canvasSubtle backdrop. Every row spans the full overlay width on that
+ * backdrop (see fillLine); the child renders at width − 2.
  */
 export class FramedOverlay implements Component {
   private readonly theme: TuiTheme
@@ -33,8 +56,20 @@ export class FramedOverlay implements Component {
   }
 
   render(width: number): string[] {
-    const border = ansiFg(this.theme.palette.borderDefault) + '─'.repeat(Math.max(1, width)) + RESET
-    return [border, '', ...this.child.render(width), '', border]
+    const contentWidth = Math.max(1, width - 2)
+    const borderFg = ansiFg(this.theme.palette.borderDefault)
+    const border = (chars: string) => borderFg + chars + RESET
+    // Side-bordered content row: the child's own styling runs between the
+    // two `│`s; fillLine re-applies the backdrop after any mid-line RESETs.
+    const content = (line: string) => `${borderFg}│${line}${borderFg}│`
+    const blankRow = `${borderFg}│${' '.repeat(contentWidth)}│`
+    return [
+      fillLine(this.theme, border(`┌${'─'.repeat(contentWidth)}┐`), width),
+      fillLine(this.theme, blankRow, width),
+      ...this.child.render(contentWidth).map(line => fillLine(this.theme, content(line), width)),
+      fillLine(this.theme, blankRow, width),
+      fillLine(this.theme, border(`└${'─'.repeat(contentWidth)}┘`), width),
+    ]
   }
 
   handleInput(data: string): void {
