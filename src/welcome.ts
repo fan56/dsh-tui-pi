@@ -1,34 +1,34 @@
 /**
  * Startup welcome banner: a pixel-art whale (generated pixel-by-pixel from
- * the user's image) with the "DSH" wordmark to its right, drawn in a
- * blocky pixel font (PIXEL_FONT). Each letter is a classic-pixel-ratio
- * glyph — 14 columns × 10 rows (2-column strokes, taller than wide) drawn
- * centered in a 28-column × 10-row block that matches the whale's width
- * and height, so the letters align with the whale. Rendered as the
- * transcript's first component, above every message.
+ * the user's image) with the "DSH" wordmark to its right, drawn in the
+ * classic Adafruit GFX 5×7 bitmap font (PIXEL_FONT, glcdfont.c, public
+ * domain — the same glyphs as the user's reference example). Each letter
+ * is rendered at 9/10/9 columns wide × 10 rows tall (D 9, S 10, H 9 —
+ * 1-column strokes, 2-row horizontal bars, the 5×7 grid scaled up ~1.4×),
+ * and the three glyphs are concatenated with no gaps into a 28-column ×
+ * 10-row wordmark block that matches the whale's width and height, so the
+ * letters align with the whale. Rendered as the transcript's first
+ * component, above every message.
  *
- * The banner is a 120-column × 10-row grid: 28 columns of whale art, a
- * 4-column gap, then 88 columns of pixel letters (3 letters × 28 columns,
- * 2 blank columns between letters). Below 122 terminal columns the
- * wordmark is dropped — the banner degrades to the 10 whale rows (28
- * columns each, no gap, no letters), so a narrow terminal never wraps the
- * letter rows; the full banner comes back as soon as the terminal is 122
- * columns or wider again (the transcript rebuilds on resize). Glyph
- * semantics: '█' is solid in both halves, '▀' is solid in the top half
- * only, '▄' is solid in the bottom half only, ' ' is transparent; the
- * letters map the font's '#' strokes to '█' blocks and its '.' empties to
- * ' '. The letter shapes keep the classic pixel font's ratio (like a 5×7
- * font scaled up ~2.8×: 14 wide × 10 tall, 2-column strokes) instead of
- * filling the whole 28-column block — a full-width 28×10 glyph is wider
- * than tall, so on screen every letter reads as a solid square (D became
- * a block). Everything is painted
- * in the whale brand blue. Transparent cells stay unpainted — they show the
- * terminal default background. This is deliberate: the transcript never
- * paints a canvas background (the TUI startup already sets the terminal
- * background to the theme canvas), so a half-block's transparent half must
- * fall through to the terminal default, not to an explicit theme
- * background. Painting it would mismatch on any terminal whose default
- * background differs from the theme canvas.
+ * The banner is a 60-column × 10-row grid: 28 columns of whale art, a
+ * 4-column gap, then 28 columns of pixel letters (9 + 10 + 9, tight).
+ * Below 62 terminal columns the wordmark is dropped — the banner degrades
+ * to the 10 whale rows (28 columns each, no gap, no letters), so a narrow
+ * terminal never wraps the letter rows; the full banner comes back as soon
+ * as the terminal is 62 columns or wider again (the transcript rebuilds on
+ * resize). Glyph semantics: '█' is solid in both halves, '▀' is solid in
+ * the top half only, '▄' is solid in the bottom half only, ' ' is
+ * transparent; the letters map the font's '#' strokes to '█' blocks and
+ * its '.' empties to ' '. The letter shapes keep the classic 5×7 font's
+ * proportions (9/10/9 columns wide × 10 rows tall), and the wordmark as a
+ * whole spans the whale's full 28 columns — three tight letters reading as
+ * one "DSH". Everything is painted in the whale brand blue. Transparent
+ * cells stay unpainted — they show the terminal default background. This
+ * is deliberate: the transcript never paints a canvas background (the TUI
+ * startup already sets the terminal background to the theme canvas), so a
+ * half-block's transparent half must fall through to the terminal default,
+ * not to an explicit theme background. Painting it would mismatch on any
+ * terminal whose default background differs from the theme canvas.
  */
 
 import { ansiFg, POWERLINE, RESET } from './theme/index.ts'
@@ -61,75 +61,63 @@ export const WHALE_ART: readonly string[] = [
 /** Blank columns between the whale and the wordmark column. */
 const WHALE_TITLE_GAP = 4
 
-/** The wordmark, rendered from PIXEL_FONT: 3 letters × 28 + 2×2 letter gaps = 88 columns. */
+/** The wordmark: D S H, rendered from PIXEL_FONT as 9 + 10 + 9 = 28 tight columns. */
 export const WORDMARK = 'DSH'
-
-/** Blank columns between two wordmark letters. */
-const LETTER_GAP = 2
 
 /** Whale art width in columns (every row is this wide). */
 const WHALE_ART_WIDTH = Math.max(...WHALE_ART.map(row => row.length))
 
-/** One wordmark letter's art width in columns (28 — the whale's width). */
-const LETTER_ART_WIDTH = 28
-
-/**
- * Full banner width: whale + gap + letters — derived from the constants so a
- * layout tweak (gap, letter count) cannot silently desync the degradation
- * threshold in `buildWelcomeBanner` from the assembled rows.
- */
-export const WELCOME_FULL_WIDTH = WHALE_ART_WIDTH + WHALE_TITLE_GAP + WORDMARK.length * LETTER_ART_WIDTH + (WORDMARK.length - 1) * LETTER_GAP
-
 /**
  * Pixel font for the wordmark letters: '#' is a stroke cell, '.' is empty.
- * Each glyph is a classic-pixel-ratio letter shape, 14 columns × 10 rows
- * (2-column strokes, taller than wide — like a 5×7 font scaled up ~2.8×),
- * centered in its 28-column block (7 blank columns on each side) so the
- * block width and height still match the whale's and the letters stay
- * top-aligned with it. The 28-column block width (not the 14-column glyph
- * width) drives the 120-column layout, so the narrow-terminal degradation
- * threshold is unchanged. A glyph that filled the whole block would be
- * wider than tall and read as a solid square on screen (see the header
- * note); the 14×10 shape keeps every letter legible as a letter. Strokes
- * render as '█' blocks in the whale brand blue; empties fall through to
- * the terminal default background like the whale's spaces.
+ * Each glyph is a letter from the classic Adafruit GFX 5×7 bitmap font
+ * (glcdfont.c, public domain — the user's reference example), rendered at
+ * its natural 5×7-proportioned width — 9 columns (D), 10 (S), 9 (H) — × 10
+ * rows tall (1-column strokes, horizontal bars 2 rows thick — the 5×7 grid
+ * scaled up ~1.4×). The glyphs are concatenated with no gaps between
+ * letters into the wordmark block, which spans 9 + 10 + 9 = 28 columns —
+ * the whale's width — so the block width and height still match the
+ * whale's and the letters stay top-aligned with it. The 28-column wordmark
+ * width (not the individual glyph widths) drives the 60-column layout and
+ * its degradation threshold. Strokes render as '█' blocks in the whale
+ * brand blue; empties fall through to the terminal default background like
+ * the whale's spaces.
  */
 export const PIXEL_FONT: Record<string, readonly string[]> = {
   D: [
-    '.......##############.......',
-    '.......##############.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##############.......',
-    '.......##############.......',
+    '#########',
+    '#########',
+    '#.......#',
+    '#.......#',
+    '#.......#',
+    '#.......#',
+    '#.......#',
+    '#.......#',
+    '#########',
+    '#########',
   ],
   S: [
-    '.......##############.......',
-    '.......##############.......',
-    '.......##...................',
-    '.......##...................',
-    '.......##############.......',
-    '.......##############.......',
-    '...................##.......',
-    '...................##.......',
-    '.......##############.......',
-    '.......##############.......',
+    '.#########',
+    '.#########',
+    '#.........',
+    '#.........',
+    '.#########',
+    '.#########',
+    '.........#',
+    '.........#',
+    '.#########',
+    '.#########',
   ],
   H: [
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##############.......',
-    '.......##############.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
-    '.......##..........##.......',
+    '#.......#',
+    '#.......#',
+    '#.......#',
+    '#.......#',
+    '#########',
+    '#########',
+    '#.......#',
+    '#.......#',
+    '#.......#',
+    '#.......#',
   ],
 }
 
@@ -144,19 +132,32 @@ for (const ch of WORDMARK) {
 }
 
 /**
- * Lay out the wordmark's 10 letter rows, 88 columns each: 28 per letter,
- * 2 blank columns between letters. The font's '#' strokes map to '█' and
- * '.' empties to ' ', so the rows paint exactly like whale rows (see the
- * header note). Wordmark glyph coverage is validated at module load.
+ * The wordmark's total width in columns — the glyphs' widths summed, with
+ * no gaps between letters: 9 (D) + 10 (S) + 9 (H) = 28, the whale's width.
+ */
+const WORDMARK_WIDTH = [...WORDMARK].reduce((width, ch) => width + (ch === ' ' ? 1 : PIXEL_FONT[ch][0].length), 0)
+
+/**
+ * Full banner width: whale + gap + wordmark — derived from the constants so
+ * a layout tweak (gap, glyph widths) cannot silently desync the degradation
+ * threshold in `buildWelcomeBanner` from the assembled rows: 28 + 4 + 28 =
+ * 60 columns.
+ */
+export const WELCOME_FULL_WIDTH = WHALE_ART_WIDTH + WHALE_TITLE_GAP + WORDMARK_WIDTH
+
+/**
+ * Lay out the wordmark's 10 letter rows, 28 columns each: the D, S and H
+ * glyphs concatenated with no gaps (9 + 10 + 9 columns). The font's '#'
+ * strokes map to '█' and '.' empties to ' ', so the rows paint exactly
+ * like whale rows (see the header note). Wordmark glyph coverage is
+ * validated at module load.
  */
 function wordmarkRows(): readonly string[] {
   const rows = Array.from({ length: WHALE_ART.length }, () => '')
-  for (let i = 0; i < WORDMARK.length; i++) {
-    const glyph = PIXEL_FONT[WORDMARK[i]]
-    // Two blank columns after a letter that is not the last one.
-    const tail = i + 1 < WORDMARK.length ? ' '.repeat(LETTER_GAP) : ''
+  for (const ch of WORDMARK) {
+    const glyph = PIXEL_FONT[ch]
     for (let r = 0; r < rows.length; r++) {
-      rows[r] += glyph[r].replaceAll('#', '█').replaceAll('.', ' ') + tail
+      rows[r] += glyph[r].replaceAll('#', '█').replaceAll('.', ' ')
     }
   }
   return rows
@@ -198,13 +199,13 @@ function paintRowRuns(row: string): string {
 
 /**
  * Assemble the welcome banner text. Every row is the styled whale row, the
- * 4-column gap, then the 88-column pixel-letter row — all painted in the
+ * 4-column gap, then the 28-column pixel-letter row — all painted in the
  * whale brand blue. The banner is theme-independent: no theme colors, no
  * bold, nothing to repaint on a theme switch.
  *
- * Width floor: the full banner is 120 columns wide plus the transcript
+ * Width floor: the full banner is 60 columns wide plus the transcript
  * Text's 1-column left/right padding (the renderer passes its Text paddingX
- * — currently 1 — so the threshold is 122). Below it the banner degrades to
+ * — currently 1 — so the threshold is 62). Below it the banner degrades to
  * the whale alone: the 10 art rows, 28 columns each, no gap and no letters,
  * which needs only 30 columns with the padding. A terminal narrower than
  * that wraps the whale rows onto extra lines (accepted degradation,
