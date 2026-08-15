@@ -29,7 +29,7 @@
 | J | 命令双通道分发（registerLocal：无 live agent 直发、不预热建会话）+ `/new` 改 detachCurrent（修 /new 后消息不渲染的阻断 bug）+ 两轮 review 修复（secret 空格误清除、pending 防重入、晚到 done once 化、row id JSON 编码、onCycle 失败回读、parseNumberInput decimal 白名单、/model stage-1 竞态、ensureSession 等 resuming、/export 守卫） | ✅ |
 | H | backlog 清理：/think /model 持久化（saveSelection）、/theme + dsh-tui namespace（重启生效）、Ctrl+C 分级中断、命令目录审计（无需补 bundle）、footer 提示可见性修复 | ✅ |
 | I | /settings 分类层级（通用/模型/插件/Agent 设置/其他，静态映射对齐 web 设置页；双语 label 保英文搜索） | ✅ |
-| J | TUI 文案统一英文 + CJK/emoji 宽度安全截断（src/text.ts clipToWidth，11 处调用点） | ✅ |
+| J | TUI 文案统一英文 + CJK/emoji 宽度安全截断（src/text.ts clipToWidth，12 处调用点） | ✅ |
 
 40 个单测全过（theme 15 + settings 18 + text 7）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级纯英文 label（General/Models/Plugins）+ Esc 链、英文搜索过滤（model→Models、general→General）、C-u 清空搜索框、中文消息 echo 与模型中文回复无乱码、中文行宽 ≤ 终端列不挤变形、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。
 
@@ -94,7 +94,7 @@ src/
                     resolveModelInfo 失败跳过 stage-2）
   text.ts          宽度工具：clipToWidth（content-first 省略号、按 grapheme 截断）+ visibleWidth
                     （re-export pi-tui，east-asian 全角=2 列）；**所有自研截断必须走它，
-                    禁止裸 String.length 截断**（11 处调用点：settings viewer、session panel、
+                    禁止裸 String.length 截断**（12 处调用点：settings viewer、session panel、
                     footer model 名、transcript preview、last-request 行、export fallback id 等）
   settings.ts       `/settings` 浏览器：ctx.settings.describe() 枚举 namespace → schemastery
                     schema rehydrate（dsh-client-schema-form）→ SettingsList 多级钻入；
