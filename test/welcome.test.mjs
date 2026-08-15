@@ -41,62 +41,63 @@ function letterRunCount(r) {
 
 /**
  * The wordmark letter grids — the spec's D/S/H glyphs (see PIXEL_FONT in
- * welcome.ts), '#' stroke, '.' empty: classic-pixel-ratio 14-column ×
- * 10-row letter shapes centered in 28-column × 10-row blocks (7 blank
- * columns each side) so each block is as wide as the whale. Pinned here as
- * the golden for the letter block, so a glyph regression fails even when it
- * keeps the run structure intact.
+ * welcome.ts), '#' stroke, '.' empty: letters from the classic Adafruit
+ * GFX 5×7 bitmap font (glcdfont.c, public domain), rendered at their
+ * natural 5×7-proportioned widths — 9 columns (D), 10 (S), 9 (H) — × 10
+ * rows, concatenated with no gaps into a 28-column block as wide as the
+ * whale. Pinned here as the golden for the letter block, so a glyph
+ * regression fails even when it keeps the run structure intact.
  */
 const D_GRID = [
-  '.......##############.......',
-  '.......##############.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##############.......',
-  '.......##############.......',
+  '#########',
+  '#########',
+  '#.......#',
+  '#.......#',
+  '#.......#',
+  '#.......#',
+  '#.......#',
+  '#.......#',
+  '#########',
+  '#########',
 ]
 
 const S_GRID = [
-  '.......##############.......',
-  '.......##############.......',
-  '.......##...................',
-  '.......##...................',
-  '.......##############.......',
-  '.......##############.......',
-  '...................##.......',
-  '...................##.......',
-  '.......##############.......',
-  '.......##############.......',
+  '.#########',
+  '.#########',
+  '#.........',
+  '#.........',
+  '.#########',
+  '.#########',
+  '.........#',
+  '.........#',
+  '.#########',
+  '.#########',
 ]
 
 const H_GRID = [
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##############.......',
-  '.......##############.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
-  '.......##..........##.......',
+  '#.......#',
+  '#.......#',
+  '#.......#',
+  '#.......#',
+  '#########',
+  '#########',
+  '#.......#',
+  '#.......#',
+  '#.......#',
+  '#.......#',
 ]
 
-/** One row of the 88-column letter block: D + 2 columns + S + 2 columns + H, strokes as '█'. */
+/** One row of the 28-column letter block: D + S + H tight (9 + 10 + 9), strokes as '█'. */
 function letterBlockRow(r) {
-  return [D_GRID, S_GRID, H_GRID].map(grid => grid[r].replaceAll('#', '█').replaceAll('.', ' ')).join('  ')
+  return [D_GRID, S_GRID, H_GRID].map(grid => grid[r].replaceAll('#', '█').replaceAll('.', ' ')).join('')
 }
 
 /**
- * The banner's 10 pinned 120-column rows, all golden: 28 columns of whale
- * art, the 4-column gap, then the letter block (28 whale + 4 + 28 D + 2 +
- * 28 S + 2 + 28 H). Pinned as the single source of truth for the rendered
- * banner, so a glyph, gap or layout regression fails even when it keeps the
- * run structure intact.
+ * The banner's 10 pinned 60-column rows, all golden: 28 columns of whale
+ * art, the 4-column gap, then the letter block (9 D + 10 S + 9 H, tight).
+ * Pinned as the single source of truth for the rendered banner, so a
+ * glyph, gap or layout regression fails even when it keeps the run
+ * structure intact.
  */
 const LETTER_ROWS = WHALE_ART.map((row, r) => row + '    ' + letterBlockRow(r))
 
@@ -127,43 +128,45 @@ test('WHALE_ART is the 10-row × 28-column grid of documented glyphs', () => {
   }
 })
 
-test('PIXEL_FONT: 28-column × 10-row blocks holding classic 14-column glyphs centered, one glyph per wordmark letter', () => {
+test('PIXEL_FONT: 9/10/9-column × 10-row glyphs — the tight DSH block is as wide as the whale', () => {
   assert.deepEqual(Object.keys(PIXEL_FONT).sort(), ['D', 'H', 'S'], 'glyphs for every letter of "DSH"')
+  const glyphWidths = { D: 9, S: 10, H: 9 }
   for (const [ch, glyph] of Object.entries(PIXEL_FONT)) {
     assert.equal(glyph.length, WHALE_ART.length, `${ch}: as many rows as the whale (top-aligned)`)
     const widths = [...new Set(glyph.map(row => row.length))]
-    assert.deepEqual(widths, [28], `${ch}: every row is exactly 28 columns — the block is as wide as the whale`)
+    assert.deepEqual(widths, [glyphWidths[ch]], `${ch}: every row is exactly ${glyphWidths[ch]} columns — the glyph's natural 5×7-proportioned width`)
     for (const row of glyph) {
       assert.match(row, /^[#.]+$/, `${ch}: only stroke (#) and empty (.) cells`)
       assert.ok(row.includes('#'), `${ch}: every row carries a stroke — no fully blank letter row`)
     }
   }
+  assert.equal(Object.values(PIXEL_FONT).reduce((width, glyph) => width + glyph[0].length, 0), 28,
+    'wordmark block width: 9 (D) + 10 (S) + 9 (H) = 28 — tight letters span the whale\'s width')
 })
 
 test('every WORDMARK letter has a PIXEL_FONT glyph', () => {
-  assert.equal(WORDMARK, 'DSH', 'the wordmark is D S H — one 28-column letter per block')
+  assert.equal(WORDMARK, 'DSH', 'the wordmark is D S H — three tight letters, 28 columns total')
   const missing = [...WORDMARK].filter(ch => PIXEL_FONT[ch] === undefined)
   assert.deepEqual(missing, [],
     'WORDMARK is a subset of PIXEL_FONT keys (wordmarkRows throws on a gap — fail at startup, not on render)')
 })
 
-test('buildWelcomeBanner: 10 equal-width rows, whale then the D/S/H letter blocks', () => {
+test('buildWelcomeBanner: 10 equal-width rows, whale then the tight D/S/H letter block', () => {
   const banner = buildWelcomeBanner()
   const rows = banner.split('\n')
   assert.equal(rows.length, 10)
   const widths = [...new Set(rows.map(row => visibleWidth(row)))]
-  assert.deepEqual(widths, [120], 'every row is the same visible width (28 whale + 4 gap + 28 D + 2 + 28 S + 2 + 28 H)')
+  assert.deepEqual(widths, [60], 'every row is the same visible width (28 whale + 4 gap + 28 tight DSH)')
 
   const plain = rows.map(stripAnsi)
   for (let i = 0; i < WHALE_ART.length; i++) {
-    assert.equal(plain[i], LETTER_ROWS[i], `row ${i}: the full 120-column pinned golden`)
+    assert.equal(plain[i], LETTER_ROWS[i], `row ${i}: the full 60-column pinned golden`)
     assert.equal(plain[i].slice(0, 28), WHALE_ART[i], `row ${i}: whale art occupies columns 0-27`)
-    assert.equal(plain[i].slice(28, 32), '    ', `row ${i}: 4-column gap between whale and D (columns 28-31)`)
-    assert.equal(plain[i].slice(32, 60), letterBlockRow(i).slice(0, 28), `row ${i}: D occupies columns 32-59`)
-    assert.equal(plain[i].slice(60, 62), '  ', `row ${i}: 2-column gap between D and S (columns 60-61)`)
-    assert.equal(plain[i].slice(62, 90), letterBlockRow(i).slice(30, 58), `row ${i}: S occupies columns 62-89`)
-    assert.equal(plain[i].slice(90, 92), '  ', `row ${i}: 2-column gap between S and H (columns 90-91)`)
-    assert.equal(plain[i].slice(92, 120), letterBlockRow(i).slice(60, 88), `row ${i}: H occupies columns 92-119`)
+    assert.equal(plain[i].slice(28, 32), '    ', `row ${i}: 4-column gap between whale and DSH (columns 28-31)`)
+    assert.equal(plain[i].slice(32, 60), letterBlockRow(i), `row ${i}: DSH occupies columns 32-59`)
+    assert.equal(plain[i].slice(32, 41), letterBlockRow(i).slice(0, 9), `row ${i}: D occupies columns 32-40`)
+    assert.equal(plain[i].slice(41, 51), letterBlockRow(i).slice(9, 19), `row ${i}: S occupies columns 41-50`)
+    assert.equal(plain[i].slice(51, 60), letterBlockRow(i).slice(19, 28), `row ${i}: H occupies columns 51-59`)
   }
 })
 
@@ -213,48 +216,48 @@ test('the banner is the doc first content at construction (spacer + Text + space
   const rendered = doc.children[1].render(200)
   assert.equal(rendered.length, 10, 'banner renders its 10 rows')
   const plain = rendered.map(stripAnsi)
-  // Each Text line carries a 1-column margin, so banner columns 0-119 land
-  // at line columns 1-120.
-  assert.equal(plain[0].slice(1, 121), LETTER_ROWS[0], 'banner carries the full pinned row, top row')
-  assert.equal(plain[9].slice(1, 121), LETTER_ROWS[9], 'banner carries the full pinned row, bottom row')
+  // Each Text line carries a 1-column margin, so banner columns 0-59 land
+  // at line columns 1-60.
+  assert.equal(plain[0].slice(1, 61), LETTER_ROWS[0], 'banner carries the full pinned row, top row')
+  assert.equal(plain[9].slice(1, 61), LETTER_ROWS[9], 'banner carries the full pinned row, bottom row')
 })
 
-test('buildWelcomeBanner: below 122 columns the banner degrades to the whale alone', () => {
-  // The 122 threshold derives from the banner width plus the Text paddingX
+test('buildWelcomeBanner: below 62 columns the banner degrades to the whale alone', () => {
+  // The 62 threshold derives from the banner width plus the Text paddingX
   // (1 per side, messages.ts renders the banner with paddingX 1) — pin the
   // derivation so a layout tweak cannot silently desync the threshold.
-  assert.equal(WELCOME_FULL_WIDTH, 120, 'full banner width: 28 whale + 4 gap + 88 letters')
-  assert.equal(WELCOME_FULL_WIDTH + 2, 122, 'threshold = full width + Text paddingX on both sides')
-  const degraded = buildWelcomeBanner(121).split('\n')
-  assert.equal(degraded.length, 10, '121 columns: still 10 rows')
+  assert.equal(WELCOME_FULL_WIDTH, 60, 'full banner width: 28 whale + 4 gap + 28 tight DSH')
+  assert.equal(WELCOME_FULL_WIDTH + 2, 62, 'threshold = full width + Text paddingX on both sides')
+  const degraded = buildWelcomeBanner(61).split('\n')
+  assert.equal(degraded.length, 10, '61 columns: still 10 rows')
   const plain = degraded.map(stripAnsi)
-  assert.deepEqual(plain, [...WHALE_ART], '121 columns: rows are exactly the bare art — no gap, no letters')
-  assert.deepEqual([...new Set(plain.map(row => row.length))], [28], '121 columns: every row is 28 columns wide')
-  assert.equal(buildWelcomeBanner(122).split('\n').length, 10, '122 columns: full banner, 10 rows')
-  assert.deepEqual([...new Set(buildWelcomeBanner(122).split('\n').map(row => visibleWidth(row)))], [120],
-    '122 columns: full banner is back at 120 columns')
+  assert.deepEqual(plain, [...WHALE_ART], '61 columns: rows are exactly the bare art — no gap, no letters')
+  assert.deepEqual([...new Set(plain.map(row => row.length))], [28], '61 columns: every row is 28 columns wide')
+  assert.equal(buildWelcomeBanner(62).split('\n').length, 10, '62 columns: full banner, 10 rows')
+  assert.deepEqual([...new Set(buildWelcomeBanner(62).split('\n').map(row => visibleWidth(row)))], [60],
+    '62 columns: full banner is back at 60 columns')
   assert.equal(buildWelcomeBanner(30).split('\n').length, 10, '30 columns: still whale-only, 10 rows')
   assert.deepEqual(buildWelcomeBanner(30).split('\n').map(stripAnsi), [...WHALE_ART], '30 columns: whale-only rows unchanged')
 })
 
 test('narrow terminals render the whale-only banner as 10 rows; the 30-column floor is the limit', () => {
-  // 122 columns: the full banner (120 + 1-column Text padding each side) fits.
-  const full = withColumns(122, () => {
+  // 62 columns: the full banner (60 + 1-column Text padding each side) fits.
+  const full = withColumns(62, () => {
     const doc = new Container()
     new TranscriptRenderer(doc, lightTheme, () => {}, '5')
     return doc.children[1]
   })
-  assert.equal(full.render(122).length, 10, '122 columns: full banner renders as exactly 10 rows')
+  assert.equal(full.render(62).length, 10, '62 columns: full banner renders as exactly 10 rows')
   const fullPlain = full.render(200).map(stripAnsi)
-  assert.equal(fullPlain[0].slice(1, 121), LETTER_ROWS[0], '122 columns: the letters are present')
+  assert.equal(fullPlain[0].slice(1, 61), LETTER_ROWS[0], '62 columns: the letters are present')
 
-  // 121 columns: the banner is built whale-only — still 10 rows, no letters.
-  const whaleOnly = withColumns(121, () => {
+  // 61 columns: the banner is built whale-only — still 10 rows, no letters.
+  const whaleOnly = withColumns(61, () => {
     const doc = new Container()
     new TranscriptRenderer(doc, lightTheme, () => {}, '5')
     return doc.children[1]
   })
-  assert.equal(whaleOnly.render(200).length, 10, '121 columns: whale-only banner, 10 rows')
+  assert.equal(whaleOnly.render(200).length, 10, '61 columns: whale-only banner, 10 rows')
   const whalePlain = whaleOnly.render(200).map(stripAnsi)
   for (let i = 0; i < 10; i++) {
     assert.equal(whalePlain[i].slice(1, 29), WHALE_ART[i], `row ${i}: whale-only rows are the bare art — no letter runs`)
@@ -305,9 +308,9 @@ test('relayout rebuilds the banner first, unchanged in rows and position', () =>
   assert.equal(doc.children[1].render(200).length, 10, 'banner keeps its 10 rows after relayout')
   assert.ok(doc.children[0] instanceof Spacer, 'top spacer survives the relayout (banner not flush with the top)')
   const plain = doc.children[1].render(200).map(stripAnsi)
-  // 1-column Text margin shifts the banner from columns 0-119 to 1-120.
-  assert.equal(plain[0].slice(1, 121), LETTER_ROWS[0], 'pixel letters still present and aligned after relayout')
-  assert.equal(plain[9].slice(1, 121), LETTER_ROWS[9], 'letter bottom strokes still present after relayout')
+  // 1-column Text margin shifts the banner from columns 0-59 to 1-60.
+  assert.equal(plain[0].slice(1, 61), LETTER_ROWS[0], 'pixel letters still present and aligned after relayout')
+  assert.equal(plain[9].slice(1, 61), LETTER_ROWS[9], 'letter bottom strokes still present after relayout')
   assert.ok(renderDoc(doc).includes('hello'), 'message content survives the relayout below the banner')
 })
 
@@ -326,12 +329,12 @@ test('every relayout rebuilds the banner at the current width (welcome op surviv
   })
   const plain = doc.children[1].render(200).map(stripAnsi)
   assert.equal(plain.length, 10, 'banner stays 10 rows through both relayouts')
-  assert.equal(plain[0].slice(1, 121), LETTER_ROWS[0], 'letters restored after widening back')
-  assert.equal(plain[9].slice(1, 121), LETTER_ROWS[9], 'letter bottom strokes restored')
+  assert.equal(plain[0].slice(1, 61), LETTER_ROWS[0], 'letters restored after widening back')
+  assert.equal(plain[9].slice(1, 61), LETTER_ROWS[9], 'letter bottom strokes restored')
   // And a third relayout (e.g. another resize or a theme switch) still works.
   withColumns(130, () => renderer.relayout())
   const again = doc.children[1].render(200).map(stripAnsi)
-  assert.equal(again[0].slice(1, 121), LETTER_ROWS[0], 'a third relayout still rebuilds the full banner')
+  assert.equal(again[0].slice(1, 61), LETTER_ROWS[0], 'a third relayout still rebuilds the full banner')
 })
 
 test('setTheme repaints the banner identically — whale and letters are theme-independent brand blue', () => {
