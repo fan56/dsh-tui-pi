@@ -39,10 +39,32 @@ import { startTui, type TuiHandle } from './tui.ts'
 export const name = 'dsh-tui-pi'
 
 /** The TUI drives the agent factory and registers slash commands. */
-export const inject = ['agents', 'commands']
+export const inject = ['agents', 'commands', 'systemPrompt']
+
+/**
+ * Model guidance for the todo lifecycle (system-prompt section, same channel
+ * the web client's deliverable guidance uses): the TUI renders the todo list
+ * as a fixed panel above the chat input, and the `todo/write` snapshot is
+ * last-write-wins — the model must clear the list itself when the work is
+ * done, or a fully-completed list stays on screen.
+ */
+const TODO_LIFECYCLE_PROMPT =
+  'The UI renders your todo list as a fixed panel above the chat input. Keep ' +
+  'items `pending` or `in_progress` while they are not done. When EVERY todo ' +
+  'is completed — no pending or in-progress items remain — write an EMPTY ' +
+  'todo list (`todos: []`) so the panel clears. Never leave a fully-completed ' +
+  'list behind.'
 
 export function apply(ctx: Context): void {
   let handle: TuiHandle | undefined
+  // Teach the model the todo lifecycle convention (see TODO_LIFECYCLE_PROMPT).
+  // Registered in this plugin's scope, so the agents this TUI creates see it;
+  // the effect disposer ties it to the /reload lifecycle.
+  ctx.effect(() => ctx.systemPrompt.section({
+    name: 'dsh-tui-pi:todo-lifecycle',
+    order: 150,
+    text: TODO_LIFECYCLE_PROMPT,
+  }), 'dsh-tui-pi: todo lifecycle prompt')
   /**
    * Live theme hot-reload sink, wired to the settings watch hook: a committed
    * `dsh-tui` theme change (this TUI's /theme write included) is applied to
