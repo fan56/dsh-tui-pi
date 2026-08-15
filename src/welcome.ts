@@ -1,21 +1,23 @@
 /**
  * Startup welcome banner: a pixel-art whale (generated pixel-by-pixel from
  * the user's image) with the "DSH" wordmark to its right, drawn in the same
- * pixel language as the whale. Each letter is a hand-authored 24×20 pixel
- * bitmap (PIXEL_FONT: 24 columns × 20 half-cell rows, '#' a pixel, '.'
- * empty) rendered to the terminal with the whale's own half-block mapping
+ * pixel language as the whale. Each letter is a hand-authored 20×20 pixel
+ * bitmap (PIXEL_FONT: 20 columns × 20 half-cell rows, '#' a pixel, '.'
+ * empty) — an upright glyph sheared into an arcade italic: every 4 pixel
+ * rows the stroke shifts 1 pixel right, so the top leans 4 pixels —
+ * rendered to the terminal with the whale's own half-block mapping
  * (top and bottom pixel → '█', top only → '▀', bottom only → '▄', neither
  * → ' '), so the letters show the same visible pixel grid: 3-pixel strokes,
  * and D's bowl and S's spine step diagonally in 2-pixel staircase corners
  * instead of meeting at square rectangle corners.
  *
- * The banner is a 106-column × 10-row grid: 28 columns of whale art, a
- * 2-column gap, then the wordmark — D (24) + 2 + S (24) + 2 + H (24) =
- * 76 columns of letters (each letter 24 columns — no wider than the
- * whale's body mass). Below 108 terminal columns the wordmark is
+ * The banner is a 94-column × 10-row grid: 28 columns of whale art, a
+ * 2-column gap, then the wordmark — D (20) + 2 + S (20) + 2 + H (20) =
+ * 64 columns of letters (each letter spans 20 columns — slimmer than the
+ * whale's body mass). Below 96 terminal columns the wordmark is
  * dropped — the banner degrades to the 10 whale rows (28 columns each, no
  * gap, no letters), so a narrow terminal never wraps the letter rows; the
- * full banner comes back as soon as the terminal is 108 columns or wider
+ * full banner comes back as soon as the terminal is 96 columns or wider
  * again (the transcript rebuilds on resize). Everything is painted in the
  * whale brand blue. Transparent cells stay unpainted — they show the
  * terminal default background. This is deliberate: the transcript never
@@ -67,12 +69,12 @@ const WHALE_ART_WIDTH = Math.max(...WHALE_ART.map(row => row.length))
 
 /**
  * Pixel font for the wordmark letters: '#' is a pixel, '.' is empty. Each
- * glyph is a hand-authored 24×20 pixel bitmap — the whale's height at
- * 24 columns wide, so no letter outbulks the whale's body (widest row
- * 26, body mass 21–24) — with 3-pixel strokes and 2-pixel
- * staircase corners: D's bowl steps 17 → 19 → 21 → 23 pixels wide down the
- * right side (and mirrored back up), and S's bars meet its verticals
- * through 1-pixel-offset steps. renderPixelGlyph folds every two pixel
+ * glyph is a hand-authored 20×20 pixel bitmap: an upright body (16 pixels
+ * wide, 17 for D's bowl) with 3-pixel strokes and 2-pixel staircase
+ * corners, sheared italic — every 4 pixel rows shift 1 pixel right (the
+ * top block leans 4 pixels, ~14°) — so every stroke's edge is a pixel
+ * staircase and each letter spans exactly 20 columns, slimmer than the
+ * whale's body (21–24). renderPixelGlyph folds every two pixel
  * rows into one terminal row of '█'/'▀'/'▄'/' ' — the exact mapping the
  * whale generator uses — so the letters and the whale share one pixel
  * grid. Strokes render in the whale brand blue; empties fall through to
@@ -80,70 +82,70 @@ const WHALE_ART_WIDTH = Math.max(...WHALE_ART.map(row => row.length))
  */
 export const PIXEL_FONT: Record<string, readonly string[]> = {
   D: [
-    '##################......',
-    '##################......',
-    '##################......',
-    '###..............###....',
-    '###..............###....',
-    '###................###..',
-    '###................###..',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###................###..',
-    '###................###..',
-    '###..............###....',
-    '###..............###....',
-    '##################......',
-    '##################......',
-    '##################......',
+    '....#############...',
+    '....#############...',
+    '....#############...',
+    '....###.........###.',
+    '...###.........###..',
+    '...###...........###',
+    '...###...........###',
+    '...###...........###',
+    '..###...........###.',
+    '..###...........###.',
+    '..###...........###.',
+    '..###...........###.',
+    '.###...........###..',
+    '.###...........###..',
+    '.###...........###..',
+    '.###.........###....',
+    '###.........###.....',
+    '#############.......',
+    '#############.......',
+    '#############.......',
   ],
   S: [
-    '....####################',
-    '....####################',
-    '....####################',
-    '###.....................',
-    '###.....................',
-    '###.....................',
-    '###.....................',
-    '#####################...',
-    '#####################...',
-    '#####################...',
-    '#####################...',
-    '.....................###',
-    '.....................###',
-    '.....................###',
-    '.....................###',
-    '.....................###',
-    '.....................###',
-    '####################....',
-    '####################....',
-    '####################....',
+    '.......#############',
+    '.......#############',
+    '.......#############',
+    '....###.............',
+    '...###..............',
+    '...###..............',
+    '...###..............',
+    '...#############....',
+    '..#############.....',
+    '..#############.....',
+    '..#############.....',
+    '...............###..',
+    '..............###...',
+    '..............###...',
+    '..............###...',
+    '..............###...',
+    '.............###....',
+    '############........',
+    '############........',
+    '############........',
   ],
   H: [
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '########################',
-    '########################',
-    '########################',
-    '########################',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
-    '###..................###',
+    '....###..........###',
+    '....###..........###',
+    '....###..........###',
+    '....###..........###',
+    '...###..........###.',
+    '...###..........###.',
+    '...###..........###.',
+    '...###..........###.',
+    '..################..',
+    '..################..',
+    '..################..',
+    '..################..',
+    '.###..........###...',
+    '.###..........###...',
+    '.###..........###...',
+    '.###..........###...',
+    '###..........###....',
+    '###..........###....',
+    '###..........###....',
+    '###..........###....',
   ],
 }
 
@@ -169,9 +171,9 @@ for (const [ch, glyph] of Object.entries(PIXEL_FONT)) {
 
 /**
  * The wordmark letters' total width in columns — the glyphs' widths
- * summed: 24 (D) + 24 (S) + 24 (H) = 72. The 2-column gaps between
+ * summed: 20 (D) + 20 (S) + 20 (H) = 60. The 2-column gaps between
  * letters are added separately in WELCOME_FULL_WIDTH (2 gaps × 2 columns
- * → the wordmark block spans 76).
+ * → the wordmark block spans 64).
  */
 const WORDMARK_WIDTH = [...WORDMARK].reduce((width, ch) => width + (ch === ' ' ? 1 : PIXEL_FONT[ch][0].length), 0)
 
@@ -179,13 +181,13 @@ const WORDMARK_WIDTH = [...WORDMARK].reduce((width, ch) => width + (ch === ' ' ?
  * Full banner width: whale + gap + wordmark block — derived from the
  * constants so a layout tweak (gap, glyph widths) cannot silently desync
  * the degradation threshold in `buildWelcomeBanner` from the assembled
- * rows: 28 + 2 + 24 + 2 + 24 + 2 + 24 = 106 columns.
+ * rows: 28 + 2 + 20 + 2 + 20 + 2 + 20 = 94 columns.
  */
 export const WELCOME_FULL_WIDTH =
   WHALE_ART_WIDTH + WHALE_TITLE_GAP + WORDMARK_WIDTH + LETTER_GAP * (WORDMARK.length - 1)
 
 /**
- * Fold a 24×20 pixel bitmap into its 10 terminal rows with the whale's own
+ * Fold a 20×20 pixel bitmap into its 10 terminal rows with the whale's own
  * half-block mapping: both pixel rows on → '█', top only → '▀', bottom
  * only → '▄', neither → ' '. Two pixels vertically per cell is what makes
  * the pixels square on screen — one column wide, one half-cell tall — the
@@ -206,8 +208,8 @@ export function renderPixelGlyph(px: readonly string[]): readonly string[] {
 }
 
 /**
- * Lay out the wordmark's 10 letter rows, 76 columns each: the D, S and H
- * glyphs with a 2-column gap between letters (24 + 2 + 24 + 2 + 24
+ * Lay out the wordmark's 10 letter rows, 64 columns each: the D, S and H
+ * glyphs with a 2-column gap between letters (20 + 2 + 20 + 2 + 20
  * columns). The pixel bitmaps are folded by renderPixelGlyph into the same
  * '█'/'▀'/'▄'/' ' glyphs the whale uses, so the rows paint exactly like
  * whale rows (see the header note). Wordmark glyph coverage and shape are
@@ -266,9 +268,9 @@ function paintRowRuns(row: string): string {
  * theme-independent: no theme colors, no bold, nothing to repaint on a
  * theme switch.
  *
- * Width floor: the full banner is 106 columns wide plus the transcript
+ * Width floor: the full banner is 94 columns wide plus the transcript
  * Text's 1-column left/right padding (the renderer passes its Text paddingX
- * — currently 1 — so the threshold is 108). Below it the banner degrades
+ * — currently 1 — so the threshold is 96). Below it the banner degrades
  * to the whale alone: the 10 art rows, 28 columns each, no gap and no
  * letters, which needs only 30 columns with the padding. A terminal
  * narrower than that wraps the whale rows onto extra lines (accepted
