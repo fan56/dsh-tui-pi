@@ -460,15 +460,19 @@ export class TranscriptRenderer {
 
   /**
    * The startup welcome banner (whale pixel art + pixel-letter wordmark) as
-   * the doc's first child, followed by a spacer that matches the
-   * message-block rhythm. The whale and the letters keep their brand blue
-   * across themes — the banner is theme-independent (gaps stay transparent
-   * over the terminal default background — see welcome.ts). The banner is
-   * built at the current terminal width: below 70 columns it degrades to
-   * the whale alone, and every rebuild (relayout/setTheme replay) reads the
-   * width afresh, so narrowing drops the wordmark and widening restores it.
+   * the doc's first content: a leading spacer, the banner Text, then the
+   * trailing spacer that matches the message-block rhythm. The leading
+   * spacer keeps the banner from pressing against the top of the transcript
+   * (the startup placeholder line it replaces sat flush at row 0). The
+   * whale and the letters keep their brand blue across themes — the banner
+   * is theme-independent (gaps stay transparent over the terminal default
+   * background — see welcome.ts). The banner is built at the current
+   * terminal width: below 122 columns it degrades to the whale alone, and
+   * every rebuild (relayout/setTheme replay) reads the width afresh, so
+   * narrowing drops the wordmark and widening restores it.
    */
   private renderWelcome(): void {
+    this.doc.addChild(new Spacer(1))
     this.doc.addChild(new Text(buildWelcomeBanner(process.stdout.columns), 1, 0))
     this.doc.addChild(new Spacer(1))
     this.requestRender()

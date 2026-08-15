@@ -1,16 +1,16 @@
 /**
  * Startup welcome banner: a pixel-art whale (generated pixel-by-pixel from
- * the user's image) with the "DSH TUI" wordmark to its right, drawn in a
- * blocky 5-column × 10-row pixel font (PIXEL_FONT) so the letters match the
- * whale's height. Rendered as the transcript's first component, above every
- * message.
+ * the user's image) with the "DSH" wordmark to its right, drawn in a
+ * blocky 28-column × 10-row pixel font (PIXEL_FONT) so the letters match
+ * the whale's width and height. Rendered as the transcript's first
+ * component, above every message.
  *
- * The banner is a 68-column × 10-row grid: 28 columns of whale art, a
- * 4-column gap, then 36 columns of pixel letters (6 letters × 5 columns,
- * 1 blank between letters, 2 between words). Below 70 terminal columns the
+ * The banner is a 120-column × 10-row grid: 28 columns of whale art, a
+ * 4-column gap, then 88 columns of pixel letters (3 letters × 28 columns,
+ * 2 blank columns between letters). Below 122 terminal columns the
  * wordmark is dropped — the banner degrades to the 10 whale rows (28
  * columns each, no gap, no letters), so a narrow terminal never wraps the
- * letter rows; the full banner comes back as soon as the terminal is 70
+ * letter rows; the full banner comes back as soon as the terminal is 122
  * columns or wider again (the transcript rebuilds on resize). Glyph
  * semantics: '█' is solid in both halves, '▀' is solid in the top half
  * only, '▄' is solid in the bottom half only, ' ' is transparent; the
@@ -55,111 +55,96 @@ export const WHALE_ART: readonly string[] = [
 /** Blank columns between the whale and the wordmark column. */
 const WHALE_TITLE_GAP = 4
 
-/** The wordmark, rendered from PIXEL_FONT: 6 letters × 5 + 4×1 letter gaps + 1×2 word gap = 36 columns. */
-export const WORDMARK = 'DSH TUI'
+/** The wordmark, rendered from PIXEL_FONT: 3 letters × 28 + 2×2 letter gaps = 88 columns. */
+export const WORDMARK = 'DSH'
+
+/** Blank columns between two wordmark letters. */
+const LETTER_GAP = 2
+
+/** Whale art width in columns (every row is this wide). */
+const WHALE_ART_WIDTH = Math.max(...WHALE_ART.map(row => row.length))
+
+/** One wordmark letter's art width in columns (28 — the whale's width). */
+const LETTER_ART_WIDTH = 28
 
 /**
- * Blocky 5-column × 10-row pixel font for the wordmark letters: '#' is a
- * stroke cell, '.' is empty. The 10 rows match the whale's height, so the
- * letters and the whale are naturally top-aligned in the banner. Strokes
- * render as '█' blocks in the whale brand blue; empties fall through to the
- * terminal default background like the whale's spaces.
+ * Full banner width: whale + gap + letters — derived from the constants so a
+ * layout tweak (gap, letter count) cannot silently desync the degradation
+ * threshold in `buildWelcomeBanner` from the assembled rows.
+ */
+export const WELCOME_FULL_WIDTH = WHALE_ART_WIDTH + WHALE_TITLE_GAP + WORDMARK.length * LETTER_ART_WIDTH + (WORDMARK.length - 1) * LETTER_GAP
+
+/**
+ * Blocky 28-column × 10-row pixel font for the wordmark letters: '#' is a
+ * stroke cell, '.' is empty. The 28 columns and 10 rows match the whale's
+ * size, so each letter is exactly as wide and as tall as the whale and the
+ * letters are naturally top-aligned in the banner. Strokes render as '█'
+ * blocks in the whale brand blue; empties fall through to the terminal
+ * default background like the whale's spaces.
  */
 export const PIXEL_FONT: Record<string, readonly string[]> = {
   D: [
-    '#####',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#####',
+    '..########################..',
+    '..########################..',
+    '..######............######..',
+    '..######............######..',
+    '..######............######..',
+    '..######............######..',
+    '..######............######..',
+    '..######............######..',
+    '..########################..',
+    '..########################..',
   ],
   S: [
-    '#####',
-    '#....',
-    '#....',
-    '#####',
-    '....#',
-    '....#',
-    '....#',
-    '....#',
-    '#....',
-    '#####',
+    '..########################..',
+    '..########################..',
+    '..######....................',
+    '..######....................',
+    '..########################..',
+    '..########################..',
+    '....................######..',
+    '....................######..',
+    '..########################..',
+    '..########################..',
   ],
   H: [
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#####',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-  ],
-  T: [
-    '#####',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-  ],
-  U: [
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#...#',
-    '#####',
-  ],
-  I: [
-    '#####',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '..#..',
-    '#####',
+    '..######............######..',
+    '..######............######..',
+    '..######............######..',
+    '..######............######..',
+    '..########################..',
+    '..########################..',
+    '..######............######..',
+    '..######............######..',
+    '..######............######..',
+    '..######............######..',
   ],
 }
 
+// Load-time validation: a wordmark letter without a font glyph is a
+// programming error — fail at module load, not at some later resize when
+// the full banner is first assembled (a narrow terminal would defer the
+// crash into the resize handler).
+for (const ch of WORDMARK) {
+  if (ch !== ' ' && PIXEL_FONT[ch] === undefined) {
+    throw new Error(`PIXEL_FONT lacks glyph for '${ch}' in WORDMARK`)
+  }
+}
+
 /**
- * Lay out the wordmark's 10 letter rows, 36 columns each: 5 per letter,
- * 1 blank column between letters, 2 between words. The font's '#' strokes
- * map to '█' and '.' empties to ' ', so the rows paint exactly like whale
- * rows (see the header note). A wordmark letter without a font glyph is a
- * programming error — fail loudly at startup instead of crashing later on
- * the undefined glyph.
+ * Lay out the wordmark's 10 letter rows, 88 columns each: 28 per letter,
+ * 2 blank columns between letters. The font's '#' strokes map to '█' and
+ * '.' empties to ' ', so the rows paint exactly like whale rows (see the
+ * header note). Wordmark glyph coverage is validated at module load.
  */
 function wordmarkRows(): readonly string[] {
   const rows = Array.from({ length: WHALE_ART.length }, () => '')
   for (let i = 0; i < WORDMARK.length; i++) {
-    const ch = WORDMARK[i]
-    const isLetter = ch !== ' '
-    if (isLetter && PIXEL_FONT[ch] === undefined) {
-      throw new Error(`PIXEL_FONT lacks glyph for '${ch}' in WORDMARK`)
-    }
-    // One blank column after a letter when the next char is another letter.
-    const tail = isLetter && i + 1 < WORDMARK.length && WORDMARK[i + 1] !== ' ' ? ' ' : ''
+    const glyph = PIXEL_FONT[WORDMARK[i]]
+    // Two blank columns after a letter that is not the last one.
+    const tail = i + 1 < WORDMARK.length ? ' '.repeat(LETTER_GAP) : ''
     for (let r = 0; r < rows.length; r++) {
-      rows[r] += (isLetter ? PIXEL_FONT[ch][r] : '  ').replaceAll('#', '█').replaceAll('.', ' ') + tail
+      rows[r] += glyph[r].replaceAll('#', '█').replaceAll('.', ' ') + tail
     }
   }
   return rows
@@ -201,31 +186,30 @@ function paintRowRuns(row: string): string {
 
 /**
  * Assemble the welcome banner text. Every row is the styled whale row, the
- * 4-column gap, then the 36-column pixel-letter row — all painted in the
+ * 4-column gap, then the 88-column pixel-letter row — all painted in the
  * whale brand blue. The banner is theme-independent: no theme colors, no
  * bold, nothing to repaint on a theme switch.
  *
- * Width floor: the full banner is 68 columns wide (28 art + 4 gap + 36
- * letters) plus the transcript Text's 1-column left/right padding, so a
- * terminal of 70 columns or more renders it as exactly 10 rows. Below 70
- * columns (the width `columns` was read from — renderWelcome passes
- * process.stdout.columns) the banner degrades to the whale alone: the 10
- * art rows, 28 columns each, no gap and no letters, which needs only 30
- * columns with the padding. A terminal narrower than that wraps the whale
- * rows onto extra lines (accepted degradation, documented rather than
- * clipped, because a terminal that narrow can't show the whale either
- * way). `undefined` (non-TTY contexts, e.g. tests) counts as wide — the
- * full banner, conservative like PANEL_LINE_CAP_FALLBACK.
+ * Width floor: the full banner is 120 columns wide plus the transcript
+ * Text's 1-column left/right padding (the renderer passes its Text paddingX
+ * — currently 1 — so the threshold is 122). Below it the banner degrades to
+ * the whale alone: the 10 art rows, 28 columns each, no gap and no letters,
+ * which needs only 30 columns with the padding. A terminal narrower than
+ * that wraps the whale rows onto extra lines (accepted degradation,
+ * documented rather than clipped, because a terminal that narrow can't show
+ * the whale either way). `undefined` (non-TTY contexts, e.g. tests) counts
+ * as wide — the full banner, conservative like PANEL_LINE_CAP_FALLBACK.
  */
 export function buildWelcomeBanner(columns: number | undefined): string {
-  if (columns !== undefined && columns < 70) {
+  // 2 = the transcript Text's paddingX on each side (messages.ts renders the
+  // banner with `new Text(..., 1, 0)`).
+  if (columns !== undefined && columns < WELCOME_FULL_WIDTH + 2) {
     // Narrow terminal: whale-only, the 10 art rows (28 columns each) — no
     // gap, no letters. Wraps only below the 30-column floor.
     return WHALE_ART.map(row => paintRowRuns(row)).join('\n')
   }
-  const whaleWidth = Math.max(...WHALE_ART.map(row => row.length))
   const letters = wordmarkRows()
   return WHALE_ART.map((row, r) => {
-    return paintRowRuns(row) + ' '.repeat(WHALE_TITLE_GAP + whaleWidth - row.length) + paintRowRuns(letters[r])
+    return paintRowRuns(row) + ' '.repeat(WHALE_TITLE_GAP + WHALE_ART_WIDTH - row.length) + paintRowRuns(letters[r])
   }).join('\n')
 }
