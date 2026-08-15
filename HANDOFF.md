@@ -9,7 +9,7 @@
 - 启动：`dsh --profile tui`（`~/.zshrc` 已配别名 `dsh-tui`、`dst`）
 - Node：`>=22.19`，pnpm 10.33+，本机 node 在 `/opt/homebrew/bin`
 
-## 当前状态（2026-08-15，12 个 commit）
+## 当前状态（2026-08-15，16 个 commit；本轮 O/P/Q/R 变更在工作区未提交）
 
 | Phase | 内容 | 状态 |
 |---|---|---|
@@ -36,10 +36,14 @@
 | M | 选择弹层底色：selectList（src/theme/index.ts:90-98）与 SettingsBrowser.listTheme（src/settings.ts:527-535）五 fn 全部包 canvasSubtle 背景；已知限制（pi-tui 0.84.2 无 hook，接受）：SettingsList 搜索 Input 行（enableSearch 首行）与 SelectList 未选中行的 value 部分是裸文本（select-list.js renderItem `return prefix + truncatedValue`），无底色 | ✅ |
 | N | /settings Models 分类改 provider 行 + Add-provider 流程（src/settings.ts + 新 src/provider-catalog.ts）：Models 不再显示 llm-pi-ai 原始 namespace 字段——每行 = providers 一个 key（label = displayName ?? 目录名 ?? id；value = 首模型 / N models / catalog（目录/llm 目录判定）；desc = API key set/missing（process.env 探测，纯展示不强求准确）；Enter 只读查看 profile）；保留 DeepSeek (official) 与 Default model 行（子菜单进原字段编辑）；底部 + Add provider…。流程仿 pi /login：内置目录选择（10 条 catalog 路由，搜索 + oauth-selector 风格标题）→ 只输 API key（复用 EditField secret 机制）→ 写 llm-pi-ai.providers.<id> = {apiKeyEnv: deriveKeyRef(id)}（走现有 mutate 写链）→ ctx.credentials.set 存 key（对齐 web；无 credentials 服务降级为提示 export）→ 重建列表出新行。**opencode-go 实为 pi-ai catalog 路由**（用户 settings.yaml 只有 apiKeyEnv，baseURL/models 由 pi-ai 目录提供），故目录全为 catalog 路由；hand-declared 写路径保留并单测覆盖 | ✅ |
 | N+ | Models 行两处显示修复：① **0 models 误报** —— 运行时 resolved profile 自带 schemastery 隐式 `models: []`，旧逻辑 `models !== undefined` 分支吞掉 catalog 判定 → providerRowView（src/provider-catalog.ts:160-175）改为 `models.length > 0` → 首个模型；否则 catalogRoute → `catalog`（空/缺省列表 = pi-ai 内置目录）；hand-declared 显式空列表仍 `0 models`（保留真实零模型场景，测试注释说明边界）。② **API key 状态误报** —— 状态列原先只查 process.env + 本会话 justStoredRefs，`.credentials.yaml` 里的存量 key（如 web 加的 opencode-go）显示 `API key missing`。dsh 进程内 credentials 服务有干净读接口：`ctx.credentials.describe(ref) → Promise<{configured, source?, writable}>`（@deepseek-ai/dsh-credentials 抽象 + dsh-credentials-local 实现，describe 对未知 ref 返回 configured:false 不抛错）。CredentialSeam（src/settings.ts:79-90）加可选 `describe?` 结构接口（不硬依赖包）；打开 Models 分类时 `prefetchCredentialStatus()`（src/settings.ts:949-986）异步对 llm-pi-ai providers 的每个 apiKeyEnv ref 调一次 describe 存入 `credentialConfigured` Map，落定时若分类仍开着则重建列表——**行构建保持同步**（不把渲染重扫改异步）；`mergedEnv()`（src/settings.ts:993-1008）合并 process.env + justStoredRefs + 预取结果，刚添加的行继续用 justStoredRefs 立即显示 set | ✅ |
+| O | 弹层边框（新 src/frame.ts FramedOverlay）：每个 popup 包上下两条 palette.borderDefault `─` 线 + spacer（共 4 行），框住整个 overlay root —— SettingsList submenu 换列表时边框自动保持（frame 不动，只换内部 list）；**6 个 showOverlay 包装点全部包上**（selectors.ts 3 处：effort/theme/stage-1 model；sessions.ts 2 处：/session 面板、/resume 列表；settings.ts 1 处：分类列表）；maxHeight 按站点上调：75%（effort/theme/model/resume，宽 80%）→ 80%（settings 浏览器，宽 80%）→ 100%（/session 面板，宽 70%）；24 行终端实测：13 list 行 + 4 frame 行 ≤ 18 不丢底边框（selectors.ts:66-68 注释）、settings 15 + 4 ≤ 19、/session 面板 19 + 4 ≤ 23 | ✅ |
+| P | 主题调色板重设计（src/theme/palette.ts，"paper feel"）：Light = 近白 canvas #fcfdfc（淡冷绿cast）+ 清灰绿 canvasSubtle #eef3ee / canvasInset #e5ebe5 + 石墨绿正文 fgDefault #1f2a24（canvas 14.6:1）+ 钢蓝 accent #0a60b5（5.6:1）+ 淡绿 success #1e843b + 淡紫 thinking #7b4fae + 柔琥珀 attention #9a6700 + 低饱和玫瑰 danger #b64550 + accentMuted #e2eff8 等 tint 系列；**fgSubtle 加深 #637269**（canvasSubtle 上 ~4.5:1 过 WCAG AA，C1）；Dark 保持 #0d1117 家族（canvasSubtle #161b22 / canvasInset #010409），muted 填色 = 25% tint 实色混合（blend()，#203651/#1a3b25/#4a2c2e/#3e331a，terminal 无 alpha 的固态近似）；对比度 28/28 全过（theme.test.mjs 断言颜色全从常量推导，改色板不破测试） | ✅ |
+| Q | 主题热切换（本轮核心，7 处协同）：① 新 src/theme-settings.ts —— 注册 dsh-tui namespace（theme union auto/light/dark，**applies 'live'**，旧 'restart' 契约作废）+ `SettingsScope.watch` 把每次 commit（/theme 选择、/settings 浏览器编辑、**外部改 settings.yaml**）推到 applyThemeRef；② tui.ts —— `themeRef` 可变绑定（所有读取走 getter）+ applyTheme：rebuildEditor 重建编辑器（保输入缓冲/onSubmit/autocomplete/branch provider，焦点安全：仅当编辑器持焦点才移焦，弹层开着不动）+ last-request/placeholder 重染色；③ messages.ts —— **ReplayOp 缓冲**（O(1)/事件 append，渲染路径永不扫）→ setTheme 唯一读方：clear + 全量重放，流式尾巴/工具卡/todos/echo/notice 按原样重建，在途流继续 setText；④ index.ts applyTheme 编排（renderer.setTheme → ui.applyTheme → footer 提示重染色 → spinner 重建，per-piece requestRender 合并成一帧无闪烁）；⑤ **DSH_TUI_THEME 钉住语义**：env 钉住显示时 /theme 诚实提示 `Theme preference saved — display is pinned by DSH_TUI_THEME=…`（偏好照常持久化，env 去掉后生效，B2）；⑥ notice/echo 全走 buffered replay（doc.clear() 重建不丢行）；⑦ readThemePreference 注册 promise + 2s cap 降级 auto（settings 服务异步挂载）；主题模块是单例，watch 回声自身写入按 bundle identity no-op | ✅ |
+| R | review 修复（Q 轮 review）：**A1 /session 焦点死区** —— 面板打开期间编辑器被主题重建 → restoreFocus 必须指向当前 editor 实例（旧闭包指向被替换的编辑器，pi-tui hide 恢复焦点到过期实例会吞后续输入）；B1 弹层 maxHeight 与 frame 4 行配合（24 行不丢边框）；B2 env 钉住不谎报（/theme 文案见 Q）；B3 四处错误行重放（settings onError、submit 捕获、cancelActiveTurn 的 ⏹ notice 全走 ReplayOp 缓冲，theme-switch 重建不丢）；C1 fgSubtle 加深（见 P）；C5 注释全英文 | ✅ |
 | O | 固定 5 行面板：think 块 + tool 卡 = 头部 1 行（bg + 状态色）+ 内容 4 行 tail（panelBodyText 尾部保留 + SGR 垫行带 bg；settle 只 setText 不重建块）；新增 chat 角色 thinkingPanelBg/toolBodyBg（复用 canvasSubtle）；'⟡'(U+27E1) 换 '💭'（用户终端方块）；无内滚——transcript 是 leaf Container，嵌套 ScrollView 拿不到 viewport（实测 0.84.2 dist/layout.js，src/messages.ts:13-20），用户拍板 tail 式 | ✅ |
 | P | review B1-B5 + C 类修复：B1 面板长行防折行（先裁纯文本后上色 clipPanelLine，cap = 终端列 - 4，回退 200；实测 clipToWidth 对 ANSI 串按 grapheme 逐段计宽会误计——裁宽+上色顺序已修正）；B2 secret 掩码渲染（EditField secret 分支：'•' 点串 + ▎ 光标 + canvasSubtle 底，值不进 render 输出，handleInput 语义不变，存量 secret 字段编辑同享）；B3 credentials.set 失败文案追加 `export <REF>=<key> to use it` 兜底 + 原地重试幂等（「查看+重存 key」两段 submenu 超 ~40 行放弃，注释说明）；B4 justStoredRefs Set（同会话连续加两个 provider 状态列都显示 key set）+ provider-catalog env 空串真值判断；B5 commitNewProvider 落定后补 refreshModelsView（写入在途 Esc 时新行不再丢）；C4 单数 '1 model'；C7 providerDirectory 过滤 settingsNs==='llm-pi-ai'；C8 删重复 refreshCategoryList；C11 降级成功改 notice 通道（EditField CommitResult {error|notice}，notice 无 ✘ 前缀） | ✅ |
 
-62 个单测全过（theme 15 + settings 18 + text 7 + reload 6（含新增"旧 fiber teardown 完成前新代码不得 apply"回归测试）+ provider-catalog 12 + messages 5）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级纯英文 label（General/Models/Plugins）+ Esc 链、英文搜索过滤（model→Models、general→General）、C-u 清空搜索框、中文消息 echo 与模型中文回复无乱码、中文行宽 ≤ 终端列不挤变形、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。本轮新增 e2e：**/reload 阻断复验**（gatekeeper 场景 tmux 实测——/reload 后输入正常：发消息出 transcript echo + 会话日志 user/message、Esc 不回显 `^[`、连续两次 /reload 均可用、运行中 Ctrl+C 第一次显示 ⏹ canceling 提示、idle Ctrl+C 正常退出；pi-tui 插桩日志确认旧 stop 恒先于新 start；agent 运行中 reload 会等 agent teardown 完成后才换 fiber，期间屏幕冻结属预期）；**/settings → Models**：OpenCode Go 行 value 显示 `catalog`（不再是 `0 models`）、description 显示 `API key set`（与 .credentials.yaml 一致，不再是 `API key missing`）；/model 选择器开关、中文 prompt echo 回归通过。
+84 个单测全过（theme 15 + settings 18 + text 7 + reload 6（含新增"旧 fiber teardown 完成前新代码不得 apply"回归测试）+ provider-catalog 11 + messages 5 + frame 8 + theme-switch 12 + theme-settings 2 = 84；旧行写的 provider-catalog 12 系笔误，实为 11——当时 62 总数（15+18+7+6+11+5）不受影响）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级纯英文 label（General/Models/Plugins）+ Esc 链、英文搜索过滤（model→Models、general→General）、C-u 清空搜索框、中文消息 echo 与模型中文回复无乱码、中文行宽 ≤ 终端列不挤变形、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。本轮新增 e2e：**/reload 阻断复验**（gatekeeper 场景 tmux 实测——/reload 后输入正常：发消息出 transcript echo + 会话日志 user/message、Esc 不回显 `^[`、连续两次 /reload 均可用、运行中 Ctrl+C 第一次显示 ⏹ canceling 提示、idle Ctrl+C 正常退出；pi-tui 插桩日志确认旧 stop 恒先于新 start；agent 运行中 reload 会等 agent teardown 完成后才换 fiber，期间屏幕冻结属预期）；**/settings → Models**：OpenCode Go 行 value 显示 `catalog`（不再是 `0 models`）、description 显示 `API key set`（与 .credentials.yaml 一致，不再是 `API key missing`）；/model 选择器开关、中文 prompt echo 回归通过。本轮新增 e2e（O/P/Q/R 验收）：**主题热切换**（/theme 选完立即整屏换色（transcript/编辑器边框/footer 提示/spinner 同帧）、外部改 settings.yaml 的 `dsh-tui.theme` 热应用、DSH_TUI_THEME 钉住时 /theme 显示 pinned 提示且显示不换、切换期间弹层外输入正常、/resume 恢复后热切换重放正确）、**弹层边框**（6 个弹层顶/底 ─ 线完整、submenu 钻入后边框保持、24 行终端底部边框不丢）、**/session A1 焦点回归**（面板打开期间热切换后 Esc 关闭焦点回到新编辑器、后续输入不吞）、**watch 链路**（commit → 外部编辑双路径都生效）；**配置逐字节还原**（e2e 前后 settings.yaml + .credentials.yaml 快照 diff 为空）。
 
 ## 当前 backlog / 待办
 
@@ -54,7 +58,7 @@
 ## 用户偏好 & 上下文
 
 - **用户语言**：中文为主；commit/代码注释英文。
-- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，12 个 commit。
+- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，16 个 commit（本轮 O/P/Q/R 变更在工作区未提交）。
 - **配色**：严格对齐 `~/scripts/cmux-theme.sh` 里的 GitHub Light/Dark（不要用 Primer 默认色板）。
 - **TUI 文案**：UI 文案统一英文；中文内容（消息/值/路径）必须正常显示（用户 2026-08-15 明确）。
 - **安装方式**：用户明确说**不用推 GitHub**，纯本地用（`link:` + tarball）。
@@ -115,6 +119,9 @@ src/
                     pickModel：两阶段——stage-1 选模型，暴露 efforts 再弹 stage-2
                     （先 show 新 overlay 再 hide 旧的，避免焦点闪跳；stage-2 Esc 整体取消；
                     resolveModelInfo 失败跳过 stage-2）
+  frame.ts         FramedOverlay：每个 popup 的顶/底 `─` 边框 + spacer（共 4 行），
+                    包整个 overlay root → SettingsList submenu 自动继承边框；6 个
+                    showOverlay 包装点（selectors 3 / sessions 2 / settings 1）
   text.ts          宽度工具：clipToWidth（content-first 省略号、按 grapheme 截断）+ visibleWidth
                     （re-export pi-tui，east-asian 全角=2 列）；**所有自研截断必须走它，
                     禁止裸 String.length 截断**（12 处调用点：settings viewer、session panel、
@@ -130,6 +137,10 @@ src/
                     写走 settings.mutate(ns, pathOps, revision) 串行链 + 失败回读服务真相；
                     11 个导出纯函数（formatValue/unionLiterals/parseNumberInput/
                     categorizeNamespaces/categoryDescription/…）
+  provider-catalog.ts 内置 provider 目录（10 条 catalog 路由）+ deriveKeyRef 约定
+                    （route key 大写、非字母数字 → `_`、`_API_KEY` 后缀）+ providerProfileFor
+                    （catalog 路由只存 apiKeyEnv；hand-declared 带 api/baseURL/models）+
+                    providerRowView（label/summary/status 纯函数，env 由调用方注入）
   sessions.ts       `/session` 只读信息面板（SessionInfoPanel，Esc 关闭）+ `/resume`
                     选择器（sessionPersistence.list() → 过滤 origin==='subagent' 与当前会话 →
                     SelectList；inspectPersistedSession 预校验供调用方在 detach 前验证）
@@ -139,9 +150,12 @@ src/
                     fgMuted info 色保留可读）；scrollIndicator ↑
   git.ts            GitBranchWatcher：5s 轮询 git rev-parse，unref timer
   theme/
-    palette.ts      githubLight（canvas #f6f8fa + 16 角色色对齐 cmux）+ githubDark
-                    （canvas #0d1117 + 16 角色色）+ detectDarkPalette (COLORFGBG 7/15→light)
-    index.ts        ansiFg/ansiBg + BOLD/RESET 常量 + buildTheme + resolveTheme
+    palette.ts      githubLight（2026-08 重设计：canvas #fcfdfc 近白 + canvasSubtle #eef3ee
+                    清灰绿 + accent #0a60b5 钢蓝 + 淡绿/淡紫/柔琥珀/低饱和玫瑰家族；fgSubtle
+                    #637269 过 4.5:1）+ githubDark（#0d1117 家族，muted = 25% tint 实色 blend）
+                    + detectDarkPalette (COLORFGBG 7/15→light)
+    index.ts        ansiFg/ansiBg + BOLD/RESET 常量 + buildTheme + resolveTheme（env DSH_TUI_THEME
+                    > preference > detect）+ POWERLINE 段色板（theme-agnostic）
 test/theme.test.mjs    15 单测：ansiFg、dark blend 值、resolveTheme 优先级、buildTheme 完整性
 test/settings.test.mjs 18 单测：formatValue/displayValue/unionLiterals、parseNumberInput
                     （decimal 白名单、拒 0x/0b/0o）、parseStringInput/parseUnionInput、
@@ -150,6 +164,13 @@ test/settings.test.mjs 18 单测：formatValue/displayValue/unionLiterals、pars
                     （60 边界截断、空成员、去重）
 test/text.test.mjs     7 单测：clipToWidth（ASCII/全角中文/混合/surrogate emoji/边界
                     省略号/超宽全丢）、visibleWidth re-export
+test/frame.test.mjs    8 单测：FramedOverlay 边框行/宽度/spacer/输入与 invalidate 转发/无
+                    handleInput 子组件容错/wrapFramedOverlay
+test/theme-switch.test.mjs 12 单测：setTheme 重放重建（bubble/工具卡/think 面板/todos/echo/
+                    notice/在途流继续 setText/同 bundle no-op/clear 后不复活/5 行形状保持/
+                    turn-end/assistant markdown）
+test/theme-settings.test.mjs 2 单测：register → watch → sink 链路（applies 'live' 断言、
+                    未知/缺失 theme 值 narrow 到 auto）
 ```
 
 ## 关键 API / 模式笔记
@@ -221,7 +242,9 @@ ctx.root.fiber.dispose()                                // 树级退出（Ctrl+C
 cd ~/github/dsh-tui-pi
 pnpm check                                    # tsc --noEmit
 pnpm build                                    # emit lib/
-pnpm test                                     # 40 单测（theme 15 + settings 18 + text 7，pretest 自动 build）
+pnpm test                                     # 84 单测（theme 15 + settings 18 + text 7 + reload 6
+                                              #   + provider-catalog 11 + messages 5 + frame 8
+                                              #   + theme-switch 12 + theme-settings 2，pretest 自动 build）
 pnpm pack                                     # → dsh-tui-pi-0.1.0.tgz
 npm pack | tail -1                            # tarball 路径
 
