@@ -115,10 +115,10 @@ are in flight (per-chunk cost stays O(200) instead of O(accumulated)); the
 assembled `assistant/message` block and the replay rebuilds render the full
 body. The startup welcome banner (whale pixel art, plus the `DSH TUI`
 wordmark in a pixel font: classic Adafruit GFX 5×7 bitmap font glyphs
-(glcdfont.c, public domain) rendered at their natural 5×7-proportioned
-widths — 9 columns (D), 10 (S), 9 (H) × 10 rows tall — concatenated
-tightly, no gaps between letters, into a 28-column block, so the
-60-column banner is whale (28) + 4-column gap + wordmark (28); below 62
+(glcdfont.c, public domain) rendered at the whale's own 28 columns × 10
+rows tall (4-column strokes, 2-row horizontal bars), spaced 2 columns
+apart into an 88-column letter block, so the 118-column banner is whale
+(28) + 2-column gap + D (28) + 2 + S (28) + 2 + H (28); below 120
 terminal columns it
 degrades to
 the whale alone) in `welcome.ts` is the first replay op; its art is
