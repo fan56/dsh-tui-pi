@@ -14,7 +14,12 @@
  *             the mapping is maintained here by hand; `other` is hidden when
  *             empty.
  *   level 1   namespace list for the chosen category (searchable);
- *             description shows applies timing
+ *             description shows applies timing. The Models category is
+ *             special-cased: it lists configured llm-pi-ai providers (label,
+ *             model summary, API-key state) instead of the raw namespace —
+ *             the original schema surface is hidden — plus dedicated
+ *             llm-deepseek / agent-default-model rows and an add-provider
+ *             flow (built-in directory → one API key → write)
  *   level 2+  schema walk, dispatched on node type:
  *             - object/dict → drill in (nested list; dicts get an add-key row)
  *             - boolean / all-literal union → Enter cycles the value
@@ -42,6 +47,7 @@ import type {
   SettingsPathOp,
   SettingsProvider,
 } from '@deepseek-ai/dsh-settings'
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import {
   getKeybindings,
   Input,
@@ -52,8 +58,31 @@ import {
   type SettingsListTheme,
   type TUI,
 } from '@earendil-works/pi-tui'
-import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
-import { clipToWidth } from './text.ts'
+import { ansiBg, ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
+import { clipToWidth, visibleWidth } from './text.ts'
+import {
+  catalogEntry,
+  deriveKeyRef,
+  providerProfileFor,
+  providerRowView,
+  unconfiguredCatalogEntries,
+  type ProviderCatalogEntry,
+} from './provider-catalog.ts'
+
+/**
+ * Structural face of the credential seam (`ctx.credentials`) the add-provider
+ * flow writes the API key through. Kept local so the browser does not
+ * hard-depend on the `@deepseek-ai/dsh-credentials` package: the seam is a
+ * cordis Service registered under `credentials` with the CredentialProvider
+ * operations — `set` is all the add-provider flow needs, `describe` (present
+ * in the real service, optional here) is the read-only probe the Models
+ * category uses to show real key state from the credentials document.
+ */
+interface CredentialSeam {
+  set(ref: string, value: string): Promise<void>
+  /** Probe one reference: `configured: true` means a value would resolve. */
+  describe?(ref: string): Promise<{ configured: boolean }>
+}
 
 // ------------------------------------------------------- category mapping --
 
@@ -81,6 +110,11 @@ export const CATEGORY_MAP: readonly SettingsCategory[] = [
 
 /** Cap for a category row's member-name description line. */
 export const CATEGORY_DESC_MAX = 60
+
+/** Branded namespaces the Models category reads and writes. */
+const NS_LLM_PI_AI = settingsNamespace('llm-pi-ai')
+const NS_LLM_DEEPSEEK = settingsNamespace('llm-deepseek')
+const NS_AGENT_DEFAULT_MODEL = settingsNamespace('agent-default-model')
 
 /**
  * Group a describe() namespace list into ordered categories — general, models,
@@ -281,23 +315,43 @@ interface RowSpec {
   secret?: boolean
 }
 
+/**
+ * Outcome of one commit write: an `error` (shown with the ✘ marker and
+ * danger color), a `notice` (shown as a plain hint — the write succeeded but
+ * needs a follow-up, e.g. "provider added, key must come from the
+ * environment"), or `undefined` (clean success → the editor closes). Exactly
+ * one of `error`/`notice` is set.
+ */
+export interface CommitResult {
+  error?: string
+  notice?: string
+}
+
 interface EditOptions {
   title: string
   subtitle: string
   initial: string
   parse: (text: string) => ParseOutcome
-  onCommit: (outcome: ParseOutcome) => Promise<string | undefined>
+  onCommit: (outcome: ParseOutcome) => Promise<CommitResult | undefined>
   onDone: () => void
   /** Error sink for writes that fail after the editor already closed (Esc). */
   onError?: (message: string) => void
+  /**
+   * Masked rendering: the value is shown as a dot row instead of plaintext
+   * (secrets never echo). Editing semantics are unaffected — the internal
+   * Input still owns input/delete/paste/submit.
+   */
+  secret?: boolean
 }
 
-/** Inline value editor: title, current-value line, error line, Input. */
-class EditField implements Component {
+/** Inline value editor: title, current-value line, error/notice line, Input. */
+export class EditField implements Component {
   private readonly tui: TUI
   private readonly options: EditOptions
   private readonly input: Input
   private error: string | undefined
+  /** Non-error commit message (success with a follow-up hint, see CommitResult). */
+  private notice: string | undefined
   /** Set while a commit write is in flight; extra Enter presses are ignored. */
   private pending = false
   /** Guards onDone: exactly one terminal transition (submit success/keep/escape). */
@@ -305,6 +359,8 @@ class EditField implements Component {
   private readonly fg: (text: string) => string
   private readonly fgMuted: (text: string) => string
   private readonly fgDanger: (text: string) => string
+  /** Popup-surface background for the secret mask line. */
+  private readonly maskBg: (text: string) => string
 
   constructor(tui: TUI, options: EditOptions, theme: TuiTheme) {
     this.tui = tui
@@ -312,6 +368,8 @@ class EditField implements Component {
     this.fg = text => ansiFg(theme.palette.accent) + text + RESET
     this.fgMuted = text => ansiFg(theme.palette.fgMuted) + text + RESET
     this.fgDanger = text => ansiFg(theme.palette.danger) + text + RESET
+    // Same canvasSubtle backdrop the browser's listTheme paints on every row.
+    this.maskBg = text => ansiBg(theme.palette.canvasSubtle) + text + RESET
     this.input = new Input()
     this.input.setValue(options.initial)
     // A fresh pi Input starts with the cursor at position 0, so typed
@@ -327,6 +385,7 @@ class EditField implements Component {
       const parsed = options.parse(text)
       if (parsed.kind === 'error') {
         this.error = parsed.error
+        this.notice = undefined
         this.tui.requestRender()
         return
       }
@@ -335,17 +394,24 @@ class EditField implements Component {
         return
       }
       this.pending = true
-      void options.onCommit(parsed).then(error => {
+      void options.onCommit(parsed).then(result => {
         this.pending = false
         if (this.done) {
           // Esc already closed the editor while the write was in flight —
           // the component renders for nobody, so a late failure is surfaced
           // through onError instead of this.error.
-          if (error !== undefined) options.onError?.(error)
+          if (result?.error !== undefined) options.onError?.(result.error)
           return
         }
-        if (error !== undefined) {
-          this.error = error
+        if (result?.error !== undefined) {
+          this.error = result.error
+          this.notice = undefined
+          this.tui.requestRender()
+        } else if (result?.notice !== undefined) {
+          // Success with a hint: stay open so the hint is readable (Enter
+          // re-runs the commit idempotently, Esc exits) — no ✘ marker.
+          this.error = undefined
+          this.notice = result.notice
           this.tui.requestRender()
         } else {
           this.finish()
@@ -374,9 +440,27 @@ class EditField implements Component {
     lines.push(this.fg(BOLD + `✎ ${this.options.title}` + RESET))
     lines.push(this.fgMuted(this.options.subtitle))
     if (this.error !== undefined) lines.push(this.fgDanger(`✘ ${this.error}`))
+    else if (this.notice !== undefined) lines.push(this.fgMuted(this.notice))
     lines.push('')
-    lines.push(...this.input.render(width))
+    if (this.options.secret === true) {
+      lines.push(this.maskLine(width))
+    } else {
+      lines.push(...this.input.render(width))
+    }
     return lines
+  }
+
+  /**
+   * Masked input line for secret fields: a dot row (one dot per visible
+   * column of the value, capped to the popup width) with a `▎` marker at the
+   * cursor position. The real cursor is not rendered — the marker only hints
+   * at the editing position; input semantics live in the internal Input.
+   */
+  private maskLine(width: number): string {
+    const maxDots = Math.max(0, width - 2)
+    const dots = '•'.repeat(Math.min(maxDots, visibleWidth(this.input.getValue())))
+    const cursor = Math.min((this.input as unknown as { cursor: number }).cursor, dots.length)
+    return this.maskBg(dots.slice(0, cursor) + '▎' + dots.slice(cursor))
   }
 
   handleInput(data: string): void {
@@ -469,6 +553,141 @@ class ReadOnlyViewer implements Component {
   }
 }
 
+/**
+ * Swappable shell around the Models category's SettingsList. Provider rows
+ * change structurally — a new provider row must appear after an add, and
+ * SettingsList.updateValue cannot express that — so the shell swaps in a
+ * freshly built list while staying the category list's stable submenu
+ * component.
+ */
+class ModelsCategoryView implements Component {
+  private list: SettingsList | undefined
+
+  swap(list: SettingsList): void {
+    this.list = list
+  }
+
+  invalidate(): void {
+    this.list?.invalidate()
+  }
+
+  render(width: number): string[] {
+    return this.list === undefined ? [] : this.list.render(width)
+  }
+
+  handleInput(data: string): void {
+    this.list?.handleInput(data)
+  }
+}
+
+/** Commit a provider (profile + key); resolves with an outcome or none. */
+interface AddProviderOptions {
+  /** Catalog entries still unconfigured, in directory order. */
+  entries: readonly ProviderCatalogEntry[]
+  /** Commit the provider: write the profile, then store the key. */
+  onCommit: (entry: ProviderCatalogEntry, key: string) => Promise<CommitResult | undefined>
+  /** Pop the whole flow (Esc, or right after a successful commit). */
+  onExit: () => void
+  /** Error sink for writes that fail after the editor already closed. */
+  onError: (message: string) => void
+}
+
+/**
+ * Add-provider flow for the Models category — the terminal counterpart of
+ * pi-agent's /login, trimmed to the information a user actually needs: pick
+ * a provider from the built-in directory (searchable, oauth-selector-style
+ * title line), enter exactly one API key, done. The key editor reuses
+ * EditField (pending guard, late-error sink); the picker is a searchable
+ * SettingsList of the unconfigured directory entries.
+ */
+class AddProviderFlow implements Component {
+  private readonly tui: TUI
+  private readonly theme: TuiTheme
+  private readonly list: SettingsList
+  private readonly empty: boolean
+  private readonly onExit: () => void
+  private readonly fg: (text: string) => string
+  private readonly fgMuted: (text: string) => string
+
+  constructor(tui: TUI, theme: TuiTheme, listTheme: SettingsListTheme, options: AddProviderOptions) {
+    this.tui = tui
+    this.theme = theme
+    this.empty = options.entries.length === 0
+    this.onExit = options.onExit
+    this.fg = text => ansiFg(theme.palette.accent) + text + RESET
+    this.fgMuted = text => ansiFg(theme.palette.fgMuted) + text + RESET
+    this.list = new SettingsList(
+      options.entries.map(entry => ({
+        id: entry.id,
+        label: entry.name,
+        currentValue: '',
+        description: entry.hint,
+        submenu: (_current, done) => this.keyEditor(entry, options, done),
+      })),
+      12,
+      listTheme,
+      () => {},
+      () => options.onExit(),
+      { enableSearch: true },
+    )
+  }
+
+  /** Key editor for one directory entry; commits through the write chain. */
+  private keyEditor(entry: ProviderCatalogEntry, options: AddProviderOptions, done: () => void): Component {
+    const ref = deriveKeyRef(entry.id)
+    return new EditField(this.tui, {
+      title: `API key for ${entry.name}`,
+      subtitle: `stored as ${ref} — never written to settings.yaml`,
+      initial: '',
+      // Never echo the key — masked dot row (B2).
+      secret: true,
+      parse: text => {
+        // Unlike an edit of a stored secret, the key is required here: a
+        // route with no key address cannot serve a request.
+        if (text.trim() === '') return { kind: 'error', error: 'API key must not be empty' }
+        return { kind: 'value', value: text.trim() }
+      },
+      onCommit: async outcome => {
+        if (outcome.kind !== 'value') return undefined
+        return options.onCommit(entry, String(outcome.value))
+      },
+      // Enter and Esc both leave the flow (the commit is already in the
+      // serialized chain either way); the Models list refreshes on the way
+      // out so the new row is visible immediately.
+      onDone: () => {
+        done()
+        options.onExit()
+      },
+      onError: message => options.onError(message),
+    }, this.theme)
+  }
+
+  invalidate(): void {
+    this.list.invalidate()
+  }
+
+  render(width: number): string[] {
+    const title = this.fg(BOLD + 'Select provider to configure:' + RESET)
+    if (this.empty) {
+      return [
+        title,
+        '',
+        this.fgMuted('All built-in providers are already configured.'),
+        this.fgMuted('  Esc to close'),
+      ]
+    }
+    return [title, '', ...this.list.render(width)]
+  }
+
+  handleInput(data: string): void {
+    if (this.empty) {
+      if (getKeybindings().matches(data, 'tui.select.cancel')) this.onExit()
+      return
+    }
+    this.list.handleInput(data)
+  }
+}
+
 // -------------------------------------------------------------------- the browser --
 
 export interface OpenSettingsBrowserOptions {
@@ -508,6 +727,20 @@ class SettingsBrowser {
   private overlay: OverlayHandle | undefined
   private catList: SettingsList | undefined
   private nsList: SettingsList | undefined
+  private modelsView: ModelsCategoryView | undefined
+  private modelsExit: (() => void) | undefined
+  /**
+   * Credential refs just stored by the add flow (possibly several in one
+   * browser session) — their rows read as key set via the merged env.
+   */
+  private readonly justStoredRefs = new Set<string>()
+  /**
+   * Credential-document configuration snapshot, prefetched once per Models
+   * category open: ref → a value would resolve (`describe().configured`).
+   * Row building stays synchronous — the prefetch only fills this map and
+   * re-swaps the list when it settles.
+   */
+  private readonly credentialConfigured = new Map<string, boolean>()
   private writeChain: Promise<void> = Promise.resolve()
   private closed: Promise<void>
   private closeResolve!: () => void
@@ -524,12 +757,22 @@ class SettingsBrowser {
     this.closed = new Promise<void>(resolve => { this.closeResolve = resolve })
     const p = options.theme.palette
     const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
+    // canvasSubtle backdrop for every browser line. Caveat (pi-tui 0.84.2,
+    // no theme hook for raw lines — accepted, recorded in full): the search
+    // Input row (first line with enableSearch) is pushed raw by
+    // settings-list.js; renderMainList pushes three bare "" separator lines
+    // (after the search row, before the description, before the hint);
+    // AddProviderFlow's title/blank lines and EditField's own title/subtitle/
+    // error/notice lines are raw styled strings — the popup is striped rather
+    // than one solid panel surface, and every such line stays on the
+    // terminal default background.
+    const bg = (hex: string) => (text: string) => ansiBg(hex) + text + RESET
     this.listTheme = {
-      label: (text, selected) => fg(p.fgDefault)(selected ? BOLD + text + RESET : text),
-      value: (text, selected) => fg(selected ? p.accent : p.fgMuted)(text),
-      description: text => fg(p.fgSubtle)(text),
-      cursor: fg(p.accent)(BOLD + '▸ '),
-      hint: text => fg(p.fgSubtle)(text),
+      label: (text, selected) => bg(p.canvasSubtle)(fg(p.fgDefault)(selected ? BOLD + text + RESET : text)),
+      value: (text, selected) => bg(p.canvasSubtle)(fg(selected ? p.accent : p.fgMuted)(text)),
+      description: text => bg(p.canvasSubtle)(fg(p.fgSubtle)(text)),
+      cursor: bg(p.canvasSubtle)(fg(p.accent)(BOLD + '▸ ')),
+      hint: text => bg(p.canvasSubtle)(fg(p.fgSubtle)(text)),
     }
   }
 
@@ -548,6 +791,9 @@ class SettingsBrowser {
     this.overlay = undefined
     this.catList = undefined
     this.nsList = undefined
+    this.modelsView = undefined
+    this.modelsExit = undefined
+    this.justStoredRefs.clear()
     this.restoreFocus()
     this.closeResolve()
   }
@@ -591,14 +837,16 @@ class SettingsBrowser {
       label: cat.label,
       currentValue: this.categorySummary(cat),
       description: this.categoryDescription(cat),
-      submenu: (_current, done) => {
-        const list = this.namespaceList(
-          this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
-          done,
-        )
-        this.nsList = list
-        return list
-      },
+      submenu: cat.id === 'models'
+        ? (_current, done) => this.openModelsSubmenu(done)
+        : (_current, done) => {
+            const list = this.namespaceList(
+              this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
+              done,
+            )
+            this.nsList = list
+            return list
+          },
     }))
     const list = new SettingsList(
       items,
@@ -670,6 +918,252 @@ class SettingsBrowser {
     for (const desc of this.descriptors) {
       this.nsList.updateValue(desc.ns, this.nsSummary(desc))
     }
+  }
+
+  // ------------------------------------------------------------ models category --
+
+  /**
+   * The Models category does not expose the raw llm-pi-ai namespace: it
+   * lists one row per configured provider (label, model summary, API-key
+   * state), keeps dedicated rows for llm-deepseek and agent-default-model
+   * (each drilling into its original field editor), and ends with the
+   * Add-provider action. The list is rebuilt on every return because adding
+   * a provider changes it structurally.
+   */
+  private openModelsSubmenu(done: () => void): ModelsCategoryView {
+    this.modelsExit = () => {
+      this.refreshCategoryList()
+      done()
+    }
+    const view = new ModelsCategoryView()
+    this.modelsView = view
+    view.swap(this.buildModelsList())
+    // The status column reads env + just-stored refs synchronously; the
+    // credentials document (`.credentials.yaml`) needs one async probe per
+    // ref, prefetched here so rows built later show the real state.
+    this.prefetchCredentialStatus()
+    return view
+  }
+
+  /**
+   * Probe the credentials service for every provider ref the llm-pi-ai
+   * namespace references and remember the outcome. Called when the Models
+   * category opens (and again on each re-open, so keys added through other
+   * surfaces show up); row building stays synchronous. A settling probe
+   * re-swaps the Models list only while the category is still open.
+   */
+  private prefetchCredentialStatus(): void {
+    const credentials = this.ctx.get('credentials') as CredentialSeam | undefined
+    if (credentials?.describe === undefined) return
+    const view = this.modelsView
+    if (view === undefined) return
+    const piDesc = this.descriptor(NS_LLM_PI_AI)
+    const providers = (piDesc?.value ?? {}) as { providers?: Record<string, unknown> }
+    const refs = [...new Set(
+      Object.values(providers.providers ?? {})
+        .map(p => (
+          typeof p === 'object' && p !== null ? (p as { apiKeyEnv?: unknown }).apiKeyEnv : undefined
+        ))
+        .filter((ref): ref is string => typeof ref === 'string' && ref !== ''),
+    )]
+    if (refs.length === 0) return
+    void Promise.all(refs.map(async ref => {
+      try {
+        const info = await credentials.describe!(ref)
+        this.credentialConfigured.set(ref, info.configured === true)
+      } catch {
+        // A failing probe must not break the Models view — the row keeps
+        // its env-based read.
+      }
+    })).then(() => {
+      if (this.modelsView === view) this.refreshModelsView()
+    })
+  }
+
+  /**
+   * Rebuild the Models list in place after a structural change.
+   * `justStoredRefs` survives the rebuild (cleared on close): the merged env
+   * marks the just-added rows as configured — the keys are stored in the
+   * credentials document, not in process.env — and stays accurate as long as
+   * the credentials do. Idempotent: each call re-reads descriptors and swaps
+   * one freshly built list.
+   */
+  private refreshModelsView(): void {
+    const view = this.modelsView
+    if (view === undefined) return
+    this.refresh()
+    view.swap(this.buildModelsList())
+  }
+
+  /**
+   * Environment view handed to providerRowView: process.env, plus every
+   * ref the add flow stored this session and every ref the credential probe
+   * found configured — both live in the credentials document, not in
+   * process.env, so their rows would otherwise read `API key missing`.
+   */
+  private mergedEnv(): Record<string, string | undefined> {
+    const extra: Record<string, string> = {}
+    for (const ref of this.justStoredRefs) extra[ref] = 'stored'
+    for (const [ref, configured] of this.credentialConfigured) {
+      if (configured) extra[ref] = 'stored'
+    }
+    return Object.keys(extra).length === 0 ? process.env : { ...process.env, ...extra }
+  }
+
+  /**
+   * Live configurable-provider directory: route key → catalog-served? The
+   * llm service owns the catalog distinction for routes the static catalog
+   * does not name, so a web-added gateway row still gets an honest summary.
+   * Only llm-pi-ai's own directory entries are consulted — another namespace's
+   * configurable providers (e.g. llm-deepseek) configure a different surface.
+   * Structural face kept local like the credentials seam; absent or failing
+   * service degrades to an empty map (rows then fall back to the static
+   * catalog).
+   */
+  private providerDirectory(): ReadonlyMap<string, boolean> {
+    const llm = this.ctx.get('llm') as
+      | { listConfigurableProviders?: () => Array<{ provider: string; settingsNs?: string; declared?: boolean }> }
+      | undefined
+    if (llm?.listConfigurableProviders === undefined) return new Map()
+    try {
+      return new Map(llm.listConfigurableProviders()
+        .filter(entry => entry.settingsNs === NS_LLM_PI_AI)
+        .map(entry => [entry.provider, entry.declared !== true]))
+    } catch {
+      return new Map()
+    }
+  }
+
+  private buildModelsList(): SettingsList {
+    const exit = this.modelsExit ?? (() => {})
+    const items: SettingItem[] = []
+    const directory = this.providerDirectory()
+
+      const piDesc = this.descriptor(NS_LLM_PI_AI)
+      if (piDesc !== undefined) {
+        const providers = (piDesc.value ?? {}) as { providers?: Record<string, unknown> }
+        const entries = Object.entries(providers.providers ?? {})
+        entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        // Keys stored by the add flow live in the credentials document, not
+        // in process.env — merge them all so their rows read as configured
+        // right away (a second provider added in the same session too), and
+        // merge the prefetched credential state so keys stored earlier (e.g.
+        // through the web Models page) read as set instead of missing.
+        const env = this.mergedEnv()
+      for (const [id, profile] of entries) {
+        // The static catalog names the routes the TUI can add; the live llm
+        // directory tells catalog-served from hand-declared for every other
+        // configured route (e.g. one added through the web Models page), so
+        // the summary does not claim `0 models` for a route the catalog
+        // actually serves.
+        const entry = catalogEntry(id) ?? {
+          id,
+          name: id,
+          hint: '',
+          catalogRoute: directory.get(id) ?? false,
+        }
+        const view = providerRowView(id, entry, profile, env)
+        items.push({
+          id: `provider:${id}`,
+          label: view.label,
+          currentValue: view.summary,
+          description: view.status,
+          // Read-only: the raw llm-pi-ai fields are deliberately not editable
+          // here — Enter shows the stored profile, nothing more. A "re-store
+          // the key" action (reusing keyEditor's EditField, credentials.set
+          // only) was considered for rows whose key never landed (B3) but
+          // needs a multi-action submenu component (~60 lines); skipped —
+          // the commit failure text names the manual fallback instead.
+          submenu: (_current, done) => new ReadOnlyViewer(this.theme, `providers.${id}`, profile, done),
+        })
+      }
+    }
+
+    const deepseekDesc = this.descriptor(NS_LLM_DEEPSEEK)
+    if (deepseekDesc !== undefined) {
+      items.push({
+        id: 'llm-deepseek',
+        label: 'DeepSeek (official)',
+        currentValue: this.nsSummary(deepseekDesc),
+        description: this.nsDescription(deepseekDesc),
+        submenu: (_current, done) => {
+          const section = this.sectionList(deepseekDesc.ns, [], () => {
+            this.refreshModelsView()
+            done()
+          })
+          return section.list
+        },
+      })
+    }
+
+    const agentDesc = this.descriptor(NS_AGENT_DEFAULT_MODEL)
+    if (agentDesc !== undefined) {
+      items.push({
+        id: 'agent-default-model',
+        label: 'Default model',
+        currentValue: this.defaultModelSummary(agentDesc),
+        description: this.nsDescription(agentDesc),
+        submenu: (_current, done) => {
+          const section = this.sectionList(agentDesc.ns, [], () => {
+            this.refreshModelsView()
+            done()
+          })
+          return section.list
+        },
+      })
+    }
+
+    if (piDesc !== undefined) {
+      const providers = (piDesc.value ?? {}) as { providers?: Record<string, unknown> }
+      const configured = new Set(Object.keys(providers.providers ?? {}))
+      items.push({
+        id: '\u0000add-provider',
+        label: '+ Add provider…',
+        currentValue: '',
+        description: 'configure a built-in provider with its API key',
+        submenu: (_current, done) => new AddProviderFlow(
+          this.tui,
+          this.theme,
+          this.listTheme,
+          {
+            entries: unconfiguredCatalogEntries(configured),
+            onCommit: (entry, key) => this.commitNewProvider(entry, key),
+            onExit: () => {
+              done()
+              this.refreshModelsView()
+            },
+            onError: message => this.onError(message),
+          },
+        ),
+      })
+    }
+
+    return new SettingsList(
+      items,
+      12,
+      this.listTheme,
+      () => {},
+      // exit() (the modelsExit hook) already refreshes the category list —
+      // calling it again here would double-refresh (C8).
+      () => { exit() },
+      { enableSearch: true },
+    )
+  }
+
+  /** Value column of the Default model row: provider/model · think level. */
+  private defaultModelSummary(desc: SettingsDescriptor): string {
+    const value = desc.value as
+      | { provider?: unknown; model?: unknown; reasoningEffort?: unknown }
+      | undefined
+    const provider = value?.provider
+    const model = value?.model
+    if (typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== '') {
+      const effort = value?.reasoningEffort
+      return typeof effort === 'string' && effort !== ''
+        ? `${provider}/${model} · think ${effort}`
+        : `${provider}/${model}`
+    }
+    return formatValue(desc.value)
   }
 
   // ------------------------------------------------------------- section levels --
@@ -908,6 +1402,53 @@ class SettingsBrowser {
     return task
   }
 
+  /**
+   * Add-provider commit: write the llm-pi-ai profile through the serialized
+   * settings chain (revision read at execution time), then store the key
+   * through the credentials seam — the same two writes the web Models page
+   * performs. A missing credentials service still commits the profile (it
+   * names the derived ref; the key then has to come from the environment).
+   *
+   * Outcome surface: a write failure is an `error`; a committed profile whose
+   * key could not be stored is an `error` with the manual fallback spelled
+   * out (B3); a committed profile with no credentials service at all is a
+   * `notice` (success + hint, no ✘ — C11).
+   */
+  private async commitNewProvider(entry: ProviderCatalogEntry, key: string): Promise<CommitResult | undefined> {
+    const ref = deriveKeyRef(entry.id)
+    const error = await this.write(NS_LLM_PI_AI, [{
+      op: 'set',
+      path: ['providers', entry.id],
+      value: providerProfileFor(entry),
+    }])
+    if (error !== undefined) return { error }
+    const credentials = this.ctx.get('credentials') as CredentialSeam | undefined
+    if (credentials === undefined) {
+      // No credential store in this process — the row is configured and the
+      // key must come from the environment; this is a success with a hint,
+      // never an error. Enter re-runs the commit idempotently.
+      return { notice: `provider added — no credentials service in this process: export ${ref} to use it` }
+    }
+    try {
+      await credentials.set(ref, key)
+    } catch (cause) {
+      // The profile is committed but the key did not land: the row already
+      // counts as configured, so the user needs the manual path. The error
+      // stays retryable in place — Enter re-runs the whole commit (B3).
+      return {
+        error: `API key not stored: ${cause instanceof Error ? cause.message : String(cause)}`
+          + ` — provider added; export ${ref}=<key> to use it`,
+      }
+    }
+    this.justStoredRefs.add(ref)
+    // Settle-time rebuild: if Esc closed the editor while the write was in
+    // flight, the onExit refresh already ran against stale descriptors and
+    // nothing else would repaint the new row. Idempotent (B5); on the normal
+    // path the onExit refresh repeats it harmlessly.
+    if (this.modelsView !== undefined) this.refreshModelsView()
+    return undefined
+  }
+
   private onCycle(rows: RowSpec[], list: SettingsList, id: string, newValue: string): void {
     const row = rows.find(r => r.id === id)
     if (row === undefined || row.kind !== 'cycle' || row.toRaw === undefined) return
@@ -939,6 +1480,8 @@ class SettingsBrowser {
         ? 'secret — leave empty to keep the current value'
         : `current: ${row.display}${meta.required === true ? ' · required' : ''}`,
       initial,
+      // role('secret') rows get the masked dot-row renderer too (B2).
+      secret: row.secret === true,
       parse: text => this.parseFor(row, text),
       onCommit: outcome => this.commitInput(row, refresh, outcome),
       onDone: done,
@@ -963,14 +1506,14 @@ class SettingsBrowser {
     }
   }
 
-  private async commitInput(row: RowSpec, refresh: () => void, outcome: ParseOutcome): Promise<string | undefined> {
+  private async commitInput(row: RowSpec, refresh: () => void, outcome: ParseOutcome): Promise<CommitResult | undefined> {
     if (outcome.kind !== 'value' && outcome.kind !== 'unset') return undefined
     const ops: SettingsPathOp[] = outcome.kind === 'unset'
       ? [{ op: 'unset', path: row.path }]
       : [{ op: 'set', path: row.path, value: outcome.value }]
     const error = await this.write(row.ns, ops)
     if (error === undefined) refresh()
-    return error
+    return error === undefined ? undefined : { error }
   }
 
   /** Add-key editor for dict sections; commits a default-valued entry. */
@@ -992,7 +1535,7 @@ class SettingsBrowser {
         const key = String(outcome.value)
         const error = await this.write(row.ns, [{ op: 'set', path: [...row.path, key], value: defaultValueFor(inner) }])
         if (error === undefined) refresh()
-        return error
+        return error === undefined ? undefined : { error }
       },
       onDone: done,
       onError: message => this.onError(message),

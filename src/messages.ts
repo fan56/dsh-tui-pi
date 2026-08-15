@@ -9,6 +9,15 @@
  * Text component; on the assembled `assistant/message` the streaming component
  * is replaced by proper Markdown rendering. This keeps per-token cost at
  * O(accumulated text) instead of re-parsing markdown on every delta.
+ *
+ * Panels: think blocks and tool cards render as fixed PANEL_HEIGHT rows (one
+ * header row + PANEL_BODY_LINES body rows). The transcript doc is a plain
+ * Container inside the outer ScrollView, so pi-tui 0.84.2 never lays out
+ * nested components (a Container without a layout node renders by simple
+ * concatenation — verified in dist/layout.js) and an inner ScrollView can
+ * never obtain a viewport. The body is therefore a padded tail of the last
+ * PANEL_BODY_LINES rows rather than an internal scroll; every row carries
+ * the panel background.
  */
 
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
@@ -18,19 +27,74 @@ import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 
+/** Fixed total height of a think/tool panel: 1 header row + body rows. */
+const PANEL_HEIGHT = 5
+/** Body rows inside a panel (PANEL_HEIGHT - 1). */
+const PANEL_BODY_LINES = PANEL_HEIGHT - 1
+/**
+ * Fallback cap for a panel body row when the terminal width is unknown
+ * (non-TTY contexts, e.g. tests): conservative so no sane terminal wraps.
+ */
+const PANEL_LINE_CAP_FALLBACK = 200
+
+/**
+ * Terminal columns a panel body row may occupy so it renders on exactly one
+ * physical row: the body Text wraps at `width - paddingX*2` (paddingX = 1),
+ * and tool rows also carry a 2-column indent, hence the -4 headroom.
+ */
+export function panelLineCap(columns: number | undefined): number {
+  return Math.max(1, (columns === undefined ? PANEL_LINE_CAP_FALLBACK : columns) - 4)
+}
+
+/**
+ * Clip an unstyled line to one physical panel row. Must run BEFORE styling:
+ * clipToWidth counts per grapheme, so the ASCII fragments of an SGR code
+ * would count as visible columns (verified against pi-tui 0.84.2) — clipping
+ * plain text first, then applying ANSI, keeps the accounting exact.
+ */
+export function clipPanelLine(text: string): string {
+  return clipToWidth(text, panelLineCap(process.stdout.columns))
+}
+
 interface StreamingState {
   turn: number
   step: number
   textComponent?: Text
   text: string
-  reasoningComponent?: Text
+  /** Fixed 5-row thinking panel; setBody() is the only per-chunk update. */
+  reasoningPanel?: ThinkingPanel
   reasoning: string
 }
 
 interface ToolCard {
-  container: Container
   header: Text
+  body: Text
   name: string
+  /** Styled detail lines captured at creation, rebuilt into the body on settle. */
+  detailLines: string[]
+}
+
+/** A fixed PANEL_HEIGHT-row panel: header Text + body Text stacked in a Container. */
+interface ThinkingPanel {
+  readonly container: Container
+  /** Replace the body rows in place — O(1), no rebuild. */
+  setBody(text: string): void
+}
+
+/**
+ * Compose a PANEL_BODY_LINES-row body from already-styled lines: keep the
+ * tail (newest rows win), pad short content with empty rows. Pad rows carry
+ * a lone SGR code (`\x1b[39m` — default foreground) so they survive Text's
+ * `text.trim() === ''` fast path, which would otherwise drop plain empty
+ * rows; the code does not touch the background, so the panel bg function
+ * still paints the full row width. Callers clip each line with
+ * `clipPanelLine` BEFORE styling — otherwise a styled line that outgrows
+ * `width - paddingX*2` wraps and the panel exceeds its fixed 5 rows.
+ */
+export function panelBodyText(lines: readonly string[]): string {
+  const visible = lines.length > PANEL_BODY_LINES ? lines.slice(-PANEL_BODY_LINES) : [...lines]
+  while (visible.length < PANEL_BODY_LINES) visible.push('\x1b[39m')
+  return visible.join('\n')
 }
 
 /** First text content of a tool result, raw lines. */
@@ -200,17 +264,14 @@ export class TranscriptRenderer {
       state.text += delta
       state.textComponent.setText(ansiFg(this.theme.palette.fgDefault) + state.text + RESET)
     } else {
-      if (state.reasoningComponent === undefined) {
-        state.reasoningComponent = new Text('', 1, 0)
-        this.doc.addChild(state.reasoningComponent)
+      if (state.reasoningPanel === undefined) {
+        state.reasoningPanel = this.createThinkingPanel()
+        this.doc.addChild(state.reasoningPanel.container)
       }
       state.reasoning += delta
-      // Live tail: header + last few lines, italic thinking color (pi style).
-      const lines = state.reasoning.trim().split('\n')
-      const tail = lines.slice(-5).join('\n')
-      state.reasoningComponent.setText(
-        this.theme.chat.thinkingText(`⟡ thinking\n${tail}`),
-      )
+      // Live tail: replace only the body text of the existing panel — O(1),
+      // never rebuild the block.
+      state.reasoningPanel.setBody(this.thinkingBody(state.reasoning))
     }
     this.requestRender()
   }
@@ -220,12 +281,52 @@ export class TranscriptRenderer {
     if (state === undefined) return
     this.streaming = undefined
     if (state.textComponent !== undefined) this.doc.removeChild(state.textComponent)
-    if (state.reasoningComponent !== undefined) this.doc.removeChild(state.reasoningComponent)
+    if (state.reasoningPanel !== undefined) this.doc.removeChild(state.reasoningPanel.container)
   }
 
   /** Keep streaming components as-is but detach state (user message arrived). */
   private dropStreaming(): void {
     this.streaming = undefined
+  }
+
+  // --------------------------------------------------------------- panels --
+
+  /**
+   * Thinking color style without a trailing RESET: the panel bg function
+   * terminates the row, so an inner RESET would clear the background and
+   * leave the row's right side unpainted.
+   */
+  private thinkStyle(text: string): string {
+    return `\x1b[3m${ansiFg(this.theme.palette.thinking)}${text}`
+  }
+
+  /** Styled PANEL_BODY_LINES tail of a reasoning text. */
+  private thinkingBody(reasoning: string): string {
+    // Tail slice before styling: lines dropped by the panel are never styled
+    // (or clipped). Clip BEFORE styling — see clipPanelLine's contract.
+    const tail = reasoning.trim().split('\n').slice(-PANEL_BODY_LINES)
+    return panelBodyText(tail.map(line => this.thinkStyle(clipPanelLine(line))))
+  }
+
+  /**
+   * Build the fixed 5-row thinking panel: header row + 4-row body.
+   * Header icon: '⟡' (U+27E1) renders as a tofu box on the user's terminal;
+   * emoji render fine there (footer ⚙✔✘⏹ all verified), so '💭' is used.
+   */
+  private createThinkingPanel(): ThinkingPanel {
+    const header = new Text(
+      this.thinkStyle(' 💭 thinking '),
+      1, 0,
+      this.theme.chat.thinkingPanelBg,
+    )
+    const body = new Text('', 1, 0, this.theme.chat.thinkingPanelBg)
+    const container = new Container()
+    container.addChild(header)
+    container.addChild(body)
+    return {
+      container,
+      setBody: (text: string) => { body.setText(text) },
+    }
   }
 
   // ------------------------------------------------------------- assistant --
@@ -241,13 +342,11 @@ export class TranscriptRenderer {
         this.doc.addChild(md)
         rendered = true
       } else if (block.type === 'reasoning' && block.text.trim() !== '') {
-        // Independent thinking display, pi-style: full block in italic
-        // thinking color, rendered as markdown.
-        const md = new Markdown(block.text.trim(), 1, 0, this.theme.markdown, {
-          color: text => ansiFg(this.theme.palette.thinking) + text + RESET,
-          italic: true,
-        })
-        this.doc.addChild(md)
+        // Final thinking: full reasoning through the same fixed 5-row panel
+        // (the body shows the 4-row tail, padded rows keep the panel shape).
+        const panel = this.createThinkingPanel()
+        panel.setBody(this.thinkingBody(block.text))
+        this.doc.addChild(panel.container)
         rendered = true
       }
       // tool-call blocks render through tool/call events — never duplicated here.
@@ -265,19 +364,24 @@ export class TranscriptRenderer {
       : status === 'success'
         ? this.theme.palette.success
         : this.theme.palette.danger
-    return ansiFg(color) + ` ${icon} ${name} ` + RESET
+    // No trailing RESET: the card bg function terminates the row so the
+    // background covers the full header width.
+    return ansiFg(color) + ` ${icon} ${name} `
   }
 
   private addToolCard(callId: string, name: string, rawArguments: string): void {
-    const container = new Container()
     const header = new Text(this.toolHeader('pending', name), 1, 0, this.theme.chat.toolPendingBg)
+    const body = new Text('', 1, 0, this.theme.chat.toolBodyBg)
+    const container = new Container()
     container.addChild(header)
+    container.addChild(body)
     const detail = callDetail(rawArguments)
-    if (detail !== '') {
-      container.addChild(new Text(ansiFg(this.theme.palette.fgMuted) + `  ${detail}` + RESET, 1, 0))
-    }
+    // callDetail already clipped to 120; clip again to the panel cap so the
+    // row never wraps on a narrow terminal.
+    const detailLines = detail === '' ? [] : [ansiFg(this.theme.palette.fgMuted) + `  ${clipPanelLine(detail)}`]
+    body.setText(panelBodyText(detailLines))
     this.doc.addChild(container)
-    this.toolCards.set(callId, { container, header, name })
+    this.toolCards.set(callId, { header, body, name, detailLines })
     this.requestRender()
   }
 
@@ -292,21 +396,24 @@ export class TranscriptRenderer {
     card.header.setText(this.toolHeader(isError ? 'error' : 'success', card.name))
     card.header.setCustomBgFn(isError ? this.theme.chat.toolErrorBg : this.theme.chat.toolSuccessBg)
 
-    const body: string[] = []
+    const bodyLines: string[] = [...card.detailLines]
     if (event.data.error !== undefined) {
-      body.push(ansiFg(this.theme.palette.danger) + `  ${event.data.error.name}: ${event.data.error.code}` + RESET)
+      bodyLines.push(ansiFg(this.theme.palette.danger)
+        + `  ${clipPanelLine(`${event.data.error.name}: ${event.data.error.code}`)}`)
     }
     if (block !== undefined) {
-      const lines = resultTextLines(block.content)
-      const shown = lines.slice(0, 10)
-      for (const line of shown) {
-        body.push(ansiFg(this.theme.palette.fgMuted) + `  ${line}` + RESET)
-      }
-      if (lines.length > shown.length) {
-        body.push(ansiFg(this.theme.palette.fgSubtle) + `  … (+${lines.length - shown.length} lines)` + RESET)
+      for (const line of resultTextLines(block.content)) {
+        bodyLines.push(ansiFg(this.theme.palette.fgMuted) + `  ${clipPanelLine(line)}`)
       }
     }
-    if (body.length > 0) card.container.addChild(new Text(body.join('\n'), 1, 0))
+    // Body keeps the 4-row tail; when lines are dropped, the first visible
+    // row reports the count so the newest result lines stay on screen.
+    if (bodyLines.length > PANEL_BODY_LINES) {
+      const dropped = bodyLines.length - PANEL_BODY_LINES
+      bodyLines.splice(0, dropped)
+      bodyLines[0] = ansiFg(this.theme.palette.fgSubtle) + `  … (+${dropped} lines)`
+    }
+    card.body.setText(panelBodyText(bodyLines))
     this.requestRender()
   }
 

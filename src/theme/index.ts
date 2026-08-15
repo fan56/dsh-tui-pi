@@ -34,6 +34,10 @@ export interface ChatTheme {
   toolPendingBg: (text: string) => string
   toolSuccessBg: (text: string) => string
   toolErrorBg: (text: string) => string
+  /** Background of the fixed-height thinking panel (header + body rows). */
+  thinkingPanelBg: (text: string) => string
+  /** Background of the tool card body rows. */
+  toolBodyBg: (text: string) => string
   thinkingText: (text: string) => string
   todoDone: (text: string) => string
   todoOpen: (text: string) => string
@@ -87,12 +91,16 @@ export function buildTheme(palette: Palette): TuiTheme {
   const bg = (hex: string) => (text: string) => ansiBg(hex) + text + RESET
   const bold = (text: string) => BOLD + text + RESET
 
+  // canvasSubtle backdrop behind every picker line. Caveat (pi-tui 0.84.2):
+  // SelectList renders unselected rows as raw `prefix + value` without a
+  // theme call (select-list.js renderItem), so only the selected row,
+  // descriptions, scroll info and no-match line get the backdrop.
   const selectList: SelectListTheme = {
-    selectedPrefix: text => fg(palette.accent)(bold(`▸ ${text}`)),
-    selectedText: text => fg(palette.fgDefault)(bold(text)),
-    description: text => fg(palette.fgSubtle)(text),
-    scrollInfo: text => fg(palette.fgSubtle)(text),
-    noMatch: text => fg(palette.danger)(text),
+    selectedPrefix: text => bg(palette.canvasSubtle)(fg(palette.accent)(bold(`▸ ${text}`))),
+    selectedText: text => bg(palette.canvasSubtle)(fg(palette.fgDefault)(bold(text))),
+    description: text => bg(palette.canvasSubtle)(fg(palette.fgSubtle)(text)),
+    scrollInfo: text => bg(palette.canvasSubtle)(fg(palette.fgSubtle)(text)),
+    noMatch: text => bg(palette.canvasSubtle)(fg(palette.danger)(text)),
   }
 
   const editor: EditorTheme = {
@@ -124,6 +132,11 @@ export function buildTheme(palette: Palette): TuiTheme {
     toolPendingBg: bg(palette.canvasSubtle),
     toolSuccessBg: bg(palette.successMuted),
     toolErrorBg: bg(palette.dangerMuted),
+    // Panel surfaces reuse the canvasSubtle surface (same as message bubbles):
+    // the thinking panel is told apart by its purple text, the tool body by
+    // its header status tint.
+    thinkingPanelBg: bg(palette.canvasSubtle),
+    toolBodyBg: bg(palette.canvasSubtle),
     thinkingText: text => `\x1b[3m${fg(palette.thinking)(text)}\x1b[0m`,
     todoDone: text => fg(palette.success)(`☑ ${text}`),
     todoOpen: text => fg(palette.fgSubtle)(`☐ ${text}`),
