@@ -14,6 +14,7 @@
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import type { BridgeStats } from './session.ts'
 import { ansiBg, ansiFg, BOLD, POWERLINE, RESET } from './theme/index.ts'
+import { clipToWidth } from './text.ts'
 
 const ARROW_RIGHT = '\uE0B0'
 const WHITE = ansiFg('#FFFFFF')
@@ -96,7 +97,7 @@ export class PowerlineFooter implements Component {
     const segs: Segment[] = []
     if (selection !== undefined) {
       segs.push({ label: `☁️ ${selection.provider}`, bgHex: POWERLINE.provider })
-      const model = selection.model.split('/').pop()!.slice(0, 24)
+      const model = clipToWidth(selection.model.split('/').pop()!, 24)
       const effort = selection.reasoningEffort ?? 'off'
       segs.push({
         label: `🤖 ${model} ${thinkingIcon(effort)} ${effort}`,

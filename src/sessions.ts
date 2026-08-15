@@ -17,6 +17,7 @@ import {
 } from '@earendil-works/pi-tui'
 import { basename } from 'node:path'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
+import { clipToWidth, visibleWidth } from './text.ts'
 
 // ------------------------------------------------------------- `/session` panel --
 
@@ -68,13 +69,13 @@ class SessionInfoPanel implements Component {
       lines.push(fg(p.fgDefault)('  no active session — send a prompt or /resume one'))
     } else {
       const max = Math.max(2, width - LABEL_WIDTH - 4)
-      const clip = (text: string): string => text.length > max ? text.slice(0, max - 1) + '…' : text
+      const clip = (text: string): string => clipToWidth(text, max)
       const row = (label: string, value: string): void => {
         lines.push(fg(p.fgMuted)(label.padEnd(LABEL_WIDTH)) + fg(p.fgDefault)(clip(value)))
       }
-      const shortId = id.slice(0, 8)
+      const shortId = clipToWidth(id, 8)
       row('session', shortId)
-      if (id.length > 8) {
+      if (visibleWidth(id) > 8) {
         lines.push('  ' + ' '.repeat(LABEL_WIDTH) + fg(p.fgSubtle)(clip(id)))
       }
       row('cwd', this.data.cwd ?? '—')
@@ -90,7 +91,7 @@ class SessionInfoPanel implements Component {
       row('cache write', String(this.data.cacheWriteTokens))
       row('events', this.data.eventCount === undefined ? '—' : String(this.data.eventCount))
       const parent = this.data.parentSession
-      row('parent', parent === undefined ? '—' : parent.slice(0, 8))
+      row('parent', parent === undefined ? '—' : clipToWidth(parent, 8))
     }
     lines.push('')
     lines.push(fg(p.fgSubtle)('  Esc to close'))
@@ -181,7 +182,7 @@ export async function pickPersistedSession(
 
   const items: SelectItem[] = candidates.map(header => ({
     value: String(header.id),
-    label: `${basename(header.cwd ?? '?')} · ${String(header.id).slice(0, 8)}`,
+    label: `${basename(header.cwd ?? '?')} · ${clipToWidth(String(header.id), 8)}`,
     description: `${new Date(header.createdAt).toLocaleString()} · ${header.cwd ?? 'no cwd'}`,
   }))
 

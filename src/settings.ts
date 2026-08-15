@@ -53,6 +53,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
+import { clipToWidth } from './text.ts'
 
 // ------------------------------------------------------- category mapping --
 
@@ -68,16 +69,14 @@ export interface SettingsCategory {
  * no category field, so the slots are maintained here by hand. Namespaces not
  * listed anywhere fall into the trailing `other` category.
  *
- * Labels are bilingual (Chinese + English): pi-tui's SettingsList search only
- * matches the label, so the English half doubles as the search surface for
- * English queries (model, shell, permission, …) while the Chinese half keeps
- * Chinese searches working.
+ * Labels are English-only: pi-tui's SettingsList search matches the label
+ * text, so English queries (model, shell, permission, …) hit directly.
  */
 export const CATEGORY_MAP: readonly SettingsCategory[] = [
-  { id: 'general', label: '通用 General', namespaces: ['permission', 'dsh-tui'] },
-  { id: 'models', label: '模型 Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
-  { id: 'plugins', label: '插件 Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
-  { id: 'agent', label: 'Agent 设置 Agent Presets', namespaces: ['agent-presets'] },
+  { id: 'general', label: 'General', namespaces: ['permission', 'dsh-tui'] },
+  { id: 'models', label: 'Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
+  { id: 'plugins', label: 'Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
+  { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
 ]
 
 /** Cap for a category row's member-name description line. */
@@ -104,18 +103,20 @@ export function categorizeNamespaces(nses: string[]): SettingsCategory[] {
     categories.push({ id: def.id, label: def.label, namespaces: members })
   }
   const others = [...input].filter(ns => !mapped.has(ns))
-  if (others.length > 0) categories.push({ id: 'other', label: '其他 Other', namespaces: others })
+  if (others.length > 0) categories.push({ id: 'other', label: 'Other', namespaces: others })
   return categories
 }
 
 /**
- * Description line for a category row: member names joined with ", ", capped at
- * `max` chars — an exactly-`max` string is kept whole, anything longer is cut
- * to `max - 1` chars with a trailing "…". Duplicate names are collapsed.
+ * Description line for a category row: member names joined with ", ", capped
+ * at `max` columns. Namespace names are ASCII, so visible width equals char
+ * count here; the width-aware clip is used anyway so the cap semantics stay
+ * uniform with every other truncation in the TUI (an exactly-fitting string
+ * is kept whole, an ellipsis appears only when a column is free).
  */
 export function categoryDescription(namespaces: readonly string[], max = 60): string {
   const joined = [...new Set(namespaces)].join(', ')
-  return joined.length <= max ? joined : `${joined.slice(0, max - 1)}…`
+  return clipToWidth(joined, max)
 }
 
 // ----------------------------------------------------------------- pure helpers --
@@ -451,9 +452,7 @@ class ReadOnlyViewer implements Component {
     const text = JSON.stringify(this.json, null, 2)
     const max = Math.max(2, width - 2)
     for (const line of text.split('\n').slice(0, 40)) {
-      lines.push(fg(this.theme.palette.fgMuted)(
-        line.length > max ? line.slice(0, max - 1) + '…' : line,
-      ))
+      lines.push(fg(this.theme.palette.fgMuted)(clipToWidth(line, max)))
     }
     lines.push('')
     lines.push(fg(this.theme.palette.fgSubtle)(

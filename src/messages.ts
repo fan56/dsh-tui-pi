@@ -16,6 +16,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 // Loads the SessionEventMap augmentation that adds command/run + command/done.
 import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
+import { clipToWidth } from './text.ts'
 
 interface StreamingState {
   turn: number
@@ -59,7 +60,7 @@ function callDetail(rawArguments: string, limit = 120): string {
       parts.push(flat)
     }
     const joined = parts.join('  ').replace(/\n/g, ' ⏎ ')
-    return joined.length > limit ? joined.slice(0, limit) + '…' : joined
+    return clipToWidth(joined, limit)
   } catch {
     return ''
   }
@@ -165,7 +166,7 @@ export class TranscriptRenderer {
     } else {
       // Injected context (agent.inject): file-change notices, skill content, …
       const first = text.split('\n')[0] ?? ''
-      const preview = first.length > 120 ? first.slice(0, 120) + '…' : first
+      const preview = clipToWidth(first, 120)
       this.appendLine(ansiFg(this.theme.palette.fgSubtle) + `ⓘ ${preview}` + RESET)
     }
   }

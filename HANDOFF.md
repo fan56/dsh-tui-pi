@@ -9,7 +9,7 @@
 - 启动：`dsh --profile tui`（`~/.zshrc` 已配别名 `dsh-tui`、`dst`）
 - Node：`>=22.19`，pnpm 10.33+，本机 node 在 `/opt/homebrew/bin`
 
-## 当前状态（2026-08-15，10 个 commit）
+## 当前状态（2026-08-15，11 个 commit）
 
 | Phase | 内容 | 状态 |
 |---|---|---|
@@ -29,8 +29,9 @@
 | J | 命令双通道分发（registerLocal：无 live agent 直发、不预热建会话）+ `/new` 改 detachCurrent（修 /new 后消息不渲染的阻断 bug）+ 两轮 review 修复（secret 空格误清除、pending 防重入、晚到 done once 化、row id JSON 编码、onCycle 失败回读、parseNumberInput decimal 白名单、/model stage-1 竞态、ensureSession 等 resuming、/export 守卫） | ✅ |
 | H | backlog 清理：/think /model 持久化（saveSelection）、/theme + dsh-tui namespace（重启生效）、Ctrl+C 分级中断、命令目录审计（无需补 bundle）、footer 提示可见性修复 | ✅ |
 | I | /settings 分类层级（通用/模型/插件/Agent 设置/其他，静态映射对齐 web 设置页；双语 label 保英文搜索） | ✅ |
+| J | TUI 文案统一英文 + CJK/emoji 宽度安全截断（src/text.ts clipToWidth，11 处调用点） | ✅ |
 
-33 个单测全过（theme 15 + settings 18）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级双语 label、英文 model / 中文 模型 搜索过滤、C-u 清空搜索框、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。
+40 个单测全过（theme 15 + settings 18 + text 7）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级纯英文 label（General/Models/Plugins）+ Esc 链、英文搜索过滤（model→Models、general→General）、C-u 清空搜索框、中文消息 echo 与模型中文回复无乱码、中文行宽 ≤ 终端列不挤变形、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。
 
 ## 当前 backlog / 待办
 
@@ -41,14 +42,16 @@
 ## 用户偏好 & 上下文
 
 - **用户语言**：中文为主；commit/代码注释英文。
-- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，10 个 commit。
+- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，11 个 commit。
 - **配色**：严格对齐 `~/scripts/cmux-theme.sh` 里的 GitHub Light/Dark（不要用 Primer 默认色板）。
+- **TUI 文案**：UI 文案统一英文；中文内容（消息/值/路径）必须正常显示（用户 2026-08-15 明确）。
 - **安装方式**：用户明确说**不用推 GitHub**，纯本地用（`link:` + tarball）。
 - **goal 模式**：用户要"我只要结果，中间不要问我"——自主执行到底；只在关键决策点（切模型、是否做某功能）才反馈。
 - **dsh 版本**：`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh` 是 0.1.0-rc.6（运行），而 `~/deepseek-harness` 是 0.1.0-rc.5（monorepo 源码）。**所有 `@deepseek-ai/*` symlink 指向 rc.6 闭包**（`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/`）保证运行时模块实例一致。
-- **`~/.dsh/settings.yaml` 当前状态**：`agent-default-model: deepseek-official / deepseek-v4-flash / reasoningEffort: off`；`dsh-tui.theme: auto`（e2e 还原后的终态）。如果 `OPENCODE_GO_API_KEY` 在 dsh 启动 shell 里没设，第一条 prompt 会报 key 错——立刻改回 `minimax-cn / MiniMax-M3`（同样文字模型，已验证可用）。
+- **`~/.dsh/settings.yaml` 当前状态**：`agent-default-model: opencode-go / deepseek-v4-flash / reasoningEffort: high`；`dsh-tui.theme: light`（e2e 还原后的终态）。如果 `OPENCODE_GO_API_KEY` 在 dsh 启动 shell 里没设，第一条 prompt 会报 key 错——立刻改回 `minimax-cn / MiniMax-M3`（同样文字模型，已验证可用）。
 - **插件机制坑**（本次调研结论）：llm-deepseek 的 `thinking: disabled` 会让所有模型只暴露 `Off` 一个 effort（`/think` 列表只有 Off 的原因）；pi-tui SettingsList 的 submenu `done(undefined)` 只关不改。
-- **pi-tui SettingsList 搜索只匹配 label**：`applyFilter` 用 fuzzyFilter 且只喂 `item.label`（description 不参与）——顶层分类的 label 必须自带可搜索关键词（所以分类 label 是双语「通用 General」），别指望 description 兜底。搜索框清空：C-u（deleteToLineStart）有效；Esc 在搜索态会直接关闭整个列表（onCancel），不会只清搜索框。
+- **pi-tui SettingsList 搜索只匹配 label**：`applyFilter` 用 fuzzyFilter 且只喂 `item.label`（description 不参与）——顶层分类的 label 必须自带可搜索关键词（所以分类 label 用英文「General」「Models」），别指望 description 兜底。搜索框清空：C-u（deleteToLineStart）有效；Esc 在搜索态会直接关闭整个列表（onCancel），不会只清搜索框。
+- **pi-tui `truncateToWidth` 语义与我们要的不同**：它是"先留省略号宽度"（'你好世界'@4 → '你…'，永远带省略号），我们要 content-first（放得下才加 '…'）——所以自写 `clipToWidth`（src/text.ts，基于 pi-tui visibleWidth + Intl.Segmenter 按 grapheme 截断，全角 2 列）。分类 label 英文化后中文搜索词不再命中（预期，英文关键词走 label）。
 
 ## 关键文件导航
 
@@ -89,11 +92,16 @@ src/
                     pickModel：两阶段——stage-1 选模型，暴露 efforts 再弹 stage-2
                     （先 show 新 overlay 再 hide 旧的，避免焦点闪跳；stage-2 Esc 整体取消；
                     resolveModelInfo 失败跳过 stage-2）
+  text.ts          宽度工具：clipToWidth（content-first 省略号、按 grapheme 截断）+ visibleWidth
+                    （re-export pi-tui，east-asian 全角=2 列）；**所有自研截断必须走它，
+                    禁止裸 String.length 截断**（11 处调用点：settings viewer、session panel、
+                    footer model 名、transcript preview、last-request 行、export fallback id 等）
   settings.ts       `/settings` 浏览器：ctx.settings.describe() 枚举 namespace → schemastery
                     schema rehydrate（dsh-client-schema-form）→ SettingsList 多级钻入；
                     分类层（level 0）：CATEGORY_MAP 静态映射（general/models/plugins/agent，
-                    对齐 web client 侧 settings.section slot）+ 双语 label（中文在前 + 空格 +
-                    英文，英文兼任搜索关键词）+ 未映射 ns 落「其他 Other」（空则隐藏）；
+                    对齐 web client 侧 settings.section slot）+ 纯英文 label（General/Models/
+                    Plugins/Agent settings/Other，label 兼任搜索关键词）+ 未映射 ns 落
+                    「Other」（空则隐藏）；
                     按节点类型分派：cycle 行（字面量 union）/ Input 行内编辑（secret 掩码、
                     空输入=保留）/ dict 加键 / ReadOnlyViewer（array/unknown）/ reset 确认；
                     写走 settings.mutate(ns, pathOps, revision) 串行链 + 失败回读服务真相；
@@ -117,6 +125,8 @@ test/settings.test.mjs 18 单测：formatValue/displayValue/unionLiterals、pars
                     defaultValueFor（dict 加键种子）、fieldDescription、categorizeNamespaces
                     （全量/未映射/空/顺序/去重/映射无重叠）、categoryDescription
                     （60 边界截断、空成员、去重）
+test/text.test.mjs     7 单测：clipToWidth（ASCII/全角中文/混合/surrogate emoji/边界
+                    省略号/超宽全丢）、visibleWidth re-export
 ```
 
 ## 关键 API / 模式笔记
@@ -187,7 +197,7 @@ ctx.root.fiber.dispose()                                // 树级退出（Ctrl+C
 cd ~/github/dsh-tui-pi
 pnpm check                                    # tsc --noEmit
 pnpm build                                    # emit lib/
-pnpm test                                     # 33 单测（theme 15 + settings 18，pretest 自动 build）
+pnpm test                                     # 40 单测（theme 15 + settings 18 + text 7，pretest 自动 build）
 pnpm pack                                     # → dsh-tui-pi-0.1.0.tgz
 npm pack | tail -1                            # tarball 路径
 

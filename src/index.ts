@@ -29,6 +29,7 @@ import {
 import { openSettingsBrowser } from './settings.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
 import { ansiFg, RESET, type ThemePreference } from './theme/index.ts'
+import { clipToWidth } from './text.ts'
 import { startTui, type TuiHandle } from './tui.ts'
 
 export const name = 'dsh-tui-pi'
@@ -281,7 +282,7 @@ export function apply(ctx: Context): void {
         await inspectPersistedSession(ctx, picked.id)
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
-        return { kind: 'error' as const, text: `Cannot resume ${String(picked.id).slice(0, 8)}: ${message}` }
+        return { kind: 'error' as const, text: `Cannot resume ${clipToWidth(String(picked.id), 8)}: ${message}` }
       }
 
       let resumed: Awaited<ReturnType<DshSessionBridge['resume']>>
@@ -307,7 +308,7 @@ export function apply(ctx: Context): void {
       ui.requestRender()
       return {
         kind: 'success' as const,
-        text: `Resumed ${String(picked.id).slice(0, 8)} · ${session.events.length} events.`,
+        text: `Resumed ${clipToWidth(String(picked.id), 8)} · ${session.events.length} events.`,
       }
     }
     commands.registerLocal('resume', resumeHandler)
@@ -331,7 +332,7 @@ export function apply(ctx: Context): void {
       input: { hint: '[path]' },
       handler: async invocation => {
         const events = invocation.agent.session.events
-        const fallback = join(homedir(), 'Downloads', `dsh-session-${String(invocation.agent.session.id).slice(0, 8)}.jsonl`)
+        const fallback = join(homedir(), 'Downloads', `dsh-session-${clipToWidth(String(invocation.agent.session.id), 8)}.jsonl`)
         const target = invocation.rawInput.trim() === '' ? fallback : resolve(invocation.rawInput.trim())
         await mkdir(dirname(target), { recursive: true })
         await writeFile(target, events.map(event => JSON.stringify(event)).join('\n') + '\n')

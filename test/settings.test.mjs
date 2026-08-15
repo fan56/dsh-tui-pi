@@ -128,25 +128,25 @@ const KNOWN_NS = [
 
 test('categorizeNamespaces places the full known set with no other', () => {
   assert.deepEqual(categorizeNamespaces(KNOWN_NS), [
-    { id: 'general', label: '通用 General', namespaces: ['permission', 'dsh-tui'] },
-    { id: 'models', label: '模型 Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
-    { id: 'plugins', label: '插件 Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
-    { id: 'agent', label: 'Agent 设置 Agent Presets', namespaces: ['agent-presets'] },
+    { id: 'general', label: 'General', namespaces: ['permission', 'dsh-tui'] },
+    { id: 'models', label: 'Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
+    { id: 'plugins', label: 'Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
+    { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
   ])
 })
 
 test('categorizeNamespaces buckets unknown namespaces into trailing other', () => {
   assert.deepEqual(categorizeNamespaces(['dsh-tui', 'future-thing', 'shell', 'llm-deepseek']), [
-    { id: 'general', label: '通用 General', namespaces: ['dsh-tui'] },
-    { id: 'models', label: '模型 Models', namespaces: ['llm-deepseek'] },
-    { id: 'plugins', label: '插件 Plugins', namespaces: ['shell'] },
-    { id: 'other', label: '其他 Other', namespaces: ['future-thing'] },
+    { id: 'general', label: 'General', namespaces: ['dsh-tui'] },
+    { id: 'models', label: 'Models', namespaces: ['llm-deepseek'] },
+    { id: 'plugins', label: 'Plugins', namespaces: ['shell'] },
+    { id: 'other', label: 'Other', namespaces: ['future-thing'] },
   ])
 })
 
 test('categorizeNamespaces returns only other for an all-unknown input', () => {
   assert.deepEqual(categorizeNamespaces(['future-thing']), [
-    { id: 'other', label: '其他 Other', namespaces: ['future-thing'] },
+    { id: 'other', label: 'Other', namespaces: ['future-thing'] },
   ])
 })
 
@@ -164,12 +164,12 @@ test('categorizeNamespaces orders categories general, models, plugins, agent, ot
 
 test('categorizeNamespaces dedupes duplicate input namespaces', () => {
   assert.deepEqual(categorizeNamespaces(['shell', 'shell', 'llm-deepseek', 'llm-deepseek']), [
-    { id: 'models', label: '模型 Models', namespaces: ['llm-deepseek'] },
-    { id: 'plugins', label: '插件 Plugins', namespaces: ['shell'] },
+    { id: 'models', label: 'Models', namespaces: ['llm-deepseek'] },
+    { id: 'plugins', label: 'Plugins', namespaces: ['shell'] },
   ])
   // A duplicated unknown namespace shows up once in other, too.
   assert.deepEqual(categorizeNamespaces(['future-thing', 'future-thing']), [
-    { id: 'other', label: '其他 Other', namespaces: ['future-thing'] },
+    { id: 'other', label: 'Other', namespaces: ['future-thing'] },
   ])
 })
 
@@ -181,15 +181,17 @@ test('CATEGORY_MAP namespaces are unique across categories', () => {
   assert.equal(resolved.size, all.length)
 })
 
-test('categoryDescription caps at max, truncating with an ellipsis', () => {
+test('categoryDescription caps at max columns (width-aware clip)', () => {
   const sixty = 'x'.repeat(60)
   assert.equal(categoryDescription([sixty]), sixty)
-  assert.equal(categoryDescription(['x'.repeat(61)]), 'x'.repeat(59) + '…')
+  // Over the cap the clip keeps maxWidth columns of content; the ellipsis
+  // appears only when the kept prefix leaves a column free.
+  assert.equal(categoryDescription(['x'.repeat(61)]), 'x'.repeat(60))
   assert.equal(categoryDescription([sixty]).length, 60)
   assert.equal(categoryDescription(['x'.repeat(61)]).length, 60)
   // Custom max follows the same boundary.
   assert.equal(categoryDescription(['abc'], 3), 'abc')
-  assert.equal(categoryDescription(['abcd'], 3), 'ab…')
+  assert.equal(categoryDescription(['abcd'], 3), 'abc')
 })
 
 test('categoryDescription joins empty or duplicated members', () => {

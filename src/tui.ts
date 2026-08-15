@@ -29,6 +29,7 @@ import {
 } from '@earendil-works/pi-tui'
 import { CwdBorderEditor } from './editor.ts'
 import { ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
+import { clipToWidth } from './text.ts'
 
 export interface StartTuiOptions {
   /** Submit handler for the editor. Defaults to a local echo (smoke-test mode). */
@@ -130,7 +131,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
           lastRequestText = undefined
         }
       } else {
-        const display = text.length > 200 ? text.slice(0, 200) + '…' : text
+        const display = clipToWidth(text, 200)
         if (lastRequestText === undefined) {
           lastRequestText = new Text('', 1, 0)
           lastRequest.addChild(lastRequestText)
