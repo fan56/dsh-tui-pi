@@ -25,6 +25,7 @@ import {
   Text,
   TuiAltScreen,
   VStack,
+  type AutocompleteProvider,
   type TUI,
 } from '@earendil-works/pi-tui'
 import { CwdBorderEditor } from './editor.ts'
@@ -55,8 +56,24 @@ export interface TuiHandle {
   readonly footer: Container
   /** Request a re-render. */
   requestRender(): void
-  /** Active theme bundle. */
+  /**
+   * Active theme bundle — swaps live under `applyTheme`; every read goes
+   * through the getter, so post-switch code always sees the new theme.
+   */
   readonly theme: TuiTheme
+  /**
+   * Hot-swap the theme bundle: repaints the editor border, the last-request
+   * line and (when empty) the placeholder, and updates every subsequent
+   * `theme` read. Transcript repainting is the TranscriptRenderer's job
+   * (`setTheme`), owned by the caller; call it before `applyTheme` so the
+   * one throttled render frame paints everything at once. No-op when the
+   * bundle is unchanged (themes are module singletons).
+   */
+  applyTheme(theme: TuiTheme): void
+  /** Autocomplete provider for the editor; re-applied across editor rebuilds. */
+  setEditorAutocompleteProvider(provider: AutocompleteProvider): void
+  /** Live git-branch source for the editor; re-applied across editor rebuilds. */
+  setEditorBranchProvider(provider: () => string | undefined): void
   /** Show/hide the "last request" widget below the editor. */
   setLastRequest(text: string | undefined): void
 }
@@ -64,7 +81,9 @@ export interface TuiHandle {
 export function startTui(options: StartTuiOptions = {}): TuiHandle {
   const terminal = new ProcessTerminal()
   const tui = new TuiAltScreen(terminal, true)
-  const theme = resolveTheme(process.env, options.themePreference ?? 'auto')
+  // Mutable theme ref: `applyTheme` swaps it and every later read (handle
+  // getter, baked closures below) observes the new bundle on the next call.
+  let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
 
   // ------------------------------------------------------------- component tree --
   const transcript = new Container()
@@ -75,12 +94,19 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   })
 
   const status = new Container()
-  const editor = new CwdBorderEditor(tui, theme.editor, process.cwd(), {
-    infoColor: text => ansiFg(theme.palette.fgMuted) + text + RESET,
+  // The editor is rebuilt under `applyTheme` (its border/info colors are
+  // baked at construction), so it must be a mutable binding and the dock
+  // must be rebuilt in place below.
+  let editor = new CwdBorderEditor(tui, themeRef.editor, process.cwd(), {
+    infoColor: text => ansiFg(themeRef.palette.fgMuted) + text + RESET,
   })
+  // External wiring that must survive editor rebuilds.
+  let autocompleteProvider: AutocompleteProvider | undefined
+  let branchProvider: (() => string | undefined) | undefined
   const lastRequest = new Container()
   const footer = new Container()
   let lastRequestText: Text | undefined
+  let lastRequestDisplay: string | undefined
 
   const dock = new VStack([
     { component: status, shrink: 1, minSize: 0 },
@@ -95,7 +121,9 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   ])
 
   // -------------------------------------------------------------- placeholder UI --
-  transcript.addChild(new Text(ansiFg(theme.palette.fgDefault) + 'dsh-tui-pi — pi-style TUI for DeepSeek Harness' + RESET, 1, 0))
+  const PLACEHOLDER = 'dsh-tui-pi — pi-style TUI for DeepSeek Harness'
+  const placeholder = new Text(ansiFg(themeRef.palette.fgDefault) + PLACEHOLDER + RESET, 1, 0)
+  transcript.addChild(placeholder)
   transcript.addChild(new Spacer(1))
 
   editor.onSubmit = (text: string) => {
@@ -105,9 +133,37 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       return
     }
     // Smoke-test fallback: local echo only.
-    transcript.addChild(new Text(theme.chat.userMessageText('▎' + text), 1, 0))
+    transcript.addChild(new Text(themeRef.chat.userMessageText('▎' + text), 1, 0))
     transcript.addChild(new Spacer(1))
     tui.requestRender()
+  }
+
+  /**
+   * Swap the editor for a fresh instance carrying the new theme's baked
+   * colors, preserving the input buffer, submit handler and provider wiring.
+   * Focus moves to the replacement only when the editor was the focus
+   * target: with an overlay open (e.g. the settings browser), the overlay
+   * keeps focus and its own close path re-focuses the (new) editor.
+   * VStack has no insert-at, so the dock is re-assembled in order with the
+   * same sizing options as the initial tree.
+   */
+  function rebuildEditor(): void {
+    const text = editor.getText()
+    const hadFocus = editor.focused
+    const next = new CwdBorderEditor(tui, themeRef.editor, process.cwd(), {
+      infoColor: text => ansiFg(themeRef.palette.fgMuted) + text + RESET,
+    })
+    next.setText(text)
+    next.onSubmit = editor.onSubmit
+    if (autocompleteProvider !== undefined) next.setAutocompleteProvider(autocompleteProvider)
+    if (branchProvider !== undefined) next.setBranchProvider(branchProvider)
+    dock.clear()
+    dock.addChild(status, { shrink: 1, minSize: 0 })
+    dock.addChild(next, { shrink: 1, minSize: 3 })
+    dock.addChild(lastRequest, { shrink: 1, minSize: 0 })
+    dock.addChild(footer, { shrink: 1, minSize: 1 })
+    editor = next
+    if (hadFocus) tui.setFocus(editor)
   }
 
   // ---------------------------------------------------------- lifecycle handle --
@@ -118,17 +174,45 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     tui,
     transcript,
     status,
-    editor,
+    get editor() {
+      return editor
+    },
     footer,
     requestRender() {
       tui.requestRender()
     },
-    theme,
+    get theme() {
+      return themeRef
+    },
+    applyTheme(theme: TuiTheme): void {
+      if (theme === themeRef) return
+      themeRef = theme
+      rebuildEditor()
+      if (lastRequestDisplay !== undefined && lastRequestText !== undefined) {
+        lastRequestText.setText(ansiFg(themeRef.palette.fgMuted) + ` ↳ ${lastRequestDisplay}` + RESET)
+      }
+      // The renderer's setTheme wipes the doc (including the placeholder);
+      // restore the startup line when nothing was replayed into it.
+      if (transcript.children.length === 0) {
+        transcript.addChild(new Text(ansiFg(themeRef.palette.fgDefault) + PLACEHOLDER + RESET, 1, 0))
+        transcript.addChild(new Spacer(1))
+      }
+      tui.requestRender()
+    },
+    setEditorAutocompleteProvider(provider: AutocompleteProvider) {
+      autocompleteProvider = provider
+      editor.setAutocompleteProvider(provider)
+    },
+    setEditorBranchProvider(provider: () => string | undefined) {
+      branchProvider = provider
+      editor.setBranchProvider(provider)
+    },
     setLastRequest(text: string | undefined) {
       if (text === undefined || text.trim() === '') {
         if (lastRequestText !== undefined) {
           lastRequest.removeChild(lastRequestText)
           lastRequestText = undefined
+          lastRequestDisplay = undefined
         }
       } else {
         const display = clipToWidth(text, 200)
@@ -136,7 +220,8 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
           lastRequestText = new Text('', 1, 0)
           lastRequest.addChild(lastRequestText)
         }
-        lastRequestText.setText(ansiFg(theme.palette.fgMuted) + ` ↳ ${display}` + RESET)
+        lastRequestDisplay = display
+        lastRequestText.setText(ansiFg(themeRef.palette.fgMuted) + ` ↳ ${display}` + RESET)
       }
       tui.requestRender()
     },

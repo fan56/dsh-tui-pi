@@ -18,6 +18,13 @@
  * never obtain a viewport. The body is therefore a padded tail of the last
  * PANEL_BODY_LINES rows rather than an internal scroll; every row carries
  * the panel background.
+ *
+ * Theme hot-switch: every applied operation is appended to `replay` (O(1)
+ * per event — never a render-path scan). `setTheme` is an explicit user
+ * action, so it may do a one-off full rebuild: clear the doc and re-apply
+ * the buffered operations against the new theme. Streaming, tool cards and
+ * todos rebuild exactly as they were applied, so an in-flight stream simply
+ * continues `setText` on its rebuilt component.
  */
 
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
@@ -73,6 +80,18 @@ interface ToolCard {
   /** Styled detail lines captured at creation, rebuilt into the body on settle. */
   detailLines: string[]
 }
+
+/**
+ * One applied transcript operation, buffered for the theme-switch rebuild.
+ * Events cover the session flow; prompt/command echoes and notices are direct
+ * renders (no matching session event) and are buffered alongside so a rebuild
+ * reproduces the transcript exactly as it stood.
+ */
+type ReplayOp =
+  | { kind: 'event'; event: SessionEvent }
+  | { kind: 'promptEcho'; text: string }
+  | { kind: 'commandEcho'; line: string; error?: string; text?: string }
+  | { kind: 'notice'; text: string; level: 'error' | 'info' }
 
 /** A fixed PANEL_HEIGHT-row panel: header Text + body Text stacked in a Container. */
 interface ThinkingPanel {
@@ -132,13 +151,19 @@ function callDetail(rawArguments: string, limit = 120): string {
 
 export class TranscriptRenderer {
   private readonly doc: Container
-  private readonly theme: TuiTheme
+  private theme: TuiTheme
   private readonly requestRender: () => void
   private streaming: StreamingState | undefined
   private readonly toolCards = new Map<string, ToolCard>()
   private todoContainer: Container | undefined
   /** Text of the prompt echoed locally on submit; the matching session event is deduped. */
   private lastEcho: string | undefined
+  /**
+   * Append-only buffer of every applied operation (O(1) per event). The
+   * render path never scans it; `setTheme` — an explicit user action — is
+   * the only reader, replaying it once against the new theme.
+   */
+  private readonly replay: ReplayOp[] = []
 
   constructor(
     doc: Container,
@@ -151,6 +176,7 @@ export class TranscriptRenderer {
   }
 
   applyEvent(event: SessionEvent): void {
+    this.replay.push({ kind: 'event', event })
     switch (event.type) {
       case 'user/message':
         this.dropStreaming()
@@ -186,12 +212,16 @@ export class TranscriptRenderer {
 
   /** Render a submitted prompt immediately, before the session echoes it back. */
   renderPromptEcho(text: string): void {
+    // Buffer the raw text: the echo bubble renders it verbatim, while the
+    // session-echo dedup key is the trimmed form (lastEcho in renderUserText).
+    this.replay.push({ kind: 'promptEcho', text })
     this.lastEcho = text.trim()
     this.renderUserText(text)
   }
 
   /** Render one executed slash command line with its outcome. */
   renderCommandEcho(line: string, error?: string, text?: string): void {
+    this.replay.push({ kind: 'commandEcho', line, error, text })
     this.appendLine(ansiFg(this.theme.palette.accent) + `⌘ ${line}` + RESET)
     if (error !== undefined) {
       this.appendLine(ansiFg(this.theme.palette.danger) + `✘ ${error}` + RESET)
@@ -200,13 +230,67 @@ export class TranscriptRenderer {
     }
   }
 
+  /**
+   * Append a transcript line that has no matching session event (a
+   * transient status notice or the sole on-screen record of an error).
+   * Buffered as a replay op like echoes, so a theme-switch rebuild keeps it.
+   * `error` lines get the ✘ danger treatment; `info` lines the attention
+   * color (the Ctrl+C cancel hint) without a prefix.
+   */
+  renderNotice(text: string, level: 'error' | 'info' = 'error'): void {
+    this.replay.push({ kind: 'notice', text, level })
+    if (level === 'error') {
+      this.appendLine(ansiFg(this.theme.palette.danger) + `✘ ${text}` + RESET)
+    } else {
+      this.appendLine(ansiFg(this.theme.palette.attention) + text + RESET)
+    }
+  }
+
+  /**
+   * Repaint the whole transcript against a new theme: clear the doc and
+   * replay the buffered operations. Per-op requestRenders coalesce into a
+   * single pi-tui frame (requestRender is nextTick-throttled), so the switch
+   * repaints once, with no intermediate flicker. An in-flight stream keeps
+   * its accumulated text — the replay rebuilds its Text and later chunks
+   * continue setText on it. No-op when the theme bundle is unchanged
+   * (themes are module singletons; the settings watcher may echo our own
+   * write).
+   */
+  setTheme(theme: TuiTheme): void {
+    if (theme === this.theme) return
+    this.theme = theme
+    const ops = [...this.replay]
+    this.clear()
+    for (const op of ops) this.applyOp(op)
+    this.requestRender()
+  }
+
   /** Drop everything rendered so far (`/new`). The next prompt opens a fresh agent. */
   clear(): void {
     this.streaming = undefined
     this.toolCards.clear()
     this.todoContainer = undefined
     this.lastEcho = undefined
+    this.replay.length = 0
     this.doc.clear()
+  }
+
+  /** Re-apply one buffered operation against the current theme. */
+  private applyOp(op: ReplayOp): void {
+    switch (op.kind) {
+      case 'event':
+        this.applyEvent(op.event)
+        break
+      case 'promptEcho':
+        this.renderPromptEcho(op.text)
+        break
+      case 'commandEcho':
+        this.renderCommandEcho(op.line, op.error, op.text)
+        break
+      case 'notice':
+        this.renderNotice(op.text, op.level)
+        break
+    }
   }
 
   // ------------------------------------------------------------------ user --

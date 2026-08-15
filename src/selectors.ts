@@ -8,6 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SelectList, type SelectItem, type TUI } from '@earendil-works/pi-tui'
+import { wrapFramedOverlay } from './frame.ts'
 import type { ThemePreference, TuiTheme } from './theme/index.ts'
 
 interface ListedModel {
@@ -61,7 +62,10 @@ function openEffortPicker(
       if (index >= 0) list.setSelectedIndex(index)
     }
 
-    const overlay = tui.showOverlay(list, { width: '80%', maxHeight: '60%' })
+    // The framed overlay adds 4 rows (borders + spacers) on top of the list;
+    // the cap must leave them room or the bottom border is sliced off on
+    // small terminals (13 list rows + 4 frame rows = 17 ≤ 18 at 24 rows).
+    const overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
     afterShow?.()
 
     const finish = (effort: ReasoningEffortId | 'default' | undefined): void => {
@@ -129,7 +133,8 @@ export function pickTheme(
     const index = THEME_ITEMS.findIndex(item => item.value === current)
     if (index >= 0) list.setSelectedIndex(index)
 
-    const overlay = tui.showOverlay(list, { width: '80%', maxHeight: '60%' })
+    // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
+    const overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
 
     const finish = (picked: ThemePreference | undefined): void => {
       overlay.hide()
@@ -181,7 +186,8 @@ export async function pickModel(
     const currentIndex = items.findIndex(item => item.value === `${current?.provider}/${current?.model}`)
     if (currentIndex >= 0) list.setSelectedIndex(currentIndex)
 
-    const overlay = tui.showOverlay(list, { width: '80%', maxHeight: '60%' })
+    // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
+    const overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
 
     const finish = (picked: ListedModel | undefined): void => {
       // Detach the stage-1 input handlers on first settle: while the model

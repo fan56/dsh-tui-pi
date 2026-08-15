@@ -16,6 +16,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import { basename } from 'node:path'
+import { wrapFramedOverlay } from './frame.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 
@@ -105,14 +106,29 @@ class SessionInfoPanel implements Component {
   }
 }
 
-/** Open the `/session` info panel; resolves when the user closes it. */
-export async function showSessionInfo(tui: TUI, theme: TuiTheme, data: SessionPanelData): Promise<void> {
+/**
+ * Open the `/session` info panel; resolves when the user closes it. Focus
+ * returns to `restoreFocus` on close — it must re-focus the CURRENT editor
+ * instance, which may have been rebuilt under a theme hot-swap while the
+ * panel was open (pi-tui's hide would otherwise restore focus to the stale
+ * pre-overlay editor and swallow subsequent input).
+ */
+export async function showSessionInfo(
+  tui: TUI,
+  theme: TuiTheme,
+  data: SessionPanelData,
+  restoreFocus: () => void,
+): Promise<void> {
   await new Promise<void>(resolve => {
     const panel = new SessionInfoPanel(theme, data, () => {
       overlay.hide()
+      restoreFocus()
       resolve()
     })
-    const overlay = tui.showOverlay(panel, { width: '70%', maxHeight: '60%' })
+    // maxHeight only ever slices (never stretches), and the framed overlay
+    // needs 4 extra rows for its borders: cap high so the bottom border
+    // survives on small terminals (24 rows: 19 panel rows + 4 frame rows).
+    const overlay = tui.showOverlay(wrapFramedOverlay(theme, panel), { width: '70%', maxHeight: '100%' })
   })
 }
 
@@ -190,7 +206,8 @@ export async function pickPersistedSession(
     const list = new SelectList(items, 12, theme.selectList)
     list.setSelectedIndex(0)
 
-    const overlay = tui.showOverlay(list, { width: '80%', maxHeight: '60%' })
+    // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
+    const overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
 
     const finish = (picked: SessionHeader | undefined): void => {
       overlay.hide()

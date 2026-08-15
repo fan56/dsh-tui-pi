@@ -30,12 +30,12 @@ test('palette ids are stable', () => {
   assert.equal(githubDark.name, 'github-dark')
 })
 
-test('dark muted backgrounds are blended solids (20% tint over canvas)', () => {
-  // accentMuted = blend(#0d1117, #2f81f7, 0.2)
-  assert.equal(githubDark.accentMuted, '#142744')
-  assert.equal(githubDark.successMuted, '#173322')
-  assert.equal(githubDark.dangerMuted, '#3d2629')
-  assert.equal(githubDark.attentionMuted, '#342c19')
+test('dark muted backgrounds are blended solids (25% tint over canvas)', () => {
+  // accentMuted = blend(#0d1117, #58a6ff, 0.25)
+  assert.equal(githubDark.accentMuted, '#203651')
+  assert.equal(githubDark.successMuted, '#1a3b25')
+  assert.equal(githubDark.dangerMuted, '#4a2c2e')
+  assert.equal(githubDark.attentionMuted, '#3e331a')
 })
 
 test('resolveTheme respects explicit override', () => {

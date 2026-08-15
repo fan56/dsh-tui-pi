@@ -2,9 +2,10 @@
  * Theme settings: persists the user's theme preference under the `dsh-tui`
  * settings namespace, surfaced by the /settings browser and the /theme
  * command. The preference is read once at TUI startup
- * (`readThemePreference`); the namespace is marked `applies: 'restart'`
- * because every component holds the theme bundle built at startup, so a
- * change cannot take effect in a running session.
+ * (`readThemePreference`), and the namespace is marked `applies: 'live'`:
+ * a committed change (the /theme picker, the /settings browser, an external
+ * edit) is pushed through the watch hook, so the running TUI repaints
+ * without a restart.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -26,7 +27,7 @@ const THEME_SETTINGS_SCHEMA = z.object({
   theme: z
     .union(['auto', 'light', 'dark'])
     .default('auto')
-    .description('Terminal color scheme (applies after restart)'),
+    .description('Terminal color scheme (applies immediately)'),
 })
 
 /** Composition entry below the user layer: fall back to terminal detection. */
@@ -43,17 +44,25 @@ let registrationPromise: Promise<void> | undefined
 /**
  * Register the `dsh-tui` settings namespace with the settings provider.
  *
- * `installSettingsSection` cannot express the `applies: 'restart'` marker
- * (its hooks carry no options, and the registration's applies is fixed at
- * `register` time), so this registers directly through the provider,
- * mirroring that helper's wiring: the registration rides the scoped
- * injection fiber and disappears with the settings service. No source thunk
- * or change hook is needed — `readThemePreference` reads the resolved value
- * on demand at TUI startup.
+ * `installSettingsSection` cannot express the `applies` marker (its hooks
+ * carry no options, and the registration's applies is fixed at `register`
+ * time), so this registers directly through the provider, mirroring that
+ * helper's wiring: the registration rides the scoped injection fiber and
+ * disappears with the settings service. `onPreferenceChange`, when given,
+ * receives every committed theme change (including this TUI's own writes)
+ * through the scope's watch hook; callers guard re-applies by theme-bundle
+ * identity, so an echoed self-write is a no-op. No source thunk is needed —
+ * `readThemePreference` reads the resolved value on demand at TUI startup.
  *
  * @param ctx - plugin context; does nothing while no settings service is mounted.
+ * @param onPreferenceChange - hot-reload sink for committed `dsh-tui` theme
+ * changes; `undefined` when the namespace is already registered (a reloaded
+ * plugin instance, a second mount of this bundle) or registration fails.
  */
-export function registerThemeSettings(ctx: Context): void {
+export function registerThemeSettings(
+  ctx: Context,
+  onPreferenceChange?: (pref: ThemePreference) => void,
+): void {
   registrationPromise = new Promise<void>(resolve => {
     ctx.inject(['settings'], (sctx) => {
       try {
@@ -64,10 +73,21 @@ export function registerThemeSettings(ctx: Context): void {
           resolve()
           return
         }
-        sctx.settings.register(THEME_SETTINGS_NAMESPACE, THEME_SETTINGS_SCHEMA, {
+        const scope = sctx.settings.register(THEME_SETTINGS_NAMESPACE, THEME_SETTINGS_SCHEMA, {
           base: THEME_SETTINGS_ENTRY,
-          applies: 'restart',
+          // 'live': a committed theme change takes effect immediately — the
+          // TUI hot-swaps its bundle via the watch hook below. 'restart' was
+          // the old contract, when every component baked its theme at startup.
+          applies: 'live',
         })
+        if (onPreferenceChange !== undefined) {
+          scope.watch((next) => {
+            // The resolved section is `{ theme: 'auto'|'light'|'dark' }` —
+            // narrow the unknown to the field we observe.
+            const value = (next as { theme?: unknown }).theme
+            onPreferenceChange(value === 'light' || value === 'dark' ? value : 'auto')
+          })
+        }
       } catch (error) {
         // TUI startup awaits `registrationPromise` — it must settle no matter
         // what, so a failed registration degrades to 'auto' instead of
@@ -143,8 +163,9 @@ export function currentThemePreference(ctx: Context): ThemePreference {
 }
 
 /**
- * Persist the theme preference to the `dsh-tui` settings namespace (effective
- * after restart, matching the namespace's `applies: 'restart'` marker).
+ * Persist the theme preference to the `dsh-tui` settings namespace. The
+ * namespace is `applies: 'live'`, so the commit (observed through the
+ * registration's watch hook) hot-applies the change to the running TUI.
  * Best-effort: a deployment without a settings provider reports the failure;
  * a failed write returns its error message for the caller to surface. A
  * concurrent writer moving the namespace rejects with `SettingsConflictError`

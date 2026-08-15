@@ -60,6 +60,7 @@ import {
 } from '@earendil-works/pi-tui'
 import { ansiBg, ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
+import { wrapFramedOverlay } from './frame.ts'
 import {
   catalogEntry,
   deriveKeyRef,
@@ -781,7 +782,10 @@ class SettingsBrowser {
     if (this.categories().length === 0) return -1
     const list = this.categoryList()
     this.catList = list
-    this.overlay = this.tui.showOverlay(list, { width: '80%', maxHeight: '70%' })
+    // The framed overlay adds 4 rows (borders + spacers) on top of the list;
+    // the cap must leave them room or the bottom border is sliced off on
+    // small terminals (24 rows: ~15 list rows + 4 frame rows ≤ 19).
+    this.overlay = this.tui.showOverlay(wrapFramedOverlay(this.theme, list), { width: '80%', maxHeight: '80%' })
     await this.closed
     return this.changes.value
   }

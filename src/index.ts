@@ -29,7 +29,7 @@ import {
 import { openSettingsBrowser } from './settings.ts'
 import { reloadPlugin } from './reload.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
-import { ansiFg, RESET, type ThemePreference } from './theme/index.ts'
+import { ansiFg, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 import { startTui, type TuiHandle } from './tui.ts'
 
@@ -40,13 +40,23 @@ export const inject = ['agents', 'commands']
 
 export function apply(ctx: Context): void {
   let handle: TuiHandle | undefined
+  /**
+   * Live theme hot-reload sink, wired to the settings watch hook: a committed
+   * `dsh-tui` theme change (this TUI's /theme write included) is applied to
+   * the running TUI. Set inside runTui once the renderer exists; the first
+   * commit can only follow a user write, long after startup.
+   */
+  let applyThemeRef: ((pref: ThemePreference) => void) | undefined
 
   ctx.effect(async () => {
     // The theme bundle is built once at TUI startup and held by every
     // component, so the persisted preference must land before startTui — the
     // namespace registration rides the settings injection fiber and the read
     // awaits it (bounded, degrades to 'auto' without a settings service).
-    registerThemeSettings(ctx)
+    // The registration also watches the namespace: `applies: 'live'`, so
+    // later commits (the /theme picker, the /settings browser, an external
+    // edit) hot-apply through applyThemeRef.
+    registerThemeSettings(ctx, pref => applyThemeRef?.(pref))
     const themePreference = await readThemePreference(ctx)
     let disposer: (() => void) | undefined
     try {
@@ -87,8 +97,10 @@ export function apply(ctx: Context): void {
           // web client's stop button). The next press — of any kind — quits.
           cancelAttempted = true
           lastInterrupt = Date.now()
-          ui.transcript.addChild(new Text(ansiFg(ui.theme.palette.attention) + '⏹ canceling current turn…' + RESET, 1, 0))
-          ui.requestRender()
+          // Transient notice: a second press quits and disposes the whole
+          // TUI, so the line's replay entry only matters for theme-switch
+          // repaints — buffering it keeps that rebuild faithful.
+          renderer.renderNotice('⏹ canceling current turn…', 'info')
           void bridge.cancelActiveTurn().then(cancelled => {
             // Nothing was running (state raced idle): nothing to cancel — quit.
             if (!cancelled) void disposeAndExit(0)
@@ -100,6 +112,10 @@ export function apply(ctx: Context): void {
       themePreference,
     })
     handle = ui
+    // Arm the settings watch sink now that the renderer exists (see apply()).
+    applyThemeRef = (pref: ThemePreference): void => {
+      applyTheme(resolveTheme(process.env, pref))
+    }
 
     const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender())
 
@@ -133,7 +149,9 @@ export function apply(ctx: Context): void {
     })
 
     const commands = new CommandService(ctx, bridge)
-    ui.editor.setAutocompleteProvider(commands.autocompleteProvider())
+    // Wiring through the handle: the editor is rebuilt on theme hot-swap, and
+    // these providers are re-applied to the replacement instance.
+    ui.setEditorAutocompleteProvider(commands.autocompleteProvider())
 
     // ------------------------------------------- TUI-owned slash commands --
     // Web-surface parity: `model` is a browser client contribution there and
@@ -241,7 +259,7 @@ export function apply(ctx: Context): void {
         status: agent === undefined ? 'none' : agentStatus,
         eventCount: agent === undefined ? undefined : agent.session.events.length,
         parentSession: header?.parentSession === undefined ? undefined : String(header.parentSession),
-      })
+      }, () => ui.tui.setFocus(ui.editor))
       return { kind: 'success' as const, text: agent === undefined ? 'No active session.' : 'Session info shown.' }
     }
     commands.registerLocal('session', sessionHandler)
@@ -367,8 +385,9 @@ export function apply(ctx: Context): void {
         theme: ui.theme,
         restoreFocus: () => ui.tui.setFocus(ui.editor),
         onError: message => {
-          ui.transcript.addChild(new Text(ansiFg(ui.theme.palette.danger) + `✘ ${message}` + RESET, 1, 0))
-          ui.requestRender()
+          // Buffered notice: the settings browser outlives the write, so the
+          // line must survive a theme hot-swap (the doc.clear() rebuild).
+          renderer.renderNotice(message, 'error')
         },
       })
       if (changes < 0) return { kind: 'error' as const, text: 'No settings namespaces are registered.' }
@@ -386,10 +405,12 @@ export function apply(ctx: Context): void {
       handler: invocation => settingsHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /settings')
 
-    // /theme: pick a color scheme. The choice is persisted to the dsh-tui
-    // settings namespace and applies after restart — the theme bundle is
-    // built once at startup, so a live switch is impossible. The settings
-    // guard mirrors /settings: without the service there is nowhere to write.
+    // /theme: pick a color scheme and apply it immediately — the choice is
+    // persisted to the dsh-tui settings namespace (`applies: 'live'`, so the
+    // watch hook would re-apply the same change anyway) and hot-swapped into
+    // the running TUI: footer hint, editor border and the whole transcript
+    // repaint on the next frame, no restart needed. The settings guard
+    // mirrors /settings: without the service there is nowhere to write.
     const themeHandler: LocalCommandHandler = async () => {
       if (ctx.get('settings') === undefined) {
         return { kind: 'error' as const, text: 'Settings service is not available.' }
@@ -400,12 +421,25 @@ export function apply(ctx: Context): void {
       if (picked === undefined) return { kind: 'success' as const, text: 'Theme unchanged.' }
       const writeError = await writeThemePreference(ctx, picked)
       if (writeError !== undefined) return { kind: 'error' as const, text: writeError }
-      return { kind: 'success' as const, text: `Theme: ${picked} — applies after restart.` }
+      // DSH_TUI_THEME pins the display regardless of the preference — don't
+      // claim the pick was applied when it wasn't. The preference is still
+      // persisted (and shown once the env override is dropped); the notice
+      // goes through the buffered command echo, so no replay issue.
+      const applied = resolveTheme(process.env, picked)
+      applyTheme(applied)
+      const expected = picked === 'light' ? lightTheme : picked === 'dark' ? darkTheme : undefined
+      if (expected !== undefined && applied !== expected) {
+        return {
+          kind: 'success' as const,
+          text: `Theme preference saved — display is pinned by DSH_TUI_THEME=${process.env.DSH_TUI_THEME}`,
+        }
+      }
+      return { kind: 'success' as const, text: `Theme: ${picked} — applied.` }
     }
     commands.registerLocal('theme', themeHandler)
     ctx.effect(() => ctx.commands.register({
       name: 'theme',
-      description: 'Set the terminal color scheme (applies after restart)',
+      description: 'Set the terminal color scheme (applies immediately)',
       handler: invocation => themeHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /theme')
 
@@ -428,7 +462,7 @@ export function apply(ctx: Context): void {
     // ------------------------------------------------- powerline footer + git --
     const git = new GitBranchWatcher(process.cwd())
     git.onChange = () => ui.requestRender()
-    ui.editor.setBranchProvider(() => git.getBranch())
+    ui.setEditorBranchProvider(() => git.getBranch())
 
     let contextWindow: number | undefined
     let contextWindowKey = ''
@@ -462,7 +496,37 @@ export function apply(ctx: Context): void {
     // Keybinding hint, added *after* the clear above: the placeholder line in
     // tui.ts used to be wiped before first render. paddingX 1 aligns the text
     // with the powerline segment labels (each starts with a leading space).
-    ui.footer.addChild(new Text(ansiFg(ui.theme.palette.fgSubtle) + '⌨ Enter: send · Ctrl+C: cancel / double: quit' + RESET, 1, 0))
+    // The hint is the footer stack's only theme-dependent piece (the powerline
+    // segments carry fixed theme-agnostic colors) — `paintFooterHint` re-colors
+    // it under a theme hot-swap; the PowerlineFooter itself needs no rebuild.
+    const footerHint = new Text('', 1, 0)
+    const paintFooterHint = (): void => {
+      footerHint.setText(ansiFg(ui.theme.palette.fgSubtle) + '⌨ Enter: send · Ctrl+C: cancel / double: quit' + RESET)
+    }
+    paintFooterHint()
+    ui.footer.addChild(footerHint)
+
+    /**
+     * Hot-apply a theme bundle to the running TUI: the transcript rebuilds
+     * from its replay buffer, the dock/editor swap to the new bundle, and the
+     * spinner (when mid-turn) is recreated with the new accent. Per-piece
+     * requestRenders coalesce into the single next-throttled frame, so the
+     * switch repaints once. No-op on the unchanged bundle — the settings
+     * watch echoes this TUI's own /theme write, and the theme modules are
+     * singletons.
+     */
+    const applyTheme = (theme: TuiTheme): void => {
+      if (theme === ui.theme) return
+      renderer.setTheme(theme)
+      ui.applyTheme(theme)
+      paintFooterHint()
+      if (loader !== undefined) {
+        loader.stop()
+        ui.status.removeChild(loader)
+        loader = undefined
+        setStatus(agentStatus)
+      }
+    }
 
     // Live clock: the footer is the only thing that changes each second.
     const clockTimer = setInterval(() => ui.requestRender(), 1000)
@@ -492,9 +556,10 @@ export function apply(ctx: Context): void {
       } catch (error: unknown) {
         // Dispatch itself failed (outside every contained path) — surface in
         // the transcript instead of an unhandled rejection killing the TUI.
+        // Buffered notice: this line is the only record of the failure and
+        // must survive a theme-switch rebuild (doc.clear()).
         const message = error instanceof Error ? error.message : String(error)
-        ui.transcript.addChild(new Text(ansiFg(ui.theme.palette.danger) + `✘ ${message}` + RESET, 1, 0))
-        ui.requestRender()
+        renderer.renderNotice(message, 'error')
         return
       }
       if (command.handled) {
@@ -505,9 +570,10 @@ export function apply(ctx: Context): void {
       try {
         await bridge.prompt(line)
       } catch (error: unknown) {
+        // Buffered notice: the failure line is the only on-screen record and
+        // must survive a theme-switch rebuild (doc.clear()).
         const message = error instanceof Error ? error.message : String(error)
-        ui.transcript.addChild(new Text(ansiFg(ui.theme.palette.danger) + `✘ ${message}` + RESET, 1, 0))
-        ui.requestRender()
+        renderer.renderNotice(message, 'error')
       }
     }
 
@@ -532,6 +598,7 @@ export function apply(ctx: Context): void {
     return async () => {
       clearInterval(clockTimer)
       git.dispose()
+      applyThemeRef = undefined
       // Stop the TUI FIRST, before the (possibly slow) agent teardown: the
       // terminal must be released while the fiber is still alone with it.
       // Deferring tui.stop() until after `await bridge.dispose()` lets any
