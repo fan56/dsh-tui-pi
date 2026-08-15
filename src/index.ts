@@ -17,12 +17,13 @@ import { Loader, Text } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { PowerlineFooter, type FooterDataSource } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
-import { TranscriptRenderer } from './messages.ts'
+import { TranscriptRenderer, type PanelHeight } from './messages.ts'
 import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts'
 import { DshSessionBridge, persistDefaultModel } from './session.ts'
 import {
   currentThemePreference,
+  readPanelHeightPreference,
   readThemePreference,
   registerThemeSettings,
   writeThemePreference,
@@ -48,20 +49,37 @@ export function apply(ctx: Context): void {
    * commit can only follow a user write, long after startup.
    */
   let applyThemeRef: ((pref: ThemePreference) => void) | undefined
+  /**
+   * Live panel-height hot-reload sink, wired to the same watch hook: a
+   * committed `dsh-tui` panelHeight change rebuilds the transcript panels at
+   * the new row budget. Armed inside runTui once the renderer exists.
+   */
+  let applyPanelHeightRef: ((height: PanelHeight) => void) | undefined
 
   ctx.effect(async () => {
     // The theme bundle is built once at TUI startup and held by every
     // component, so the persisted preference must land before startTui — the
     // namespace registration rides the settings injection fiber and the read
-    // awaits it (bounded, degrades to 'auto' without a settings service).
-    // The registration also watches the namespace: `applies: 'live'`, so
-    // later commits (the /theme picker, the /settings browser, an external
-    // edit) hot-apply through applyThemeRef.
-    registerThemeSettings(ctx, pref => applyThemeRef?.(pref))
+    // awaits it (bounded, degrades to the defaults without a settings
+    // service). The registration also watches the namespace: `applies:
+    // 'live'`, so later commits (the /theme picker, the /settings browser, an
+    // external edit) hot-apply through applyThemeRef / applyPanelHeightRef.
+    // Panel height FIRST, theme second: a single commit of both fields (a
+    // namespace-level reset, an external edit) must not replay twice at the
+    // wrong height. setPanelHeight + relayout repaint the transcript at the
+    // new row budget; the setTheme replay that follows already renders at
+    // that new height, so the theme rebuild is the one complete rebuild.
+    // applyTheme carries the theme-bundle identity guard, so a height-only
+    // commit never triggers a second rebuild.
+    registerThemeSettings(ctx, (pref, height) => {
+      applyPanelHeightRef?.(height)
+      applyThemeRef?.(pref)
+    })
     const themePreference = await readThemePreference(ctx)
+    const panelHeight = await readPanelHeightPreference(ctx)
     let disposer: (() => void) | undefined
     try {
-      disposer = runTui(themePreference)
+      disposer = runTui(themePreference, panelHeight)
     } catch (error) {
       // An async-effect failure after startTui would otherwise orphan the
       // terminal in raw mode — the disposer never registers, so nothing ever
@@ -75,13 +93,13 @@ export function apply(ctx: Context): void {
   }, 'dsh-tui-pi.render')
 
   /**
-   * Build the TUI and its slash commands for the resolved theme preference.
-   * Declared as a hoisted function so the effect body stays a thin wrapper:
-   * the whole build runs inside the try/catch above, so any failure disposes
-   * the TUI handle before the error reaches cordis. Returns the effect
-   * disposer handed back to cordis on teardown.
+   * Build the TUI and its slash commands for the resolved theme preference
+   * and panel height. Declared as a hoisted function so the effect body stays
+   * a thin wrapper: the whole build runs inside the try/catch above, so any
+   * failure disposes the TUI handle before the error reaches cordis. Returns
+   * the effect disposer handed back to cordis on teardown.
    */
-  function runTui(themePreference: ThemePreference): () => void {
+  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight): () => void {
     // Graded Ctrl+C: while the agent is mid-turn the first press cancels the
     // active turn (keepInbox preserves the queue) with on-screen feedback;
     // any further press — or any press while idle — quits the TUI.
@@ -118,11 +136,19 @@ export function apply(ctx: Context): void {
       applyTheme(resolveTheme(process.env, pref))
     }
 
-    const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender())
+    const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender(), panelHeight)
+    // Arm the panel-height watch sink now that the renderer exists: a
+    // committed panelHeight change sets the new height and relayouts the
+    // transcript (the replay rebuild), repainting every panel at the new row
+    // budget. setPanelHeight reports whether the height actually changed, so
+    // an echoed self-write is a no-op.
+    applyPanelHeightRef = (height: PanelHeight): void => {
+      if (renderer.setPanelHeight(height)) renderer.relayout()
+    }
 
     // Terminal resize: pi-tui re-renders every component at the new columns,
     // but bordered panel rows were padded to the OLD box width — a narrowing
-    // terminal wraps every row and shatters the fixed 6-row panels. Relayout
+    // terminal wraps every row and shatters the fixed-height panels. Relayout
     // the transcript (replay-buffer rebuild) on the next frame: pi-tui's own
     // resize render is nextTick + 16ms throttled, so the rebuilt panels win
     // the race and the first new-width frame is already intact. The trailing
@@ -714,6 +740,7 @@ export function apply(ctx: Context): void {
       clearInterval(clockTimer)
       git.dispose()
       applyThemeRef = undefined
+      applyPanelHeightRef = undefined
       // Stop the TUI FIRST, before the (possibly slow) agent teardown: the
       // terminal must be released while the fiber is still alone with it.
       // Deferring tui.stop() until after `await bridge.dispose()` lets any

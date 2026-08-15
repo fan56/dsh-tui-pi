@@ -1,10 +1,11 @@
 /**
  * Theme-settings chain tests: the settings-namespace registration forwards
- * every committed `dsh-tui` theme change through the watch hook — the sink
- * that hot-applies to the running TUI (applyThemeRef in src/index.ts). The
- * settings service is faked with a real cordis Context (stub style, cf.
- * reload.test.mjs); the provider surface used by theme-settings.ts is
- * describe/register/mutate + the registered scope's watch.
+ * every committed `dsh-tui` change (theme and panel height) through the watch
+ * hook — the sinks that hot-apply to the running TUI (applyThemeRef /
+ * applyPanelHeightRef in src/index.ts). The settings service is faked with a
+ * real cordis Context (stub style, cf. reload.test.mjs); the provider surface
+ * used by theme-settings.ts is describe/register/mutate + the registered
+ * scope's watch.
  * Runs against the built lib/ (pnpm build && pnpm test).
  */
 
@@ -13,8 +14,9 @@ import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import {
   THEME_SETTINGS_NAMESPACE,
-  registerThemeSettings,
+  readPanelHeightPreference,
   readThemePreference,
+  registerThemeSettings,
   writeThemePreference,
 } from '../lib/theme-settings.js'
 
@@ -117,4 +119,78 @@ test('watch narrows unknown or missing theme values to auto', async () => {
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['theme'] }])
   await settle()
   assert.deepEqual(sink, ['auto', 'dark', 'auto'], 'missing theme key narrows to auto')
+})
+
+test('committed panelHeight changes flow register → watch → sink with narrowing', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  const sink = []
+  registerThemeSettings(ctx, (pref, height) => { sink.push({ pref, height }) })
+  await settle()
+
+  // Startup read: the base entry resolves to the default height.
+  assert.equal(await readPanelHeightPreference(ctx), '5')
+
+  // A committed height change (a settings write → mutate → watch) must reach
+  // the sink alongside the (unchanged, narrowed) theme value — the
+  // applyPanelHeightRef chain. There is no dedicated height writer anymore:
+  // the /settings browser and external edits mutate the path directly.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['panelHeight'], value: '10' }])
+  await settle()
+  assert.deepEqual(sink, [{ pref: 'auto', height: '10' }], 'watch forwarded the committed height')
+
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['panelHeight'], value: 'all' }])
+  await settle()
+  assert.deepEqual(sink, [{ pref: 'auto', height: '10' }, { pref: 'auto', height: 'all' }],
+    'second commit forwarded too')
+
+  // The live value is readable back from the settings service.
+  assert.equal(await readPanelHeightPreference(ctx), 'all', 'live value read back')
+})
+
+test('a single commit of both fields forwards both narrowed values in one callback', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  const sink = []
+  registerThemeSettings(ctx, (pref, height) => { sink.push({ pref, height }) })
+  await settle()
+
+  // A namespace-level reset / external edit commits BOTH fields in one
+  // mutate: the watch must fire exactly once with both narrowed values —
+  // the index.ts sink then applies the height first and the theme second
+  // (one replay rebuild at the new height), never a double replay.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [
+    { op: 'set', path: ['theme'], value: 'dark' },
+    { op: 'set', path: ['panelHeight'], value: '10' },
+  ])
+  await settle()
+  assert.deepEqual(sink, [{ pref: 'dark', height: '10' }], 'one callback carries both fields')
+
+  // The resolved section carries both values for the startup readers.
+  assert.equal(await readThemePreference(ctx), 'dark', 'theme read back')
+  assert.equal(await readPanelHeightPreference(ctx), '10', 'height read back')
+})
+
+test('watch narrows unknown or missing panelHeight values to 5', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  const heights = []
+  registerThemeSettings(ctx, (pref, height) => { heights.push(height) })
+  await settle()
+
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['panelHeight'], value: '12' }])
+  await settle()
+  assert.deepEqual(heights, ['5'], 'unknown height narrows to 5')
+
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['panelHeight'], value: '7' }])
+  await settle()
+  assert.deepEqual(heights, ['5', '7'], 'valid height passes through')
+
+  // Unsetting the key removes it from the section: narrows back to 5.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['panelHeight'] }])
+  await settle()
+  assert.deepEqual(heights, ['5', '7', '5'], 'missing panelHeight key narrows to 5')
 })

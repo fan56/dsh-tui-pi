@@ -10,15 +10,21 @@
  * is replaced by proper Markdown rendering. This keeps per-token cost at
  * O(accumulated text) instead of re-parsing markdown on every delta.
  *
- * Panels: think blocks and tool cards render as fixed PANEL_HEIGHT rows — a
- * full box border (top border + header row + PANEL_BODY_LINES body rows +
- * bottom border). The transcript doc is a plain Container inside the outer
- * ScrollView, so pi-tui 0.84.2 never lays out nested components (a Container
- * without a layout node renders by simple concatenation — verified in
- * dist/layout.js) and an inner ScrollView can never obtain a viewport. The
- * body is therefore a padded tail of the last PANEL_BODY_LINES rows rather
- * than an internal scroll; every row (borders included) carries the panel
- * background.
+ * Panels: think blocks and tool cards render as boxed rows — a full box
+ * border (top border + header row + body rows + bottom border). The default
+ * panel is DEFAULT_PANEL_HEIGHT rows; the height is configurable through the
+ * `dsh-tui` settings namespace ('5'/'7'/'10' rows, or 'all' to print the
+ * full body without a row cap). The transcript doc is a plain Container
+ * inside the outer ScrollView, so pi-tui 0.84.2 never lays out nested
+ * components (a Container without a layout node renders by simple
+ * concatenation — verified in dist/layout.js) and an inner ScrollView can
+ * never obtain a viewport. The body is therefore a padded tail of the last
+ * body-row budget (or every row, in 'all' mode) rather than an internal
+ * scroll; every row (borders included) carries the panel background. In
+ * 'all' mode the unbounded content stays bounded on screen: a streaming
+ * reasoning panel boxes only a STREAMING_TAIL_LINES live tail while chunks
+ * are in flight (the assembled message renders the full body), and a settled
+ * tool card keeps at most ALL_TOOL_RESULT_LINES rows with a drop marker.
  *
  * Theme hot-switch: every applied operation is appended to `replay` (O(1)
  * per event — never a render-path scan). `setTheme` is an explicit user
@@ -35,12 +41,39 @@ import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 
-/** Fixed total height of a think/tool panel: top border + header row + body
- * rows + bottom border.
+/**
+ * Configurable think/tool panel height. Fixed values are the total panel row
+ * count (top border + header row + body rows + bottom border); 'all' prints
+ * the full body with no row cap (every row still clips to one terminal line).
  */
-const PANEL_HEIGHT = 6
-/** Body rows inside a panel (PANEL_HEIGHT - top border - header - bottom border). */
-const PANEL_BODY_LINES = PANEL_HEIGHT - 3
+export type PanelHeight = '5' | '7' | '10' | 'all'
+
+/**
+ * Default total height of a think/tool panel: top border + header row + body
+ * rows + bottom border. The single default for every '5' fallback (the
+ * renderer constructor, the settings schema default/entry/narrowing) — other
+ * heights are set through the `panelHeight` setting.
+ */
+export const DEFAULT_PANEL_HEIGHT: PanelHeight = '5'
+/** Body rows inside the default panel (DEFAULT_PANEL_HEIGHT - top border - header - bottom border). */
+const PANEL_BODY_LINES = Number(DEFAULT_PANEL_HEIGHT) - 3
+
+/**
+ * 'all' streaming cap: while a reasoning stream is in flight, the panel boxes
+ * only this many trailing rows. Without the cap every chunk would re-box the
+ * whole accumulated body — O(accumulated) per chunk, O(n²) over the stream
+ * (3000 lines ≈ 22s vs 155ms at a fixed height). The live tail is transient:
+ * the assembled `assistant/message` reasoning block (and the replay rebuilds)
+ * render the full body.
+ */
+export const STREAMING_TAIL_LINES = 200
+
+/**
+ * 'all' settle cap: a settled tool card keeps at most this many body rows,
+ * with a `… (+N lines)` marker for the drop. The unlimited body would
+ * otherwise hitch the frame and balloon memory on a 50k-line tool result.
+ */
+export const ALL_TOOL_RESULT_LINES = 2000
 /** Thinking panel header row content (icon + label), 11 visible columns. */
 const THINKING_HEADER = '💭 thinking'
 /**
@@ -106,7 +139,7 @@ interface StreamingState {
   step: number
   textComponent?: Text
   text: string
-  /** Fixed 6-row thinking panel; setBody() is the only per-chunk update. */
+  /** Height-configurable thinking panel; setBody() is the only per-chunk update. */
   reasoningPanel?: ThinkingPanel
   reasoning: string
 }
@@ -131,7 +164,8 @@ type ReplayOp =
   | { kind: 'commandEcho'; line: string; error?: string; text?: string }
   | { kind: 'notice'; text: string; level: 'error' | 'info' }
 
-/** A fixed PANEL_HEIGHT-row panel: header Text + body Text stacked in a Container. */
+/** A boxed panel (default DEFAULT_PANEL_HEIGHT rows, configurable height): header Text
+ * + body Text stacked in a Container. */
 interface ThinkingPanel {
   readonly container: Container
   /** Replace the body rows in place — O(1), no rebuild. */
@@ -139,10 +173,13 @@ interface ThinkingPanel {
 }
 
 /**
- * Compose the bordered body Text content (PANEL_BODY_LINES boxed rows plus
- * the bottom border) from already-styled, already-clipped lines: keep the
- * tail (newest rows win), pad short content with empty boxed rows. Every
- * row is one `boxWidth`-wide boxed line (`│ ` … ` │`, see borderedRow);
+ * Compose the bordered body Text content (boxed rows plus the bottom border)
+ * from already-styled, already-clipped lines: keep the tail — newest rows
+ * win — pad short content with empty boxed rows, then append the bottom
+ * border. `bodyRows` is the panel's body-row budget (default PANEL_BODY_LINES)
+ * or 'all': with 'all' every line is kept verbatim, nothing is padded, and
+ * only the bottom border is appended (the box stays closed). Every row is
+ * one `boxWidth`-wide boxed line (`│ ` … ` │`, see borderedRow);
  * `borderFg` is the panelBorder SGR prefix (no trailing RESET — the panel
  * bg function terminates the row). Pad rows carry the box characters, so
  * they survive Text's `text.trim() === ''` fast path, which would otherwise
@@ -150,11 +187,20 @@ interface ThinkingPanel {
  * background, so the panel bg function still paints the full row width.
  * Callers clip each line with `clipPanelLine` BEFORE styling — otherwise a
  * styled line that outgrows `width - paddingX*2` wraps and the panel
- * exceeds its fixed 6 rows.
+ * exceeds its configured rows.
  */
-export function panelBodyText(lines: readonly string[], boxWidth: number, borderFg: string): string {
-  const visible = lines.length > PANEL_BODY_LINES ? lines.slice(-PANEL_BODY_LINES) : [...lines]
-  while (visible.length < PANEL_BODY_LINES) visible.push('')
+export function panelBodyText(
+  lines: readonly string[],
+  boxWidth: number,
+  borderFg: string,
+  bodyRows: number | 'all' = PANEL_BODY_LINES,
+): string {
+  const visible = bodyRows === 'all'
+    ? [...lines]
+    : lines.length > bodyRows ? lines.slice(-bodyRows) : [...lines]
+  if (bodyRows !== 'all') {
+    while (visible.length < bodyRows) visible.push('')
+  }
   return [...visible.map(line => borderedRow(boxWidth, borderFg, line)), panelBottomBorder(boxWidth, borderFg)].join('\n')
 }
 
@@ -195,6 +241,8 @@ export class TranscriptRenderer {
   private readonly doc: Container
   private theme: TuiTheme
   private readonly requestRender: () => void
+  /** Configured panel height ('5'/'7'/'10' total rows, or 'all' = uncapped). */
+  private panelHeight: PanelHeight
   private streaming: StreamingState | undefined
   private readonly toolCards = new Map<string, ToolCard>()
   private todoContainer: Container | undefined
@@ -211,10 +259,33 @@ export class TranscriptRenderer {
     doc: Container,
     theme: TuiTheme,
     requestRender: () => void,
+    panelHeight: PanelHeight = DEFAULT_PANEL_HEIGHT,
   ) {
     this.doc = doc
     this.theme = theme
     this.requestRender = requestRender
+    this.panelHeight = panelHeight
+  }
+
+  /**
+   * Body-row budget for the configured panel height: the fixed row count
+   * (panel total − top border − header − bottom border) or 'all' when the
+   * panel prints its full body.
+   */
+  private panelBodyRows(): number | 'all' {
+    return this.panelHeight === 'all' ? 'all' : Number(this.panelHeight) - 3
+  }
+
+  /**
+   * Switch the configured panel height. Returns whether the height actually
+   * changed — the settings watch sink relayouts only then; `relayout` is the
+   * replay rebuild that repaints every panel (streaming, tool cards, settled
+   * cards) at the new row budget.
+   */
+  setPanelHeight(panelHeight: PanelHeight): boolean {
+    if (panelHeight === this.panelHeight) return false
+    this.panelHeight = panelHeight
+    return true
   }
 
   applyEvent(event: SessionEvent): void {
@@ -312,7 +383,7 @@ export class TranscriptRenderer {
    * counterpart of `setTheme`. On stdout `resize` pi-tui re-renders every
    * component with the new columns, but bordered panel rows were padded to
    * the OLD box width, so a narrowing terminal wraps every row and shatters
-   * the fixed 6-row panels. Clear and re-apply the buffered operations
+   * the fixed-height panels. Clear and re-apply the buffered operations
    * exactly like a theme switch: an in-flight stream keeps its accumulated
    * text (the replay rebuilds its Text and later chunks continue setText on
    * it), tool cards keep their settle state, todos reappear. No-op when
@@ -415,8 +486,10 @@ export class TranscriptRenderer {
       }
       state.reasoning += delta
       // Live tail: replace only the body text of the existing panel — O(1),
-      // never rebuild the block.
-      state.reasoningPanel.setBody(this.thinkingBody(state.reasoning))
+      // never rebuild the block. In 'all' mode the body is the bounded
+      // streaming tail (see STREAMING_TAIL_LINES), so per-chunk cost stays
+      // O(tail), not O(accumulated).
+      state.reasoningPanel.setBody(this.thinkingBody(state.reasoning, true))
     }
     this.requestRender()
   }
@@ -462,23 +535,37 @@ export class TranscriptRenderer {
     return `\x1b[3m${ansiFg(this.theme.palette.thinking)}${text}\x1b[23m`
   }
 
-  /** Styled, boxed PANEL_BODY_LINES tail of a reasoning text (bottom border included). */
-  private thinkingBody(reasoning: string): string {
+  /**
+   * Styled, boxed tail of a reasoning text at the configured height (bottom
+   * border included). `streaming` marks the in-flight live path (per-chunk
+   * setBody): 'all' then boxes only the bounded STREAMING_TAIL_LINES tail so
+   * every chunk stays O(tail) — the full body renders once the assembled
+   * `assistant/message` (and the replay rebuilds) call without the flag.
+   * Fixed heights are already tail-bounded and behave identically either way.
+   */
+  private thinkingBody(reasoning: string, streaming = false): string {
     const { boxWidth, borderFg } = this.panelBox()
+    const bodyRows = this.panelBodyRows()
+    const lines = reasoning.trim().split('\n')
     // Tail slice before styling: lines dropped by the panel are never styled
-    // (or clipped). Clip BEFORE styling — see clipPanelLine's contract.
-    const tail = reasoning.trim().split('\n').slice(-PANEL_BODY_LINES)
-    return panelBodyText(tail.map(line => this.thinkStyle(clipPanelLine(line))), boxWidth, borderFg)
+    // (or clipped). 'all' keeps every line — except the transient streaming
+    // tail. Clip BEFORE styling — see clipPanelLine's contract.
+    let tail = bodyRows === 'all' ? lines : lines.slice(-bodyRows)
+    if (bodyRows === 'all' && streaming && lines.length > STREAMING_TAIL_LINES) {
+      tail = tail.slice(-STREAMING_TAIL_LINES)
+    }
+    return panelBodyText(tail.map(line => this.thinkStyle(clipPanelLine(line))), boxWidth, borderFg, bodyRows)
   }
 
   /**
-   * Build the fixed 6-row thinking panel: top border + header row + 3-row
-   * body + bottom border, all on the thinking panel background.
+   * Build the thinking panel (default 5 rows, configurable height): top
+   * border + header row + body rows + bottom border, all on the thinking
+   * panel background.
    * Header icon: '⟡' (U+27E1) renders as a tofu box on the user's terminal;
    * emoji render fine there (footer ⚙✔✘⏹ all verified), so '💭' is used.
    * The fixed header text is clipped at the plain-text stage like every
    * other panel line — below 17 terminal columns it would otherwise outgrow
-   * the header row's budget and wrap, breaking the 6-row shape.
+   * the header row's budget and wrap, breaking the panel shape.
    */
   private createThinkingPanel(): ThinkingPanel {
     const { boxWidth, borderFg } = this.panelBox()
@@ -510,8 +597,9 @@ export class TranscriptRenderer {
         this.doc.addChild(md)
         rendered = true
       } else if (block.type === 'reasoning' && block.text.trim() !== '') {
-        // Final thinking: full reasoning through the same fixed 6-row panel
-        // (the body shows the 3-row tail, padded rows keep the panel shape).
+        // Final thinking: full reasoning through the same height-configurable
+        // panel (fixed heights show the body-row tail, padded rows keep the
+        // panel shape; 'all' prints every line).
         const panel = this.createThinkingPanel()
         panel.setBody(this.thinkingBody(block.text))
         this.doc.addChild(panel.container)
@@ -535,7 +623,7 @@ export class TranscriptRenderer {
         : this.theme.palette.danger
     // Clip the model-controlled name at the plain-text stage before styling
     // (indent 2 = the icon + space): an unbounded name would outgrow the
-    // header row's budget and wrap, breaking the fixed 6-row panel.
+    // header row's budget and wrap, breaking the fixed-height panel.
     const clipped = clipPanelLine(name, 2)
     // No trailing RESET: the card bg function terminates the row so the
     // background covers the full header width.
@@ -553,7 +641,7 @@ export class TranscriptRenderer {
     // callDetail already clipped to 120; clip again to the panel cap so the
     // row never wraps on a narrow terminal.
     const detailLines = detail === '' ? [] : [ansiFg(this.theme.palette.fgMuted) + `  ${clipPanelLine(detail, 2)}`]
-    body.setText(panelBodyText(detailLines, boxWidth, borderFg))
+    body.setText(panelBodyText(detailLines, boxWidth, borderFg, this.panelBodyRows()))
     this.doc.addChild(container)
     this.toolCards.set(callId, { header, body, name, detailLines })
     this.requestRender()
@@ -584,17 +672,22 @@ export class TranscriptRenderer {
         bodyLines.push(ansiFg(this.theme.palette.fgMuted) + `  ${clipPanelLine(line, 2)}`)
       }
     }
-    // Body keeps the 3-row tail; when lines are dropped, the first visible
-    // row reports the count so the newest result lines stay on screen. The
-    // marker is clipped at the plain-text stage (indent 2, like every tool
-    // row): on a narrow terminal a 3-digit dropped count exceeds the row's
-    // budget and would wrap, breaking the fixed 6-row panel.
-    if (bodyLines.length > PANEL_BODY_LINES) {
-      const dropped = bodyLines.length - PANEL_BODY_LINES
+    // Body keeps the tail at the configured row budget; when lines are
+    // dropped, the first visible row reports the count so the newest result
+    // lines stay on screen. 'all' keeps every line up to the ALL_TOOL_RESULT_LINES
+    // cap (an unlimited body would hitch the frame and balloon memory on a
+    // huge result) and shows the marker beyond it; under the cap there is no
+    // marker. The marker is clipped at the plain-text stage (indent 2, like
+    // every tool row): on a narrow terminal a 3-digit dropped count exceeds
+    // the row's budget and would wrap, breaking the fixed-height panel.
+    const bodyRows = this.panelBodyRows()
+    const cap = bodyRows === 'all' ? ALL_TOOL_RESULT_LINES : bodyRows
+    if (bodyLines.length > cap) {
+      const dropped = bodyLines.length - cap
       bodyLines.splice(0, dropped)
       bodyLines[0] = ansiFg(this.theme.palette.fgSubtle) + clipPanelLine(`  … (+${dropped} lines)`, 2)
     }
-    card.body.setText(panelBodyText(bodyLines, boxWidth, borderFg))
+    card.body.setText(panelBodyText(bodyLines, boxWidth, borderFg, bodyRows))
     this.requestRender()
   }
 

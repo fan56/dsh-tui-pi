@@ -1,11 +1,11 @@
 /**
- * Theme settings: persists the user's theme preference under the `dsh-tui`
- * settings namespace, surfaced by the /settings browser and the /theme
- * command. The preference is read once at TUI startup
- * (`readThemePreference`), and the namespace is marked `applies: 'live'`:
- * a committed change (the /theme picker, the /settings browser, an external
- * edit) is pushed through the watch hook, so the running TUI repaints
- * without a restart.
+ * Theme settings: persists the user's theme preference and the think/tool
+ * panel height under the `dsh-tui` settings namespace, surfaced by the
+ * /settings browser and the /theme command. The preferences are read once at
+ * TUI startup (`readThemePreference` / `readPanelHeightPreference`), and the
+ * namespace is marked `applies: 'live'`: a committed change (the /theme
+ * picker, the /settings browser, an external edit) is pushed through the
+ * watch hook, so the running TUI repaints without a restart.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -17,9 +17,10 @@ import {
   type SettingsProvider,
 } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
+import { DEFAULT_PANEL_HEIGHT, type PanelHeight } from './messages.ts'
 import type { ThemePreference } from './theme/index.ts'
 
-/** Settings namespace carrying the persisted theme preference. */
+/** Settings namespace carrying the persisted dsh-tui preferences. */
 export const THEME_SETTINGS_NAMESPACE: SettingsNamespace = settingsNamespace('dsh-tui')
 
 /** Schema of the `dsh-tui` settings section. */
@@ -28,10 +29,20 @@ const THEME_SETTINGS_SCHEMA = z.object({
     .union(['auto', 'light', 'dark'])
     .default('auto')
     .description('Terminal color scheme (applies immediately)'),
+  panelHeight: z
+    .union(['5', '7', '10', 'all'])
+    .default(DEFAULT_PANEL_HEIGHT)
+    .description(
+      "Think/tool panel height in rows ('5'/'7'/'10'/'all'); 'all' prints the full content — "
+      + 'a streaming reasoning panel shows a 200-line live tail and tool results cap at 2000 lines',
+    ),
 })
 
-/** Composition entry below the user layer: fall back to terminal detection. */
-const THEME_SETTINGS_ENTRY: { theme: ThemePreference } = { theme: 'auto' }
+/** Composition entry below the user layer: fall back to the defaults. */
+const THEME_SETTINGS_ENTRY: { theme: ThemePreference; panelHeight: PanelHeight } = {
+  theme: 'auto',
+  panelHeight: DEFAULT_PANEL_HEIGHT,
+}
 
 /**
  * In-flight namespace registration. The registration rides the settings
@@ -49,19 +60,21 @@ let registrationPromise: Promise<void> | undefined
  * time), so this registers directly through the provider, mirroring that
  * helper's wiring: the registration rides the scoped injection fiber and
  * disappears with the settings service. `onPreferenceChange`, when given,
- * receives every committed theme change (including this TUI's own writes)
- * through the scope's watch hook; callers guard re-applies by theme-bundle
- * identity, so an echoed self-write is a no-op. No source thunk is needed —
- * `readThemePreference` reads the resolved value on demand at TUI startup.
+ * receives every committed change (including this TUI's own writes) through
+ * the scope's watch hook; callers guard re-applies by theme-bundle identity
+ * and height change, so an echoed self-write is a no-op. No source thunk is
+ * needed — the read helpers read the resolved values on demand at TUI
+ * startup.
  *
  * @param ctx - plugin context; does nothing while no settings service is mounted.
  * @param onPreferenceChange - hot-reload sink for committed `dsh-tui` theme
- * changes; `undefined` when the namespace is already registered (a reloaded
- * plugin instance, a second mount of this bundle) or registration fails.
+ * and panel-height changes; `undefined` when the namespace is already
+ * registered (a reloaded plugin instance, a second mount of this bundle) or
+ * registration fails.
  */
 export function registerThemeSettings(
   ctx: Context,
-  onPreferenceChange?: (pref: ThemePreference) => void,
+  onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight) => void,
 ): void {
   registrationPromise = new Promise<void>(resolve => {
     ctx.inject(['settings'], (sctx) => {
@@ -75,17 +88,23 @@ export function registerThemeSettings(
         }
         const scope = sctx.settings.register(THEME_SETTINGS_NAMESPACE, THEME_SETTINGS_SCHEMA, {
           base: THEME_SETTINGS_ENTRY,
-          // 'live': a committed theme change takes effect immediately — the
-          // TUI hot-swaps its bundle via the watch hook below. 'restart' was
-          // the old contract, when every component baked its theme at startup.
+          // 'live': a committed change takes effect immediately — the TUI
+          // hot-applies the theme bundle and the panel height via the watch
+          // hook below. 'restart' was the old contract, when every component
+          // baked its theme at startup.
           applies: 'live',
         })
         if (onPreferenceChange !== undefined) {
           scope.watch((next) => {
-            // The resolved section is `{ theme: 'auto'|'light'|'dark' }` —
-            // narrow the unknown to the field we observe.
-            const value = (next as { theme?: unknown }).theme
-            onPreferenceChange(value === 'light' || value === 'dark' ? value : 'auto')
+            // The resolved section is `{ theme: ..., panelHeight: ... }` —
+            // narrow the unknown to the two observed fields.
+            const section = next as { theme?: unknown; panelHeight?: unknown }
+            const theme = section.theme
+            const panelHeight = section.panelHeight
+            onPreferenceChange(
+              theme === 'light' || theme === 'dark' ? theme : 'auto',
+              panelHeight === '7' || panelHeight === '10' || panelHeight === 'all' ? panelHeight : DEFAULT_PANEL_HEIGHT,
+            )
           })
         }
       } catch (error) {
@@ -102,27 +121,22 @@ export function registerThemeSettings(
 }
 
 /**
- * Read the persisted theme preference.
+ * The resolved `dsh-tui` section as read from the settings provider, after
+ * waiting for the in-flight registration.
  *
  * The registration is delivered through the settings injection fiber, so the
  * value may not be visible synchronously right after `registerThemeSettings`:
  * the settings service mounts asynchronously (its init sets up the provider,
  * a file watcher, ...), a tick after the registration request in the dsh
  * profile. Wait for the registration to land before describing — bounded, so
- * a settings-less deployment degrades to `'auto'` instead of hanging TUI
- * startup. Without a registration request there is nothing to wait for —
- * return `'auto'` immediately.
+ * a settings-less deployment degrades to the defaults instead of hanging TUI
+ * startup. Without a registration request there is nothing to wait for.
  *
- * @param ctx - plugin context.
- * @returns the resolved `dsh-tui` theme value, or `'auto'` when the settings
- * service is absent or the namespace/value cannot be read.
+ * @returns the resolved section, or `undefined` when no registration is in
+ * flight, the settings service is absent, or the namespace has not landed.
  */
-export async function readThemePreference(ctx: Context): Promise<ThemePreference> {
-  // No registration in flight and no settings service: nothing can ever
-  // appear — degrade without waiting (a settings-less deployment must not
-  // stall startup). With a registration in flight the settings service may
-  // still be mounting; the race below resolves as soon as it lands.
-  if (registrationPromise === undefined) return 'auto'
+async function readResolvedSection(ctx: Context): Promise<{ theme?: unknown; panelHeight?: unknown } | undefined> {
+  if (registrationPromise === undefined) return undefined
   let fallback: ReturnType<typeof setTimeout> | undefined
   await Promise.race([
     registrationPromise,
@@ -130,16 +144,41 @@ export async function readThemePreference(ctx: Context): Promise<ThemePreference
   ])
   if (fallback !== undefined) clearTimeout(fallback)
   const settings = ctx.get('settings') as SettingsProvider | undefined
-  if (settings === undefined) return 'auto'
-  // The descriptor's `value` is the whole resolved section (`{ theme: ... }`),
-  // not the theme itself — narrow the unknown to the field we read.
-  const pref = (settings
+  if (settings === undefined) return undefined
+  // The descriptor's `value` is the whole resolved section
+  // (`{ theme: ..., panelHeight: ... }`), not the field itself — narrow the
+  // unknown to the two observed fields.
+  return settings
     .describe()
     .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { theme?: unknown }
-    | undefined)?.theme
+    | { theme?: unknown; panelHeight?: unknown }
+    | undefined
+}
+
+/**
+ * Read the persisted theme preference (the startup snapshot).
+ *
+ * @param ctx - plugin context.
+ * @returns the resolved `dsh-tui` theme value, or `'auto'` when the settings
+ * service is absent or the namespace/value cannot be read.
+ */
+export async function readThemePreference(ctx: Context): Promise<ThemePreference> {
+  const pref = (await readResolvedSection(ctx))?.theme
   if (pref === 'light' || pref === 'dark') return pref
   return 'auto'
+}
+
+/**
+ * Read the persisted think/tool panel height (the startup snapshot).
+ *
+ * @param ctx - plugin context.
+ * @returns the resolved `dsh-tui` panelHeight value, or DEFAULT_PANEL_HEIGHT
+ * when the settings service is absent or the namespace/value cannot be read.
+ */
+export async function readPanelHeightPreference(ctx: Context): Promise<PanelHeight> {
+  const height = (await readResolvedSection(ctx))?.panelHeight
+  if (height === '7' || height === '10' || height === 'all') return height
+  return DEFAULT_PANEL_HEIGHT
 }
 
 /**
@@ -163,23 +202,23 @@ export function currentThemePreference(ctx: Context): ThemePreference {
 }
 
 /**
- * Persist the theme preference to the `dsh-tui` settings namespace. The
- * namespace is `applies: 'live'`, so the commit (observed through the
- * registration's watch hook) hot-applies the change to the running TUI.
- * Best-effort: a deployment without a settings provider reports the failure;
- * a failed write returns its error message for the caller to surface. A
- * concurrent writer moving the namespace rejects with `SettingsConflictError`
- * — retried once against a fresh revision; a second conflict surfaces a
- * friendly message instead of the raw error.
+ * Persist one `dsh-tui` preference (theme or panelHeight) to the settings
+ * namespace. The namespace is `applies: 'live'`, so the commit (observed
+ * through the registration's watch hook) hot-applies the change to the
+ * running TUI. Best-effort: a deployment without a settings provider reports
+ * the failure; a failed write returns its error message for the caller to
+ * surface. A concurrent writer moving the namespace rejects with
+ * `SettingsConflictError` — retried once against a fresh revision; a second
+ * conflict surfaces a friendly message instead of the raw error.
  * @returns undefined on success, the failure message otherwise.
  */
-export async function writeThemePreference(ctx: Context, pref: ThemePreference): Promise<string | undefined> {
+async function writeDshTuiPreference(ctx: Context, key: 'theme' | 'panelHeight', value: string): Promise<string | undefined> {
   const settings = ctx.get('settings') as SettingsProvider | undefined
   if (settings === undefined) return 'Settings service is not available.'
   // The descriptor carries the namespace's revision (optimistic-concurrency
   // token for mutate) and proves the schema registration that validates the
   // path below; the write rejects when the namespace is unregistered.
-  const ops: SettingsPathOp[] = [{ op: 'set', path: ['theme'], value: pref }]
+  const ops: SettingsPathOp[] = [{ op: 'set', path: [key], value }]
   for (let attempt = 0; ; attempt++) {
     const descriptor = settings.describe().find((d) => d.ns === THEME_SETTINGS_NAMESPACE)
     try {
@@ -192,4 +231,14 @@ export async function writeThemePreference(ctx: Context, pref: ThemePreference):
         : error instanceof Error ? error.message : String(error)
     }
   }
+}
+
+/**
+ * Persist the theme preference to the `dsh-tui` settings namespace. The
+ * namespace is `applies: 'live'`, so the commit (observed through the
+ * registration's watch hook) hot-applies the change to the running TUI.
+ * @returns undefined on success, the failure message otherwise.
+ */
+export async function writeThemePreference(ctx: Context, pref: ThemePreference): Promise<string | undefined> {
+  return writeDshTuiPreference(ctx, 'theme', pref)
 }

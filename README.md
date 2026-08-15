@@ -123,10 +123,16 @@ dsh-tui-pi avoids both by construction:
 - **Streaming strategy**: deltas accumulate in a plain Text via `setText` on
   the same component (never remove+re-add per token); markdown renders once on
   the assembled `assistant/message` (no per-token markdown parsing).
-- **Fixed 5-row think/tool panels**: one header row + a 4-row tail body (no
-  inner scroll — pi-tui 0.84.2 never lays out nested components, so a nested
-  ScrollView cannot obtain a viewport). Body lines are clipped to one physical
-  row *before* styling, so long output can never wrap the panel past 5 rows.
+- **Configurable think/tool panels** (`dsh-tui.panelHeight`, default `'5'`):
+  `'5'/'7'/'10'` set the total panel rows (top border + header row + body rows
+  + bottom border); `'all'` prints the full body, with bounded on-screen
+  content — a streaming reasoning panel boxes a 200-line live tail while
+  chunks are in flight (the assembled message renders everything) and a
+  settled tool result keeps at most 2000 lines (a `… (+N lines)` marker
+  reports the drop). No inner scroll — pi-tui 0.84.2 never lays out nested
+  components, so a nested ScrollView cannot obtain a viewport. Body lines are
+  clipped to one physical row *before* styling, so long output can never wrap
+  the panel past its configured rows.
 - **Width safety**: every truncation goes through `clipToWidth` (src/text.ts)
   — CJK full-width characters count 2 columns and graphemes are never split.
   Bare `String.length` clipping is banned.
@@ -136,7 +142,7 @@ dsh-tui-pi avoids both by construction:
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (84 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (123 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -187,8 +193,8 @@ src/
   commands.ts       CommandService: slash autocomplete + dual-channel dispatch
                     (registerLocal agentless direct / ctx.commands host path)
   messages.ts       TranscriptRenderer: session events → pi-tui components;
-                    streaming setText, fixed panels, ReplayOp buffer for
-                    theme-switch rebuilds
+                    streaming setText, height-configurable panels, ReplayOp
+                    buffer for theme-switch rebuilds
   footer.ts         PowerlineFooter (ported segment palette, 7 segments + clock)
   editor.ts         CwdBorderEditor (top border: 📁 cwd │ ⎇ branch)
   git.ts            GitBranchWatcher (polled, cached)

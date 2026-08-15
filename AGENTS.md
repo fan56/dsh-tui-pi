@@ -12,7 +12,8 @@ index.ts          cordis plugin entry (apply + effect) — all wiring: commands,
 tui.ts            UI shell: alt-screen, transcript ScrollView, dock, editor
                   rebuild on theme swap (themeRef mutable binding)
 messages.ts       TranscriptRenderer: session events → components; ReplayOp
-                  buffer + setTheme rebuild; fixed 5-row panels; streaming
+                  buffer + setTheme rebuild; height-configurable panels
+                  ('5'/'7'/'10'/'all'); streaming
 session.ts        DshSessionBridge: lazy create, followup, resume/replay,
                   cancel, O(1) stats, persistDefaultModel
 commands.ts       CommandService: parse + dual-channel dispatch + autocomplete
@@ -106,8 +107,10 @@ throttled render frame`.
 
 - **Layout does not descend into a plain Container**: a Container without a
   layout node renders by concatenation, so a nested ScrollView inside the
-  transcript can never obtain a viewport. Fixed 5-row panels with a tail body
-  are the accepted design — no inner scrolling.
+  transcript can never obtain a viewport. Height-configurable panels with a
+  tail body (`dsh-tui.panelHeight`: '5'/'7'/'10' rows, or 'all' with a
+  bounded streaming tail and a 2000-line tool-result cap) are the accepted
+  design — no inner scrolling.
 - **SelectListTheme has no background hook for unselected rows**: the value
   part of unselected rows renders raw (`renderItem` → `prefix + truncatedValue`),
   so it cannot get the `canvasSubtle` backdrop. Only the selected row,

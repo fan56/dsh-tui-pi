@@ -5,7 +5,9 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
+import { nodeAtPath, rehydrateSchema } from '@deepseek-ai/dsh-client-schema-form'
 import {
   CATEGORY_MAP,
   categorizeNamespaces,
@@ -19,6 +21,10 @@ import {
   parseUnionInput,
   unionLiterals,
 } from '../lib/settings.js'
+import {
+  THEME_SETTINGS_NAMESPACE,
+  registerThemeSettings,
+} from '../lib/theme-settings.js'
 
 test('formatValue handles every JSON kind', () => {
   assert.equal(formatValue(undefined), '(unset)')
@@ -197,4 +203,38 @@ test('categoryDescription caps at max columns (width-aware clip)', () => {
 test('categoryDescription joins empty or duplicated members', () => {
   assert.equal(categoryDescription([]), '')
   assert.equal(categoryDescription(['llm-deepseek', 'llm-deepseek', 'shell']), 'llm-deepseek, shell')
+})
+
+test('dsh-tui theme and panelHeight fields rehydrate as all-literal unions (cycle rows)', async () => {
+  // Minimal settings fake (describe/register only): the registration stores
+  // the schema; rehydrate walks it exactly like the /settings browser's
+  // SettingsBrowser.root → nodeAtPath path.
+  const descriptors = []
+  const ctx = new Context()
+  ctx.provide('settings', {
+    describe: () => descriptors,
+    register(ns, schema, options) {
+      descriptors.push({ ns, schema, value: options?.base ?? {}, applies: options?.applies })
+      return { watch: () => () => {} }
+    },
+  })
+  registerThemeSettings(ctx, () => {})
+  await new Promise(resolve => setImmediate(resolve))
+
+  const desc = descriptors.find(d => d.ns === THEME_SETTINGS_NAMESPACE)
+  assert.ok(desc !== undefined, 'dsh-tui namespace registered')
+  const root = rehydrateSchema(desc.schema)
+
+  // Theme field: the reference pattern — every branch is a literal, so
+  // rowKindFor maps the union to 'cycle' (Enter cycles the value).
+  const theme = nodeAtPath(root, ['theme'])
+  assert.equal(theme.type, 'union', 'theme node is a union')
+  assert.deepEqual(unionLiterals(theme), { values: ['auto', 'light', 'dark'], all: true },
+    'theme is an all-literal union → cycle row')
+
+  // PanelHeight field: same mechanism, the four configurable heights.
+  const panelHeight = nodeAtPath(root, ['panelHeight'])
+  assert.equal(panelHeight.type, 'union', 'panelHeight node is a union')
+  assert.deepEqual(unionLiterals(panelHeight), { values: ['5', '7', '10', 'all'], all: true },
+    'panelHeight is an all-literal union over the four heights → cycle row')
 })

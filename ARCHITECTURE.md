@@ -85,12 +85,15 @@ event does O(event) work:
   echo rendered on submit is deduped via `lastEcho` (trimmed text match).
 - `assistant/chunk` — `text-delta` appends to one streaming `Text`
   (`setText`, never rebuild); `reasoning-delta` updates the thinking panel's
-  body rows in place.
+  body rows in place (in 'all' mode the live body is a bounded tail, see
+  below).
 - `assistant/message` — the streaming component is finalized (removed), the
   message renders as `Markdown` once (no per-token parsing); a `reasoning`
-  block renders through the same fixed panel.
-- `tool/call` / `tool/result` — a 5-row card (status-colored header
-  `⚙/✔/✘ name`, 4-row body tail) keyed by `callId`.
+  block renders through the same height-configurable panel (full body).
+- `tool/call` / `tool/result` — a height-configurable card (status-colored
+  header `⚙/✔/✘ name`, body tail) keyed by `callId`; settled results keep at
+  most the body budget — or 2000 lines in 'all' mode, with a `… (+N lines)`
+  marker for the drop.
 - `todo/write` — snapshot container replaced wholesale.
 - `turn/end` — error / `⏹ interrupted` / `⚠ output token limit reached` line.
 - `command/run` / `command/done` — flow nodes, no render (the command echo
@@ -101,10 +104,16 @@ never scanned by the render path). `setTheme` — an explicit user action — is
 the single reader: it clears the doc and replays the buffer against the new
 theme, so streaming state, tool cards, todos, echoes and notices rebuild
 exactly as applied and an in-flight stream continues `setText` on its rebuilt
-component. Panels are fixed `PANEL_HEIGHT = 5` rows (1 header + 4 body) with a
-padded tail (`panelBodyText`, pad rows carry a lone `\x1b[39m` so Text's
-empty-row fast path doesn't drop them); rows are clipped to one physical line
-with `clipPanelLine` (columns − 4, fallback 200) **before** styling.
+component. Panels are height-configurable through `dsh-tui.panelHeight`
+(`'5'/'7'/'10'` total rows — top border + header row + body rows + bottom
+border — or `'all'` for the full body) with a padded tail (`panelBodyText`,
+pad rows carry the box characters `│ … │` so Text's empty-row fast path
+doesn't drop them); rows are clipped to one physical line with
+`clipPanelLine` (columns − 4, fallback 200) **before** styling. In 'all'
+mode a streaming reasoning panel boxes only the last 200 lines while chunks
+are in flight (per-chunk cost stays O(200) instead of O(accumulated)); the
+assembled `assistant/message` block and the replay rebuilds render the full
+body.
 
 ### Bridge (session.ts)
 
