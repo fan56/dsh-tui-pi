@@ -1,10 +1,11 @@
 /**
  * Powerline-style status footer, ported from pi-powerline-footer.
  *
- * Segments (left → right): provider · model+thinking · context usage ·
- * cache-hit rate · message count · tool count, then a right-aligned 24h
- * clock. Segment backgrounds are the pi-powerline-footer palette; separators
- * are U+E0B0 powerline arrows tinted by the neighbouring segment colours.
+ * Segments (left → right): fixed brand "dsh" · provider · model+thinking ·
+ * context usage · cache-hit rate · message count · tool count, then a
+ * right-aligned 24h clock. Segment backgrounds are the pi-powerline-footer
+ * palette; separators are U+E0B0 powerline arrows tinted by the neighbouring
+ * segment colours.
  *
  * Render cost is O(segments): every statistic is read from the bridge's
  * incrementally maintained counters (never a session-log scan). The 1s clock
@@ -94,7 +95,7 @@ export class PowerlineFooter implements Component {
     const stats = this.source.getStats()
     const selection = this.source.getSelection()
 
-    const segs: Segment[] = []
+    const segs: Segment[] = [{ label: 'dsh', bgHex: POWERLINE.brand }]
     if (selection !== undefined) {
       segs.push({ label: `☁️ ${selection.provider}`, bgHex: POWERLINE.provider })
       const model = clipToWidth(selection.model.split('/').pop()!, 24)

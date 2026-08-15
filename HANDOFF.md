@@ -5,7 +5,7 @@
 ## 项目位置与运行方式
 
 - 仓库：`/Users/fliu56/github/dsh-tui-pi`
-- 安装：`~/.dsh/profiles/tui` 通过 `link:` 实时挂载（改 src + `pnpm build` → 重启即生效，无需重装）
+- 安装：`~/.dsh/profiles/tui` 通过 `link:` 实时挂载（改 src + `pnpm build` → 在 TUI 里 `/reload` 即生效，无需重启 dsh；reload 会 dispose 当前会话，可用 `/resume` 接回）
 - 启动：`dsh --profile tui`（`~/.zshrc` 已配别名 `dsh-tui`、`dst`）
 - Node：`>=22.19`，pnpm 10.33+，本机 node 在 `/opt/homebrew/bin`
 
@@ -31,8 +31,9 @@
 | I | /settings 分类层级（通用/模型/插件/Agent 设置/其他，静态映射对齐 web 设置页；双语 label 保英文搜索） | ✅ |
 | J | TUI 文案统一英文 + CJK/emoji 宽度安全截断（src/text.ts clipToWidth，12 处调用点） | ✅ |
 | K | 移除 /models 别名（/model 单一入口；/settings Models 管路由配置层） | ✅ |
+| L | footer 左侧固定 dsh 品牌段（POWERLINE.brand #4D6BFE）+ `/reload` 热重载（src/reload.ts：仿 cordis-plugin-hmr partialReload — 清 ESM loadCache + CJS cache → 重新 import 入口 → registry.delete + 换 fiber；旧 fiber 全量 unload（TUI/bridge/agent 都 dispose，会话留档可 /resume）→ 新代码 apply；失败回滚缓存 + 重启旧代码；re-entrancy guard；runTui disposer 改 async 保证旧 TUI 先停再起新 TUI） | ✅ |
 
-40 个单测全过（theme 15 + settings 18 + text 7）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级纯英文 label（General/Models/Plugins）+ Esc 链、英文搜索过滤（model→Models、general→General）、C-u 清空搜索框、中文消息 echo 与模型中文回复无乱码、中文行宽 ≤ 终端列不挤变形、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。
+45 个单测全过（theme 15 + settings 18 + text 7 + reload 5）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级纯英文 label（General/Models/Plugins）+ Esc 链、英文搜索过滤（model→Models、general→General）、C-u 清空搜索框、中文消息 echo 与模型中文回复无乱码、中文行宽 ≤ 终端列不挤变形、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。
 
 ## 当前 backlog / 待办
 
@@ -59,9 +60,17 @@
 ```
 src/
   index.ts          cordis 插件入口 + 所有 wiring：commands 注册 (/model, /export, /think,
-                    /session, /resume, /new, /settings) + footer + git watcher + 时钟 +
+                    /session, /resume, /new, /settings, /reload) + footer + git watcher + 时钟 +
                     bridge + editor 分支 provider + 树级退出；/resume 里做 inspect 预校验、
                     renderer.clear() 后 firstLiveSeq 切分种子回放
+  reload.ts         /reload 热重载：仿 cordis-plugin-hmr partialReload——按入口 module job
+                    收集 user-code 依赖闭包（跳过 node:/node_modules）→ Map.prototype 清
+                    ESM loadCache + CJS require.cache → loader.import() 重导入口 → 
+                    registry.delete(旧 callback)（先删 runtime，loader 的 internal/plugin
+                    才不标 entry disabled）→ await 旧 fiber 全量 dispose（runTui disposer
+                    已改 async，保证旧 TUI 停完再起新 TUI）→ parent.registry.plugin(新代码)
+                    并接 entry 簿记；失败回滚缓存 + 重启旧代码；模块级 re-entrancy guard；
+                    entryUrl 直接用 index.ts 的 import.meta.url（+realpath 兜底）
   tui.ts            TUI 启动：TuiAltScreen + ScrollView (transcript) + VStack dock，
                     CwdBorderEditor（fgMuted info 色）、setLastRequest、lastRequest 容器；
                     StartTuiOptions.themePreference（'auto' 回退终端检测）

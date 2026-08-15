@@ -51,6 +51,8 @@ export interface ThinkingLevelColors {
 }
 
 export const POWERLINE = {
+  /** Fixed brand segment ("dsh") pinned to the footer's left edge. */
+  brand: '#4D6BFE',
   provider: '#6A1B9A',
   thinking: {
     off: '#616161',

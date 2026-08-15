@@ -27,6 +27,7 @@ import {
   writeThemePreference,
 } from './theme-settings.ts'
 import { openSettingsBrowser } from './settings.ts'
+import { reloadPlugin } from './reload.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
 import { ansiFg, RESET, type ThemePreference } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
@@ -408,6 +409,22 @@ export function apply(ctx: Context): void {
       handler: invocation => themeHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /theme')
 
+    // /reload: hot-reload this plugin from the current source — re-imports the
+    // module and its dependencies (picking up src changes after `pnpm build`)
+    // and swaps the plugin runtime. The old fiber is disposed, so the TUI and
+    // the live agent bridge are torn down; the session log persists and can be
+    // rejoined with /resume. Failures before the swap leave the TUI untouched.
+    const reloadHandler: LocalCommandHandler = async () => ({
+      kind: 'success' as const,
+      text: await reloadPlugin(ctx, import.meta.url),
+    })
+    commands.registerLocal('reload', reloadHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'reload',
+      description: 'Reload the TUI from the current source (apply code changes without restarting dsh)',
+      handler: invocation => reloadHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /reload')
+
     // ------------------------------------------------- powerline footer + git --
     const git = new GitBranchWatcher(process.cwd())
     git.onChange = () => ui.requestRender()
@@ -512,14 +529,12 @@ export function apply(ctx: Context): void {
       return exitTask
     }
 
-    return () => {
-      void (async () => {
-        clearInterval(clockTimer)
-        git.dispose()
-        try { await bridge.dispose() } catch { /* contained */ }
-        handle?.dispose()
-        handle = undefined
-      })()
+    return async () => {
+      clearInterval(clockTimer)
+      git.dispose()
+      try { await bridge.dispose() } catch { /* contained */ }
+      handle?.dispose()
+      handle = undefined
     }
   }
 }
