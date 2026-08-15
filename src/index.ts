@@ -164,17 +164,11 @@ export function apply(ctx: Context): void {
       }
     }
     commands.registerLocal('model', modelHandler)
-    commands.registerLocal('models', modelHandler)
     ctx.effect(() => ctx.commands.register({
       name: 'model',
       description: 'Select the model (and think level) for this conversation',
       handler: invocation => modelHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /model')
-    ctx.effect(() => ctx.commands.register({
-      name: 'models',
-      description: 'Select the model (and think level) for this conversation',
-      handler: invocation => modelHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /models')
 
     // /think: cycle the current model's reasoning effort without re-picking
     // the model. A no-session /think still lands in the selection ref and
@@ -462,9 +456,9 @@ export function apply(ctx: Context): void {
      * (model/effort pickers, settings browser, session panel, resume list).
      * The generic 30s guard would fire mid-session and echo a spurious
      * "aborted due to timeout" — those run with a never-aborting signal
-     * instead. Note /models shares the /model body but is its own name.
+     * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'models', 'think', 'session', 'resume', 'theme'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {

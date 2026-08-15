@@ -9,7 +9,7 @@
 - 启动：`dsh --profile tui`（`~/.zshrc` 已配别名 `dsh-tui`、`dst`）
 - Node：`>=22.19`，pnpm 10.33+，本机 node 在 `/opt/homebrew/bin`
 
-## 当前状态（2026-08-15，11 个 commit）
+## 当前状态（2026-08-15，12 个 commit）
 
 | Phase | 内容 | 状态 |
 |---|---|---|
@@ -24,12 +24,13 @@
 | 补丁 | web 命令对齐：注册原生 `/model`（43 模型选择器 + live switch + footer 同步）、`/export`（写 JSONL） | ✅ |
 | 补丁 | thinking 块独立渲染（流式尾巴 + 定稿斜体 thinking 色 Markdown）；tool 卡多行（status 色头 + args 行 + 10 行结果） | ✅ |
 | G | `/settings` 文字配置浏览器：describe() 动态枚举 7 namespace + schema rehydrate → 多级钻入、cycle 行（字面量 union）、Input 行内编辑（secret 掩码、空输入=保留）、dict 加键、ReadOnlyViewer、reset 确认；mutate 串行链写回 + 失败回读；9 个纯函数单测 | ✅ |
-| H | `/think`（当前模型 reasoning effort 选择器，'(provider default)' 行清除覆盖，live 切换 + footer 同步）+ `/model` 两阶段（先选模型、有 efforts 再弹 effort）+ `/models` 别名（stage-2 Esc 整体取消、overlay 交接无焦点闪跳） | ✅ |
+| H | `/think`（当前模型 reasoning effort 选择器，'(provider default)' 行清除覆盖，live 切换 + footer 同步）+ `/model` 两阶段（先选模型、有 efforts 再弹 effort；stage-2 Esc 整体取消、overlay 交接无焦点闪跳） | ✅ |
 | I | `/session` 只读信息面板（id/cwd/created/model/think/status/messages/tokens/events/parent）+ `/resume`（list 过滤 subagent/当前会话 → inspect 预校验（损坏日志不动当前会话）→ detach+resume（保事件订阅）→ firstLiveSeq 切分种子回放、chunk 跳过；transcript/stats 从零重建） | ✅ |
 | J | 命令双通道分发（registerLocal：无 live agent 直发、不预热建会话）+ `/new` 改 detachCurrent（修 /new 后消息不渲染的阻断 bug）+ 两轮 review 修复（secret 空格误清除、pending 防重入、晚到 done once 化、row id JSON 编码、onCycle 失败回读、parseNumberInput decimal 白名单、/model stage-1 竞态、ensureSession 等 resuming、/export 守卫） | ✅ |
 | H | backlog 清理：/think /model 持久化（saveSelection）、/theme + dsh-tui namespace（重启生效）、Ctrl+C 分级中断、命令目录审计（无需补 bundle）、footer 提示可见性修复 | ✅ |
 | I | /settings 分类层级（通用/模型/插件/Agent 设置/其他，静态映射对齐 web 设置页；双语 label 保英文搜索） | ✅ |
 | J | TUI 文案统一英文 + CJK/emoji 宽度安全截断（src/text.ts clipToWidth，12 处调用点） | ✅ |
+| K | 移除 /models 别名（/model 单一入口；/settings Models 管路由配置层） | ✅ |
 
 40 个单测全过（theme 15 + settings 18 + text 7）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级纯英文 label（General/Models/Plugins）+ Esc 链、英文搜索过滤（model→Models、general→General）、C-u 清空搜索框、中文消息 echo 与模型中文回复无乱码、中文行宽 ≤ 终端列不挤变形、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。
 
@@ -42,7 +43,7 @@
 ## 用户偏好 & 上下文
 
 - **用户语言**：中文为主；commit/代码注释英文。
-- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，11 个 commit。
+- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，12 个 commit。
 - **配色**：严格对齐 `~/scripts/cmux-theme.sh` 里的 GitHub Light/Dark（不要用 Primer 默认色板）。
 - **TUI 文案**：UI 文案统一英文；中文内容（消息/值/路径）必须正常显示（用户 2026-08-15 明确）。
 - **安装方式**：用户明确说**不用推 GitHub**，纯本地用（`link:` + tarball）。
@@ -175,6 +176,7 @@ ctx.root.fiber.dispose()                                // 树级退出（Ctrl+C
   - `llm-deepseek` = 官方直连：唯一 provider `deepseek-official`（api.deepseek.com），静态 2 模型（v4-flash / pro），`thinking: disabled`（→ `/think` 只有 Off，见坑）。
   - `llm-pi-ai` = pi-ai 通用适配器：依赖 `@earendil-works/pi-ai ^0.82.1`，内置 37 provider（opencode、minimax、anthropic、openai…），`llm-pi-ai.providers` 可自定义路由（provider/model 的覆写映射）；零路由时包休眠不干扰。
   - **唯一冲突面**：两包共用 settings ns `llm-pi-ai`/`llm-deepseek`（不重叠），但 pi-ai 内部 providers 目录里若手写一个与内置同 id 的 provider → 报 DUPLICATE_ADAPTER（这是包内注册，不是跨包冲突）。
+- **web UI 同样挂 llm-pi-ai**（重要澄清，写给下个 session）：web bundles = dsh-base + dsh-web-app，而 dsh-base 同时挂载 llm-pi-ai（cordis.patch.yml:95，零路由时休眠）和 llm-deepseek（:450）——LLM 层对 TUI 和 web 完全一致。用户在 web Models 页配置的 opencode-go 路由，就是 web 写进 `llm-pi-ai.providers` 的（dsh-client-ui-settings-models 的自定义 provider 固定写 llm-pi-ai ns）；TUI 与 web 共享 `~/.dsh/settings.yaml`，路由完全一致。llm-deepseek 的 deepseek-official 是出厂默认；用户当前默认路由 opencode-go 走 llm-pi-ai。
 - **用户当前路由示例**：`opencode-go / deepseek-v4-flash` 走 llm-pi-ai → opencode.ai 网关（配置 `thinkingFormat: deepseek` 才有 effort 语义）；`/model` 选择器的模型总数 = pi-ai 静态目录 + llm-deepseek 的 2 个。
 - **模型选择三张表**：web 模型页直接写 `llm-pi-ai` + `llm-deepseek` 两个 ns；会话内选择器走 `sessions.selectModel` RPC（**会话级**，不落 settings）；`agent-default-model` 只有 TUI 的 `persistDefaultModel` 在写（settings.replace last-write-wins）。
 - **web 设置分类机制**：分类在 client 侧 slot（`settings.section` 元数据：general order0 / models order10 / plugins order15 / agent-presets order20），**数据面（describe()）没有 category 字段** → TUI 用静态 `CATEGORY_MAP` 对齐，新上游 ns 自动落「其他 Other」；映射表维护责任在 TUI 侧，上游加 ns 时要回来补 CATEGORY_MAP。
