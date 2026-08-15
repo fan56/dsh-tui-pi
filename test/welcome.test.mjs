@@ -40,48 +40,50 @@ function letterRunCount(r) {
 }
 
 /**
- * The wordmark letter grids — the spec's 28-column × 10-row D/S/H glyphs
- * (see PIXEL_FONT in welcome.ts), '#' stroke, '.' empty. Pinned here as the
- * golden for the letter block, so a glyph regression fails even when it
+ * The wordmark letter grids — the spec's D/S/H glyphs (see PIXEL_FONT in
+ * welcome.ts), '#' stroke, '.' empty: classic-pixel-ratio 14-column ×
+ * 10-row letter shapes centered in 28-column × 10-row blocks (7 blank
+ * columns each side) so each block is as wide as the whale. Pinned here as
+ * the golden for the letter block, so a glyph regression fails even when it
  * keeps the run structure intact.
  */
 const D_GRID = [
-  '..########################..',
-  '..########################..',
-  '..######............######..',
-  '..######............######..',
-  '..######............######..',
-  '..######............######..',
-  '..######............######..',
-  '..######............######..',
-  '..########################..',
-  '..########################..',
+  '.......##############.......',
+  '.......##############.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##############.......',
+  '.......##############.......',
 ]
 
 const S_GRID = [
-  '..########################..',
-  '..########################..',
-  '..######....................',
-  '..######....................',
-  '..########################..',
-  '..########################..',
-  '....................######..',
-  '....................######..',
-  '..########################..',
-  '..########################..',
+  '.......##############.......',
+  '.......##############.......',
+  '.......##...................',
+  '.......##...................',
+  '.......##############.......',
+  '.......##############.......',
+  '...................##.......',
+  '...................##.......',
+  '.......##############.......',
+  '.......##############.......',
 ]
 
 const H_GRID = [
-  '..######............######..',
-  '..######............######..',
-  '..######............######..',
-  '..######............######..',
-  '..########################..',
-  '..########################..',
-  '..######............######..',
-  '..######............######..',
-  '..######............######..',
-  '..######............######..',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##############.......',
+  '.......##############.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
+  '.......##..........##.......',
 ]
 
 /** One row of the 88-column letter block: D + 2 columns + S + 2 columns + H, strokes as '█'. */
@@ -125,12 +127,12 @@ test('WHALE_ART is the 10-row × 28-column grid of documented glyphs', () => {
   }
 })
 
-test('PIXEL_FONT: 28-column × 10-row blocky font, one glyph per wordmark letter', () => {
+test('PIXEL_FONT: 28-column × 10-row blocks holding classic 14-column glyphs centered, one glyph per wordmark letter', () => {
   assert.deepEqual(Object.keys(PIXEL_FONT).sort(), ['D', 'H', 'S'], 'glyphs for every letter of "DSH"')
   for (const [ch, glyph] of Object.entries(PIXEL_FONT)) {
     assert.equal(glyph.length, WHALE_ART.length, `${ch}: as many rows as the whale (top-aligned)`)
     const widths = [...new Set(glyph.map(row => row.length))]
-    assert.deepEqual(widths, [28], `${ch}: every row is exactly 28 columns — as wide as the whale`)
+    assert.deepEqual(widths, [28], `${ch}: every row is exactly 28 columns — the block is as wide as the whale`)
     for (const row of glyph) {
       assert.match(row, /^[#.]+$/, `${ch}: only stroke (#) and empty (.) cells`)
       assert.ok(row.includes('#'), `${ch}: every row carries a stroke — no fully blank letter row`)

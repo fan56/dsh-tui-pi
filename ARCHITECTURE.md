@@ -114,7 +114,9 @@ mode a streaming reasoning panel boxes only the last 200 lines while chunks
 are in flight (per-chunk cost stays O(200) instead of O(accumulated)); the
 assembled `assistant/message` block and the replay rebuilds render the full
 body. The startup welcome banner (whale pixel art, plus the `DSH TUI`
-wordmark in a blocky pixel font; below 70 terminal columns it degrades to
+wordmark in a pixel font with classic-pixel-ratio glyphs — 14-column
+letter shapes centered in 28-column blocks; below 70 terminal columns it
+degrades to
 the whale alone) in `welcome.ts` is the first replay op; its art is
 reproducible from `assets/whale-source.png` via `node assets/whale-gen.mjs`
 (test-enforced).

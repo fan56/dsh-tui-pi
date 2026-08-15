@@ -1,9 +1,11 @@
 /**
  * Startup welcome banner: a pixel-art whale (generated pixel-by-pixel from
  * the user's image) with the "DSH" wordmark to its right, drawn in a
- * blocky 28-column × 10-row pixel font (PIXEL_FONT) so the letters match
- * the whale's width and height. Rendered as the transcript's first
- * component, above every message.
+ * blocky pixel font (PIXEL_FONT). Each letter is a classic-pixel-ratio
+ * glyph — 14 columns × 10 rows (2-column strokes, taller than wide) drawn
+ * centered in a 28-column × 10-row block that matches the whale's width
+ * and height, so the letters align with the whale. Rendered as the
+ * transcript's first component, above every message.
  *
  * The banner is a 120-column × 10-row grid: 28 columns of whale art, a
  * 4-column gap, then 88 columns of pixel letters (3 letters × 28 columns,
@@ -15,7 +17,11 @@
  * semantics: '█' is solid in both halves, '▀' is solid in the top half
  * only, '▄' is solid in the bottom half only, ' ' is transparent; the
  * letters map the font's '#' strokes to '█' blocks and its '.' empties to
- * ' '. Everything is painted
+ * ' '. The letter shapes keep the classic pixel font's ratio (like a 5×7
+ * font scaled up ~2.8×: 14 wide × 10 tall, 2-column strokes) instead of
+ * filling the whole 28-column block — a full-width 28×10 glyph is wider
+ * than tall, so on screen every letter reads as a solid square (D became
+ * a block). Everything is painted
  * in the whale brand blue. Transparent cells stay unpainted — they show the
  * terminal default background. This is deliberate: the transcript never
  * paints a canvas background (the TUI startup already sets the terminal
@@ -75,49 +81,55 @@ const LETTER_ART_WIDTH = 28
 export const WELCOME_FULL_WIDTH = WHALE_ART_WIDTH + WHALE_TITLE_GAP + WORDMARK.length * LETTER_ART_WIDTH + (WORDMARK.length - 1) * LETTER_GAP
 
 /**
- * Blocky 28-column × 10-row pixel font for the wordmark letters: '#' is a
- * stroke cell, '.' is empty. The 28 columns and 10 rows match the whale's
- * size, so each letter is exactly as wide and as tall as the whale and the
- * letters are naturally top-aligned in the banner. Strokes render as '█'
- * blocks in the whale brand blue; empties fall through to the terminal
- * default background like the whale's spaces.
+ * Pixel font for the wordmark letters: '#' is a stroke cell, '.' is empty.
+ * Each glyph is a classic-pixel-ratio letter shape, 14 columns × 10 rows
+ * (2-column strokes, taller than wide — like a 5×7 font scaled up ~2.8×),
+ * centered in its 28-column block (7 blank columns on each side) so the
+ * block width and height still match the whale's and the letters stay
+ * top-aligned with it. The 28-column block width (not the 14-column glyph
+ * width) drives the 120-column layout, so the narrow-terminal degradation
+ * threshold is unchanged. A glyph that filled the whole block would be
+ * wider than tall and read as a solid square on screen (see the header
+ * note); the 14×10 shape keeps every letter legible as a letter. Strokes
+ * render as '█' blocks in the whale brand blue; empties fall through to
+ * the terminal default background like the whale's spaces.
  */
 export const PIXEL_FONT: Record<string, readonly string[]> = {
   D: [
-    '..########################..',
-    '..########################..',
-    '..######............######..',
-    '..######............######..',
-    '..######............######..',
-    '..######............######..',
-    '..######............######..',
-    '..######............######..',
-    '..########################..',
-    '..########################..',
+    '.......##############.......',
+    '.......##############.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##############.......',
+    '.......##############.......',
   ],
   S: [
-    '..########################..',
-    '..########################..',
-    '..######....................',
-    '..######....................',
-    '..########################..',
-    '..########################..',
-    '....................######..',
-    '....................######..',
-    '..########################..',
-    '..########################..',
+    '.......##############.......',
+    '.......##############.......',
+    '.......##...................',
+    '.......##...................',
+    '.......##############.......',
+    '.......##############.......',
+    '...................##.......',
+    '...................##.......',
+    '.......##############.......',
+    '.......##############.......',
   ],
   H: [
-    '..######............######..',
-    '..######............######..',
-    '..######............######..',
-    '..######............######..',
-    '..########################..',
-    '..########################..',
-    '..######............######..',
-    '..######............######..',
-    '..######............######..',
-    '..######............######..',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##############.......',
+    '.......##############.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
+    '.......##..........##.......',
   ],
 }
 
