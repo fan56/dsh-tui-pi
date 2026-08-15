@@ -4,6 +4,8 @@
  * Layout (alt-screen, mirrors pi interactive mode):
  *
  *   ┌──────────────────────────────────────┐
+ *   │ widgetsContainer (live Todos/Agents)  │  basis auto / grow 0 — appears
+ *   ├──────────────────────────────────────┤  only while it has content
  *   │ scrollable transcript (ScrollView)   │  basis 0 / grow 1 — fills the rest
  *   ├──────────────────────────────────────┤
  *   │ statusContainer                      │  ┐
@@ -48,6 +50,8 @@ export interface TuiHandle {
   readonly tui: TUI
   /** The scrollable transcript document container. */
   readonly transcript: Container
+  /** Fixed slot pinned above the chat window — live Todos/Agents widgets. */
+  readonly widgets: Container
   /** Fixed dock slot rendered between transcript and editor. */
   readonly status: Container
   /** The input editor. */
@@ -88,6 +92,10 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
 
   // ------------------------------------------------------------- component tree --
+  // Live Todos/Agents widgets, pinned ABOVE the chat window: a plain
+  // Container with auto height — it renders zero rows while empty and grows
+  // to its content while the model has todos or subagents running.
+  const widgets = new Container()
   const transcript = new Container()
   const transcriptView = new ScrollView(transcript, {
     follow: 'end',
@@ -119,6 +127,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   ])
 
   const root = new VStack([
+    { component: widgets, basis: 'auto', grow: 0, shrink: 1, minSize: 0 },
     { component: transcriptView, basis: 0, grow: 1, shrink: 1, minSize: 1 },
     { component: dock, basis: 'auto', grow: 0, shrink: 1, minSize: 1 },
   ])
@@ -177,6 +186,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     },
     tui,
     transcript,
+    widgets,
     status,
     get editor() {
       return editor

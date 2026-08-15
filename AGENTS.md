@@ -15,7 +15,13 @@ messages.ts       TranscriptRenderer: session events → components; ReplayOp
                   buffer + setTheme rebuild; height-configurable panels
                   ('5'/'7'/'10'/'all'); streaming
 session.ts        DshSessionBridge: lazy create, followup, resume/replay,
-                  cancel, O(1) stats, persistDefaultModel
+                  cancel, O(1) stats, persistDefaultModel, subagent tracker
+                  (tool-workflow + child events → AgentView rows → onLive)
+dsh-events.ts     local types/guards for tool-workflow/subagent/llm-retry
+                  events (declaring packages not installed) + AgentView
+live-widgets.ts   LiveWidgets: fixed Todos/Agents widgets pinned above the
+                  chat window (renderTodos/renderAgents/tickLive/setTheme;
+                  clear-when-done)
 commands.ts       CommandService: parse + dual-channel dispatch + autocomplete
 frame.ts          FramedOverlay: shared top/bottom ─ border for every popup
 selectors.ts      /model (2-stage), /think, /theme pickers
@@ -72,9 +78,10 @@ throttled render frame`.
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **84 tests** across 9 files (theme 15 +
-  settings 18 + text 7 + reload 6 + provider-catalog 11 + messages 5 + frame 8
-  + theme-switch 12 + theme-settings 2). New pure logic → new test file under
+- `pnpm test` must stay green: **171 tests** across 14 files (welcome 18 +
+  theme 17 + theme-switch 28 + settings 19 + messages 14 + frame 11 +
+  provider-catalog 11 + live 11 + permission 9 + sessions 8 + quotes 8 +
+  text 7 + reload 6 + theme-settings 5). New pure logic → new test file under
   `test/` against built `lib/` (`node --test`, pretest builds). Update the
   totals in HANDOFF.md.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch

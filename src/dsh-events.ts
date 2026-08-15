@@ -1,0 +1,116 @@
+/**
+ * Local structural types for session events whose declaring packages
+ * (`@deepseek-ai/dsh-tool-workflow`, `@deepseek-ai/dsh-subagent`,
+ * `@deepseek-ai/dsh-llm-retry`) are not installed in this plugin. The TUI
+ * receives these events on the `session/event` firehose regardless (the
+ * firehose is not scope-filtered — see dsh-scope's generated subject
+ * resolvers), so the bridge folds them through these minimal, dependency-free
+ * shapes instead of importing the augmenting packages.
+ *
+ * `SessionEvent` is a closed discriminated union over the core event map, so
+ * `switch (event.type)` falls through these types; the guards narrow them
+ * explicitly.
+ */
+
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
+
+// The declaring packages normally extend `SessionEventMap` with their event
+// types via module augmentation, which is what makes `SessionEvent`'s
+// discriminated union include them. Those packages are not installed in this
+// plugin's type environment, so merge the four foreign event types into the
+// core map ourselves — otherwise the guards below would narrow to `never`
+// (the union has no member with these `type` literals) and every call site
+// would see a dead branch. Adding members to the union is inert for
+// `switch (event.type)` consumers: existing cases stay, unknown types fall to
+// `default`.
+declare module '@deepseek-ai/dsh-session' {
+  interface SessionEventMap {
+    'tool-workflow/agent-start': ToolWorkflowAgentStartData
+    'tool-workflow/agent-end': ToolWorkflowAgentEndData
+    'subagent/descriptor': SubagentDescriptorData
+    'llm/retry': LlmRetryData
+  }
+}
+
+/** `tool-workflow/agent-start`: one workflow member, after its child Session is published. */
+export interface ToolWorkflowAgentStartData {
+  readonly runId: string
+  readonly seq: number
+  readonly label: string
+  readonly phase?: string
+  readonly childId: string
+}
+
+/** `tool-workflow/agent-end`: one workflow member settlement. */
+export interface ToolWorkflowAgentEndData {
+  readonly runId: string
+  readonly seq: number
+  readonly outcome: 'completed' | 'failed' | 'cancelled'
+}
+
+/** `subagent/descriptor`: durable identity of a session-backed subagent child. */
+export interface SubagentDescriptorData {
+  readonly version: number
+  readonly mode: 'one-shot' | 'continuable'
+  readonly provider: string
+  readonly label?: string
+}
+
+/** `llm/retry`: one provider-routed retry scheduled after a failed request attempt. */
+export interface LlmRetryData {
+  readonly retry: number
+  /** Absent for the `mode: 'always'` arm of the real event. */
+  readonly maxRetries?: number
+}
+
+/** Type guard for `tool-workflow/agent-start` events. */
+export function isAgentStart(event: SessionEvent): event is SessionEvent & { type: 'tool-workflow/agent-start'; data: ToolWorkflowAgentStartData } {
+  return event.type === 'tool-workflow/agent-start'
+}
+
+/** Type guard for `tool-workflow/agent-end` events. */
+export function isAgentEnd(event: SessionEvent): event is SessionEvent & { type: 'tool-workflow/agent-end'; data: ToolWorkflowAgentEndData } {
+  return event.type === 'tool-workflow/agent-end'
+}
+
+/** Type guard for `subagent/descriptor` events (written to the CHILD session's log). */
+export function isSubagentDescriptor(event: SessionEvent): event is SessionEvent & { type: 'subagent/descriptor'; data: SubagentDescriptorData } {
+  return event.type === 'subagent/descriptor'
+}
+
+/** Type guard for `llm/retry` events. */
+export function isLlmRetry(event: SessionEvent): event is SessionEvent & { type: 'llm/retry'; data: LlmRetryData } {
+  return event.type === 'llm/retry'
+}
+
+/**
+ * One live subagent row the TUI renders: the bridge's per-child fold of
+ * workflow events (parent log) and the child's own session events. All
+ * fields are O(1)-maintained — never a session-log scan on the render path.
+ */
+export interface AgentView {
+  /** The child session id (raw string). */
+  readonly childId: string
+  /** Subagent type name from the child's `subagent/descriptor.provider`, when known. */
+  readonly provider?: string
+  /** Delegation label from `tool-workflow/agent-start`. */
+  readonly label: string
+  /** Parent-log seq of the agent-start event — the stable ordering key. */
+  readonly seq: number
+  /** Unix epoch ms of the agent-start event — the elapsed baseline. */
+  readonly startedAt: number
+  /** Settled outcome (`tool-workflow/agent-end`), when the child finished. */
+  readonly outcome?: 'completed' | 'failed' | 'cancelled'
+  /** Unix epoch ms of the agent-end event, when settled. */
+  readonly endedAt?: number
+  /** Cumulative tokens: input + output + cacheRead + cacheWrite. */
+  readonly tokens: number
+  /** Latest `llm/retry` attempt number (0 = none retried). */
+  readonly retries: number
+  /** Latest `llm/retry` maxRetries, when the policy reported one. */
+  readonly maxRetries?: number
+  /** Last tool name the child invoked (the activity line), when any. */
+  readonly lastTool?: string
+  /** Context window from the child's `request/context`, for the % column. */
+  readonly contextWindow?: number
+}

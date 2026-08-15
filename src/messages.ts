@@ -32,9 +32,10 @@
  * Theme hot-switch: every applied operation is appended to `replay` (O(1)
  * per event — never a render-path scan). `setTheme` is an explicit user
  * action, so it may do a one-off full rebuild: clear the doc and re-apply
- * the buffered operations against the new theme. Streaming, tool cards and
- * todos rebuild exactly as they were applied, so an in-flight stream simply
- * continues `setText` on its rebuilt component.
+ * the buffered operations against the new theme. Streaming and tool cards
+ * rebuild exactly as they were applied, so an in-flight stream simply
+ * continues `setText` on its rebuilt component. (The live Todos/Agents
+ * widgets live outside the transcript — see live-widgets.ts.)
  *
  * Welcome banner: the first replay op, pushed at construction (the doc is
  * cleared first, replacing tui.ts's startup placeholder). It stays at the
@@ -48,7 +49,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
-import { buildWelcomeBanner, WHALE_COLOR } from './welcome.ts'
+import { buildWelcomeBanner } from './welcome.ts'
 import { formatDailyQuote, pickDailyQuote } from './quotes.ts'
 
 /**
@@ -285,7 +286,6 @@ export class TranscriptRenderer {
   private panelHeight: PanelHeight
   private streaming: StreamingState | undefined
   private readonly toolCards = new Map<string, ToolCard>()
-  private todoContainer: Container | undefined
   /** Text of the prompt echoed locally on submit; the matching session event is deduped. */
   private lastEcho: string | undefined
   /**
@@ -362,7 +362,8 @@ export class TranscriptRenderer {
         this.settleToolCard(event)
         break
       case 'todo/write':
-        this.renderTodos(event.data.todos)
+        // Todos render in the fixed live widget (LiveWidgets), not the
+        // transcript; index.ts routes the event there.
         break
       case 'turn/end':
         this.renderTurnEnd(event.data.reason)
@@ -460,7 +461,6 @@ export class TranscriptRenderer {
   clear(): void {
     this.streaming = undefined
     this.toolCards.clear()
-    this.todoContainer = undefined
     this.lastEcho = undefined
     this.replay.length = 0
     this.doc.clear()
@@ -687,18 +687,17 @@ export class TranscriptRenderer {
   private renderAssistantMessage(event: SessionEvent & { type: 'assistant/message' }): void {
     const message = event.data.message
     let rendered = false
-    // The whale speaks: one brand-blue 🐳 line above the first text block —
-    // the "formal answer" carries the whale avatar, thinking panels and tool
-    // cards do not. Theme-independent brand blue (same as the banner), so the
-    // replay rebuild is byte-identical across themes.
+    // The whale speaks: the first text block is prefixed inline (`🐳: text`)
+    // instead of taking its own avatar line — thinking panels and tool cards
+    // do not carry it, and later text blocks render plain.
     let whaleShown = false
     for (const block of message.content) {
       if (block.type === 'text' && block.text.trim() !== '') {
-        if (!whaleShown) {
-          this.doc.addChild(new Text(ansiFg(WHALE_COLOR) + '🐳' + RESET, 1, 0))
-          whaleShown = true
-        }
-        const md = new Markdown(block.text, 1, 0, this.theme.markdown, {
+        // trimStart keeps the prefix on the same line as the reply when the
+        // block opens with a newline.
+        const text = whaleShown ? block.text : `🐳: ${block.text.trimStart()}`
+        whaleShown = true
+        const md = new Markdown(text, 1, 0, this.theme.markdown, {
           color: text => ansiFg(this.theme.palette.fgDefault) + text + RESET,
         })
         this.doc.addChild(md)
@@ -804,23 +803,6 @@ export class TranscriptRenderer {
     this.requestRender()
   }
 
-  // ----------------------------------------------------------------- todos --
-
-  private renderTodos(todos: readonly { content: string; status: string }[]): void {
-    if (this.todoContainer !== undefined) this.doc.removeChild(this.todoContainer)
-    const container = new Container()
-    for (const todo of todos) {
-      const line = todo.status === 'completed'
-        ? this.theme.chat.todoDone(todo.content)
-        : todo.status === 'in_progress'
-          ? ansiFg(this.theme.palette.attention) + `▶ ${todo.content}` + RESET
-          : this.theme.chat.todoOpen(todo.content)
-      container.addChild(new Text(line, 1, 0))
-    }
-    this.doc.addChild(container)
-    this.todoContainer = container
-    this.requestRender()
-  }
 
   // -------------------------------------------------------------- turn end --
 

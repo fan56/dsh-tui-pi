@@ -16,12 +16,16 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { settingsNamespace, SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import type { AgentView } from './dsh-events.ts'
+import { isAgentEnd, isAgentStart, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
 
 export interface BridgeCallbacks {
   /** One session-log event for the bridge's session, in log order. */
   onEvent(event: SessionEvent): void
   /** Whole-agent lifecycle transition. */
   onStatus(status: 'idle' | 'running'): void
+  /** Live snapshot of tracked subagent (child session) rows, on any change. */
+  onLive(agents: readonly AgentView[]): void
 }
 
 /** Incrementally maintained footer statistics (all O(1) reads). */
@@ -58,6 +62,14 @@ export class DshSessionBridge {
     msgCount: 0,
     toolCallCount: 0,
   }
+  /** Live subagent rows keyed by the parent-log pairing key `${runId}:${seq}`. */
+  private readonly agentViews = new Map<string, AgentView>()
+  /** Child session ids whose own events we fold into the agent views. */
+  private readonly childSessions = new Set<string>()
+  /** Session ids whose workflow events we fold for child discovery (parent first, then every tracked child — delegation nests). */
+  private readonly trackedSessions = new Set<string>()
+  /** O(1) childId -> `${runId}:${seq}` lookup for the child-event fold. */
+  private readonly childToKey = new Map<string, string>()
 
   constructor(ctx: Context, callbacks: BridgeCallbacks) {
     this.ctx = ctx
@@ -74,9 +86,16 @@ export class DshSessionBridge {
           ...sel.reasoningEffort === undefined ? {} : { reasoningEffort: sel.reasoningEffort },
         }
     this.disposers.push(ctx.on('session/event', (session: Session, event: SessionEvent) => {
-      if (this.sessionId === undefined || session.id !== this.sessionId) return
-      this.applyEvent(event)
-      this.callbacks.onEvent(event)
+      const sessionKey = String(session.id)
+      // Fold workflow + child events for every tracked session (the firehose
+      // is not scope-filtered, so child sessions arrive here too).
+      if (this.trackedSessions.has(sessionKey)) {
+        this.foldTracked(sessionKey, event)
+      }
+      if (this.sessionId !== undefined && session.id === this.sessionId) {
+        this.applyEvent(event)
+        this.callbacks.onEvent(event)
+      }
     }))
     this.disposers.push(ctx.on('agent/status', ({ agent, status }: { agent: { id: string }; status: 'idle' | 'running' }) => {
       if (this.handle === undefined || agent.id !== this.handle.agent.id) return
@@ -155,6 +174,10 @@ export class DshSessionBridge {
     this.handle = undefined
     this.sessionId = undefined
     this.running = false
+    this.agentViews.clear()
+    this.childSessions.clear()
+    this.trackedSessions.clear()
+    this.childToKey.clear()
     if (handle !== undefined) await handle.dispose()
   }
 
@@ -164,7 +187,8 @@ export class DshSessionBridge {
    * The agent handle is disposed, the session id cleared, and the
    * incremental stats zeroed (the footer must not carry the old session's
    * numbers); the disposers stay installed, and the session-id filter
-   * re-binds on the next lazy creation.
+   * re-binds on the next lazy creation. The subagent tracker is cleared and
+   * an empty `onLive` is emitted so the renderer drops the agents block.
    */
   async detachCurrent(): Promise<void> {
     const handle = this.handle
@@ -178,6 +202,11 @@ export class DshSessionBridge {
     this.stats.msgCount = 0
     this.stats.toolCallCount = 0
     this.stats.latestCacheHitRate = undefined
+    this.agentViews.clear()
+    this.childSessions.clear()
+    this.trackedSessions.clear()
+    this.childToKey.clear()
+    this.emitLive()
     if (handle !== undefined) await handle.dispose()
   }
 
@@ -197,6 +226,15 @@ export class DshSessionBridge {
       this.handle = undefined
       this.sessionId = undefined
       this.running = false
+      this.agentViews.clear()
+      this.childSessions.clear()
+      this.trackedSessions.clear()
+      this.childToKey.clear()
+      // The renderer keeps its live snapshot across the resume teardown (it
+      // must survive theme-switch rebuilds), so an empty emit is required to
+      // drop the previous session's agents block before the resumed log's
+      // workflow events rebuild it.
+      this.emitLive()
       if (handle !== undefined) await handle.dispose()
       // Same seeding rule as createSession: a live /model or /think choice
       // survives the resume; otherwise the composed default applies.
@@ -211,6 +249,7 @@ export class DshSessionBridge {
       })
       this.handle = resumed
       this.sessionId = sessionId
+      this.trackedSessions.add(String(sessionId))
       return resumed
     })()
     this.resuming = task
@@ -237,8 +276,15 @@ export class DshSessionBridge {
     this.stats.msgCount = 0
     this.stats.toolCallCount = 0
     this.stats.latestCacheHitRate = undefined
+    const sessionId = this.sessionId
     for (const event of events) {
       if (event.type === 'assistant/chunk') continue
+      // Replay feeds the parent log only — fold its persisted workflow events
+      // through the same tracking logic so the agents view is rebuilt; child
+      // live events arrive via the subscription after resume.
+      if (sessionId !== undefined && this.trackedSessions.has(String(sessionId))) {
+        this.foldTracked(String(sessionId), event)
+      }
       this.applyEvent(event)
       this.callbacks.onEvent(event)
     }
@@ -272,6 +318,109 @@ export class DshSessionBridge {
     }
   }
 
+  /**
+   * Fold one event of a tracked session into the agent views (workflow events
+   * of the parent log + the child's own log). O(1) per event — Maps/Sets only,
+   * never a session-log scan. Emits `onLive` when a view actually changed.
+   * @returns whether a view changed (and `onLive` was emitted).
+   */
+  private foldTracked(sessionId: string, event: SessionEvent): boolean {
+    let changed = false
+    if (isAgentStart(event)) {
+      const key = `${event.data.runId}:${event.data.seq}`
+      if (!this.agentViews.has(key)) {
+        this.agentViews.set(key, {
+          childId: event.data.childId,
+          label: event.data.label,
+          seq: event.data.seq,
+          startedAt: event.time,
+          tokens: 0,
+          retries: 0,
+        })
+        this.childToKey.set(event.data.childId, key)
+        this.childSessions.add(event.data.childId)
+        this.trackedSessions.add(event.data.childId)
+        changed = true
+      }
+    } else if (isAgentEnd(event)) {
+      const key = `${event.data.runId}:${event.data.seq}`
+      const existing = this.agentViews.get(key)
+      if (existing !== undefined && existing.outcome === undefined) {
+        this.agentViews.set(key, {
+          ...existing,
+          outcome: event.data.outcome,
+          endedAt: event.time,
+        })
+        changed = true
+      }
+    }
+    if (this.childSessions.has(sessionId)) {
+      if (isSubagentDescriptor(event)) {
+        const entry = this.childView(sessionId)
+        if (entry !== undefined && entry.view.provider !== event.data.provider) {
+          this.agentViews.set(entry.key, { ...entry.view, provider: event.data.provider })
+          changed = true
+        }
+      } else if (event.type === 'assistant/message') {
+        const usage = event.data.usage
+        if (usage !== undefined) {
+          const entry = this.childView(sessionId)
+          if (entry !== undefined) {
+            const delta = usage.inputTokens + usage.outputTokens
+              + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+            if (delta > 0) {
+              this.agentViews.set(entry.key, { ...entry.view, tokens: entry.view.tokens + delta })
+              changed = true
+            }
+          }
+        }
+      } else if (isLlmRetry(event)) {
+        const entry = this.childView(sessionId)
+        if (entry !== undefined
+          && (entry.view.retries !== event.data.retry || entry.view.maxRetries !== event.data.maxRetries)) {
+          this.agentViews.set(entry.key, {
+            ...entry.view,
+            retries: event.data.retry,
+            maxRetries: event.data.maxRetries,
+          })
+          changed = true
+        }
+      } else if (event.type === 'tool/call') {
+        const entry = this.childView(sessionId)
+        if (entry !== undefined && entry.view.lastTool !== event.data.name) {
+          this.agentViews.set(entry.key, { ...entry.view, lastTool: event.data.name })
+          changed = true
+        }
+      } else if (event.type === 'request/context') {
+        const contextWindow = event.data.contextWindow
+        if (typeof contextWindow === 'number') {
+          const entry = this.childView(sessionId)
+          if (entry !== undefined && entry.view.contextWindow !== contextWindow) {
+            this.agentViews.set(entry.key, { ...entry.view, contextWindow })
+            changed = true
+          }
+        }
+      }
+    }
+    if (changed) this.emitLive()
+    return changed
+  }
+
+  /** The agent view for a tracked child session id, when any (O(1)). */
+  private childView(sessionId: string): { key: string; view: AgentView } | undefined {
+    const key = this.childToKey.get(sessionId)
+    if (key === undefined) return undefined
+    const view = this.agentViews.get(key)
+    return view === undefined ? undefined : { key, view }
+  }
+
+  /** Push the current agent views (stable order) to the renderer. */
+  private emitLive(): void {
+    this.callbacks.onLive(
+      [...this.agentViews.values()].sort((a, b) => a.seq - b.seq || a.startedAt - b.startedAt),
+    )
+  }
+
   private async ensureSession(): Promise<AgentHandle> {
     // A resume in flight would otherwise race this check: the handle is only
     // set when resume completes, so a prompt fired mid-resume must not start
@@ -291,6 +440,7 @@ export class DshSessionBridge {
     try {
       this.handle = await creation
       this.sessionId = this.handle.agent.session.id
+      this.trackedSessions.add(String(this.sessionId))
       return this.handle
     } finally {
       this.creating = undefined

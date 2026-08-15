@@ -9,7 +9,7 @@
 - 启动：`dsh --profile tui`（`~/.zshrc` 已配别名 `dsh-tui`、`dst`）
 - Node：`>=22.19`，pnpm 10.33+，本机 node 在 `/opt/homebrew/bin`
 
-## 当前状态（2026-08-15，16 个 commit；本轮 O/P/Q/R 变更在工作区未提交）
+## 当前状态（2026-08-15，16 个 commit；本轮 O/P/Q/R/S 变更在工作区未提交）
 
 | Phase | 内容 | 状态 |
 |---|---|---|
@@ -40,10 +40,11 @@
 | P | 主题调色板重设计（src/theme/palette.ts，"paper feel"）：Light = 近白 canvas #fcfdfc（淡冷绿cast）+ 清灰绿 canvasSubtle #eef3ee / canvasInset #e5ebe5 + 石墨绿正文 fgDefault #1f2a24（canvas 14.6:1）+ 钢蓝 accent #0a60b5（5.6:1）+ 淡绿 success #1e843b + 淡紫 thinking #7b4fae + 柔琥珀 attention #9a6700 + 低饱和玫瑰 danger #b64550 + accentMuted #e2eff8 等 tint 系列；**fgSubtle 加深 #637269**（canvasSubtle 上 ~4.5:1 过 WCAG AA，C1）；Dark 保持 #0d1117 家族（canvasSubtle #161b22 / canvasInset #010409），muted 填色 = 25% tint 实色混合（blend()，#203651/#1a3b25/#4a2c2e/#3e331a，terminal 无 alpha 的固态近似）；对比度 28/28 全过（theme.test.mjs 断言颜色全从常量推导，改色板不破测试） | ✅ |
 | Q | 主题热切换（本轮核心，7 处协同）：① 新 src/theme-settings.ts —— 注册 dsh-tui namespace（theme union auto/light/dark，**applies 'live'**，旧 'restart' 契约作废）+ `SettingsScope.watch` 把每次 commit（/theme 选择、/settings 浏览器编辑、**外部改 settings.yaml**）推到 applyThemeRef；② tui.ts —— `themeRef` 可变绑定（所有读取走 getter）+ applyTheme：rebuildEditor 重建编辑器（保输入缓冲/onSubmit/autocomplete/branch provider，焦点安全：仅当编辑器持焦点才移焦，弹层开着不动）+ last-request/placeholder 重染色；③ messages.ts —— **ReplayOp 缓冲**（O(1)/事件 append，渲染路径永不扫）→ setTheme 唯一读方：clear + 全量重放，流式尾巴/工具卡/todos/echo/notice 按原样重建，在途流继续 setText；④ index.ts applyTheme 编排（renderer.setTheme → ui.applyTheme → footer 提示重染色 → spinner 重建，per-piece requestRender 合并成一帧无闪烁）；⑤ **DSH_TUI_THEME 钉住语义**：env 钉住显示时 /theme 诚实提示 `Theme preference saved — display is pinned by DSH_TUI_THEME=…`（偏好照常持久化，env 去掉后生效，B2）；⑥ notice/echo 全走 buffered replay（doc.clear() 重建不丢行）；⑦ readThemePreference 注册 promise + 2s cap 降级 auto（settings 服务异步挂载）；主题模块是单例，watch 回声自身写入按 bundle identity no-op | ✅ |
 | R | review 修复（Q 轮 review）：**A1 /session 焦点死区** —— 面板打开期间编辑器被主题重建 → restoreFocus 必须指向当前 editor 实例（旧闭包指向被替换的编辑器，pi-tui hide 恢复焦点到过期实例会吞后续输入）；B1 弹层 maxHeight 与 frame 4 行配合（24 行不丢边框）；B2 env 钉住不谎报（/theme 文案见 Q）；B3 四处错误行重放（settings onError、submit 捕获、cancelActiveTurn 的 ⏹ notice 全走 ReplayOp 缓冲，theme-switch 重建不丢）；C1 fgSubtle 加深（见 P）；C5 注释全英文 | ✅ |
+| S | **live Todos + Subagents widgets**（本轮核心，4 处协同 + 一轮重做）：① 新 src/dsh-events.ts —— 本地声明 tool-workflow/agent-start|end、subagent/descriptor、llm/retry 事件类型 + `declare module` 合并进 SessionEventMap（声明包未装进插件；守卫收窄，switch 其余走 default）+ AgentView 视图结构；② src/session.ts —— bridge 加 subagent 追踪器：session/event 火线**不按 scope 过滤**（dsh-scope 的 session/event resolver 为 null，子会话事件也会到达），父日志 tool-workflow/agent-start（runId:seq → childId，delegation 可嵌套递归）建视图、agent-end 结算；子日志 subagent/descriptor（provider）/assistant/message usage（token 累加）/llm/retry（↻N≤M）/tool/call（当前动作）/request/context（上下文窗口算百分比）折叠成 O(1) AgentView map，`onLive(排序快照)` 推给 widget；dispose/detach/resume 清空并 onLive([])；replay() 走同一折叠（resume 重建 board）；③ 新 src/live-widgets.ts —— **固定 widget（不随 transcript 滚动）钉在聊天区顶部**（tui.ts 的 root VStack 加了 basis:auto/grow:0 的 widgets 槽，有内容才占行）：renderTodos（● Todos (done/total) 树 + ├─/└─ + ☐/◐/☑，todo/write 事件由 index.ts onEvent 转发，transcript 不再渲染 todo）+ renderAgents（● Agents 板：仅**运行中**子代理一行——spinner/provider+label/↻N≤M/token(+%)/耗时/⎿ activity；结算即从板上消失，全部结束后 widget 收起=「结束就清空」）+ tickLive（AGENT_TICK_MS 100ms 转 spinner/刷耗时，无事 no-op）+ setTheme（热切换重上色，无 ReplayOp 参与）+ clear；行宽先裁后上色（todo content width-6、agent label 按实际 chrome 宽算、activity width-8）；④ src/index.ts 接 onLive/liveTimer（unref，两处 teardown 清）/applyTheme 里 setTheme//new 与 /resume 里 clear。**重做**：首版做成 transcript 底部块被用户否掉（「这 2 个是 widget，固定在聊天窗口上面」）→ 移出 transcript 进固定槽；对应移除 messages.ts 的 live 代码（renderTodos/renderAgents/tickLive/agents ReplayOp/AGENT_*）。**鲸鱼改内联**：🐳 不再独占一行，前缀到首个文本块 `🐳: 文本`（trimStart 保证同行；WHALE_COLOR 独立行渲染删除）。新增 11 单测（test/live.test.mjs：树结构/空块/单多代理行/无 provider/结算即消失/tick/no-provider/宽 80 不变量/setTheme 保内容/clear/双 section 分隔）；theme-switch.test.mjs 的 todo 重放用例改为渲染器不再渲染 todo 后的等价物 | ✅ |
 | O | 固定 5 行面板：think 块 + tool 卡 = 头部 1 行（bg + 状态色）+ 内容 4 行 tail（panelBodyText 尾部保留 + SGR 垫行带 bg；settle 只 setText 不重建块）；新增 chat 角色 thinkingPanelBg/toolBodyBg（复用 canvasSubtle）；'⟡'(U+27E1) 换 '💭'（用户终端方块）；无内滚——transcript 是 leaf Container，嵌套 ScrollView 拿不到 viewport（实测 0.84.2 dist/layout.js，src/messages.ts:13-20），用户拍板 tail 式 | ✅ |
 | P | review B1-B5 + C 类修复：B1 面板长行防折行（先裁纯文本后上色 clipPanelLine，cap = 终端列 - 4，回退 200；实测 clipToWidth 对 ANSI 串按 grapheme 逐段计宽会误计——裁宽+上色顺序已修正）；B2 secret 掩码渲染（EditField secret 分支：'•' 点串 + ▎ 光标 + canvasSubtle 底，值不进 render 输出，handleInput 语义不变，存量 secret 字段编辑同享）；B3 credentials.set 失败文案追加 `export <REF>=<key> to use it` 兜底 + 原地重试幂等（「查看+重存 key」两段 submenu 超 ~40 行放弃，注释说明）；B4 justStoredRefs Set（同会话连续加两个 provider 状态列都显示 key set）+ provider-catalog env 空串真值判断；B5 commitNewProvider 落定后补 refreshModelsView（写入在途 Esc 时新行不再丢）；C4 单数 '1 model'；C7 providerDirectory 过滤 settingsNs==='llm-pi-ai'；C8 删重复 refreshCategoryList；C11 降级成功改 notice 通道（EditField CommitResult {error|notice}，notice 无 ✘ 前缀） | ✅ |
 
-84 个单测全过（theme 15 + settings 18 + text 7 + reload 6（含新增"旧 fiber teardown 完成前新代码不得 apply"回归测试）+ provider-catalog 11 + messages 5 + frame 8 + theme-switch 12 + theme-settings 2 = 84；旧行写的 provider-catalog 12 系笔误，实为 11——当时 62 总数（15+18+7+6+11+5）不受影响）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级纯英文 label（General/Models/Plugins）+ Esc 链、英文搜索过滤（model→Models、general→General）、C-u 清空搜索框、中文消息 echo 与模型中文回复无乱码、中文行宽 ≤ 终端列不挤变形、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。本轮新增 e2e：**/reload 阻断复验**（gatekeeper 场景 tmux 实测——/reload 后输入正常：发消息出 transcript echo + 会话日志 user/message、Esc 不回显 `^[`、连续两次 /reload 均可用、运行中 Ctrl+C 第一次显示 ⏹ canceling 提示、idle Ctrl+C 正常退出；pi-tui 插桩日志确认旧 stop 恒先于新 start；agent 运行中 reload 会等 agent teardown 完成后才换 fiber，期间屏幕冻结属预期）；**/settings → Models**：OpenCode Go 行 value 显示 `catalog`（不再是 `0 models`）、description 显示 `API key set`（与 .credentials.yaml 一致，不再是 `API key missing`）；/model 选择器开关、中文 prompt echo 回归通过。本轮新增 e2e（O/P/Q/R 验收）：**主题热切换**（/theme 选完立即整屏换色（transcript/编辑器边框/footer 提示/spinner 同帧）、外部改 settings.yaml 的 `dsh-tui.theme` 热应用、DSH_TUI_THEME 钉住时 /theme 显示 pinned 提示且显示不换、切换期间弹层外输入正常、/resume 恢复后热切换重放正确）、**弹层边框**（6 个弹层顶/底 ─ 线完整、submenu 钻入后边框保持、24 行终端底部边框不丢）、**/session A1 焦点回归**（面板打开期间热切换后 Esc 关闭焦点回到新编辑器、后续输入不吞）、**watch 链路**（commit → 外部编辑双路径都生效）；**配置逐字节还原**（e2e 前后 settings.yaml + .credentials.yaml 快照 diff 为空）。
+S 轮新增 11 单测（live.test.mjs）后全量 **171 个单测全过**（welcome 18 + theme 17 + theme-switch 28 + settings 19 + messages 14 + frame 11 + provider-catalog 11 + live 11 + permission 9 + sessions 8 + quotes 8 + text 7 + reload 6 + theme-settings 5 = 171）、`pnpm check` 0 error；tmux e2e 全通过（/settings 枚举钻入 cycle 编辑写回、分类层级纯英文 label（General/Models/Plugins）+ Esc 链、英文搜索过滤（model→Models、general→General）、C-u 清空搜索框、中文消息 echo 与模型中文回复无乱码、中文行宽 ≤ 终端列不挤变形、/think、/model 两阶段 Off/High/Max、/session 无会话+有会话面板、/resume 31 个会话列表+恢复+统计重建、/new 后渲染、冷启动 /export 守卫、footer 提示可见、/model 重启持久化、Ctrl+C 分级中断、/theme 预选 auto、还原 V4-Flash；e2e 前后 settings.yaml 一致）。本轮新增 e2e：**/reload 阻断复验**（gatekeeper 场景 tmux 实测——/reload 后输入正常：发消息出 transcript echo + 会话日志 user/message、Esc 不回显 `^[`、连续两次 /reload 均可用、运行中 Ctrl+C 第一次显示 ⏹ canceling 提示、idle Ctrl+C 正常退出；pi-tui 插桩日志确认旧 stop 恒先于新 start；agent 运行中 reload 会等 agent teardown 完成后才换 fiber，期间屏幕冻结属预期）；**/settings → Models**：OpenCode Go 行 value 显示 `catalog`（不再是 `0 models`）、description 显示 `API key set`（与 .credentials.yaml 一致，不再是 `API key missing`）；/model 选择器开关、中文 prompt echo 回归通过。本轮新增 e2e（O/P/Q/R 验收）：**主题热切换**（/theme 选完立即整屏换色（transcript/编辑器边框/footer 提示/spinner 同帧）、外部改 settings.yaml 的 `dsh-tui.theme` 热应用、DSH_TUI_THEME 钉住时 /theme 显示 pinned 提示且显示不换、切换期间弹层外输入正常、/resume 恢复后热切换重放正确）、**弹层边框**（6 个弹层顶/底 ─ 线完整、submenu 钻入后边框保持、24 行终端底部边框不丢）、**/session A1 焦点回归**（面板打开期间热切换后 Esc 关闭焦点回到新编辑器、后续输入不吞）、**watch 链路**（commit → 外部编辑双路径都生效）；**配置逐字节还原**（e2e 前后 settings.yaml + .credentials.yaml 快照 diff 为空）。
 
 ## 当前 backlog / 待办
 
@@ -58,7 +59,7 @@
 ## 用户偏好 & 上下文
 
 - **用户语言**：中文为主；commit/代码注释英文。
-- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，16 个 commit（本轮 O/P/Q/R 变更在工作区未提交）。
+- **仓库位置**：`~/github/dsh-tui-pi`，git 已 init，main 分支，16 个 commit（本轮 O/P/Q/R/S 变更在工作区未提交）。
 - **配色**：严格对齐 `~/scripts/cmux-theme.sh` 里的 GitHub Light/Dark（不要用 Primer 默认色板）。
 - **TUI 文案**：UI 文案统一英文；中文内容（消息/值/路径）必须正常显示（用户 2026-08-15 明确）。
 - **安装方式**：用户明确说**不用推 GitHub**，纯本地用（`link:` + tarball）。
@@ -94,12 +95,28 @@ src/
   session.ts        DshSessionBridge：构造时 eager 读 agentDefaultModel；ensureSession
                     lazy 建 agent（先等 resuming 互斥）；installModelSelection(agentCtx, mutableRef)；
                     setSelection(next) live 切换；detachCurrent()（/new 用：dispose agent 但保留
-                    事件订阅 + 清 stats）；resume(sessionId)（detach + agents.resume + 
-                    seedSelectionFromDefault 保 live 选择）；replay(events)（从零重建 stats、
-                    chunk 跳过、幂等）；isRunning()（agent/status 镜像）+ cancelActiveTurn()
+                    事件订阅 + 清 stats + 清 subagent 追踪并 onLive([])）；resume(sessionId)
+                    （detach + agents.resume + seedSelectionFromDefault 保 live 选择 + 清追踪
+                    并 onLive([])）；replay(events)（从零重建 stats、chunk 跳过、幂等；同时
+                    折叠父日志 tool-workflow 事件重建 board）；**subagent 追踪器**：
+                    agentViews（runId:seq→AgentView）/childSessions/trackedSessions/
+                    childToKey —— session/event 火线不按 scope 过滤，foldTracked 折叠
+                    tool-workflow/agent-start|end（父日志）+ subagent/descriptor/
+                    assistant/message usage/llm/retry/tool/call/request/context（子日志）
+                    → onLive(排序快照)；isRunning()（agent/status 镜像）+ cancelActiveTurn()
                     （agent.cancel keepInbox）；persistDefaultModel(ctx, selection)（首选
                     agentDefaultModel.saveSelection → settings.replace last-write-wins；
                     无服务时 fallback settings.mutate + 一次冲突重试）
+  dsh-events.ts     本地声明 tool-workflow/agent-start|end、subagent/descriptor、llm/retry
+                    事件类型 + `declare module '@deepseek-ai/dsh-session'` 合并进
+                    SessionEventMap（声明包 dsh-tool-workflow/dsh-subagent/dsh-llm-retry
+                    未装进插件）+ isAgentStart/isAgentEnd/isSubagentDescriptor/isLlmRetry
+                    守卫 + AgentView 结构
+  live-widgets.ts   LiveWidgets：固定 widget（tui.ts 的 root VStack 顶部 widgets 槽，
+                    有内容才占行）——renderTodos（● Todos 树）/renderAgents（● Agents 板，
+                    仅运行中子代理：spinner/provider+label/↻N≤M/token(+%)/耗时/⎿ activity；
+                    结算即消失、全空收起）/tickLive（100ms 转 spinner/刷耗时）/setTheme/
+                    clear；todo/write 事件由 index.ts onEvent 转发（transcript 不再渲染）
   theme-settings.ts /theme 设置接线：registerThemeSettings（register dsh-tui namespace
                     { theme: union['auto','light','dark'] }，applies restart）、
                     readThemePreference（settings 异步挂载等待 + cap，失败降级 auto）、
@@ -110,10 +127,11 @@ src/
   messages.ts       TranscriptRenderer：applyEvent → switch 事件类型
                     - applyChunk：text-delta/reasoning-delta 流式（reasoning 尾巴 5 行斜体）
                     - finalizeStreaming + renderAssistantMessage：定稿 Markdown
+                      （首文本块前缀 `🐳: `，鲸鱼不再独占一行）
                     - addToolCard/settleToolCard：Container + status 色头 + args 行 + 10 行结果
                     - renderUserMessage：source.kind 去重（echo vs session 事件）
                     - renderCommandEcho：⌘ /cmd + 结果/错误
-                    - renderTodos：todo/write 快照替换
+                    - todo/write 不再渲染（走 live-widgets，index.ts onEvent 转发）
   selectors.ts      pickEffort：resolveModelInfo(p, m).reasoning.efforts → SelectList
                     （'(provider default)' 行清除 effort 覆盖、当前值预选中）；
                     pickModel：两阶段——stage-1 选模型，暴露 efforts 再弹 stage-2
@@ -181,6 +199,8 @@ ctx.agents.create({ sessionId, meta: { cwd }, agentOptions: { provider, model, r
 ctx.agents.resume({ resumeSessionId, agentOptions, setup })   // 恢复持久会话（bridge.resume 用）
 agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
 ctx.on('session/event', (session, event) => ...)     // event.data per SessionEventMap
+// **不按 scope 过滤**（dsh-scope 的 session/event resolver 为 null）：所有会话
+// （含 subagent 子会话）的事件都会到达，bridge 按 session.id 区分父/子折叠
 ctx.on('agent/status', ({ agent, status }) => ...)   // 'idle' | 'running'
 ctx.commands.register({ name, description, input?, handler })  // host 命令注册
 ctx.commands.list(agent)                              // 补全源
@@ -242,9 +262,11 @@ ctx.root.fiber.dispose()                                // 树级退出（Ctrl+C
 cd ~/github/dsh-tui-pi
 pnpm check                                    # tsc --noEmit
 pnpm build                                    # emit lib/
-pnpm test                                     # 84 单测（theme 15 + settings 18 + text 7 + reload 6
-                                              #   + provider-catalog 11 + messages 5 + frame 8
-                                              #   + theme-switch 12 + theme-settings 2，pretest 自动 build）
+pnpm test                                     # 171 单测（welcome 18 + theme 17 + theme-switch 28
+                                              #   + settings 19 + messages 14 + frame 11
+                                              #   + provider-catalog 11 + live 11 + permission 9
+                                              #   + sessions 8 + quotes 8 + text 7 + reload 6
+                                              #   + theme-settings 5，pretest 自动 build）
 pnpm pack                                     # → dsh-tui-pi-0.1.0.tgz
 npm pack | tail -1                            # tarball 路径
 

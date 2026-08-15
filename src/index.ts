@@ -18,6 +18,7 @@ import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { PowerlineFooter, type FooterDataSource } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
 import { TranscriptRenderer, type PanelHeight } from './messages.ts'
+import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts'
 import { DshSessionBridge, persistDefaultModel } from './session.ts'
@@ -137,6 +138,11 @@ export function apply(ctx: Context): void {
     }
 
     const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender(), panelHeight)
+    // Live Todos/Agents widgets pinned above the chat window: show while the
+    // model has todos or subagents running, collapse when done. Owned here —
+    // fed by todo/write events and the bridge's subagent fold, ticked by the
+    // live timer, recolored by applyTheme.
+    const liveWidgets = new LiveWidgets(ui.widgets, ui.theme, () => ui.requestRender())
     // Arm the panel-height watch sink now that the renderer exists: a
     // committed panelHeight change sets the new height and relayouts the
     // transcript (the replay rebuild), repainting every panel at the new row
@@ -198,12 +204,19 @@ export function apply(ctx: Context): void {
     const bridge = new DshSessionBridge(ctx, {
       onEvent: event => {
         renderer.applyEvent(event)
+        if (event.type === 'todo/write') {
+          // Todos render in the fixed live widget, not the transcript.
+          liveWidgets.renderTodos(event.data.todos)
+        }
         if (PERMISSION_KNOB_EVENTS.has(event.type)) {
           refreshPermissionPreset()
           ui.requestRender()
         }
       },
       onStatus: setStatus,
+      onLive: agents => {
+        liveWidgets.renderAgents(agents)
+      },
     })
 
     /**
@@ -387,8 +400,11 @@ export function apply(ctx: Context): void {
       // been emitted before the bridge's session-id filter re-bound).
       refreshPermissionPreset()
       // Clear BEFORE replay: the renderer's local-echo dedupe must not see
-      // replayed user messages next to a stale prompt echo.
+      // replayed user messages next to a stale prompt echo. The live widget
+      // drops the previous session's todos too (its agents already went via
+      // the bridge's onLive([]) on resume reset).
       renderer.clear()
+      liveWidgets.clear()
       // Replay seed history only: events at or above firstLiveSeq were
       // published in-process and arrive again through the session/event
       // subscription (replaying them would double-count stats and echo).
@@ -443,6 +459,9 @@ export function apply(ctx: Context): void {
       // to a later one (the next prompt re-seeds it).
       refreshPermissionPreset()
       renderer.clear()
+      // The widget's agents already cleared via the bridge's onLive([]); drop
+      // the previous session's todos too.
+      liveWidgets.clear()
       return { kind: 'success' as const, text: 'New session started.' }
     }
     commands.registerLocal('new', newHandler)
@@ -616,6 +635,7 @@ export function apply(ctx: Context): void {
     const applyTheme = (theme: TuiTheme): void => {
       if (theme === ui.theme) return
       renderer.setTheme(theme)
+      liveWidgets.setTheme(theme)
       ui.applyTheme(theme)
       paintFooterHint()
       if (loader !== undefined) {
@@ -629,6 +649,11 @@ export function apply(ctx: Context): void {
     // Live clock: the footer is the only thing that changes each second.
     const clockTimer = setInterval(() => ui.requestRender(), 1000)
     clockTimer.unref?.()
+
+    // Live Todos/Agents widget: spinner + elapsed refresh ~10x/sec while
+    // children run (tickLive no-ops when nothing runs).
+    const liveTimer = setInterval(() => liveWidgets.tickLive(), AGENT_TICK_MS)
+    liveTimer.unref?.()
 
     /**
      * Modal commands keep an overlay open for as long as the user browses
@@ -725,6 +750,7 @@ export function apply(ctx: Context): void {
     const disposeAndExit = async (code: number): Promise<void> => {
       exitTask ??= (async () => {
         clearInterval(clockTimer)
+        clearInterval(liveTimer)
         git.dispose()
         try { await bridge.dispose() } catch { /* contained */ }
         ui.dispose()
@@ -738,6 +764,7 @@ export function apply(ctx: Context): void {
       if (relayoutTimer !== undefined) clearTimeout(relayoutTimer)
       process.stdout.removeListener('resize', onResize)
       clearInterval(clockTimer)
+      clearInterval(liveTimer)
       git.dispose()
       applyThemeRef = undefined
       applyPanelHeightRef = undefined

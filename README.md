@@ -21,6 +21,13 @@ pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
   provider / model+thinking / context / cache-hit / msgs / tools with U+E0B0
   arrows, right-aligned live clock, cwd+git-branch editor top border, and the
   `↳ last-request` widget.
+- **Live todos & subagents**: fixed widgets pinned above the chat window —
+  todos render as a tree block (`● Todos (done/total)` with `☐`/`◐`/`☑`
+  status icons); subagent children spawn a live `● Agents` board (spinner,
+  provider + label, retries, token count + context percent, elapsed and the
+  current tool) refreshed ~10×/s. Show while there is content, clear when
+  done — a settled child drops off the board and the widget collapses to
+  zero rows.
 
 ## Commands
 
@@ -105,6 +112,12 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 
 - Type a prompt → Enter. Streaming reply renders live; tool calls render as
   `⚙/✔/✘` cards.
+- Todos and subagent children the model spawns show in fixed widgets pinned
+  **above** the chat window (they never scroll with the transcript): a
+  `● Todos (done/total)` tree and a live `● Agents` board — spinner, provider
+  + label, retries (`↻N≤M`), tokens (+ context percent), elapsed, and the
+  current tool (`⎿ running …`). A finished child drops off the board; when
+  nothing is left the widget collapses away.
 - `/` opens slash-command autocomplete (Tab/arrows/Enter).
 - Ctrl+C quits — while the agent is mid-turn the first press cancels the turn
   (`⏹ canceling current turn…`), any further press quits.
@@ -120,6 +133,9 @@ dsh-tui-pi avoids both by construction:
   cache-hit rate). Render never re-scans the dsh session log.
 - **Footer reads O(1) maintained values** — never derived in `render()`.
 - **Clock tick only re-renders the footer line**; transcript components cache.
+- **Live widgets tick at 100 ms** (`AGENT_TICK_MS`, unref'd timer): a tick
+  only re-setTexts the widget's single Text (O(agents)) and is a no-op while
+  no child runs — never a transcript re-scan.
 - **Streaming strategy**: deltas accumulate in a plain Text via `setText` on
   the same component (never remove+re-add per token); markdown renders once on
   the assembled `assistant/message` (no per-token markdown parsing).
@@ -142,7 +158,7 @@ dsh-tui-pi avoids both by construction:
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (123 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (171 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -189,7 +205,12 @@ src/
   tui.ts            TUI bootstrap: alt-screen tree, transcript ScrollView,
                     dock (status/editor/last-request/footer), editor rebuild
   session.ts        DshSessionBridge: lazy agent create, followup, resume,
-                    replay, cancel, O(1) incremental stats, persistDefaultModel
+                    replay, cancel, O(1) incremental stats, persistDefaultModel,
+                    subagent tracker (tool-workflow + child events → live rows)
+  dsh-events.ts     local types + guards for tool-workflow/subagent/llm-retry
+                    events (declaring packages not installed) + AgentView
+  live-widgets.ts   LiveWidgets: fixed Todos/Agents widgets pinned above the
+                    chat window (renderTodos/renderAgents/tickLive/setTheme)
   commands.ts       CommandService: slash autocomplete + dual-channel dispatch
                     (registerLocal agentless direct / ctx.commands host path)
   messages.ts       TranscriptRenderer: session events → pi-tui components;
@@ -216,7 +237,7 @@ src/
     palette.ts      GitHub light/dark palettes + terminal-background detection
     index.ts        buildTheme: Editor/Markdown/SelectList/chat roles, POWERLINE
                     segment palette, resolveTheme (env > preference > detect)
-test/*.test.mjs     unit tests, node --test against lib/ (84 across 9 files)
+test/*.test.mjs     unit tests, node --test against lib/ (171 across 14 files)
 ```
 
 ## Status (2026-08-15)
@@ -224,9 +245,10 @@ test/*.test.mjs     unit tests, node --test against lib/ (84 across 9 files)
 All surface commands shipped and tmux-e2e verified: `/model /think /session
 /resume /new /settings /export /theme /reload`; provider-first Models with the
 add-provider flow; overlay chrome (backgrounds + borders); theme hot-switch
-(immediate apply, external-change watch, env pinning); graded Ctrl+C; clean
-Ctrl+C exit. `pnpm check` clean, 84 unit tests green, e2e run confirmed the
-settings/credentials files are restored byte-for-byte.
+(immediate apply, external-change watch, env pinning); graded Ctrl+C; live
+todos + subagent progress blocks; clean Ctrl+C exit. `pnpm check` clean,
+171 unit tests green, e2e run confirmed the settings/credentials files are
+restored byte-for-byte.
 
 Known limitations (accepted, pi-tui 0.84.2 constraints):
 

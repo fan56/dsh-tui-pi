@@ -62,11 +62,10 @@ test('setTheme repaints existing content with the new theme', () => {
   assert.ok(renderDoc(doc).includes('Hi there'), 'streaming content survives the repaint')
 })
 
-test('setTheme rebuilds tool cards, thinking panels and todos against the new theme', () => {
+test('setTheme rebuilds tool cards and thinking panels against the new theme', () => {
   const { doc, renderer } = makeRenderer()
   renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'c1', name: 'read', arguments: '{"file_path":"a.txt"}' }, ts: 0, seq: 2 })
   renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 0, chunk: { type: 'reasoning-delta', text: 'thinking line' } }, ts: 0, seq: 3 })
-  renderer.applyEvent({ type: 'todo/write', data: { todos: [{ content: 'task one', status: 'in_progress' }] }, ts: 0, seq: 4 })
 
   const width = panelRenderWidth()
   const dark = renderDocStyled(doc, width)
@@ -80,8 +79,6 @@ test('setTheme rebuilds tool cards, thinking panels and todos against the new th
   assert.ok(light.includes(ansiBg(githubLight.toolPanelBg)), 'tool card repainted to its light blue surface')
   assert.ok(!light.includes(ansiBg(githubDark.thinkingPanelBg)) && !light.includes(ansiBg(githubDark.toolPanelBg)),
     'no dark panel surfaces left behind')
-  assert.ok(light.includes(ansiFg(githubLight.attention)), 'in-progress todo repainted to the light attention')
-  assert.ok(light.includes('task one'), 'todo content survives')
   assert.ok(light.includes('thinking line'), 'think body survives')
   assert.ok(light.includes('read'), 'tool card header survives')
 })
@@ -192,11 +189,11 @@ test('clear() drops the replay buffer — nothing resurrects on setTheme', () =>
   renderer.setTheme(lightTheme)
   assert.equal(doc.children.length, 0, 'cleared transcript stays empty across the switch')
 
-  // New content after the switch applies normally.
-  renderer.applyEvent({ type: 'todo/write', data: { todos: [{ content: 'fresh', status: 'pending' }] }, ts: 0, seq: 8 })
+  // New content after the switch applies normally (todo/write now renders in
+  // the fixed live widget, not the transcript — a prompt echo stands in).
+  renderer.renderPromptEcho('fresh')
   const out = renderDocStyled(doc)
-  assert.ok(renderDoc(doc).includes('fresh'), 'fresh todo renders')
-  assert.ok(out.includes(ansiFg(githubLight.fgSubtle)), 'pending todo painted with the light subtle fg')
+  assert.ok(renderDoc(doc).includes('fresh'), 'fresh content renders')
   assert.ok(!renderDoc(doc).includes('old session'), 'cleared content never returns')
 })
 

@@ -15,7 +15,6 @@ import { Container, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import { clipPanelLine, panelBodyText, panelBoxWidth, panelLineCap, toolSubject, TranscriptRenderer } from '../lib/messages.js'
 import { ansiFg, darkTheme, lightTheme } from '../lib/theme/index.js'
 import { visibleWidth } from '../lib/text.js'
-import { WHALE_COLOR } from '../lib/welcome.js'
 
 const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
 
@@ -196,7 +195,7 @@ test('tool card header shows name + subject (read → file path, cli → command
 
 // ------------------------------------------------------- whale avatar ----
 
-test('the whale 🐳 precedes the assistant\'s formal answer, once per message', () => {
+test('the whale 🐳 prefixes the assistant\'s formal answer inline, once per message', () => {
   const doc = new Container()
   const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
   renderer.applyEvent({
@@ -208,13 +207,14 @@ test('the whale 🐳 precedes the assistant\'s formal answer, once per message',
     ts: 0, seq: 1,
   })
   const rendered = doc.children.map(c => c.render(200).join('\n')).join('\n')
-  assert.ok(rendered.includes(ansiFg(WHALE_COLOR) + '🐳'), 'brand-blue whale icon line')
   const plain = stripAnsi(rendered)
-  assert.ok(plain.indexOf('🐳') < plain.indexOf('hello there'), 'icon above the answer text')
+  // Inline prefix on the answer's first line (`🐳: hello there`), never a
+  // line of its own — the old avatar-on-its-own-line behavior is gone.
+  assert.ok(plain.includes('🐳: hello there'), 'whale prefix runs inline with the answer')
+  assert.ok(!plain.includes('🐳\n'), 'the whale never takes its own line')
   assert.equal((plain.match(/🐳/g) ?? []).length, 1, 'one whale per message, not per text block')
 
   renderer.setTheme(darkTheme)
   const after = doc.children.map(c => c.render(200).join('\n')).join('\n')
-  assert.ok(stripAnsi(after).includes('🐳'), 'whale survives the theme rebuild (replayed with the message)')
-  assert.ok(after.includes(ansiFg(WHALE_COLOR) + '🐳'), 'still brand blue — theme-independent like the banner')
+  assert.ok(stripAnsi(after).includes('🐳: hello there'), 'whale survives the theme rebuild (replayed with the message)')
 })

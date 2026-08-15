@@ -48,7 +48,13 @@ entry / wiring   index.ts          command registration, footer/git/clock,
                  footer.ts         powerline segments (O(segments) render)
   └─ renderer    messages.ts       session events → components, ReplayOp buffer
   └─ bridge      session.ts        lazy session, O(1) stats, cancel, resume,
-                                   replay, persistDefaultModel
+                                   replay, persistDefaultModel, subagent tracker
+                 dsh-events.ts     local types/guards for tool-workflow,
+                                   subagent/descriptor, llm/retry events
+                                   (declaring packages not installed) + AgentView
+  └─ widgets     live-widgets.ts   fixed Todos/Agents widgets pinned above the
+                                   chat window (renderTodos/renderAgents/
+                                   tickLive/setTheme)
   └─ commands    commands.ts       parse + dual-channel dispatch + autocomplete
   └─ overlays    selectors.ts      /model /think /theme pickers
                  sessions.ts       /session panel, /resume picker
@@ -94,7 +100,8 @@ event does O(event) work:
   header `⚙/✔/✘ name`, body tail) keyed by `callId`; settled results keep at
   most the body budget — or 2000 lines in 'all' mode, with a `… (+N lines)`
   marker for the drop.
-- `todo/write` — snapshot container replaced wholesale.
+- `todo/write` — routed to the fixed live widget (see below), never rendered
+  in the transcript.
 - `turn/end` — error / `⏹ interrupted` / `⚠ output token limit reached` line.
 - `command/run` / `command/done` — flow nodes, no render (the command echo
   path covers display).
@@ -102,7 +109,7 @@ event does O(event) work:
 Every applied operation is appended to a `ReplayOp` buffer (O(1) per event,
 never scanned by the render path). `setTheme` — an explicit user action — is
 the single reader: it clears the doc and replays the buffer against the new
-theme, so streaming state, tool cards, todos, echoes and notices rebuild
+theme, so streaming state, tool cards, echoes and notices rebuild
 exactly as applied and an in-flight stream continues `setText` on its rebuilt
 component. Panels are height-configurable through `dsh-tui.panelHeight`
 (`'5'/'7'/'10'` total rows — top border + header row + body rows + bottom
@@ -123,7 +130,35 @@ terminal columns it
 degrades to
 the whale alone) in `welcome.ts` is the first replay op; its art is
 reproducible from `assets/whale-source.png` via `node assets/whale-gen.mjs`
-(test-enforced).
+(test-enforced). The whale also prefixes the assistant's first text block
+inline (`🐳: text`) instead of taking its own avatar line.
+
+### Live widgets (live-widgets.ts)
+
+`LiveWidgets` renders the todos tree and the subagent board into a **fixed
+container pinned above the chat window** (`ui.widgets`, a `basis: auto / grow:
+0` slot between the top of the screen and the transcript ScrollView in
+tui.ts) — they never scroll with the transcript. Show-when-content,
+clear-when-done:
+
+- `renderTodos(todos)` — `todo/write` events (routed from index.ts's
+  `onEvent`, since the transcript no longer renders them): a `● Todos
+  (done/total)` header with `├─`/`└─` tree lines and `☐`/`◐`/`☑` status
+  icons. An empty snapshot (or `/new`) hides the section.
+- `renderAgents(agents)` — the bridge's `onLive` fold: one line per **running**
+  child (spinner, provider + label, `↻retries≤max`, total tokens + context
+  percent, elapsed, activity `⎿ running {tool}…`). A settled child drops off
+  the board immediately; when none run the section — and the whole widget
+  when todos are gone too — collapses to zero rows.
+- `tickLive()` — `AGENT_TICK_MS` (100 ms) timer in index.ts advances the
+  spinner and re-reads the elapsed clock; no-op while nothing runs.
+- `setTheme(bundle)` — recolors in place on a theme hot-switch (the widget is
+  live state, not transcript history — no ReplayOp involvement).
+
+Width discipline matches the panels: every line is clipped before styling,
+the todo content budget is `width − 6` (tree chrome), and the agent label
+budget is computed against the actual chrome width (connector + icon +
+provider + meta) so no row ever wraps.
 
 ### Bridge (session.ts)
 
@@ -140,6 +175,18 @@ reproducible from `assets/whale-source.png` via `node assets/whale-gen.mjs`
 - **Stats**: `session/event` and `agent/status` subscriptions (filtered to
   the bridge's session id) maintain running counters; the footer reads
   `getStats()` O(1).
+- **Subagents**: the same `session/event` firehose is not scope-filtered
+  (dsh-scope's `session/event` resolver is null), so child sessions arrive
+  too. The tracker folds `tool-workflow/agent-start` (parent log; keyed by
+  `runId:seq`, registers the child's session id — delegation nests) and
+  `tool-workflow/agent-end` (settle), plus each child's own
+  `subagent/descriptor` (provider name), `assistant/message` usage (tokens),
+  `llm/retry` (retries/max), `tool/call` (last activity) and
+  `request/context` (context window) into an O(1) `AgentView` map;
+  `onLive` pushes the sorted snapshot to the widget. `replay()` folds the
+  same parent-log events so a resumed session rebuilds the board. The tracker
+  clears on dispose/detach/resume — each firing `onLive([])` — so the widget
+  drops stale rows before the next session's events rebuild it.
 - **Cancel**: `cancelActiveTurn()` → `agent.cancel({ kind: 'user' },
   { keepInbox: true })` — the web stop-button equivalent; `isRunning()` is a
   mirror of the status subscription.
