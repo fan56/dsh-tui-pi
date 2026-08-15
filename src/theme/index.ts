@@ -133,14 +133,15 @@ export function buildTheme(palette: Palette): TuiTheme {
   const chat: ChatTheme = {
     userMessageBg: bg(palette.canvasSubtle),
     userMessageText: fg(palette.fgDefault),
-    toolPendingBg: bg(palette.canvasSubtle),
+    // Tool card surfaces share the blue tool surface; only the settle status
+    // swaps the header tint (success green / error red).
+    toolPendingBg: bg(palette.toolPanelBg),
     toolSuccessBg: bg(palette.successMuted),
     toolErrorBg: bg(palette.dangerMuted),
-    // Panel surfaces reuse the canvasSubtle surface (same as message bubbles):
-    // the thinking panel is told apart by its purple text, the tool body by
-    // its header status tint.
-    thinkingPanelBg: bg(palette.canvasSubtle),
-    toolBodyBg: bg(palette.canvasSubtle),
+    // The thinking panel has its own purple surface, distinct from the blue
+    // tool cards and the green-gray message bubbles.
+    thinkingPanelBg: bg(palette.thinkingPanelBg),
+    toolBodyBg: bg(palette.toolPanelBg),
     thinkingText: text => `\x1b[3m${fg(palette.thinking)(text)}\x1b[0m`,
     todoDone: text => fg(palette.success)(`☑ ${text}`),
     todoOpen: text => fg(palette.fgSubtle)(`☐ ${text}`),

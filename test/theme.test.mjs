@@ -38,6 +38,30 @@ test('dark muted backgrounds are blended solids (25% tint over canvas)', () => {
   assert.equal(githubDark.attentionMuted, '#3e331a')
 })
 
+test('panel surfaces and border roles exist in both themes', () => {
+  assert.equal(githubLight.thinkingPanelBg, '#f4effa')
+  assert.equal(githubLight.toolPanelBg, '#eef4fb')
+  assert.equal(githubLight.panelBorder, '#a9c0ab')
+  // Dark tints follow the existing blend convention (25% over canvas):
+  // thinkingPanelBg = blend(#0d1117, #bc8cff, 0.25); toolPanelBg matches
+  // accentMuted's 25% blue tint.
+  assert.equal(githubDark.thinkingPanelBg, '#393051')
+  assert.equal(githubDark.toolPanelBg, '#203651')
+  assert.equal(githubDark.panelBorder, '#34433b')
+})
+
+test('chat panel bg roles wire to the distinct panel surfaces', () => {
+  const light = buildTheme(githubLight)
+  assert.ok(light.chat.thinkingPanelBg('x').startsWith(ansiBg(githubLight.thinkingPanelBg)))
+  assert.ok(light.chat.toolPendingBg('x').startsWith(ansiBg(githubLight.toolPanelBg)))
+  assert.ok(light.chat.toolBodyBg('x').startsWith(ansiBg(githubLight.toolPanelBg)))
+  // The settle status tints stay on their own surfaces (unchanged).
+  assert.ok(light.chat.toolSuccessBg('x').startsWith(ansiBg(githubLight.successMuted)))
+  assert.ok(light.chat.toolErrorBg('x').startsWith(ansiBg(githubLight.dangerMuted)))
+  // User message bubbles keep the canvasSubtle surface.
+  assert.ok(light.chat.userMessageBg('x').startsWith(ansiBg(githubLight.canvasSubtle)))
+})
+
 test('resolveTheme respects explicit override', () => {
   assert.equal(resolveTheme({ DSH_TUI_THEME: 'light' }).palette.name, 'github-light')
   assert.equal(resolveTheme({ DSH_TUI_THEME: 'dark' }).palette.name, 'github-dark')

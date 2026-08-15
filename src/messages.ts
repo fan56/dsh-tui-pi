@@ -10,14 +10,15 @@
  * is replaced by proper Markdown rendering. This keeps per-token cost at
  * O(accumulated text) instead of re-parsing markdown on every delta.
  *
- * Panels: think blocks and tool cards render as fixed PANEL_HEIGHT rows (one
- * header row + PANEL_BODY_LINES body rows). The transcript doc is a plain
- * Container inside the outer ScrollView, so pi-tui 0.84.2 never lays out
- * nested components (a Container without a layout node renders by simple
- * concatenation — verified in dist/layout.js) and an inner ScrollView can
- * never obtain a viewport. The body is therefore a padded tail of the last
- * PANEL_BODY_LINES rows rather than an internal scroll; every row carries
- * the panel background.
+ * Panels: think blocks and tool cards render as fixed PANEL_HEIGHT rows — a
+ * full box border (top border + header row + PANEL_BODY_LINES body rows +
+ * bottom border). The transcript doc is a plain Container inside the outer
+ * ScrollView, so pi-tui 0.84.2 never lays out nested components (a Container
+ * without a layout node renders by simple concatenation — verified in
+ * dist/layout.js) and an inner ScrollView can never obtain a viewport. The
+ * body is therefore a padded tail of the last PANEL_BODY_LINES rows rather
+ * than an internal scroll; every row (borders included) carries the panel
+ * background.
  *
  * Theme hot-switch: every applied operation is appended to `replay` (O(1)
  * per event — never a render-path scan). `setTheme` is an explicit user
@@ -32,25 +33,57 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 // Loads the SessionEventMap augmentation that adds command/run + command/done.
 import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
-import { clipToWidth } from './text.ts'
+import { clipToWidth, visibleWidth } from './text.ts'
 
-/** Fixed total height of a think/tool panel: 1 header row + body rows. */
-const PANEL_HEIGHT = 5
-/** Body rows inside a panel (PANEL_HEIGHT - 1). */
-const PANEL_BODY_LINES = PANEL_HEIGHT - 1
+/** Fixed total height of a think/tool panel: top border + header row + body
+ * rows + bottom border.
+ */
+const PANEL_HEIGHT = 6
+/** Body rows inside a panel (PANEL_HEIGHT - top border - header - bottom border). */
+const PANEL_BODY_LINES = PANEL_HEIGHT - 3
+/** Thinking panel header row content (icon + label), 11 visible columns. */
+const THINKING_HEADER = '💭 thinking'
 /**
- * Fallback cap for a panel body row when the terminal width is unknown
- * (non-TTY contexts, e.g. tests): conservative so no sane terminal wraps.
+ * Fallback terminal columns when the real width is unknown (non-TTY
+ * contexts, e.g. tests): conservative so no sane terminal wraps.
  */
 const PANEL_LINE_CAP_FALLBACK = 200
 
 /**
- * Terminal columns a panel body row may occupy so it renders on exactly one
- * physical row: the body Text wraps at `width - paddingX*2` (paddingX = 1),
- * and tool rows also carry a 2-column indent, hence the -4 headroom.
+ * Terminal columns a panel body row's CONTENT may occupy so the whole
+ * bordered row renders on exactly one physical line: the body Text wraps at
+ * `width - paddingX*2` (paddingX = 1), every row carries 4 columns of box
+ * chrome (`│ ` … ` │`), and tool rows add a 2-column indent — hence the -6
+ * (think) and -8 (tool, indent = 2) headroom.
  */
-export function panelLineCap(columns: number | undefined): number {
-  return Math.max(1, (columns === undefined ? PANEL_LINE_CAP_FALLBACK : columns) - 4)
+export function panelLineCap(columns: number | undefined, indent = 0): number {
+  return Math.max(1, (columns === undefined ? PANEL_LINE_CAP_FALLBACK : columns) - 6 - indent)
+}
+
+/** Full visible width of one bordered panel row, box chrome included. */
+export function panelBoxWidth(columns: number | undefined): number {
+  return panelLineCap(columns) + 4
+}
+
+/**
+ * One bordered panel row of exactly `boxWidth` visible columns: side borders
+ * in `borderFg`, `inner` (already styled, already clipped) left-aligned and
+ * padded with spaces to the full box width. No trailing RESET — the panel bg
+ * function terminates the row and paints the whole width.
+ */
+function borderedRow(boxWidth: number, borderFg: string, inner: string): string {
+  const pad = Math.max(0, boxWidth - 4 - visibleWidth(inner))
+  return `${borderFg}│ ${inner}${' '.repeat(pad)}${borderFg} │`
+}
+
+/** Top border line (`┌─…─┐`), `boxWidth` columns wide, in `borderFg`. */
+function panelTopBorder(boxWidth: number, borderFg: string): string {
+  return `${borderFg}┌${'─'.repeat(Math.max(0, boxWidth - 2))}┐`
+}
+
+/** Bottom border line (`└─…─┘`), `boxWidth` columns wide, in `borderFg`. */
+function panelBottomBorder(boxWidth: number, borderFg: string): string {
+  return `${borderFg}└${'─'.repeat(Math.max(0, boxWidth - 2))}┘`
 }
 
 /**
@@ -58,9 +91,14 @@ export function panelLineCap(columns: number | undefined): number {
  * clipToWidth counts per grapheme, so the ASCII fragments of an SGR code
  * would count as visible columns (verified against pi-tui 0.84.2) — clipping
  * plain text first, then applying ANSI, keeps the accounting exact.
+ * `indent` is the leading content indent the row carries (2 for tool rows).
+ * Carriage returns are stripped first: pi-tui's wrapTextWithAnsi splits on
+ * `/\r\n|\r|\n/`, so a bare \r (progress bars, CRLF tool output) would break
+ * the fixed panel rows just like a wrap would — the panel line is one row,
+ * not a line record.
  */
-export function clipPanelLine(text: string): string {
-  return clipToWidth(text, panelLineCap(process.stdout.columns))
+export function clipPanelLine(text: string, indent = 0): string {
+  return clipToWidth(text.replace(/\r/g, ''), panelLineCap(process.stdout.columns, indent))
 }
 
 interface StreamingState {
@@ -68,7 +106,7 @@ interface StreamingState {
   step: number
   textComponent?: Text
   text: string
-  /** Fixed 5-row thinking panel; setBody() is the only per-chunk update. */
+  /** Fixed 6-row thinking panel; setBody() is the only per-chunk update. */
   reasoningPanel?: ThinkingPanel
   reasoning: string
 }
@@ -101,19 +139,23 @@ interface ThinkingPanel {
 }
 
 /**
- * Compose a PANEL_BODY_LINES-row body from already-styled lines: keep the
- * tail (newest rows win), pad short content with empty rows. Pad rows carry
- * a lone SGR code (`\x1b[39m` — default foreground) so they survive Text's
- * `text.trim() === ''` fast path, which would otherwise drop plain empty
- * rows; the code does not touch the background, so the panel bg function
- * still paints the full row width. Callers clip each line with
- * `clipPanelLine` BEFORE styling — otherwise a styled line that outgrows
- * `width - paddingX*2` wraps and the panel exceeds its fixed 5 rows.
+ * Compose the bordered body Text content (PANEL_BODY_LINES boxed rows plus
+ * the bottom border) from already-styled, already-clipped lines: keep the
+ * tail (newest rows win), pad short content with empty boxed rows. Every
+ * row is one `boxWidth`-wide boxed line (`│ ` … ` │`, see borderedRow);
+ * `borderFg` is the panelBorder SGR prefix (no trailing RESET — the panel
+ * bg function terminates the row). Pad rows carry the box characters, so
+ * they survive Text's `text.trim() === ''` fast path, which would otherwise
+ * drop a body of only empty rows; the border SGR does not touch the
+ * background, so the panel bg function still paints the full row width.
+ * Callers clip each line with `clipPanelLine` BEFORE styling — otherwise a
+ * styled line that outgrows `width - paddingX*2` wraps and the panel
+ * exceeds its fixed 6 rows.
  */
-export function panelBodyText(lines: readonly string[]): string {
+export function panelBodyText(lines: readonly string[], boxWidth: number, borderFg: string): string {
   const visible = lines.length > PANEL_BODY_LINES ? lines.slice(-PANEL_BODY_LINES) : [...lines]
-  while (visible.length < PANEL_BODY_LINES) visible.push('\x1b[39m')
-  return visible.join('\n')
+  while (visible.length < PANEL_BODY_LINES) visible.push('')
+  return [...visible.map(line => borderedRow(boxWidth, borderFg, line)), panelBottomBorder(boxWidth, borderFg)].join('\n')
 }
 
 /** First text content of a tool result, raw lines. */
@@ -265,6 +307,25 @@ export class TranscriptRenderer {
     this.requestRender()
   }
 
+  /**
+   * Repaint the whole transcript at the current terminal width — the resize
+   * counterpart of `setTheme`. On stdout `resize` pi-tui re-renders every
+   * component with the new columns, but bordered panel rows were padded to
+   * the OLD box width, so a narrowing terminal wraps every row and shatters
+   * the fixed 6-row panels. Clear and re-apply the buffered operations
+   * exactly like a theme switch: an in-flight stream keeps its accumulated
+   * text (the replay rebuilds its Text and later chunks continue setText on
+   * it), tool cards keep their settle state, todos reappear. No-op when
+   * nothing was rendered — the startup placeholder stays untouched.
+   */
+  relayout(): void {
+    if (this.replay.length === 0) return
+    const ops = [...this.replay]
+    this.clear()
+    for (const op of ops) this.applyOp(op)
+    this.requestRender()
+  }
+
   /** Drop everything rendered so far (`/new`). The next prompt opens a fresh agent. */
   clear(): void {
     this.streaming = undefined
@@ -375,31 +436,54 @@ export class TranscriptRenderer {
 
   // --------------------------------------------------------------- panels --
 
-  /**
-   * Thinking color style without a trailing RESET: the panel bg function
-   * terminates the row, so an inner RESET would clear the background and
-   * leave the row's right side unpainted.
-   */
-  private thinkStyle(text: string): string {
-    return `\x1b[3m${ansiFg(this.theme.palette.thinking)}${text}`
+  /** Full box width and panelBorder SGR prefix for one panel, per current theme. */
+  private panelBox(): { boxWidth: number; borderFg: string } {
+    return {
+      boxWidth: panelBoxWidth(process.stdout.columns),
+      borderFg: ansiFg(this.theme.palette.panelBorder),
+    }
   }
 
-  /** Styled PANEL_BODY_LINES tail of a reasoning text. */
+  /** Top border line plus bordered header row — the header Text's two lines. */
+  private panelTop(boxWidth: number, borderFg: string, headerInner: string): string {
+    return `${panelTopBorder(boxWidth, borderFg)}\n${borderedRow(boxWidth, borderFg, headerInner)}`
+  }
+
+  /**
+   * Thinking color style, italic-on. The style terminates with a targeted
+   * italic-off (`\x1b[23m`) — NOT a full RESET: the panel bg function paints
+   * the whole row width, and a `\x1b[0m` here would clear the background and
+   * leave the row's right side unpainted. Without the italic-off the leak is
+   * visible in the box chrome: wrapTextWithAnsi carries ANSI state across
+   * lines within one Text, so the row's right border, the following body
+   * rows and the bottom border would all render italic.
+   */
+  private thinkStyle(text: string): string {
+    return `\x1b[3m${ansiFg(this.theme.palette.thinking)}${text}\x1b[23m`
+  }
+
+  /** Styled, boxed PANEL_BODY_LINES tail of a reasoning text (bottom border included). */
   private thinkingBody(reasoning: string): string {
+    const { boxWidth, borderFg } = this.panelBox()
     // Tail slice before styling: lines dropped by the panel are never styled
     // (or clipped). Clip BEFORE styling — see clipPanelLine's contract.
     const tail = reasoning.trim().split('\n').slice(-PANEL_BODY_LINES)
-    return panelBodyText(tail.map(line => this.thinkStyle(clipPanelLine(line))))
+    return panelBodyText(tail.map(line => this.thinkStyle(clipPanelLine(line))), boxWidth, borderFg)
   }
 
   /**
-   * Build the fixed 5-row thinking panel: header row + 4-row body.
+   * Build the fixed 6-row thinking panel: top border + header row + 3-row
+   * body + bottom border, all on the thinking panel background.
    * Header icon: '⟡' (U+27E1) renders as a tofu box on the user's terminal;
    * emoji render fine there (footer ⚙✔✘⏹ all verified), so '💭' is used.
+   * The fixed header text is clipped at the plain-text stage like every
+   * other panel line — below 17 terminal columns it would otherwise outgrow
+   * the header row's budget and wrap, breaking the 6-row shape.
    */
   private createThinkingPanel(): ThinkingPanel {
+    const { boxWidth, borderFg } = this.panelBox()
     const header = new Text(
-      this.thinkStyle(' 💭 thinking '),
+      this.panelTop(boxWidth, borderFg, this.thinkStyle(clipPanelLine(THINKING_HEADER))),
       1, 0,
       this.theme.chat.thinkingPanelBg,
     )
@@ -426,8 +510,8 @@ export class TranscriptRenderer {
         this.doc.addChild(md)
         rendered = true
       } else if (block.type === 'reasoning' && block.text.trim() !== '') {
-        // Final thinking: full reasoning through the same fixed 5-row panel
-        // (the body shows the 4-row tail, padded rows keep the panel shape).
+        // Final thinking: full reasoning through the same fixed 6-row panel
+        // (the body shows the 3-row tail, padded rows keep the panel shape).
         const panel = this.createThinkingPanel()
         panel.setBody(this.thinkingBody(block.text))
         this.doc.addChild(panel.container)
@@ -441,6 +525,7 @@ export class TranscriptRenderer {
 
   // ----------------------------------------------------------------- tools --
 
+  /** Styled tool header content (icon + name, no box chrome, no trailing RESET). */
   private toolHeader(status: 'pending' | 'success' | 'error', name: string): string {
     const icon = status === 'pending' ? '⚙' : status === 'success' ? '✔' : '✘'
     const color = status === 'pending'
@@ -448,13 +533,18 @@ export class TranscriptRenderer {
       : status === 'success'
         ? this.theme.palette.success
         : this.theme.palette.danger
+    // Clip the model-controlled name at the plain-text stage before styling
+    // (indent 2 = the icon + space): an unbounded name would outgrow the
+    // header row's budget and wrap, breaking the fixed 6-row panel.
+    const clipped = clipPanelLine(name, 2)
     // No trailing RESET: the card bg function terminates the row so the
     // background covers the full header width.
-    return ansiFg(color) + ` ${icon} ${name} `
+    return ansiFg(color) + `${icon} ${clipped}`
   }
 
   private addToolCard(callId: string, name: string, rawArguments: string): void {
-    const header = new Text(this.toolHeader('pending', name), 1, 0, this.theme.chat.toolPendingBg)
+    const { boxWidth, borderFg } = this.panelBox()
+    const header = new Text(this.panelTop(boxWidth, borderFg, this.toolHeader('pending', name)), 1, 0, this.theme.chat.toolPendingBg)
     const body = new Text('', 1, 0, this.theme.chat.toolBodyBg)
     const container = new Container()
     container.addChild(header)
@@ -462,8 +552,8 @@ export class TranscriptRenderer {
     const detail = callDetail(rawArguments)
     // callDetail already clipped to 120; clip again to the panel cap so the
     // row never wraps on a narrow terminal.
-    const detailLines = detail === '' ? [] : [ansiFg(this.theme.palette.fgMuted) + `  ${clipPanelLine(detail)}`]
-    body.setText(panelBodyText(detailLines))
+    const detailLines = detail === '' ? [] : [ansiFg(this.theme.palette.fgMuted) + `  ${clipPanelLine(detail, 2)}`]
+    body.setText(panelBodyText(detailLines, boxWidth, borderFg))
     this.doc.addChild(container)
     this.toolCards.set(callId, { header, body, name, detailLines })
     this.requestRender()
@@ -476,28 +566,35 @@ export class TranscriptRenderer {
     if (card === undefined) return
     this.toolCards.delete(callId)
 
+    const { boxWidth, borderFg } = this.panelBox()
     const isError = event.data.error !== undefined || (block?.isError ?? false)
-    card.header.setText(this.toolHeader(isError ? 'error' : 'success', card.name))
+    // Rebuild both header Text lines: the top border (unchanged chrome) and
+    // the swapped-status header row; the status bg fn repaints the border
+    // row too, so the whole box top takes the success/error tint.
+    card.header.setText(this.panelTop(boxWidth, borderFg, this.toolHeader(isError ? 'error' : 'success', card.name)))
     card.header.setCustomBgFn(isError ? this.theme.chat.toolErrorBg : this.theme.chat.toolSuccessBg)
 
     const bodyLines: string[] = [...card.detailLines]
     if (event.data.error !== undefined) {
       bodyLines.push(ansiFg(this.theme.palette.danger)
-        + `  ${clipPanelLine(`${event.data.error.name}: ${event.data.error.code}`)}`)
+        + `  ${clipPanelLine(`${event.data.error.name}: ${event.data.error.code}`, 2)}`)
     }
     if (block !== undefined) {
       for (const line of resultTextLines(block.content)) {
-        bodyLines.push(ansiFg(this.theme.palette.fgMuted) + `  ${clipPanelLine(line)}`)
+        bodyLines.push(ansiFg(this.theme.palette.fgMuted) + `  ${clipPanelLine(line, 2)}`)
       }
     }
-    // Body keeps the 4-row tail; when lines are dropped, the first visible
-    // row reports the count so the newest result lines stay on screen.
+    // Body keeps the 3-row tail; when lines are dropped, the first visible
+    // row reports the count so the newest result lines stay on screen. The
+    // marker is clipped at the plain-text stage (indent 2, like every tool
+    // row): on a narrow terminal a 3-digit dropped count exceeds the row's
+    // budget and would wrap, breaking the fixed 6-row panel.
     if (bodyLines.length > PANEL_BODY_LINES) {
       const dropped = bodyLines.length - PANEL_BODY_LINES
       bodyLines.splice(0, dropped)
-      bodyLines[0] = ansiFg(this.theme.palette.fgSubtle) + `  … (+${dropped} lines)`
+      bodyLines[0] = ansiFg(this.theme.palette.fgSubtle) + clipPanelLine(`  … (+${dropped} lines)`, 2)
     }
-    card.body.setText(panelBodyText(bodyLines))
+    card.body.setText(panelBodyText(bodyLines, boxWidth, borderFg))
     this.requestRender()
   }
 

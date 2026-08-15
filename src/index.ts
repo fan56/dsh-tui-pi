@@ -18,7 +18,8 @@ import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { PowerlineFooter, type FooterDataSource } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
 import { TranscriptRenderer } from './messages.ts'
-import { pickEffort, pickModel, pickTheme } from './selectors.ts'
+import { displayPermissionPreset } from './permission.ts'
+import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts'
 import { DshSessionBridge, persistDefaultModel } from './session.ts'
 import {
   currentThemePreference,
@@ -119,6 +120,25 @@ export function apply(ctx: Context): void {
 
     const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender())
 
+    // Terminal resize: pi-tui re-renders every component at the new columns,
+    // but bordered panel rows were padded to the OLD box width — a narrowing
+    // terminal wraps every row and shatters the fixed 6-row panels. Relayout
+    // the transcript (replay-buffer rebuild) on the next frame: pi-tui's own
+    // resize render is nextTick + 16ms throttled, so the rebuilt panels win
+    // the race and the first new-width frame is already intact. The trailing
+    // 0ms timer coalesces resize-event storms from terminal drags. The
+    // listener is per-runTui and removed in the effect disposer below, so a
+    // /reload never leaks one.
+    let relayoutTimer: NodeJS.Timeout | undefined
+    const onResize = (): void => {
+      if (relayoutTimer !== undefined) clearTimeout(relayoutTimer)
+      relayoutTimer = setTimeout(() => {
+        relayoutTimer = undefined
+        renderer.relayout()
+      }, 0)
+    }
+    process.stdout.on('resize', onResize)
+
     // Working/idle indicator in the fixed dock (hidden while idle).
     let loader: Loader | undefined
     let agentStatus: 'idle' | 'running' = 'idle'
@@ -143,10 +163,39 @@ export function apply(ctx: Context): void {
       }
     }
 
+    // Permission knob events (preset switch, sandbox mode, approval policy)
+    // paint nothing in the transcript — they only change the editor's
+    // permission badge — so the renderer's default no-op must be compensated
+    // with a repaint request here. The badge reads the cached current preset
+    // (see the provider below), so a knob change must refresh the cache too.
+    const PERMISSION_KNOB_EVENTS = new Set(['permission/preset', 'sandbox/mode', 'approval/policy'])
     const bridge = new DshSessionBridge(ctx, {
-      onEvent: event => renderer.applyEvent(event),
+      onEvent: event => {
+        renderer.applyEvent(event)
+        if (PERMISSION_KNOB_EVENTS.has(event.type)) {
+          refreshPermissionPreset()
+          ui.requestRender()
+        }
+      },
       onStatus: setStatus,
     })
+
+    /**
+     * One O(events) fold of the session log into the effective preset, stored
+     * for the badge provider. Runs once per session (ensure/resume, see the
+     * call sites) and once per knob change — never on the render path, which
+     * is what makes the provider's read O(1). Clearing to undefined is the
+     * right answer for an absent agent/preset service: the provider then
+     * hides the badge.
+     */
+    let permissionPreset: string | undefined
+    const refreshPermissionPreset = (): void => {
+      const presets = ctx.get('permissionPresets')
+      const agent = bridge.getAgent()
+      permissionPreset = presets === undefined || agent === undefined
+        ? undefined
+        : presets.current(agent.session.events)
+    }
 
     const commands = new CommandService(ctx, bridge)
     // Wiring through the handle: the editor is rebuilt on theme hot-swap, and
@@ -308,6 +357,9 @@ export function apply(ctx: Context): void {
           text: `Resume failed: ${message} — the previous session was closed; the next prompt starts a new one.`,
         }
       }
+      // Seed the badge cache for the resumed session (its pin event may have
+      // been emitted before the bridge's session-id filter re-bound).
+      refreshPermissionPreset()
       // Clear BEFORE replay: the renderer's local-echo dedupe must not see
       // replayed user messages next to a stale prompt echo.
       renderer.clear()
@@ -361,6 +413,9 @@ export function apply(ctx: Context): void {
     // splice them away and no future message would ever render again).
     const newHandler: LocalCommandHandler = async () => {
       try { await bridge.detachCurrent() } catch { /* contained */ }
+      // No agent → the badge cache must not serve the old session's preset
+      // to a later one (the next prompt re-seeds it).
+      refreshPermissionPreset()
       renderer.clear()
       return { kind: 'success' as const, text: 'New session started.' }
     }
@@ -463,6 +518,23 @@ export function apply(ctx: Context): void {
     const git = new GitBranchWatcher(process.cwd())
     git.onChange = () => ui.requestRender()
     ui.setEditorBranchProvider(() => git.getBranch())
+    // Permission badge: the live session's effective preset under the web
+    // client's display conventions (danger-full-access → "Full access").
+    // Reads the cached current preset — O(1) per render, never a session-log
+    // fold (that lives in refreshPermissionPreset, once per session/knob
+    // change). Falls back to a live fold only while the cache is unprimed:
+    // the session's initial pin event can be dropped by the bridge's
+    // session-id filter (which binds only after agent creation completes),
+    // so until the ensure/resume seed lands, the fallback keeps the badge
+    // correct at the price of one fold per frame — bounded by the short
+    // creation window.
+    ui.setEditorPermissionProvider(() => {
+      const presets = ctx.get('permissionPresets')
+      const agent = bridge.getAgent()
+      if (presets === undefined || agent === undefined) return undefined
+      const current = permissionPreset ?? presets.current(agent.session.events)
+      return displayPermissionPreset(current, presets.optionOf(current).name)
+    })
 
     let contextWindow: number | undefined
     let contextWindowKey = ''
@@ -539,20 +611,57 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {
       const line = text.trim()
       if (line === '') return
       ui.setLastRequest(line)
-      const name = line.startsWith('/') ? line.slice(1).split(/\s+/)[0]?.toLowerCase() : undefined
+      const tokens = line.startsWith('/') ? line.slice(1).split(/\s+/) : []
+      const name = tokens[0]?.toLowerCase()
+      let executeLine = line
+      // Bare /permission (no arguments) opens the preset picker — UI sugar
+      // over dsh's canonical command: a picked row is replayed as
+      // `/permission <name>` through the normal execute path below, so the
+      // switch stays canonical while the echo keeps the user's original line.
+      // `/permission <name>` passes straight through. Without a composed
+      // preset service there is nothing to pick and the bare line falls
+      // through to the model like any other unregistered command.
+      if (name === 'permission' && tokens.length === 1) {
+        const presets = ctx.get('permissionPresets')
+        if (presets !== undefined) {
+          const agent = bridge.getAgent()
+          const current = agent === undefined ? undefined : presets.current(agent.session.events)
+          let picked: string | undefined
+          try {
+            picked = await pickPermission(ctx, ui.tui, ui.theme, current, () => ui.tui.setFocus(ui.editor))
+          } catch (error: unknown) {
+            // Picker failure (preset service or overlay error) — pickPermission
+            // restores focus itself before rejecting, so the editor is usable
+            // again; surface the failure in the transcript like every other
+            // dispatch error. Buffered notice: this line is the only record of
+            // the failure and must survive a theme-switch rebuild (doc.clear()).
+            const message = error instanceof Error ? error.message : String(error)
+            renderer.renderNotice(message, 'error')
+            return
+          }
+          if (picked === undefined || picked === 'custom') {
+            // Cancelled — or the derived custom state, which is display-only
+            // and not a switch target (mirrors the web client's popup
+            // filtering). Either way nothing changed.
+            renderer.renderCommandEcho(line, undefined, 'Permission unchanged.')
+            return
+          }
+          executeLine = `/permission ${picked}`
+        }
+      }
       const signal = name !== undefined && MODAL_COMMANDS.has(name)
         ? new AbortController().signal
         : AbortSignal.timeout(30_000)
       let command: Awaited<ReturnType<CommandService['tryExecute']>>
       try {
-        command = await commands.tryExecute(line, signal)
+        command = await commands.tryExecute(executeLine, signal)
       } catch (error: unknown) {
         // Dispatch itself failed (outside every contained path) — surface in
         // the transcript instead of an unhandled rejection killing the TUI.
@@ -575,6 +684,10 @@ export function apply(ctx: Context): void {
         const message = error instanceof Error ? error.message : String(error)
         renderer.renderNotice(message, 'error')
       }
+      // Session (re)created by the prompt: seed the badge cache. The initial
+      // permission pin event was likely dropped by the session-id filter,
+      // which binds only after agent creation completes.
+      refreshPermissionPreset()
     }
 
     /**
@@ -596,6 +709,8 @@ export function apply(ctx: Context): void {
     }
 
     return async () => {
+      if (relayoutTimer !== undefined) clearTimeout(relayoutTimer)
+      process.stdout.removeListener('resize', onResize)
       clearInterval(clockTimer)
       git.dispose()
       applyThemeRef = undefined

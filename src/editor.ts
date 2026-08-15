@@ -1,8 +1,9 @@
 /**
  * Custom editor that replaces the input's TOP BORDER row with a plain-text
- * info line: cwd + git branch (separator "│"), in border color only (no
- * powerline background segments). Ported from pi-powerline-footer's
- * CwdBorderEditor; every other editor row is left untouched.
+ * info line: cwd + permission badge + git branch (separator "│"), in border
+ * color only (no powerline background segments). Ported from
+ * pi-powerline-footer's CwdBorderEditor; every other editor row is left
+ * untouched.
  */
 
 import { Editor, truncateToWidth, visibleWidth, type EditorTheme, type TUI } from '@earendil-works/pi-tui'
@@ -20,6 +21,7 @@ export class CwdBorderEditor extends Editor {
   private readonly sessionCwd: string
   private readonly infoColor: (str: string) => string
   private branchProvider: () => string | undefined = () => undefined
+  private permissionProvider: () => string | undefined = () => undefined
 
   constructor(
     tui: TUI,
@@ -39,6 +41,14 @@ export class CwdBorderEditor extends Editor {
     this.branchProvider = provider
   }
 
+  /**
+   * Live permission-preset display-name source (e.g. "Full access") — the
+   * badge shown right after the cwd; polled outside, the editor only reads it.
+   */
+  setPermissionProvider(provider: () => string | undefined): void {
+    this.permissionProvider = provider
+  }
+
   render(width: number): string[] {
     const lines = super.render(width)
     if (lines.length < 2 || width < 3) return lines
@@ -49,7 +59,11 @@ export class CwdBorderEditor extends Editor {
     const scrollMatch = /↑\s*(\d+)/u.exec(firstLine)
     const scrollInfo = scrollMatch === null ? '' : ` ↑ ${scrollMatch[1]}`
 
-    const parts = [`📁 ${formatCwd(this.sessionCwd)}`]
+    const permission = this.permissionProvider()
+    const parts = [
+      `📁 ${formatCwd(this.sessionCwd)}` +
+        (permission !== undefined && permission !== '' ? ` (${permission})` : ''),
+    ]
     const branch = this.branchProvider()
     if (branch !== undefined && branch !== '') parts.push(`⎇ ${branch}`)
     const content = parts.join(' │ ') + scrollInfo

@@ -1,14 +1,16 @@
 /**
  * TUI overlays (pi SelectList style). Currently: the `/model` picker and the
  * reasoning effort picker — the terminal counterparts of the web UI's "model"
- * client contribution — plus the `/theme` preference picker.
+ * client contribution — plus the `/theme` preference picker and the
+ * `/permission` preset picker.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { SelectList, type SelectItem, type TUI } from '@earendil-works/pi-tui'
+import { SelectList, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
+import { permissionItems } from './permission.ts'
 import type { ThemePreference, TuiTheme } from './theme/index.ts'
 
 interface ListedModel {
@@ -143,6 +145,55 @@ export function pickTheme(
     }
 
     list.onSelect = item => finish(item.value as ThemePreference)
+    list.onCancel = () => finish(undefined)
+  })
+}
+
+/**
+ * Open the permission preset picker overlay. Resolves with the picked preset
+ * name, or `undefined` when cancelled. The row matching `current` is
+ * preselected when present; focus returns to `restoreFocus` on close.
+ * Without a composed permission-presets service there is nothing to pick —
+ * resolves `undefined` immediately.
+ */
+export function pickPermission(
+  ctx: Context,
+  tui: TUI,
+  theme: TuiTheme,
+  current: string | undefined,
+  restoreFocus: () => void,
+): Promise<string | undefined> {
+  const presets = ctx.get('permissionPresets')
+  if (presets === undefined) return Promise.resolve(undefined)
+
+  const items = permissionItems(presets, current)
+  return new Promise((resolve, reject) => {
+    const list = new SelectList(items, 12, theme.selectList)
+    if (current !== undefined) {
+      const index = items.findIndex(item => item.value === current)
+      if (index >= 0) list.setSelectedIndex(index)
+    }
+
+    // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
+    let overlay: OverlayHandle
+    try {
+      overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
+    } catch (error) {
+      // Never strand the keyboard on a half-mounted picker: the rejection
+      // reaches the caller (submit's try/catch surfaces it), but focus must
+      // already be back on the editor.
+      restoreFocus()
+      reject(error)
+      return
+    }
+
+    const finish = (picked: string | undefined): void => {
+      overlay.hide()
+      restoreFocus()
+      resolve(picked)
+    }
+
+    list.onSelect = item => finish(item.value)
     list.onCancel = () => finish(undefined)
   })
 }

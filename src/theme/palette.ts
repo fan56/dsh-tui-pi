@@ -40,6 +40,12 @@ export interface Palette {
   readonly attentionMuted: string
   /** Thinking/reasoning block text. */
   readonly thinking: string
+  /** Think panel surface (distinct pale purple on light / purple tint on dark). */
+  readonly thinkingPanelBg: string
+  /** Tool card surface (distinct pale blue on light / blue tint on dark). */
+  readonly toolPanelBg: string
+  /** Panel box border (think/tool boxes), one step stronger than borderDefault. */
+  readonly panelBorder: string
 }
 
 export const githubLight: Palette = {
@@ -88,6 +94,15 @@ export const githubLight: Palette = {
   attentionMuted: '#f6edd8',
   // Thinking text (think panel, italic): soft violet, 5.2:1 on canvasSubtle.
   thinking: '#7b4fae',
+  // Think panel surface: pale lavender, off the green-gray bubble surfaces so
+  // the reasoning block reads as its own surface.
+  thinkingPanelBg: '#f4effa',
+  // Tool card surface: pale ice blue, same family as accentMuted but a touch
+  // bluer than the green-gray bubble surface.
+  toolPanelBg: '#eef4fb',
+  // Panel box border (think/tool boxes): green-gray, one step stronger than
+  // borderDefault so the box lines read against the canvas.
+  panelBorder: '#a9c0ab',
 }
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/
@@ -146,6 +161,15 @@ export const githubDark: Palette = {
   // Thinking text: same violet family as the light thinking, brightened,
   // 6.9:1 on canvasSubtle.
   thinking: '#bc8cff',
+  // Think panel surface: 25% violet tint over canvas (same blend convention
+  // as the other dark muted fills).
+  thinkingPanelBg: blend('#0d1117', '#bc8cff', 0.25),
+  // Tool card surface: same 25% blue tint as accentMuted (the two surfaces
+  // are one family; the blue reads as "tool" next to the purple "think").
+  toolPanelBg: blend('#0d1117', '#58a6ff', 0.25),
+  // Panel box border (think/tool boxes): green-gray, one step stronger than
+  // borderDefault so the box lines read against the dark canvas.
+  panelBorder: '#34433b',
 }
 
 /**

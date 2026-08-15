@@ -33,6 +33,7 @@ pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 | `/new` | detach the current session and clear the transcript; the next prompt opens a fresh one (the escape hatch when the current history must not follow, e.g. images in it). |
 | `/settings` | text-based settings browser: namespaces grouped into categories (General / Models / Plugins / Agent Presets / Other), schema walk with drill-ins, cycle rows, inline editors (secrets masked), dict add-key, reset-to-defaults. Writes go through the settings mutate chain. |
 | `/export` | write the current session log as JSONL — default `~/Downloads/dsh-session-<id>.jsonl`, or a path argument. |
+| `/permission` | permission-preset picker (whatever the deployment table advertises — read-only / workspace-write / danger-full-access). Select a preset to apply it through dsh's canonical `/permission <name>` command, or Esc to keep the current one. The editor's top border shows the live preset badge (danger-full-access → "Full access"). |
 | `/theme` | color-scheme picker (auto / light / dark). The choice applies immediately and is persisted to `dsh-tui.theme`. |
 | `/reload` | hot-reload the plugin from the current source (after `pnpm build`) without restarting dsh — the TUI and the live agent are torn down; the session log persists and can be rejoined with `/resume`. |
 
@@ -143,13 +144,22 @@ dsh closure (`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules`);
 at runtime those imports resolve to the same module instances the running dsh
 uses. Those symlinks stay out of any tarball (`files` ships lib/bin/patch only).
 
-⚠️ `pnpm install` regenerates the three type-check symlinks
-(`dsh-settings`, `dsh-client-schema-form`, `schemastery`) into local `.pnpm`
-copies, splitting the cordis module identity and breaking `pnpm check` — after
-any install, re-link them:
+⚠️ `pnpm install` regenerates the three type-check symlinks declared in
+`package.json` (`dsh-settings`, `dsh-client-schema-form`, `schemastery`)
+into local `.pnpm` copies, splitting the cordis module identity and breaking
+`pnpm check` — after any install, re-link them:
 
 ```sh
 ln -sfn /opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/{dsh-settings,dsh-client-schema-form,schemastery} node_modules/@deepseek-ai/
+```
+
+`dsh-permission-presets` is a fourth, undeclared type-check link — the same
+extraneous-closure pattern as `cordis`/`dsh-agent` above: `pnpm install`
+never regenerates it (it is not in the dependency tree), but a wiped
+`node_modules` needs it re-created by hand:
+
+```sh
+ln -sfn /opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-permission-presets node_modules/@deepseek-ai/
 ```
 
 **pi-tui patch**: this plugin applies a small patch to the pinned
@@ -189,7 +199,10 @@ src/
   text.ts           clipToWidth / visibleWidth (grapheme-safe column clipping)
   theme-settings.ts dsh-tui settings namespace (applies: 'live') + watch sink
                     + preference read/write with conflict retry
-  selectors.ts      /model (two-stage), /think and /theme picker overlays
+  selectors.ts      /model (two-stage), /think, /theme and /permission picker
+                    overlays
+  permission.ts     permission display names (web-client conventions) + picker
+                    option assembly (pure, unit-tested)
   sessions.ts       /session info panel + /resume persisted-session picker
   settings.ts       /settings browser: categories, schema walk, inline editors,
                     serialized mutate write chain, add-provider flow

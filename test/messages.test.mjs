@@ -1,35 +1,49 @@
 /**
- * Panel-line clipping tests — the fixed 5-row panels (think block / tool
- * card) must never exceed their height: every body row is clipped to one
- * physical terminal row BEFORE styling, so pi-tui's wrapTextWithAnsi (the
- * Text component wraps at `width - paddingX*2`) has nothing to fold.
+ * Panel-line clipping tests — the fixed 6-row boxed panels (think block /
+ * tool card: top border + header + 3 body rows + bottom border) must never
+ * exceed their height: every body row's content is clipped to one physical
+ * terminal row BEFORE styling, so pi-tui's wrapTextWithAnsi (the Text
+ * component wraps at `width - paddingX*2`) has nothing to fold.
  * Runs against the built lib/ (pnpm build && pnpm test).
  */
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { wrapTextWithAnsi } from '@earendil-works/pi-tui'
-import { clipPanelLine, panelBodyText, panelLineCap } from '../lib/messages.js'
+import { clipPanelLine, panelBodyText, panelBoxWidth, panelLineCap } from '../lib/messages.js'
 import { visibleWidth } from '../lib/text.js'
 
-test('panelLineCap leaves headroom for the row padding and indent', () => {
-  // Body Text paddingX = 1 → wraps at columns - 2; tool rows also carry a
-  // 2-column indent, hence the -4 headroom.
-  assert.equal(panelLineCap(80), 76)
-  assert.equal(panelLineCap(120), 116)
+const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
+
+test('panelLineCap leaves headroom for the box chrome and indent', () => {
+  // Body Text paddingX = 1 → wraps at columns - 2; every row carries 4
+  // columns of box chrome (`│ ` … ` │`); tool rows add a 2-column indent.
+  assert.equal(panelLineCap(80), 74)
+  assert.equal(panelLineCap(80, 2), 72)
+  assert.equal(panelLineCap(120), 114)
+  assert.equal(panelLineCap(120, 2), 112)
   // Conservative fallback when the terminal width is unknown (tests, pipes).
-  assert.equal(panelLineCap(undefined), 196)
+  assert.equal(panelLineCap(undefined), 194)
+  assert.equal(panelLineCap(undefined, 2), 192)
   assert.equal(panelLineCap(0), 1)
   assert.equal(panelLineCap(-5), 1)
+})
+
+test('panelBoxWidth is the full bordered row width (cap + 4 chrome)', () => {
+  assert.equal(panelBoxWidth(80), 78)
+  assert.equal(panelBoxWidth(120), 118)
+  assert.equal(panelBoxWidth(undefined), 198)
 })
 
 test('clipPanelLine clips long lines to exactly one physical panel row', () => {
   const cap = panelLineCap(process.stdout.columns)
   const clipped = clipPanelLine('x'.repeat(500))
   assert.ok(visibleWidth(clipped) <= cap, 'clipped line fits the cap')
-  // The body Text wraps at width - paddingX*2 (paddingX = 1) → contentWidth
-  // is cap + 2; a clipped line must survive wrapping on a single row.
-  assert.equal(wrapTextWithAnsi(clipped, cap + 2).length, 1, 'no wrap at panel width')
+  // The body Text wraps at width - paddingX*2 (paddingX = 1) → a boxed row
+  // of `│ ` + clipped + ` │` (boxWidth = cap + 4) must survive wrapping on
+  // a single line at the panel width.
+  const boxed = `│ ${clipped} │`
+  assert.equal(wrapTextWithAnsi(boxed, cap + 4).length, 1, 'boxed row does not wrap')
   // Short lines pass through untouched.
   assert.equal(clipPanelLine('short line'), 'short line')
   assert.equal(clipPanelLine(''), '')
@@ -39,11 +53,11 @@ test('clipPanelLine counts CJK full-width columns', () => {
   const cap = panelLineCap(process.stdout.columns)
   const clipped = clipPanelLine('长'.repeat(300))
   assert.ok(visibleWidth(clipped) <= cap)
-  assert.equal(wrapTextWithAnsi(clipped, cap + 2).length, 1)
+  assert.equal(wrapTextWithAnsi(`│ ${clipped} │`, cap + 4).length, 1)
   // No surrogate pair is ever split by the clip.
   const emojiClipped = clipPanelLine('👍'.repeat(200))
   assert.equal(visibleWidth(emojiClipped) % 2, 0)
-  assert.equal(wrapTextWithAnsi(emojiClipped, cap + 2).length, 1)
+  assert.equal(wrapTextWithAnsi(`│ ${emojiClipped} │`, cap + 4).length, 1)
 })
 
 test('clipping before styling keeps the ANSI prefix and one physical row', () => {
@@ -53,17 +67,56 @@ test('clipping before styling keeps the ANSI prefix and one physical row', () =>
   const cap = panelLineCap(process.stdout.columns)
   const styled = '\x1b[3m\x1b[38;2;111;66;193m' + clipPanelLine('y'.repeat(400))
   assert.ok(visibleWidth(styled) <= cap, 'styled row still fits the cap')
-  assert.equal(wrapTextWithAnsi(styled, cap + 2).length, 1, 'styled row does not wrap')
+  assert.equal(wrapTextWithAnsi(`│ ${styled} │`, cap + 4).length, 1, 'styled row does not wrap')
   assert.ok(styled.startsWith('\x1b[3m\x1b[38;2;111;66;193m'), 'style prefix survives')
 })
 
-test('panelBodyText keeps the tail and pads to PANEL_BODY_LINES rows', () => {
-  const body = panelBodyText(['a', 'b', 'c', 'd', 'e'])
+test('boxed rows fit at the narrow-terminal budget (80 columns)', () => {
+  // Max think content (74) plus chrome is exactly the box width (78); a row
+  // one column wider would wrap. Tool rows carry the 2-column indent.
+  const thinkRow = `│ ${'x'.repeat(74)} │`
+  assert.equal(visibleWidth(thinkRow), 78)
+  assert.equal(wrapTextWithAnsi(thinkRow, 78).length, 1)
+  const toolRow = `│ ${'  ' + 'x'.repeat(72)} │`
+  assert.equal(visibleWidth(toolRow), 78)
+  assert.equal(wrapTextWithAnsi(toolRow, 78).length, 1)
+})
+
+test('panelBodyText keeps the tail, boxes every row, appends the bottom border', () => {
+  const borderFg = '\x1b[38;2;169;192;171m'
+  const body = panelBodyText(['a', 'b', 'c', 'd', 'e'], 20, borderFg)
   const rows = body.split('\n')
-  assert.equal(rows.length, 4, 'never more than the 4 body rows')
-  assert.deepEqual(rows, ['b', 'c', 'd', 'e'], 'newest rows win')
-  // Empty bodies pad with lone-SGR rows so Text does not drop them.
-  const padded = panelBodyText([])
-  assert.equal(padded.split('\n').length, 4)
-  assert.ok(padded.split('\n').every(row => row === '\x1b[39m'))
+  assert.equal(rows.length, 4, '3 body rows + the bottom border')
+  assert.deepEqual(rows.slice(0, 3).map(stripAnsi).map(s => s.trimEnd().slice(0, 3)), ['│ c', '│ d', '│ e'],
+    'newest rows win, left-aligned after the left border')
+  // Bottom border row.
+  assert.match(stripAnsi(rows[3]), /^└─+┘$/, 'bottom border shape')
+  assert.equal(visibleWidth(rows[3]), 20, 'bottom border spans the full box width')
+  // Every row is exactly boxWidth visible columns.
+  for (const row of rows) assert.equal(visibleWidth(row), 20, 'row is one box-width line')
+})
+
+test('panelBodyText pads short bodies with empty boxed rows', () => {
+  const borderFg = '\x1b[38;2;169;192;171m'
+  const body = panelBodyText([], 20, borderFg)
+  const rows = body.split('\n')
+  assert.equal(rows.length, 4, '3 pad rows + the bottom border')
+  // Pad rows are non-empty (the box characters survive Text's trim fast
+  // path) and carry both side borders.
+  for (const row of rows.slice(0, 3)) {
+    assert.ok(stripAnsi(row).startsWith('│'), 'pad row has a left border')
+    assert.ok(stripAnsi(row).trimEnd().endsWith('│'), 'pad row has a right border')
+    assert.equal(visibleWidth(row), 20)
+  }
+  assert.match(stripAnsi(rows[3]), /^└─+┘$/, 'bottom border shape')
+})
+
+test('panelBodyText rows keep the border color prefix with no trailing RESET', () => {
+  const borderFg = '\x1b[38;2;169;192;171m'
+  const body = panelBodyText(['a'], 20, borderFg)
+  for (const row of body.split('\n')) {
+    // No RESET inside: the panel bg function terminates the row.
+    assert.ok(!row.includes('\x1b[0m'), 'row carries no trailing reset')
+  }
+  assert.ok(panelBodyText(['a'], 20, borderFg).includes(borderFg), 'border color applied')
 })

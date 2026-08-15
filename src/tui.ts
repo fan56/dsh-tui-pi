@@ -74,6 +74,8 @@ export interface TuiHandle {
   setEditorAutocompleteProvider(provider: AutocompleteProvider): void
   /** Live git-branch source for the editor; re-applied across editor rebuilds. */
   setEditorBranchProvider(provider: () => string | undefined): void
+  /** Live permission-preset display-name source for the editor; re-applied across editor rebuilds. */
+  setEditorPermissionProvider(provider: () => string | undefined): void
   /** Show/hide the "last request" widget below the editor. */
   setLastRequest(text: string | undefined): void
 }
@@ -103,6 +105,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // External wiring that must survive editor rebuilds.
   let autocompleteProvider: AutocompleteProvider | undefined
   let branchProvider: (() => string | undefined) | undefined
+  let permissionProvider: (() => string | undefined) | undefined
   const lastRequest = new Container()
   const footer = new Container()
   let lastRequestText: Text | undefined
@@ -157,6 +160,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     next.onSubmit = editor.onSubmit
     if (autocompleteProvider !== undefined) next.setAutocompleteProvider(autocompleteProvider)
     if (branchProvider !== undefined) next.setBranchProvider(branchProvider)
+    if (permissionProvider !== undefined) next.setPermissionProvider(permissionProvider)
     dock.clear()
     dock.addChild(status, { shrink: 1, minSize: 0 })
     dock.addChild(next, { shrink: 1, minSize: 3 })
@@ -206,6 +210,10 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     setEditorBranchProvider(provider: () => string | undefined) {
       branchProvider = provider
       editor.setBranchProvider(provider)
+    },
+    setEditorPermissionProvider(provider: () => string | undefined) {
+      permissionProvider = provider
+      editor.setPermissionProvider(provider)
     },
     setLastRequest(text: string | undefined) {
       if (text === undefined || text.trim() === '') {
