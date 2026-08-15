@@ -11,10 +11,13 @@
  * O(accumulated text) instead of re-parsing markdown on every delta.
  *
  * Panels: think blocks and tool cards render as boxed rows — a full box
- * border (top border + header row + body rows + bottom border). The default
- * panel is DEFAULT_PANEL_HEIGHT rows; the height is configurable through the
- * `dsh-tui` settings namespace ('5'/'7'/'10' rows, or 'all' to print the
- * full body without a row cap). The transcript doc is a plain Container
+ * border (top border + header row + body rows + bottom border). The
+ * configured height counts the DISPLAYED rows — the header line plus the
+ * content rows ('5' shows five rows; the two box borders add two more
+ * physical rows, so a '5' box is seven terminal rows tall). The height is
+ * configurable through the `dsh-tui` settings namespace ('5'/'7'/'10'
+ * displayed rows, or 'all' to print the full body without a row cap). The
+ * transcript doc is a plain Container
  * inside the outer ScrollView, so pi-tui 0.84.2 never lays out nested
  * components (a Container without a layout node renders by simple
  * concatenation — verified in dist/layout.js) and an inner ScrollView can
@@ -49,21 +52,22 @@ import { buildWelcomeBanner, WHALE_COLOR } from './welcome.ts'
 import { formatDailyQuote, pickDailyQuote } from './quotes.ts'
 
 /**
- * Configurable think/tool panel height. Fixed values are the total panel row
- * count (top border + header row + body rows + bottom border); 'all' prints
- * the full body with no row cap (every row still clips to one terminal line).
+ * Configurable think/tool panel height. Fixed values count the DISPLAYED
+ * rows — the header line plus the content rows (the two box borders are not
+ * counted; they add two more physical rows); 'all' prints the full body
+ * with no row cap (every row still clips to one terminal line).
  */
 export type PanelHeight = '5' | '7' | '10' | 'all'
 
 /**
- * Default total height of a think/tool panel: top border + header row + body
- * rows + bottom border. The single default for every '5' fallback (the
- * renderer constructor, the settings schema default/entry/narrowing) — other
- * heights are set through the `panelHeight` setting.
+ * Default displayed height of a think/tool panel: the header line plus the
+ * content rows. The single default for every '5' fallback (the renderer
+ * constructor, the settings schema default/entry/narrowing) — other heights
+ * are set through the `panelHeight` setting.
  */
 export const DEFAULT_PANEL_HEIGHT: PanelHeight = '5'
-/** Body rows inside the default panel (DEFAULT_PANEL_HEIGHT - top border - header - bottom border). */
-const PANEL_BODY_LINES = Number(DEFAULT_PANEL_HEIGHT) - 3
+/** Content rows inside the default panel (DEFAULT_PANEL_HEIGHT displayed rows − the header row). */
+const PANEL_BODY_LINES = Number(DEFAULT_PANEL_HEIGHT) - 1
 
 /**
  * 'all' streaming cap: while a reasoning stream is in flight, the panel boxes
@@ -317,12 +321,12 @@ export class TranscriptRenderer {
   }
 
   /**
-   * Body-row budget for the configured panel height: the fixed row count
-   * (panel total − top border − header − bottom border) or 'all' when the
-   * panel prints its full body.
+   * Content-row budget for the configured panel height: the displayed row
+   * count minus the header row ('5' → 4 content rows), or 'all' when the
+   * panel prints its full body. The box borders are not part of the budget.
    */
   private panelBodyRows(): number | 'all' {
-    return this.panelHeight === 'all' ? 'all' : Number(this.panelHeight) - 3
+    return this.panelHeight === 'all' ? 'all' : Number(this.panelHeight) - 1
   }
 
   /**

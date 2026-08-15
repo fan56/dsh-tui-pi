@@ -90,12 +90,12 @@ test('panelBodyText keeps the tail, boxes every row, appends the bottom border',
   const borderFg = '\x1b[38;2;169;192;171m'
   const body = panelBodyText(['a', 'b', 'c', 'd', 'e'], 20, borderFg)
   const rows = body.split('\n')
-  assert.equal(rows.length, 3, '2 body rows + the bottom border')
-  assert.deepEqual(rows.slice(0, 2).map(stripAnsi).map(s => s.trimEnd().slice(0, 3)), ['│ d', '│ e'],
+  assert.equal(rows.length, 5, '4 body rows (default displayed 5 − header) + the bottom border')
+  assert.deepEqual(rows.slice(0, 4).map(stripAnsi).map(s => s.trimEnd().slice(0, 3)), ['│ b', '│ c', '│ d', '│ e'],
     'newest rows win, left-aligned after the left border')
   // Bottom border row.
-  assert.match(stripAnsi(rows[2]), /^└─+┘$/, 'bottom border shape')
-  assert.equal(visibleWidth(rows[2]), 20, 'bottom border spans the full box width')
+  assert.match(stripAnsi(rows[4]), /^└─+┘$/, 'bottom border shape')
+  assert.equal(visibleWidth(rows[4]), 20, 'bottom border spans the full box width')
   // Every row is exactly boxWidth visible columns.
   for (const row of rows) assert.equal(visibleWidth(row), 20, 'row is one box-width line')
 })
@@ -104,15 +104,15 @@ test('panelBodyText pads short bodies with empty boxed rows', () => {
   const borderFg = '\x1b[38;2;169;192;171m'
   const body = panelBodyText([], 20, borderFg)
   const rows = body.split('\n')
-  assert.equal(rows.length, 3, '2 pad rows + the bottom border')
+  assert.equal(rows.length, 5, '4 pad rows (default displayed 5 − header) + the bottom border')
   // Pad rows are non-empty (the box characters survive Text's trim fast
   // path) and carry both side borders.
-  for (const row of rows.slice(0, 2)) {
+  for (const row of rows.slice(0, 4)) {
     assert.ok(stripAnsi(row).startsWith('│'), 'pad row has a left border')
     assert.ok(stripAnsi(row).trimEnd().endsWith('│'), 'pad row has a right border')
     assert.equal(visibleWidth(row), 20)
   }
-  assert.match(stripAnsi(rows[2]), /^└─+┘$/, 'bottom border shape')
+  assert.match(stripAnsi(rows[4]), /^└─+┘$/, 'bottom border shape')
 })
 
 test('panelBodyText rows keep the border color prefix with no trailing RESET', () => {

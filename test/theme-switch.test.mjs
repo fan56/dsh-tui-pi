@@ -200,16 +200,16 @@ test('clear() drops the replay buffer — nothing resurrects on setTheme', () =>
   assert.ok(!renderDoc(doc).includes('old session'), 'cleared content never returns')
 })
 
-test('thinking panel keeps its fixed 5-row box shape after a switch', () => {
+test('thinking panel keeps its fixed displayed-5-row box shape after a switch', () => {
   const { doc, renderer } = makeRenderer()
   renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 0, chunk: { type: 'reasoning-delta', text: 'one\ntwo\nthree' } }, ts: 0, seq: 3 })
   const width = panelRenderWidth()
   const panel = () => doc.children.find(child => child.constructor.name === 'Container')
-  assert.equal(panel().render(width).length, 5, 'top border + header + 2 body rows + bottom border')
+  assert.equal(panel().render(width).length, 7, 'top border + header + 4 content rows (displayed 5) + bottom border')
 
   renderer.setTheme(lightTheme)
   const after = panel().render(width)
-  assert.equal(after.length, 5, 'panel keeps 5 rows after the switch')
+  assert.equal(after.length, 7, 'panel keeps its 7-row box after the switch')
   assert.ok(after.join('\n').includes(ansiBg(githubLight.thinkingPanelBg)), 'body rows carry the light purple panel bg')
 })
 
@@ -218,13 +218,13 @@ test('thinking panel renders the full box border shape', () => {
   renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 0, chunk: { type: 'reasoning-delta', text: 'one\ntwo\nthree' } }, ts: 0, seq: 3 })
   const width = panelRenderWidth()
   const plain = doc.children.find(child => child.constructor.name === 'Container').render(width).map(stripAnsi)
-  assert.equal(plain.length, 5)
+  assert.equal(plain.length, 7)
   // Text renders with paddingX = 1, so the box is inset by one column.
   assert.match(plain[0], /^\s*┌─+┐\s*$/, 'top border spans the box width')
-  assert.match(plain[4], /^\s*└─+┘\s*$/, 'bottom border spans the box width')
+  assert.match(plain[6], /^\s*└─+┘\s*$/, 'bottom border spans the box width')
   assert.ok(plain[1].trim().startsWith('│ 💭 thinking'), 'header row carries the left border')
   assert.ok(plain[1].trimEnd().endsWith('│'), 'header row carries the right border')
-  for (const row of plain.slice(2, 4)) {
+  for (const row of plain.slice(2, 6)) {
     assert.ok(row.trim().startsWith('│ '), 'body row carries the left border')
     assert.ok(row.trimEnd().endsWith('│'), 'body row carries the right border')
   }
@@ -255,9 +255,9 @@ test('tool card renders the full box and keeps its shape when it settles', () =>
   const panel = doc.children.find(child => child.constructor.name === 'Container')
 
   const pending = panel.render(width).map(stripAnsi)
-  assert.equal(pending.length, 5, 'pending card is a full box')
+  assert.equal(pending.length, 7, 'pending card is a full box (displayed 5 + 2 borders)')
   assert.match(pending[0], /^\s*┌─+┐\s*$/, 'top border')
-  assert.match(pending[4], /^\s*└─+┘\s*$/, 'bottom border')
+  assert.match(pending[6], /^\s*└─+┘\s*$/, 'bottom border')
   assert.ok(pending[1].trim().startsWith('│ ⚙ bash'), 'pending header row')
 
   renderer.applyEvent({
@@ -272,9 +272,9 @@ test('tool card renders the full box and keeps its shape when it settles', () =>
     seq: 5,
   })
   const settled = panel.render(width).map(stripAnsi)
-  assert.equal(settled.length, 5, 'settled card keeps the box shape')
+  assert.equal(settled.length, 7, 'settled card keeps the box shape (displayed 5 + 2 borders)')
   assert.match(settled[0], /^\s*┌─+┐\s*$/, 'top border survives the settle')
-  assert.match(settled[4], /^\s*└─+┘\s*$/, 'bottom border survives the settle')
+  assert.match(settled[6], /^\s*└─+┘\s*$/, 'bottom border survives the settle')
   assert.ok(settled[1].trim().startsWith('│ ✔ bash'), 'header flipped to the success icon')
   assert.ok(settled[2].includes('  $ ls'), 'tool detail row keeps its 2-column indent')
   assert.ok(settled[3].includes('a.txt'), 'result row inside the box')
@@ -330,16 +330,16 @@ function withColumns(columns, fn) {
   }
 }
 
-/** Every Container doc child is a panel; assert each renders exactly 5 rows. */
-function assertPanelsFiveRows(doc, width) {
+/** Every Container doc child is a panel; assert each renders exactly the displayed-5 box (7 rows). */
+function assertPanelsDisplayedFiveRows(doc, width) {
   const panels = doc.children.filter(child => child.constructor.name === 'Container')
   assert.ok(panels.length > 0, 'at least one panel rendered')
   for (const panel of panels) {
-    assert.equal(panel.render(width).length, 5, `panel stays 5 rows at width ${width}`)
+    assert.equal(panel.render(width).length, 7, `panel stays 7 rows (displayed 5) at width ${width}`)
   }
 }
 
-test('panels stay exactly 5 rows on narrow terminals (10/16/20 columns)', () => {
+test('panels stay exactly 7 rows (displayed 5) on narrow terminals (10/16/20 columns)', () => {
   for (const columns of [10, 16, 20]) {
     const { doc, renderer } = makeRenderer()
     withColumns(columns, () => {
@@ -347,13 +347,13 @@ test('panels stay exactly 5 rows on narrow terminals (10/16/20 columns)', () => 
       renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' }, ts: 0, seq: 2 })
       // The render width equals the real column count: the box width is
       // columns - 2, which is exactly the Text content width at render.
-      assertPanelsFiveRows(doc, columns)
+      assertPanelsDisplayedFiveRows(doc, columns)
       assert.ok(renderDoc(doc).includes('💭'), `thinking header keeps its icon at ${columns} columns`)
     })
   }
 })
 
-test('a 300-character tool name still settles the card at exactly 5 rows', () => {
+test('a 300-character tool name still settles the card at exactly 7 rows (displayed 5)', () => {
   const { doc, renderer } = makeRenderer()
   withColumns(80, () => {
     renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'c1', name: 'x'.repeat(300), arguments: '{}' }, ts: 0, seq: 2 })
@@ -368,7 +368,7 @@ test('a 300-character tool name still settles the card at exactly 5 rows', () =>
       ts: 0,
       seq: 5,
     })
-    assertPanelsFiveRows(doc, 80)
+    assertPanelsDisplayedFiveRows(doc, 80)
     const rows = doc.children.find(child => child.constructor.name === 'Container').render(80).map(stripAnsi)
     assert.ok(rows[1].trim().startsWith('│ ✔'), 'header keeps the icon and status after the settle')
   })
@@ -391,7 +391,7 @@ test('carriage returns in a tool result never split the fixed rows', () => {
       ts: 0,
       seq: 5,
     })
-    assertPanelsFiveRows(doc, 80)
+    assertPanelsDisplayedFiveRows(doc, 80)
     assert.ok(renderDoc(doc).includes('finished'), 'result content survives')
   })
 })
@@ -400,9 +400,9 @@ test('the (+N lines) marker stays on one row at 20 columns with a large drop', (
   const { doc, renderer } = makeRenderer()
   withColumns(20, () => {
     renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' }, ts: 0, seq: 2 })
-    // 1002 result lines + 1 detail line → 1001 dropped; the marker text
-    // (17 columns) exceeds the 12-column row budget at 20 columns, so it
-    // must be clipped, never wrapped.
+    // 1002 result lines + 1 detail line → 999 dropped (4 visible); the
+    // marker text (17 columns) exceeds the 12-column row budget at 20
+    // columns, so it must be clipped, never wrapped.
     const lines = Array.from({ length: 1002 }, (_, i) => `line ${i + 1}`)
     renderer.applyEvent({
       type: 'tool/result',
@@ -415,9 +415,9 @@ test('the (+N lines) marker stays on one row at 20 columns with a large drop', (
       ts: 0,
       seq: 5,
     })
-    assertPanelsFiveRows(doc, 20)
+    assertPanelsDisplayedFiveRows(doc, 20)
     const rows = doc.children.find(child => child.constructor.name === 'Container').render(20).map(stripAnsi)
-    assert.ok(rows[2].includes('(+1001'), 'marker row reports the dropped count')
+    assert.ok(rows[2].includes('(+999'), 'marker row reports the dropped count')
   })
 })
 
@@ -427,13 +427,13 @@ test('relayout rebuilds panels at the new width after a terminal shrink', () => 
     renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 0, chunk: { type: 'reasoning-delta', text: 'think line' } }, ts: 0, seq: 3 })
     renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' }, ts: 0, seq: 2 })
   })
-  withColumns(120, () => assertPanelsFiveRows(doc, 120))
+  withColumns(120, () => assertPanelsDisplayedFiveRows(doc, 120))
 
   // The terminal narrows: relayout rebuilds every panel at the new width.
   withColumns(20, () => renderer.relayout())
 
   withColumns(20, () => {
-    assertPanelsFiveRows(doc, 20)
+    assertPanelsDisplayedFiveRows(doc, 20)
     assert.ok(renderDoc(doc).includes('think line'), 'thinking content survives the relayout')
     assert.ok(renderDoc(doc).includes('bash'), 'tool card survives the relayout')
   })
@@ -456,15 +456,15 @@ test('setPanelHeight + relayout rebuild every panel at the new height', () => {
   renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' }, ts: 0, seq: 2 })
   const width = panelRenderWidth()
   const panels = () => doc.children.filter(child => child.constructor.name === 'Container')
-  assert.ok(panels().every(p => p.render(width).length === 5), 'default 5 rows before the change')
+  assert.ok(panels().every(p => p.render(width).length === 7), 'default displayed 5 → 7-row box before the change')
 
   assert.equal(renderer.setPanelHeight('7'), true, 'height change reported')
   renderer.relayout()
-  assert.ok(panels().every(p => p.render(width).length === 7), 'panels rebuilt at 7 rows (4 body rows)')
+  assert.ok(panels().every(p => p.render(width).length === 9), 'panels rebuilt at displayed 7 → 9-row box (6 content rows)')
 
   assert.equal(renderer.setPanelHeight('10'), true, 'height change reported')
   renderer.relayout()
-  assert.ok(panels().every(p => p.render(width).length === 10), 'panels rebuilt at 10 rows (7 body rows)')
+  assert.ok(panels().every(p => p.render(width).length === 12), 'panels rebuilt at displayed 10 → 12-row box (9 content rows)')
   // The taller thinking panel shows more of the tail: four reasoning lines
   // fit entirely, in order, no truncation marker.
   const thinkRows = panels()[0].render(width).map(stripAnsi)
@@ -476,7 +476,7 @@ test('setPanelHeight + relayout rebuild every panel at the new height', () => {
   assert.equal(renderer.setPanelHeight('7'), true, 'change detected without a relayout')
   assert.equal(panels()[0].render(width).join('\n'), before, 'without relayout the panels keep the old height')
   renderer.relayout()
-  assert.equal(panels()[0].render(width).length, 7, 'relayout applies the stored height')
+  assert.equal(panels()[0].render(width).length, 9, 'relayout applies the stored height')
 })
 
 test("'all' panel height prints the full body and closes the box", () => {
@@ -612,9 +612,9 @@ test('settle with a taller fixed height keeps the tail and reports the drop', ()
   })
   const width = panelRenderWidth()
   const rows = doc.children.find(child => child.constructor.name === 'Container').render(width).map(stripAnsi)
-  assert.equal(rows.length, 7, '7-row panel keeps its shape after the settle')
-  assert.ok(rows[2].includes('(+7'), 'marker reports 11 lines − 4 visible = 7 dropped')
-  assert.ok(rows[3].includes('result 8'), 'newest result rows stay on screen')
-  assert.ok(rows[5].includes('result 10'), 'last result row inside the box')
-  assert.match(rows[6], /└─+┘/, 'bottom border closes the box')
+  assert.equal(rows.length, 9, 'displayed-7 panel keeps its shape after the settle (border + header + 6 content + border)')
+  assert.ok(rows[2].includes('(+5'), 'marker reports 11 lines − 6 visible = 5 dropped')
+  assert.ok(rows[3].includes('result 6'), 'newest result rows stay on screen')
+  assert.ok(rows[7].includes('result 10'), 'last result row inside the box')
+  assert.match(rows[8], /└─+┘/, 'bottom border closes the box')
 })

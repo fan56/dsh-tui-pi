@@ -33,8 +33,9 @@ const THEME_SETTINGS_SCHEMA = z.object({
     .union(['5', '7', '10', 'all'])
     .default(DEFAULT_PANEL_HEIGHT)
     .description(
-      "Think/tool panel height in rows ('5'/'7'/'10'/'all'); 'all' prints the full content — "
-      + 'a streaming reasoning panel shows a 200-line live tail and tool results cap at 2000 lines',
+      "Think/tool panel height in displayed rows ('5'/'7'/'10' — header + content lines; "
+      + "box borders add 2 more) or 'all' to print the full content — a streaming "
+      + 'reasoning panel shows a 200-line live tail and tool results cap at 2000 lines',
     ),
 })
 
