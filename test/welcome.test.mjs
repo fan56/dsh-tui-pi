@@ -4,7 +4,8 @@
  * half-block gaps left transparent over the terminal default background,
  * wordmark letters in the same brand blue, banner theme-independent), and
  * TranscriptRenderer integration: the banner is the doc's first content at
- * construction (a leading spacer, the banner Text, a trailing spacer),
+ * construction (a leading spacer, the banner Text, a spacer, the
+ * daily-quote caption Text, a trailing spacer),
  * survives relayout, repaints identically against a new theme (nothing
  * theme-dependent), and is removed by clear() (/new) like any startup
  * screen. Also guards the art's reproducibility from
@@ -217,14 +218,16 @@ test('the banner carries no theme colors — whale and letters are brand blue on
     'no theme fg — the banner is theme-independent, colored from WHALE_COLOR only')
 })
 
-test('the banner is the doc first content at construction (spacer + Text + spacer)', () => {
+test('the banner is the doc first content at construction (spacer + Text + spacer + quote + spacer)', () => {
   const doc = new Container()
   // Fixed wide width: renderWelcome builds the banner at process.stdout.columns.
   withColumns(200, () => new TranscriptRenderer(doc, lightTheme, () => {}, '5'))
-  assert.equal(doc.children.length, 3, 'leading spacer, banner Text, trailing spacer')
+  assert.equal(doc.children.length, 5, 'leading spacer, banner Text, spacer, daily-quote Text, trailing spacer')
   assert.ok(doc.children[0] instanceof Spacer, 'first child is the leading spacer — the banner does not press against the transcript top')
   assert.ok(doc.children[1] instanceof Text, 'second child is the banner Text')
-  assert.ok(doc.children[2] instanceof Spacer, 'third child is the trailing spacer')
+  assert.ok(doc.children[2] instanceof Spacer, 'third child is the spacer between banner and quote')
+  assert.ok(doc.children[3] instanceof Text, 'fourth child is the daily-quote caption Text')
+  assert.ok(doc.children[4] instanceof Spacer, 'fifth child is the trailing spacer')
   const rendered = doc.children[1].render(200)
   assert.equal(rendered.length, 10, 'banner renders its 10 rows')
   const plain = rendered.map(stripAnsi)

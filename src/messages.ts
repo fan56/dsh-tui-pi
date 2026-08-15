@@ -46,6 +46,7 @@ import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 import { buildWelcomeBanner } from './welcome.ts'
+import { formatDailyQuote, pickDailyQuote } from './quotes.ts'
 
 /**
  * Configurable think/tool panel height. Fixed values are the total panel row
@@ -263,6 +264,12 @@ export class TranscriptRenderer {
    * the only reader, replaying it once against the new theme.
    */
   private readonly replay: ReplayOp[] = []
+  /**
+   * The session's daily quote — rolled once here, so every rebuild
+   * (relayout/setTheme replay) re-renders the same line and only a fresh
+   * session rolls a new one (see quotes.ts).
+   */
+  private readonly dailyQuote: string = pickDailyQuote()
 
   constructor(
     doc: Container,
@@ -459,21 +466,29 @@ export class TranscriptRenderer {
   // ---------------------------------------------------------------- banner --
 
   /**
-   * The startup welcome banner (whale pixel art + pixel-letter wordmark) as
-   * the doc's first content: a leading spacer, the banner Text, then the
+   * The startup welcome banner (whale pixel art + pixel-letter wordmark)
+   * with the daily quote caption beneath it, as the doc's first content:
+   * a leading spacer, the banner Text, a spacer, the quote Text, then the
    * trailing spacer that matches the message-block rhythm. The leading
    * spacer keeps the banner from pressing against the top of the transcript
    * (the startup placeholder line it replaces sat flush at row 0). The
    * whale and the letters keep their brand blue across themes — the banner
    * is theme-independent (gaps stay transparent over the terminal default
-   * background — see welcome.ts). The banner is built at the current
-   * terminal width: below 122 columns it degrades to the whale alone, and
-   * every rebuild (relayout/setTheme replay) reads the width afresh, so
-   * narrowing drops the wordmark and widening restores it.
+   * background — see welcome.ts); the quote is the one theme-tinted line
+   * (fgSubtle, rebuilt with the live theme by the replay). The banner is
+   * built at the current terminal width: below 96 columns it degrades to
+   * the whale alone, and every rebuild (relayout/setTheme replay) reads the
+   * width afresh, so narrowing drops the wordmark and widening restores it.
+   * The quote line is clipped to the terminal width before styling (the
+   * repo rule — ANSI never goes through the clipper), so it never wraps.
    */
   private renderWelcome(): void {
     this.doc.addChild(new Spacer(1))
     this.doc.addChild(new Text(buildWelcomeBanner(process.stdout.columns), 1, 0))
+    this.doc.addChild(new Spacer(1))
+    // (columns ?? Infinity): non-TTY contexts (tests) get the full line.
+    const quote = clipToWidth(formatDailyQuote(this.dailyQuote), (process.stdout.columns ?? Infinity) - 2)
+    this.doc.addChild(new Text(ansiFg(this.theme.palette.fgSubtle) + quote + RESET, 1, 0))
     this.doc.addChild(new Spacer(1))
     this.requestRender()
   }

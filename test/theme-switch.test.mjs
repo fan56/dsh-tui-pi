@@ -121,9 +121,12 @@ test('in-flight stream continues on the rebuilt component after setTheme', () =>
   const styled = renderDocStyled(doc)
   assert.ok(styled.includes(ansiFg(githubLight.fgDefault)), 'streaming text painted with the light fg')
   // Count only the content Texts — the welcome banner Text is identified by
-  // its whale-blue pixels rather than assumed to be the first child.
+  // its whale-blue pixels and the daily-quote caption by its CJK brackets
+  // rather than assuming child positions.
   const textChildren = doc.children.filter(child =>
-    child.constructor.name === 'Text' && !child.render(200).join('').includes(ansiFg(WHALE_COLOR))
+    child.constructor.name === 'Text'
+    && !child.render(200).join('').includes(ansiFg(WHALE_COLOR))
+    && !child.render(200).join('').includes('「')
   )
   assert.equal(textChildren.length, 1, 'one streaming text component — no duplicates after the switch')
 })
