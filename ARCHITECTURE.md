@@ -169,9 +169,11 @@ wraps inside the box.
 `APPEND_SYSTEM.md` convention (dsh side: `~/.dsh/APPEND_SYSTEM.md`,
 `$DSH_HOME` or `~/.dsh`) — a user-editable file appended to the system
 prompt of every agent the TUI creates. The file is a **runtime user
-artifact, never shipped with the source**: the repo contains no
-`APPEND_SYSTEM.md`; the plugin only creates it on first run and maintains
-its one marked section. A system-prompt section registered in the plugin's
+artifact**: at install time the TUI seeds a fresh file from the shipped
+English template `templates/APPEND_SYSTEM.md` (the pi orchestrator-identity
+definition, translated — content lives in the FILE, not in code) plus the
+TUI's marked todo-lifecycle section; an existing file is user-owned and
+never overwritten. A system-prompt section registered in the plugin's
 scope (`dsh-tui-pi:append-system`, order 200) uses a text **provider** that
 reads the file at each assembly (`readAppendSystem`), so edits apply to the
 next request with no restart and no watcher; an empty file contributes

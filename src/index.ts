@@ -17,7 +17,7 @@ import { Loader, Text } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { PowerlineFooter, type FooterDataSource } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
-import { ensureTodoLifecycleInstructions, migrateAgentsMdTodoSection, readAppendSystem } from './append-system.ts'
+import { ensureAppendSystemFile, migrateAgentsMdTodoSection, readAppendSystem } from './append-system.ts'
 import { TranscriptRenderer, type PanelHeight } from './messages.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
@@ -55,8 +55,9 @@ export function apply(ctx: Context): void {
     text: () => readAppendSystem(),
   }), 'dsh-tui-pi: append-system')
   // The TUI's own todo-lifecycle guidance rides the same file (idempotent
-  // marker); the legacy AGENTS.md delivery is migrated out. Both best-effort.
-  void ensureTodoLifecycleInstructions()
+  // marker); a fresh file is seeded with the orchestrator template. The
+  // legacy AGENTS.md delivery is migrated out. All best-effort.
+  void ensureAppendSystemFile()
   void migrateAgentsMdTodoSection()
   /**
    * Live theme hot-reload sink, wired to the settings watch hook: a committed

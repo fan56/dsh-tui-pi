@@ -15,7 +15,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  ensureTodoLifecycleInstructions,
+  ensureAppendSystemFile,
   migrateAgentsMdTodoSection,
   readAppendSystem,
   TODO_LIFECYCLE_MARKER,
@@ -28,17 +28,22 @@ async function tempDir() {
 
 // ------------------------------------------------------------- ensure ----
 
-test('creates APPEND_SYSTEM.md with the todo-lifecycle section when absent', async () => {
+test('creates APPEND_SYSTEM.md seeded from the shipped template when absent', async () => {
   const dir = await tempDir()
   try {
     const path = join(dir, 'APPEND_SYSTEM.md')
-    assert.equal(await ensureTodoLifecycleInstructions(path), undefined)
+    const template = join(dir, 'template.md')
+    await writeFile(template, '# Orchestrator template\n', 'utf8')
+    assert.equal(await ensureAppendSystemFile(path, template), undefined)
     const content = await readFile(path, 'utf8')
+    assert.ok(content.startsWith('# Orchestrator template'), 'template seeded first')
     assert.ok(content.includes(TODO_LIFECYCLE_MARKER), 'marker present')
     assert.ok(content.includes('write an EMPTY todo list'), 'guidance present')
+    assert.ok(content.indexOf(TODO_LIFECYCLE_MARKER) > content.indexOf('Orchestrator template'),
+      'template first, marked section after')
     // Idempotent: a second call leaves the file byte-identical.
     const before = await readFile(path, 'utf8')
-    assert.equal(await ensureTodoLifecycleInstructions(path), undefined)
+    assert.equal(await ensureAppendSystemFile(path), undefined)
     assert.equal(await readFile(path, 'utf8'), before, 'no rewrite when marked')
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -50,7 +55,7 @@ test('appends the section to an existing file without the marker', async () => {
   try {
     const path = join(dir, 'APPEND_SYSTEM.md')
     await writeFile(path, '# My append notes\n\nAlways cite sources.\n', 'utf8')
-    assert.equal(await ensureTodoLifecycleInstructions(path), undefined)
+    assert.equal(await ensureAppendSystemFile(path), undefined)
     const content = await readFile(path, 'utf8')
     assert.ok(content.startsWith('# My append notes'), 'existing content preserved')
     assert.ok(content.includes(TODO_LIFECYCLE_MARKER), 'section appended')
@@ -66,7 +71,7 @@ test('leaves an already-marked file byte-identical', async () => {
     const path = join(dir, 'APPEND_SYSTEM.md')
     const marked = `# Notes\n\n${TODO_LIFECYCLE_MARKER}\n## Todo list lifecycle (dsh-tui-pi)\n\nKeep it tidy.\n`
     await writeFile(path, marked, 'utf8')
-    assert.equal(await ensureTodoLifecycleInstructions(path), undefined)
+    assert.equal(await ensureAppendSystemFile(path), undefined)
     assert.equal(await readFile(path, 'utf8'), marked, 'no rewrite when already marked')
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -94,8 +99,8 @@ test('migrate strips the marker block from AGENTS.md and deletes an emptied file
   const dir = await tempDir()
   try {
     const path = join(dir, 'AGENTS.md')
-    // Our earlier incarnation: the file contains only the TUI block.
-    await ensureTodoLifecycleInstructions(path)
+    // Our earlier incarnation: AGENTS.md contained only the TUI block.
+    await writeFile(path, TODO_LIFECYCLE_SECTION, 'utf8')
     assert.equal(await migrateAgentsMdTodoSection(path), undefined)
     await assert.rejects(() => stat(path), 'file deleted when the strip leaves it empty')
     // With user content around the block, only the block is removed.
@@ -118,7 +123,7 @@ test('reports a failure instead of throwing (missing parent dir)', async () => {
   const dir = await tempDir()
   try {
     const path = join(dir, 'no-such-dir', 'APPEND_SYSTEM.md')
-    const error = await ensureTodoLifecycleInstructions(path)
+    const error = await ensureAppendSystemFile(path)
     assert.ok(typeof error === 'string' && error !== '', 'error message returned, not thrown')
     // The tmp file must not linger.
     await assert.rejects(() => readFile(`${path}.tmp`))

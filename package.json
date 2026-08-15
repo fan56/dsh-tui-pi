@@ -19,6 +19,7 @@
     "cordis.patch.yml",
     "patches",
     "pnpm-workspace.yaml",
+    "templates",
     "README.md",
     "LICENSE"
   ],

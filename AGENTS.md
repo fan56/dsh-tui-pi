@@ -23,11 +23,12 @@ live-widgets.ts   LiveWidgets: bordered Todos/Agents panels above the chat
                   input (renderTodos/renderAgents/tickLive/setTheme;
                   show-when-content, clear-when-done)
 append-system.ts  APPEND_SYSTEM.md support (pi convention, dsh side
-                  ~/.dsh/APPEND_SYSTEM.md — a RUNTIME user file, never
-                  shipped in this repo): section provider reads the file per
-                  assembly (hot-apply); the dsh-tui-pi:todo-lifecycle
-                  section is ensured there (idempotent marker, atomic) and
-                  migrated out of the legacy ~/.dsh/AGENTS.md
+                  ~/.dsh/APPEND_SYSTEM.md — a RUNTIME user file): install
+                  seeds a fresh file from templates/APPEND_SYSTEM.md (the
+                  English orchestrator template; content in the file, not
+                  code); the dsh-tui-pi:todo-lifecycle section is ensured
+                  there (idempotent marker, atomic) and migrated out of the
+                  legacy ~/.dsh/AGENTS.md
 commands.ts       CommandService: parse + dual-channel dispatch + autocomplete
 frame.ts          FramedOverlay: shared top/bottom ─ border for every popup
 selectors.ts      /model (2-stage), /think, /theme pickers
