@@ -165,16 +165,22 @@ gets the tree-chrome headroom, and the agent name (provider + label) is split
 from a shared budget measured against the actual chrome width, so no row ever
 wraps inside the box.
 
-**Model-side guidance** (instructions.ts): because `todo/write` is a
-whole-list snapshot and models rarely clear it, the TUI also teaches the
-lifecycle through dsh's native instruction channel — the user-global
-`~/.dsh/AGENTS.md` (dsh-agent-instructions reads it for every session,
-`$DSH_HOME` or `~/.dsh`). `ensureTodoLifecycleInstructions` is idempotent
-(marker `<!-- dsh-tui-pi:todo-lifecycle -->`): creates the file when absent,
-appends the section when the marker is missing, leaves a marked file
-untouched; atomic (tmp + rename) and best-effort, fired at plugin startup
-without blocking it. The panel-side all-completed hide remains the fallback
-when the model ignores the convention.
+**Model-side guidance** (append-system.ts): the TUI supports pi's
+`APPEND_SYSTEM.md` convention (dsh side: `~/.dsh/APPEND_SYSTEM.md`,
+`$DSH_HOME` or `~/.dsh`) — a user-editable file appended to the system
+prompt of every agent the TUI creates. A system-prompt section registered
+in the plugin's scope (`dsh-tui-pi:append-system`, order 200) uses a text
+**provider** that reads the file at each assembly (`readAppendSystem`), so
+edits apply to the next request with no restart and no watcher; an empty
+file contributes nothing (empty sections are dropped by the renderer).
+Because `todo/write` is a whole-list snapshot and models rarely clear it,
+the TUI's own `dsh-tui-pi:todo-lifecycle` guidance lives in the same file:
+`ensureTodoLifecycleInstructions` is idempotent (marker
+`<!-- dsh-tui-pi:todo-lifecycle -->`), atomic (tmp + rename) and
+best-effort; `migrateAgentsMdTodoSection` removes the section's earlier
+incarnation from `~/.dsh/AGENTS.md` so the guidance is not delivered twice.
+The panel-side all-completed hide remains the fallback when the model
+ignores the convention.
 
 ### Bridge (session.ts)
 

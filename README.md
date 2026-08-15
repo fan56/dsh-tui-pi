@@ -28,11 +28,13 @@ pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
   content, clear when done — a settled child drops off the board and an empty
   panel collapses to zero rows. Subagents are tracked from the child sessions
   themselves (header `origin: subagent` + `parentSession`), so any spawn
-  mechanism works. The TUI also teaches the model the todo lifecycle through
-  dsh's native instruction channel: it ensures a `dsh-tui-pi:todo-lifecycle`
-  section (marker `<!-- dsh-tui-pi:todo-lifecycle -->`) exists in the
-  user-global `~/.dsh/AGENTS.md` — read by every dsh session — telling the
-  model to write an empty todo list once everything is completed (idempotent,
+  mechanism works. The TUI also supports pi's `APPEND_SYSTEM.md` convention
+  (dsh side: `~/.dsh/APPEND_SYSTEM.md`): a user-editable file whose content is
+  appended to the system prompt of every agent the TUI creates — read at each
+  assembly, so edits apply to the next request without a restart. The TUI's
+  own `dsh-tui-pi:todo-lifecycle` guidance (marker
+  `<!-- dsh-tui-pi:todo-lifecycle -->`) lives in that file, telling the model
+  to write an empty todo list once everything is completed (idempotent,
   atomic, best-effort; the panel-side all-completed hide remains as fallback).
 
 ## Commands

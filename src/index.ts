@@ -17,7 +17,7 @@ import { Loader, Text } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { PowerlineFooter, type FooterDataSource } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
-import { ensureTodoLifecycleInstructions } from './instructions.ts'
+import { ensureTodoLifecycleInstructions, migrateAgentsMdTodoSection, readAppendSystem } from './append-system.ts'
 import { TranscriptRenderer, type PanelHeight } from './messages.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
@@ -40,14 +40,24 @@ import { startTui, type TuiHandle } from './tui.ts'
 export const name = 'dsh-tui-pi'
 
 /** The TUI drives the agent factory and registers slash commands. */
-export const inject = ['agents', 'commands']
+export const inject = ['agents', 'commands', 'systemPrompt']
 
 export function apply(ctx: Context): void {
   let handle: TuiHandle | undefined
-  // Teach the model the todo lifecycle through the native instructions
-  // channel (`~/.dsh/AGENTS.md`, read by every dsh session) instead of a
-  // system-prompt patch: idempotent, best-effort, never blocks startup.
+  // APPEND_SYSTEM.md (pi's convention; dsh side ~/.dsh/APPEND_SYSTEM.md): a
+  // user-editable file appended to the system prompt of every agent this TUI
+  // creates. The section text provider reads the file at each assembly, so
+  // edits apply to the next request without a restart or watcher. Empty
+  // content contributes nothing.
+  ctx.effect(() => ctx.systemPrompt.section({
+    name: 'dsh-tui-pi:append-system',
+    order: 200,
+    text: () => readAppendSystem(),
+  }), 'dsh-tui-pi: append-system')
+  // The TUI's own todo-lifecycle guidance rides the same file (idempotent
+  // marker); the legacy AGENTS.md delivery is migrated out. Both best-effort.
   void ensureTodoLifecycleInstructions()
+  void migrateAgentsMdTodoSection()
   /**
    * Live theme hot-reload sink, wired to the settings watch hook: a committed
    * `dsh-tui` theme change (this TUI's /theme write included) is applied to

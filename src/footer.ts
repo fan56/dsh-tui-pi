@@ -119,8 +119,8 @@ export class PowerlineFooter implements Component {
       segs.push({ label: `🧠 ${fmtNum(used)}`, bgHex: POWERLINE.contextOk })
     }
 
-    if ((stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) && stats.latestCacheHitRate !== undefined) {
-      segs.push({ label: `⚡ CH${stats.latestCacheHitRate.toFixed(1)}%`, bgHex: POWERLINE.cache })
+    if ((stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) && stats.cacheHitRate !== undefined) {
+      segs.push({ label: `⚡ CH${stats.cacheHitRate.toFixed(1)}%`, bgHex: POWERLINE.cache })
     }
     segs.push({ label: `💬 ${stats.msgCount} msgs`, bgHex: POWERLINE.messages })
     segs.push({ label: `🔧 ${stats.toolCallCount} tools`, bgHex: POWERLINE.tools })

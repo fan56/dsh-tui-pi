@@ -37,8 +37,8 @@ export interface BridgeStats {
   /** User + assistant surface messages observed. */
   msgCount: number
   toolCallCount: number
-  /** Cache-hit rate of the latest assistant message with usage, when known. */
-  latestCacheHitRate?: number
+  /** Whole-log cache-hit rate: cumulative cacheReadTokens ÷ billed input (input + cacheRead + cacheWrite), matching DSH web. */
+  cacheHitRate?: number
 }
 
 export class DshSessionBridge {
@@ -224,7 +224,7 @@ export class DshSessionBridge {
     this.stats.cacheWriteTokens = 0
     this.stats.msgCount = 0
     this.stats.toolCallCount = 0
-    this.stats.latestCacheHitRate = undefined
+    this.stats.cacheHitRate = undefined
     this.agentViews.clear()
     this.childSessions.clear()
     this.trackedSessions.clear()
@@ -298,7 +298,7 @@ export class DshSessionBridge {
     this.stats.cacheWriteTokens = 0
     this.stats.msgCount = 0
     this.stats.toolCallCount = 0
-    this.stats.latestCacheHitRate = undefined
+    this.stats.cacheHitRate = undefined
     const sessionId = this.sessionId
     for (const event of events) {
       if (event.type === 'assistant/chunk') continue
@@ -330,9 +330,9 @@ export class DshSessionBridge {
         this.stats.outputTokens += usage.outputTokens
         this.stats.cacheReadTokens += usage.cacheReadTokens ?? 0
         this.stats.cacheWriteTokens += usage.cacheWriteTokens ?? 0
-        const promptTokens = usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
-        this.stats.latestCacheHitRate = promptTokens > 0
-          ? ((usage.cacheReadTokens ?? 0) / promptTokens) * 100
+        const billedInput = this.stats.inputTokens + this.stats.cacheReadTokens + this.stats.cacheWriteTokens
+        this.stats.cacheHitRate = billedInput > 0
+          ? (this.stats.cacheReadTokens / billedInput) * 100
           : undefined
         break
       }
