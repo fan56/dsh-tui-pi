@@ -4,13 +4,12 @@
  * Layout (alt-screen, mirrors pi interactive mode):
  *
  *   ┌──────────────────────────────────────┐
- *   │ widgetsContainer (live Todos/Agents)  │  basis auto / grow 0 — appears
- *   ├──────────────────────────────────────┤  only while it has content
  *   │ scrollable transcript (ScrollView)   │  basis 0 / grow 1 — fills the rest
  *   ├──────────────────────────────────────┤
  *   │ statusContainer                      │  ┐
- *   │ editor                               │  │ dock — basis auto / grow 0,
- *   │ footerContainer                      │  ┘ sized to its content
+ *   │ widgetsContainer (Todos/Agents)      │  │ dock — basis auto / grow 0,
+ *   │ editor                               │  │ sized to its content
+ *   │ footerContainer                      │  ┘
  *   └──────────────────────────────────────┘
  *
  * Design rules inherited from the pi-turbo findings — never re-scan the
@@ -92,9 +91,9 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
 
   // ------------------------------------------------------------- component tree --
-  // Live Todos/Agents widgets, pinned ABOVE the chat window: a plain
-  // Container with auto height — it renders zero rows while empty and grows
-  // to its content while the model has todos or subagents running.
+  // Live Todos/Agents widgets, pinned ABOVE the chat input: a plain Container
+  // with auto height — it renders zero rows while empty and grows to its
+  // (bordered-panel) content while the model has todos or subagents running.
   const widgets = new Container()
   const transcript = new Container()
   const transcriptView = new ScrollView(transcript, {
@@ -121,13 +120,13 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
 
   const dock = new VStack([
     { component: status, shrink: 1, minSize: 0 },
+    { component: widgets, shrink: 1, minSize: 0 },
     { component: editor, shrink: 1, minSize: 3 },
     { component: lastRequest, shrink: 1, minSize: 0 },
     { component: footer, shrink: 1, minSize: 1 },
   ])
 
   const root = new VStack([
-    { component: widgets, basis: 'auto', grow: 0, shrink: 1, minSize: 0 },
     { component: transcriptView, basis: 0, grow: 1, shrink: 1, minSize: 1 },
     { component: dock, basis: 'auto', grow: 0, shrink: 1, minSize: 1 },
   ])
@@ -172,6 +171,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     if (permissionProvider !== undefined) next.setPermissionProvider(permissionProvider)
     dock.clear()
     dock.addChild(status, { shrink: 1, minSize: 0 })
+    dock.addChild(widgets, { shrink: 1, minSize: 0 })
     dock.addChild(next, { shrink: 1, minSize: 3 })
     dock.addChild(lastRequest, { shrink: 1, minSize: 0 })
     dock.addChild(footer, { shrink: 1, minSize: 1 })

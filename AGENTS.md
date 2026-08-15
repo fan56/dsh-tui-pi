@@ -19,9 +19,9 @@ session.ts        DshSessionBridge: lazy create, followup, resume/replay,
                   (tool-workflow + child events → AgentView rows → onLive)
 dsh-events.ts     local types/guards for tool-workflow/subagent/llm-retry
                   events (declaring packages not installed) + AgentView
-live-widgets.ts   LiveWidgets: fixed Todos/Agents widgets pinned above the
-                  chat window (renderTodos/renderAgents/tickLive/setTheme;
-                  clear-when-done)
+live-widgets.ts   LiveWidgets: bordered Todos/Agents panels above the chat
+                  input (renderTodos/renderAgents/tickLive/setTheme;
+                  show-when-content, clear-when-done)
 commands.ts       CommandService: parse + dual-channel dispatch + autocomplete
 frame.ts          FramedOverlay: shared top/bottom ─ border for every popup
 selectors.ts      /model (2-stage), /think, /theme pickers

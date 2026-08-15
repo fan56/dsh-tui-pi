@@ -21,13 +21,14 @@ pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
   provider / model+thinking / context / cache-hit / msgs / tools with U+E0B0
   arrows, right-aligned live clock, cwd+git-branch editor top border, and the
   `↳ last-request` widget.
-- **Live todos & subagents**: fixed widgets pinned above the chat window —
-  todos render as a tree block (`● Todos (done/total)` with `☐`/`◐`/`☑`
-  status icons); subagent children spawn a live `● Agents` board (spinner,
-  provider + label, retries, token count + context percent, elapsed and the
-  current tool) refreshed ~10×/s. Show while there is content, clear when
-  done — a settled child drops off the board and the widget collapses to
-  zero rows.
+- **Live todos & subagents**: bordered panels pinned **above the chat input** —
+  a `● Todos (done/total)` tree (`☐`/`◐`/`☑` status icons) and a live
+  `● Agents` board (spinner, provider + label, retries, token count + context
+  percent, elapsed and the current tool) refreshed ~10×/s. Show while there is
+  content, clear when done — a settled child drops off the board and an empty
+  panel collapses to zero rows. Subagents are tracked from the child sessions
+  themselves (header `origin: subagent` + `parentSession`), so any spawn
+  mechanism works.
 
 ## Commands
 
@@ -112,12 +113,12 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 
 - Type a prompt → Enter. Streaming reply renders live; tool calls render as
   `⚙/✔/✘` cards.
-- Todos and subagent children the model spawns show in fixed widgets pinned
-  **above** the chat window (they never scroll with the transcript): a
+- Todos and subagent children the model spawns show in bordered panels pinned
+  **above the chat input** (they never scroll with the transcript): a
   `● Todos (done/total)` tree and a live `● Agents` board — spinner, provider
   + label, retries (`↻N≤M`), tokens (+ context percent), elapsed, and the
   current tool (`⎿ running …`). A finished child drops off the board; when
-  nothing is left the widget collapses away.
+  nothing is left the panels collapse away.
 - `/` opens slash-command autocomplete (Tab/arrows/Enter).
 - Ctrl+C quits — while the agent is mid-turn the first press cancels the turn
   (`⏹ canceling current turn…`), any further press quits.

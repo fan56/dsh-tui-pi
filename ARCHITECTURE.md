@@ -135,30 +135,33 @@ inline (`🐳: text`) instead of taking its own avatar line.
 
 ### Live widgets (live-widgets.ts)
 
-`LiveWidgets` renders the todos tree and the subagent board into a **fixed
-container pinned above the chat window** (`ui.widgets`, a `basis: auto / grow:
-0` slot between the top of the screen and the transcript ScrollView in
-tui.ts) — they never scroll with the transcript. Show-when-content,
-clear-when-done:
+`LiveWidgets` renders two **bordered panels** — the Todos tree and the Agents
+board — into a fixed container **pinned above the chat input** (`ui.widgets`,
+a `basis: auto / grow: 0` slot in the dock VStack directly above the editor,
+tui.ts); they never scroll with the transcript. Each panel is a box (top
+border + header row + body rows + bottom border, the same chrome as the
+thinking/tool panels, `borderDefault`). Show-when-content, clear-when-done:
 
 - `renderTodos(todos)` — `todo/write` events (routed from index.ts's
-  `onEvent`, since the transcript no longer renders them): a `● Todos
+  `onEvent`, since the transcript no longer renders them): a boxed `● Todos
   (done/total)` header with `├─`/`└─` tree lines and `☐`/`◐`/`☑` status
-  icons. An empty snapshot (or `/new`) hides the section.
-- `renderAgents(agents)` — the bridge's `onLive` fold: one line per **running**
-  child (spinner, provider + label, `↻retries≤max`, total tokens + context
-  percent, elapsed, activity `⎿ running {tool}…`). A settled child drops off
-  the board immediately; when none run the section — and the whole widget
-  when todos are gone too — collapses to zero rows.
+  icons. An empty snapshot (or `/new`) hides the panel.
+- `renderAgents(agents)` — the bridge's `onLive` fold: a boxed `● Agents`
+  panel with one line per **running** child (spinner, provider + label,
+  `↻retries≤max`, total tokens + context percent, elapsed, activity
+  `⎿ running {tool}…`). A settled child drops off the board immediately; when
+  none run the panel — and the whole slot when todos are gone too — collapses
+  to zero rows.
 - `tickLive()` — `AGENT_TICK_MS` (100 ms) timer in index.ts advances the
   spinner and re-reads the elapsed clock; no-op while nothing runs.
 - `setTheme(bundle)` — recolors in place on a theme hot-switch (the widget is
   live state, not transcript history — no ReplayOp involvement).
 
-Width discipline matches the panels: every line is clipped before styling,
-the todo content budget is `width − 6` (tree chrome), and the agent label
-budget is computed against the actual chrome width (connector + icon +
-provider + meta) so no row ever wraps.
+Width discipline matches the panels: every line is clipped before styling to
+the boxed row's inner budget (`panelBoxWidth(columns) − 4`); the todo content
+gets the tree-chrome headroom, and the agent name (provider + label) is split
+from a shared budget measured against the actual chrome width, so no row ever
+wraps inside the box.
 
 ### Bridge (session.ts)
 
@@ -177,16 +180,22 @@ provider + meta) so no row ever wraps.
   `getStats()` O(1).
 - **Subagents**: the same `session/event` firehose is not scope-filtered
   (dsh-scope's `session/event` resolver is null), so child sessions arrive
-  too. The tracker folds `tool-workflow/agent-start` (parent log; keyed by
-  `runId:seq`, registers the child's session id — delegation nests) and
-  `tool-workflow/agent-end` (settle), plus each child's own
-  `subagent/descriptor` (provider name), `assistant/message` usage (tokens),
-  `llm/retry` (retries/max), `tool/call` (last activity) and
-  `request/context` (context window) into an O(1) `AgentView` map;
-  `onLive` pushes the sorted snapshot to the widget. `replay()` folds the
-  same parent-log events so a resumed session rebuilds the board. The tracker
-  clears on dispose/detach/resume — each firing `onLive([])` — so the widget
-  drops stale rows before the next session's events rebuild it.
+  too. Children are keyed by session id and discovered two ways:
+  `tool-workflow/agent-start` on a tracked session's log (registers the child
+  with its workflow label) or — the primary path, since some deployments
+  never emit workflow events — the child session's **header**
+  (`origin: 'subagent'` + `parentSession` matching a tracked session);
+  delegation nests. Each child's own events fold into an O(1) `AgentView`:
+  `subagent/descriptor` (provider + label), `assistant/message` usage
+  (tokens), `llm/retry` (retries/max), `tool/call` (last activity),
+  `request/context` (context window), and `turn/end` (best-effort settle —
+  the board's clear-when-done; `turn/start` re-marks a resumed child running).
+  `tool-workflow/agent-end` pairs through `runId:seq` for the real outcome.
+  `onLive` pushes the sorted snapshot (by `startedAt`) to the widget.
+  `replay()` folds the same parent-log workflow events so a resumed session
+  rebuilds the board. The tracker clears on dispose/detach/resume — each
+  firing `onLive([])` — so the widget drops stale rows before the next
+  session's events rebuild it.
 - **Cancel**: `cancelActiveTurn()` → `agent.cancel({ kind: 'user' },
   { keepInbox: true })` — the web stop-button equivalent; `isRunning()` is a
   mirror of the status subscription.

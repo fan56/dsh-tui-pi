@@ -62,14 +62,18 @@ export class DshSessionBridge {
     msgCount: 0,
     toolCallCount: 0,
   }
-  /** Live subagent rows keyed by the parent-log pairing key `${runId}:${seq}`. */
+  /** Live subagent rows keyed by child session id. */
   private readonly agentViews = new Map<string, AgentView>()
   /** Child session ids whose own events we fold into the agent views. */
   private readonly childSessions = new Set<string>()
-  /** Session ids whose workflow events we fold for child discovery (parent first, then every tracked child — delegation nests). */
+  /**
+   * Session ids that can own tracked children (this session first, then every
+   * tracked child — delegation nests). Used to match `parentSession` headers
+   * and to fold workflow events of the parent log.
+   */
   private readonly trackedSessions = new Set<string>()
-  /** O(1) childId -> `${runId}:${seq}` lookup for the child-event fold. */
-  private readonly childToKey = new Map<string, string>()
+  /** `${runId}:${seq}` → childId, for `tool-workflow/agent-end` pairing. */
+  private readonly runSeqToChild = new Map<string, string>()
 
   constructor(ctx: Context, callbacks: BridgeCallbacks) {
     this.ctx = ctx
@@ -87,8 +91,27 @@ export class DshSessionBridge {
         }
     this.disposers.push(ctx.on('session/event', (session: Session, event: SessionEvent) => {
       const sessionKey = String(session.id)
-      // Fold workflow + child events for every tracked session (the firehose
-      // is not scope-filtered, so child sessions arrive here too).
+      // Discover subagent children by session header — the deployment may
+      // never emit tool-workflow events (the firehose is not scope-filtered,
+      // so child sessions arrive here too). Any session whose parent is a
+      // tracked session is a child; the descriptor event later refines the
+      // label/provider.
+      const header = session.header
+      if (header?.origin === 'subagent' && header.parentSession !== undefined
+        && this.trackedSessions.has(String(header.parentSession))
+        && !this.agentViews.has(sessionKey)) {
+        this.agentViews.set(sessionKey, {
+          childId: sessionKey,
+          label: `subagent ${sessionKey.slice(0, 8)}`,
+          startedAt: event.time,
+          tokens: 0,
+          retries: 0,
+        })
+        this.childSessions.add(sessionKey)
+        this.trackedSessions.add(sessionKey)
+        this.emitLive()
+      }
+      // Fold workflow + child events for every tracked session.
       if (this.trackedSessions.has(sessionKey)) {
         this.foldTracked(sessionKey, event)
       }
@@ -177,7 +200,7 @@ export class DshSessionBridge {
     this.agentViews.clear()
     this.childSessions.clear()
     this.trackedSessions.clear()
-    this.childToKey.clear()
+    this.runSeqToChild.clear()
     if (handle !== undefined) await handle.dispose()
   }
 
@@ -205,7 +228,7 @@ export class DshSessionBridge {
     this.agentViews.clear()
     this.childSessions.clear()
     this.trackedSessions.clear()
-    this.childToKey.clear()
+    this.runSeqToChild.clear()
     this.emitLive()
     if (handle !== undefined) await handle.dispose()
   }
@@ -229,7 +252,7 @@ export class DshSessionBridge {
       this.agentViews.clear()
       this.childSessions.clear()
       this.trackedSessions.clear()
-      this.childToKey.clear()
+      this.runSeqToChild.clear()
       // The renderer keeps its live snapshot across the resume teardown (it
       // must survive theme-switch rebuilds), so an empty emit is required to
       // drop the previous session's agents block before the resumed log's
@@ -327,26 +350,25 @@ export class DshSessionBridge {
   private foldTracked(sessionId: string, event: SessionEvent): boolean {
     let changed = false
     if (isAgentStart(event)) {
-      const key = `${event.data.runId}:${event.data.seq}`
-      if (!this.agentViews.has(key)) {
-        this.agentViews.set(key, {
+      // Workflow member: register with the workflow label + start time.
+      if (!this.agentViews.has(event.data.childId)) {
+        this.agentViews.set(event.data.childId, {
           childId: event.data.childId,
           label: event.data.label,
-          seq: event.data.seq,
           startedAt: event.time,
           tokens: 0,
           retries: 0,
         })
-        this.childToKey.set(event.data.childId, key)
+        this.runSeqToChild.set(`${event.data.runId}:${event.data.seq}`, event.data.childId)
         this.childSessions.add(event.data.childId)
         this.trackedSessions.add(event.data.childId)
         changed = true
       }
     } else if (isAgentEnd(event)) {
-      const key = `${event.data.runId}:${event.data.seq}`
-      const existing = this.agentViews.get(key)
-      if (existing !== undefined && existing.outcome === undefined) {
-        this.agentViews.set(key, {
+      const childId = this.runSeqToChild.get(`${event.data.runId}:${event.data.seq}`)
+      const existing = childId === undefined ? undefined : this.agentViews.get(childId)
+      if (childId !== undefined && existing !== undefined && existing.outcome === undefined) {
+        this.agentViews.set(childId, {
           ...existing,
           outcome: event.data.outcome,
           endedAt: event.time,
@@ -355,50 +377,57 @@ export class DshSessionBridge {
       }
     }
     if (this.childSessions.has(sessionId)) {
-      if (isSubagentDescriptor(event)) {
-        const entry = this.childView(sessionId)
-        if (entry !== undefined && entry.view.provider !== event.data.provider) {
-          this.agentViews.set(entry.key, { ...entry.view, provider: event.data.provider })
-          changed = true
-        }
-      } else if (event.type === 'assistant/message') {
-        const usage = event.data.usage
-        if (usage !== undefined) {
-          const entry = this.childView(sessionId)
-          if (entry !== undefined) {
+      const view = this.agentViews.get(sessionId)
+      if (view !== undefined) {
+        if (isSubagentDescriptor(event)) {
+          if (view.provider !== event.data.provider
+            || (event.data.label !== undefined && view.label !== event.data.label)) {
+            this.agentViews.set(sessionId, {
+              ...view,
+              provider: event.data.provider,
+              ...(event.data.label === undefined ? {} : { label: event.data.label }),
+            })
+            changed = true
+          }
+        } else if (event.type === 'assistant/message') {
+          const usage = event.data.usage
+          if (usage !== undefined) {
             const delta = usage.inputTokens + usage.outputTokens
               + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
             if (delta > 0) {
-              this.agentViews.set(entry.key, { ...entry.view, tokens: entry.view.tokens + delta })
+              this.agentViews.set(sessionId, { ...view, tokens: view.tokens + delta })
               changed = true
             }
           }
-        }
-      } else if (isLlmRetry(event)) {
-        const entry = this.childView(sessionId)
-        if (entry !== undefined
-          && (entry.view.retries !== event.data.retry || entry.view.maxRetries !== event.data.maxRetries)) {
-          this.agentViews.set(entry.key, {
-            ...entry.view,
-            retries: event.data.retry,
-            maxRetries: event.data.maxRetries,
-          })
-          changed = true
-        }
-      } else if (event.type === 'tool/call') {
-        const entry = this.childView(sessionId)
-        if (entry !== undefined && entry.view.lastTool !== event.data.name) {
-          this.agentViews.set(entry.key, { ...entry.view, lastTool: event.data.name })
-          changed = true
-        }
-      } else if (event.type === 'request/context') {
-        const contextWindow = event.data.contextWindow
-        if (typeof contextWindow === 'number') {
-          const entry = this.childView(sessionId)
-          if (entry !== undefined && entry.view.contextWindow !== contextWindow) {
-            this.agentViews.set(entry.key, { ...entry.view, contextWindow })
+        } else if (isLlmRetry(event)) {
+          if (view.retries !== event.data.retry || view.maxRetries !== event.data.maxRetries) {
+            this.agentViews.set(sessionId, {
+              ...view,
+              retries: event.data.retry,
+              maxRetries: event.data.maxRetries,
+            })
             changed = true
           }
+        } else if (event.type === 'tool/call') {
+          if (view.lastTool !== event.data.name) {
+            this.agentViews.set(sessionId, { ...view, lastTool: event.data.name })
+            changed = true
+          }
+        } else if (event.type === 'request/context') {
+          const contextWindow = event.data.contextWindow
+          if (typeof contextWindow === 'number' && view.contextWindow !== contextWindow) {
+            this.agentViews.set(sessionId, { ...view, contextWindow })
+            changed = true
+          }
+        } else if (event.type === 'turn/end' && view.outcome === undefined) {
+          // Best-effort settle for header-discovered children (no workflow
+          // outcome event): the child's turn closed — the widget drops it.
+          this.agentViews.set(sessionId, { ...view, outcome: 'completed', endedAt: event.time })
+          changed = true
+        } else if (event.type === 'turn/start' && view.outcome !== undefined) {
+          // A continuable child resumed: mark it running again.
+          this.agentViews.set(sessionId, { ...view, outcome: undefined, endedAt: undefined })
+          changed = true
         }
       }
     }
@@ -406,18 +435,10 @@ export class DshSessionBridge {
     return changed
   }
 
-  /** The agent view for a tracked child session id, when any (O(1)). */
-  private childView(sessionId: string): { key: string; view: AgentView } | undefined {
-    const key = this.childToKey.get(sessionId)
-    if (key === undefined) return undefined
-    const view = this.agentViews.get(key)
-    return view === undefined ? undefined : { key, view }
-  }
-
   /** Push the current agent views (stable order) to the renderer. */
   private emitLive(): void {
     this.callbacks.onLive(
-      [...this.agentViews.values()].sort((a, b) => a.seq - b.seq || a.startedAt - b.startedAt),
+      [...this.agentViews.values()].sort((a, b) => a.startedAt - b.startedAt || a.childId.localeCompare(b.childId)),
     )
   }
 

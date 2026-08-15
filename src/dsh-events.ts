@@ -85,23 +85,29 @@ export function isLlmRetry(event: SessionEvent): event is SessionEvent & { type:
 
 /**
  * One live subagent row the TUI renders: the bridge's per-child fold of
- * workflow events (parent log) and the child's own session events. All
- * fields are O(1)-maintained — never a session-log scan on the render path.
+ * workflow events (parent log) and the child's own session events. Children
+ * are keyed by their session id — discovered either from
+ * `tool-workflow/agent-start` or, when the deployment never emits workflow
+ * events, from the child session's header (`origin: 'subagent'` +
+ * `parentSession`). All fields are O(1)-maintained — never a session-log
+ * scan on the render path.
  */
 export interface AgentView {
-  /** The child session id (raw string). */
+  /** The child session id (raw string) — the stable identity key. */
   readonly childId: string
   /** Subagent type name from the child's `subagent/descriptor.provider`, when known. */
   readonly provider?: string
-  /** Delegation label from `tool-workflow/agent-start`. */
+  /** Delegation label from `tool-workflow/agent-start` or the child's descriptor. */
   readonly label: string
-  /** Parent-log seq of the agent-start event — the stable ordering key. */
-  readonly seq: number
-  /** Unix epoch ms of the agent-start event — the elapsed baseline. */
+  /** Unix epoch ms when the child was first observed — the elapsed baseline. */
   readonly startedAt: number
-  /** Settled outcome (`tool-workflow/agent-end`), when the child finished. */
+  /**
+   * Settled marker: set by `tool-workflow/agent-end` (real outcome) or,
+   * for header-discovered children, best-effort on the child's `turn/end`.
+   * A settled child drops off the live board (clear-when-done).
+   */
   readonly outcome?: 'completed' | 'failed' | 'cancelled'
-  /** Unix epoch ms of the agent-end event, when settled. */
+  /** Unix epoch ms of the settle event, when settled. */
   readonly endedAt?: number
   /** Cumulative tokens: input + output + cacheRead + cacheWrite. */
   readonly tokens: number
