@@ -76,6 +76,42 @@ test('reload swaps the plugin runtime: old fiber disposed, fresh code applied', 
   assert.ok(!root.registry.has(oldModule), 'old runtime removed')
 })
 
+test('reload waits for the old fiber teardown before the fresh code applies', async () => {
+  const root = new Context()
+  let teardownComplete = false
+  let sawTeardownDuringApply = false
+
+  const oldModule = {
+    name: 'fake',
+    apply(ctx) {
+      // A slow effect disposer, like the TUI teardown (agent dispose + tui
+      // stop). The reload must await it: if the fresh fiber starts while the
+      // old one still holds the terminal, the late tui.stop() would kill the
+      // new TUI's input.
+      ctx.effect(async () => () => new Promise(resolve => {
+        setTimeout(() => {
+          teardownComplete = true
+          resolve()
+        }, 100)
+      }))
+    },
+  }
+  const freshModule = {
+    name: 'fake',
+    apply() {
+      sawTeardownDuringApply = teardownComplete
+    },
+  }
+  root.provide('loader', makeLoader(freshModule))
+
+  const fiber = await root.plugin(oldModule)
+  const result = await reloadPlugin(fiber.ctx, ENTRY_URL)
+
+  assert.ok(result.startsWith('Reloaded'), result)
+  assert.equal(sawTeardownDuringApply, true,
+    'fresh apply must run only after the old fiber teardown (incl. tui.stop) completed')
+})
+
 test('reload keeps the old TUI when the re-import fails and restores caches', async () => {
   const root = new Context()
   let appliedOld = 0

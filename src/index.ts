@@ -532,9 +532,15 @@ export function apply(ctx: Context): void {
     return async () => {
       clearInterval(clockTimer)
       git.dispose()
-      try { await bridge.dispose() } catch { /* contained */ }
+      // Stop the TUI FIRST, before the (possibly slow) agent teardown: the
+      // terminal must be released while the fiber is still alone with it.
+      // Deferring tui.stop() until after `await bridge.dispose()` lets any
+      // fire-and-forget disposal (e.g. /reload's fiber swap) start a fresh
+      // TUI while this one still holds the terminal — the late stop then
+      // disables raw mode and pauses stdin out from under the new TUI.
       handle?.dispose()
       handle = undefined
+      try { await bridge.dispose() } catch { /* contained */ }
     }
   }
 }

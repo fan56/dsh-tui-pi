@@ -163,9 +163,18 @@ async function performReload(ctx: Context, fallbackUrl: string): Promise<string>
     // registry.has(callback) on disposal and must not mark the entry disabled,
     // and the fiber disposers then skip their own registry bookkeeping.
     ctx.registry.delete(oldCallback)
-    // Await the old fiber's full unload (TUI stopped, terminal released)
-    // before the fresh fiber starts its own TUI.
-    await Promise.allSettled(oldFibers.map(fiber => Promise.resolve(fiber.dispose())))
+    // registry.delete already called fiber.dispose() on every old fiber, so a
+    // second dispose() call here would be useless — cordis effect wrappers
+    // return void 0 once their cleanup is in flight — and the teardown would
+    // race the fresh fiber's start below. Await the real teardown through
+    // each fiber's lifecycle inertia instead. Yield one turn first: fibers
+    // whose "ctx.plugin()" effect is async only start their unload on a
+    // microtask, and await() must see the in-flight inertia to wait for it.
+    // This ordering matters: the old TUI's terminal stop must land BEFORE the
+    // fresh TUI takes the terminal over, or the late stop would disable raw
+    // mode and pause stdin out from under the new TUI (input deadlock).
+    await new Promise(resolve => setImmediate(resolve))
+    await Promise.allSettled(oldFibers.map(fiber => fiber.await()))
     for (const oldFiber of oldFibers as FiberLike[]) {
       const next = oldFiber.parent.registry.plugin(fresh as Plugin, oldFiber._config, () => []) as FiberLike
       next.entry = oldFiber.entry
