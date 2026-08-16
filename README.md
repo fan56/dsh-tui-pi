@@ -178,8 +178,35 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
   finished child drops off; when nothing is left the panel and the activity
   lines collapse away.
 - `/` opens slash-command autocomplete (Tab/arrows/Enter).
-- Ctrl+C quits — while the agent is mid-turn the first press cancels the turn
-  (`⏹ canceling current turn…`), any further press quits.
+
+## Keyboard shortcuts
+
+App-level keys (key mappings mirror [pi](https://github.com/badlogic/pi-mono)):
+
+| Key | Action |
+| --- | --- |
+| `Enter` | send the prompt |
+| `Esc` | **stop the current task** — priority chain: a popup that is open closes itself first; the editor's autocomplete closes; a mid-turn agent is cancelled (`⏹ canceling current turn…`); a non-empty editor does **nothing** (anti-misfire); on an **empty** editor a second `Esc` within 500ms opens `/session` |
+| `Ctrl+C` | mid-turn: first press cancels the running turn, second press (within 500ms) quits; idle: first press clears the editor, second press quits. With a popup open it cancels the popup instead |
+| `Ctrl+D` | quit — only when the editor is **empty**, like pi's `app.exit`; with text it is the regular delete-character-forward |
+| `Ctrl+L` | open the model/think picker (pi's `app.model.select`) |
+| `Tab` | autocomplete |
+
+Editor keys (movement/deletion/undo) come from the pi-tui `Editor` default
+bindings — no dsh code involved: `←→↑↓` / `Ctrl+B`/`Ctrl+F` move, `Alt+←→` /
+`Ctrl+←→` / `Alt+B`/`Alt+F` word-move, `Home`/`End` / `Ctrl+A`/`Ctrl+E` line
+edges, `PageUp`/`PageDown` scroll, `Backspace` / `Delete`/`Ctrl+D` delete,
+`Ctrl+W`/`Alt+Backspace` delete word back, `Alt+D` delete word forward,
+`Ctrl+U`/`Ctrl+K` delete to line start/end, `Ctrl+-` undo, `Ctrl+Y`/`Alt+Y`
+yank, `Shift+Enter`/`Ctrl+J` newline.
+
+Not supported yet (documented status): `Ctrl+O` collapse tool output, `Ctrl+X`
+copy the last assistant message, `Alt+Enter` follow-up queue, `Ctrl+G` external
+editor, `Ctrl+V` paste image, `Ctrl+Z` suspend,
+`Ctrl+P`/`Ctrl+Shift+P` model cycle, `Shift+Tab` think cycle, `Ctrl+T` collapse
+thinking, and app-level key remapping (pi's `~/.pi/agent/keybindings.json`):
+the decision logic in `src/keymap.ts` accepts injectable key ids, but no file
+loader is wired yet.
 
 ## Performance rules (from the pi-turbo findings)
 

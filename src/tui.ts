@@ -21,7 +21,6 @@
 
 import {
   Container,
-  matchesKey,
   ProcessTerminal,
   ScrollView,
   Spacer,
@@ -32,13 +31,21 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import { CwdBorderEditor } from './editor.ts'
+import { resolveKeyAction, type KeyAction } from './keymap.ts'
 import { ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 
 export interface StartTuiOptions {
   /** Submit handler for the editor. Defaults to a local echo (smoke-test mode). */
   onSubmit?: (text: string) => void
-  /** Ctrl+C handler. Defaults to a plain exit (smoke-test mode). */
-  onInterrupt?: () => void
+  /**
+   * Executes an app-level key action (see keymap.ts for the pi-aligned
+   * interrupt chain: Esc stop, windowed Ctrl+C, empty-editor Ctrl+D quit).
+   * Absent (smoke-test mode): Ctrl+C family and Ctrl+D quit fall back to a
+   * plain exit(130); interrupt-arm/double are no-ops.
+   */
+  onKeyAction?: (action: KeyAction) => void
+  /** Whether the agent is mid-turn; feeds the Esc/Ctrl+C decision. Defaults to false. */
+  isRunning?: () => boolean
   /** Persisted theme preference; 'auto' falls back to terminal detection. */
   themePreference?: ThemePreference
 }
@@ -229,17 +236,53 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // ------------------------------------------------------------- input & focus --
   tui.setFocus(editor)
 
+  /**
+   * App-level key dispatch — the pi interrupt chain (see keymap.ts):
+   * popup/overlay first, then the editor's autocomplete, then the running
+   * agent, then the empty-editor double-press windows. Every decision is
+   * delegated to the pure `resolveKeyAction`; the listener only composes
+   * live state, advances the double-press timestamps, and reports whether
+   * the key was consumed. `matchesKey('escape')` is true for the lone ESC
+   * byte `\x1b` — and, because legacy terminal Ctrl+[ sends the same byte,
+   * for Ctrl+[ too (pi-tui keys.js normalizes both to `escape`).
+   */
+  let lastEscPress = 0
+  let lastCtrlCPress = 0
+  const isRunning = options.isRunning ?? (() => false)
+
   tui.addInputListener((data: string) => {
-    if (matchesKey(data, 'ctrl+c')) {
-      if (options.onInterrupt !== undefined) {
-        options.onInterrupt()
-      } else {
+    const action = resolveKeyAction(data, {
+      running: isRunning(),
+      overlayOpen: tui.hasOverlay(),
+      editorHasText: editor.getText() !== '',
+      autocompleteOpen: editor.isShowingAutocomplete(),
+      lastEscPress,
+      lastCtrlCPress,
+    }, Date.now())
+    // Advance the double-press windows for the keys this chain owns. Only
+    // the EMPTY-editor idle chain arms the double-Esc timer: an Esc that
+    // cancels a running turn must not count as the first press of a pair,
+    // or mashing Esc while stopping would pop /session right after (pi arms
+    // the double-escape only from the empty-editor branch too).
+    if (action.kind === 'interrupt-arm' || action.kind === 'interrupt-double') {
+      lastEscPress = Date.now()
+    } else if (action.kind === 'ctrl-c-cancel' || action.kind === 'ctrl-c-clear' || action.kind === 'ctrl-c-quit') {
+      lastCtrlCPress = Date.now()
+    }
+    // Pass-through outcomes (popup, autocomplete, unbound keys) let the
+    // focused component handle the key; actionable ones go to the caller.
+    if (action.kind !== 'overlay' && action.kind !== 'autocomplete-close' && action.kind !== 'noop') {
+      if (options.onKeyAction !== undefined) {
+        options.onKeyAction(action)
+      } else if (action.kind === 'ctrl-c-cancel' || action.kind === 'ctrl-c-clear'
+        || action.kind === 'ctrl-c-quit' || action.kind === 'ctrl-d-quit') {
+        // Smoke-test fallback: any Ctrl+C family press, or an empty-editor
+        // Ctrl+D, exits — Ctrl+C behaves like the pre-keymap build.
         handle.dispose()
         process.exit(130)
       }
-      return { consume: true }
     }
-    return undefined
+    return action.consumes ? { consume: true } : undefined
   })
 
   tui.setLayoutRoot(root)

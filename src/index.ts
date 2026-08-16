@@ -36,6 +36,7 @@ import { reloadPlugin } from './reload.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
 import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
+import { type KeyAction } from './keymap.ts'
 import { startTui, type TuiHandle } from './tui.ts'
 
 export const name = 'dsh-tui-pi'
@@ -118,32 +119,56 @@ export function apply(ctx: Context): void {
    * the effect disposer handed back to cordis on teardown.
    */
   function runTui(themePreference: ThemePreference, panelHeight: PanelHeight): () => void {
-    // Graded Ctrl+C: while the agent is mid-turn the first press cancels the
-    // active turn (keepInbox preserves the queue) with on-screen feedback;
-    // any further press — or any press while idle — quits the TUI.
-    let cancelAttempted = false
-    let lastInterrupt = 0
-
     const ui = startTui({
       onSubmit: text => {
         void submit(text)
       },
-      onInterrupt: () => {
-        if (bridge.isRunning() && !cancelAttempted && Date.now() - lastInterrupt > 1500) {
-          // First press mid-turn: cancel with on-screen feedback (mirrors the
-          // web client's stop button). The next press — of any kind — quits.
-          cancelAttempted = true
-          lastInterrupt = Date.now()
-          // Transient notice: a second press quits and disposes the whole
-          // TUI, so the line's replay entry only matters for theme-switch
-          // repaints — buffering it keeps that rebuild faithful.
-          renderer.renderNotice('⏹ canceling current turn…', 'info')
-          void bridge.cancelActiveTurn().then(cancelled => {
-            // Nothing was running (state raced idle): nothing to cancel — quit.
-            if (!cancelled) void disposeAndExit(0)
-          })
-        } else {
-          void disposeAndExit(0)
+      // App-level keys (pi interrupt chain): Esc stops the current task
+      // (popup/autocomplete first, then cancel-active-turn, anti-misfire
+      // no-op on a non-empty editor), Ctrl+C cancels a running turn or
+      // clears the editor — a second press within 500ms quits — and Ctrl+D
+      // quits only on an empty editor. All decisions live in keymap.ts.
+      isRunning: () => bridge.isRunning(),
+      onKeyAction: (action: KeyAction) => {
+        switch (action.kind) {
+          case 'interrupt-cancel':
+          case 'ctrl-c-cancel': {
+            // First press mid-turn: cancel with on-screen feedback (mirrors
+            // the web client's stop button; keepInbox preserves the queue).
+            // Transient notice: a second press quits and disposes the whole
+            // TUI, so the line's replay entry only matters for theme-switch
+            // repaints — buffering it keeps that rebuild faithful.
+            renderer.renderNotice('⏹ canceling current turn…', 'info')
+            void bridge.cancelActiveTurn().then(cancelled => {
+              // State raced idle between the decision and the cancel call —
+              // nothing to cancel. No exit: quitting needs the deliberate
+              // double-press, so a stale single press never kills the TUI.
+              if (!cancelled) renderer.renderNotice('Nothing running to cancel.', 'info')
+            })
+            break
+          }
+          case 'interrupt-double':
+            // Double-Esc on an empty editor: pi's default double action is
+            // /tree; dsh has no /tree, so this opens /session (the session
+            // info panel — the closest non-invasive analogue).
+            void sessionHandler('', new AbortController().signal)
+            break
+          case 'ctrl-c-clear':
+            // First Ctrl+C while idle: clear the editor (pi app.clear); a
+            // second press within 500ms quits.
+            ui.editor.setText('')
+            ui.requestRender()
+            break
+          case 'ctrl-c-quit':
+          case 'ctrl-d-quit':
+            void disposeAndExit(0)
+            break
+          case 'model-picker':
+            // Ctrl+L: pi app.model.select — open the model/think picker.
+            void modelHandler('', new AbortController().signal)
+            break
+          default:
+            break
         }
       },
       themePreference,
@@ -681,7 +706,7 @@ export function apply(ctx: Context): void {
     // it under a theme hot-swap; the PowerlineFooter itself needs no rebuild.
     const footerHint = new Text('', 1, 0)
     const paintFooterHint = (): void => {
-      footerHint.setText(ansiFg(ui.theme.palette.fgSubtle) + '⌨ Enter: send · Ctrl+C: cancel / double: quit' + RESET)
+      footerHint.setText(ansiFg(ui.theme.palette.fgSubtle) + '⌨ Enter: send · Esc: stop · Ctrl+C: cancel / double: quit · Ctrl+D: quit (empty)' + RESET)
     }
     paintFooterHint()
     ui.footer.addChild(footerHint)
