@@ -2,6 +2,34 @@
 
 pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh).
 
+## Preview (ASCII mock-up)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  🐳: 两个 subagent 已在后台并行启动 (A: 5b19b15c, B: d2072ffd) │  ← transcript (scrolls)
+│  ┌─ 💭 thinking ──────────────────────────────────────────┐  │
+│  │ Actually, I can check list_agents or wait…             │  │
+│  └────────────────────────────────────────────────────────┘  │
+│  ⚙ bash  python scripts/demo.py  …  ✔ bash                │  │
+└──────────────────────────────────────────────────────────────┘
+┌─ ● Todos (1/2) ────────────────────────────────────────────┐
+│ ├─ ☑ Todo 1: 启动 subagent A 执行 10s 任务并收集结果        │  ← fixed widgets
+│ └─ ◐ Todo 2: 启动 subagent B 执行 10s 任务并收集结果        │    above the input
+└─────────────────────────────────────────────────────────────┘
+┌─ ● Agents ─────────────────────────────────────────────────┐
+│ ├─ ⠼ spawn  Subagent A 10s 任务 · 1.2k token · 19.0s       │
+│ │    ⎿  running sleep…                                     │
+│ └─ ⠼ spawn  Subagent B 10s 任务 · 562 token · 6.0s         │
+│      ⎿  working…                                           │
+└─────────────────────────────────────────────────────────────┘
+∴ working…                                                    ← status
+📁 ~/github (Full access) │ ⎇ main                            ← editor border
+[ 请输入指令…                                                ] ← input
+ ↳ 创建 2 个 todo, 每个 todo 起一个 10s 的 subagent            ← last request
+dsh ▸ ☁ opencode-go ▸ 🤖 deepseek-v4-flash ▸ ● high ▸ 🧠 11.6k/1.0M (1.2%) ▸ ⚡ CH98.9% ▸ 💬 8 ▸ 🔧 4       00:00:14   ← footer
+⌨ Enter: send · Ctrl+C: cancel / double: quit                 ← hints
+```
+
 - **Look & feel**: pi coding agent interactive TUI, built on
   `@earendil-works/pi-tui` 0.84.2 (pinned) — alt-screen scrollable transcript,
   docked editor/status/footer, markdown messages, slash-command autocomplete.
