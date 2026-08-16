@@ -227,10 +227,12 @@ format: `modifier+key`, modifiers `ctrl`/`shift`/`alt`/`super` (combined with
 }
 ```
 
-The file is read when the TUI starts — edit it, then `/reload` (the panel
-also shows the path and any rejected entries, and a broken file never blocks
-startup: bad entries fall back to the defaults with a warning notice).
-`/hotkeys` shows the effective table, with overridden keys starred.
+The file is read when the TUI starts. You can edit it by hand (then
+`/reload`) — or use `/hotkeys`, which shows the effective table in the same
+select-panel style as `/agents`: each app key is a row (custom overrides
+starred), `Enter` prompts for a new key id (empty input resets the key to its
+default), and a commit **writes the file and applies the change live** — no
+`/reload` needed. Invalid entries never block: they warn and keep the default.
 
 ## Performance rules (from the pi-turbo findings)
 

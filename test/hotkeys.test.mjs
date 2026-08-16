@@ -6,7 +6,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -16,6 +16,8 @@ import {
   KEYBINDINGS_FILE,
   keybindingsPath,
   loadKeyBindings,
+  parseKeyInput,
+  updateKeyBindingsFile,
 } from '../lib/hotkeys.js'
 
 // ------------------------------------------------------------- helpers --
@@ -28,6 +30,10 @@ function writeKeys(home, json) {
   const file = keybindingsPath(home)
   writeFileSync(file, JSON.stringify(json, null, 2))
   return file
+}
+
+function readText(file) {
+  return readFileSync(file, 'utf8')
 }
 
 // ---------------------------------------------------------------- path --
@@ -118,11 +124,51 @@ test('loadKeyBindings: unknown fields warn and are ignored', () => {
   assert.match(result.warnings[0], /unknown field "ctrlZ"/)
 })
 
+test('updateKeyBindingsFile: absent file → creates it with the update', () => {
+  const home = tempHome()
+  const file = keybindingsPath(home)
+  const error = updateKeyBindingsFile(file, [['escape', 'ctrl+x']])
+  assert.equal(error, undefined)
+  const result = loadKeyBindings(file)
+  assert.deepEqual(result.bindings, { escape: 'ctrl+x' })
+  assert.equal(result.exists, true)
+})
+
+test('updateKeyBindingsFile: merge preserves other keys, null removes one', () => {
+  const home = tempHome()
+  const file = writeKeys(home, { escape: 'ctrl+x', modelPicker: 'ctrl+m', note: 'user key' })
+  // Set one key and null out another in one write; unknown fields survive.
+  const error = updateKeyBindingsFile(file, [['escape', null], ['ctrlD', 'ctrl+w']])
+  assert.equal(error, undefined)
+  const result = loadKeyBindings(file)
+  assert.deepEqual(result.bindings, { ctrlD: 'ctrl+w', modelPicker: 'ctrl+m' })
+})
+
+test('updateKeyBindingsFile: a broken existing file errors instead of being clobbered', () => {
+  const home = tempHome()
+  const file = keybindingsPath(home)
+  writeFileSync(file, '{ nope')
+  const error = updateKeyBindingsFile(file, [['escape', 'ctrl+x']])
+  assert.match(error, /fix or delete the file/)
+  // The broken file is untouched.
+  assert.equal(readText(file), '{ nope')
+})
+
+test('parseKeyInput: empty resets, valid ids pass, typos are rejected', () => {
+  assert.deepEqual(parseKeyInput(''), { kind: 'unset' })
+  assert.deepEqual(parseKeyInput('  '), { kind: 'unset' })
+  assert.deepEqual(parseKeyInput('ctrl+x'), { kind: 'value', value: 'ctrl+x' })
+  assert.deepEqual(parseKeyInput('f5'), { kind: 'value', value: 'f5' })
+  const bad = parseKeyInput('zzz')
+  assert.equal(bad.kind, 'error')
+})
+
 // --------------------------------------------------------------- table --
 
-test('appHotkeyRows: default table lists the four app keys plus Enter and Tab', () => {
+test('appHotkeyRows: default table lists the four app keys', () => {
   const rows = appHotkeyRows({})
-  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Enter', 'Tab'])
+  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L'])
+  assert.deepEqual(rows.map(row => row.field), ['escape', 'ctrlC', 'ctrlD', 'modelPicker'])
   assert.ok(rows.every(row => !row.custom))
   assert.equal(rows[0].action, 'stop the current task')
 })

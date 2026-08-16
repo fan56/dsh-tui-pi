@@ -95,6 +95,8 @@ export interface TuiHandle {
   setEditorBranchProvider(provider: () => string | undefined): void
   /** Live permission-preset display-name source for the editor; re-applied across editor rebuilds. */
   setEditorPermissionProvider(provider: () => string | undefined): void
+  /** Swap the user keybindings live (`/hotkeys` writes → apply immediately). */
+  setKeyBindings(bindings: Partial<KeyBindings>): void
 }
 
 export function startTui(options: StartTuiOptions = {}): TuiHandle {
@@ -123,6 +125,9 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   let editor = new CwdBorderEditor(tui, themeRef.editor, process.cwd(), {
     infoColor: text => ansiFg(themeRef.palette.fgMuted) + text + RESET,
   })
+  // User keybindings overrides — mutable so `/hotkeys` can live-apply a
+  // write without restarting the TUI (see `setKeyBindings`).
+  let keyBindingsRef: Partial<KeyBindings> | undefined = options.keyBindings
   // External wiring that must survive editor rebuilds.
   let autocompleteProvider: AutocompleteProvider | undefined
   let branchProvider: (() => string | undefined) | undefined
@@ -233,6 +238,9 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       permissionProvider = provider
       editor.setPermissionProvider(provider)
     },
+    setKeyBindings(bindings: Partial<KeyBindings>) {
+      keyBindingsRef = bindings
+    },
   }
 
   // ------------------------------------------------------------- input & focus --
@@ -260,7 +268,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       autocompleteOpen: editor.isShowingAutocomplete(),
       lastEscPress,
       lastCtrlCPress,
-    }, Date.now(), options.keyBindings)
+    }, Date.now(), keyBindingsRef)
     // Advance the double-press windows for the keys this chain owns. Only
     // the EMPTY-editor idle chain arms the double-Esc timer: an Esc that
     // cancels a running turn must not count as the first press of a pair,

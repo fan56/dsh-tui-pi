@@ -38,6 +38,8 @@ settings.ts       /settings browser: categories, schema walk, write chain,
                   add-provider flow (uses provider-catalog.ts)
 sessions.ts       /session panel + /resume picker
 reload.ts         /reload hot-reload (cordis-plugin-hmr style)
+hotkeys.ts        /hotkeys — keybindings.json contract + validation + the
+                  select-panel manager (FieldPanel + EditField, /agents style)
 theme-settings.ts dsh-tui settings namespace (applies: 'live') + watch sink
 theme/            palette.ts (GitHub light/dark) + index.ts (buildTheme,
                   resolveTheme: env > preference > COLORFGBG detection)

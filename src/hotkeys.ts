@@ -1,25 +1,30 @@
 /**
- * `/hotkeys` — view and customize the app-level keybindings.
+ * `/hotkeys` — view and customize the app-level keybindings, in the /agents
+ * select-panel style (src/panels.ts).
  *
- * pi's convention is a `/hotkeys` command (full markdown table) plus a
- * user-editable `~/.pi/agent/keybindings.json`, applied with `/reload`.
- * dsh side: `$DSH_HOME/keybindings.json` (default `~/.dsh/keybindings.json`),
- * read at TUI startup and re-read by `/reload`. The file is a PARTIAL map of
- * the four app keys ({@link APP_KEY_FIELDS}) to pi-tui key ids; anything
- * missing falls back to the defaults (`src/keymap.ts`). Invalid entries are
- * skipped with a warning notice — a broken file never breaks the TUI.
+ * pi's convention is a `/hotkeys` command plus a user-editable
+ * `~/.pi/agent/keybindings.json`. dsh side: `$DSH_HOME/keybindings.json`
+ * (default `~/.dsh/keybindings.json`). The file is a PARTIAL map of the four
+ * app keys ({@link APP_KEY_FIELDS}) to pi-tui key ids; anything missing falls
+ * back to the defaults (`src/keymap.ts`).
  *
- * The decision logic stays in `keymap.ts` (pure); this module only owns the
- * file contract, the validation, the display table, and the panel component.
+ * UI (mirrors `/agents`): a FieldPanel lists the app keys — binding, custom
+ * star, action, file path + warnings; Enter opens an EditField to type a new
+ * key id (empty input resets the key to its default). A commit writes the
+ * file AND live-applies the new bindings to the running TUI (no /reload
+ * needed). Invalid entries never block: they warn and keep the default.
+ *
+ * The decision logic stays in `keymap.ts` (pure); this module owns the file
+ * contract, the validation, the display table and the interactive flow.
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { getKeybindings, type Component, type KeyId, type TUI } from '@earendil-works/pi-tui'
+import type { KeyId, TUI } from '@earendil-works/pi-tui'
 import { DEFAULT_KEYBINDINGS, type KeyBindings } from './keymap.ts'
-import { wrapFramedOverlay } from './frame.ts'
+import { FieldPanel, PanelHost } from './panels.ts'
+import { EditField, type CommitResult, type ParseOutcome } from './settings.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
-import { clipToWidth } from './text.ts'
 
 /** The user-editable keybindings file name inside the dsh home. */
 export const KEYBINDINGS_FILE = 'keybindings.json'
@@ -134,10 +139,60 @@ export function loadKeyBindings(path: string): LoadedKeyBindings {
   return { bindings, warnings, exists: true }
 }
 
+/**
+ * Merge-write the keybindings file: each `[field, value]` sets a binding,
+ * `null` removes it (reset to default). Unknown fields already in the file
+ * are preserved (the user's other keys survive). Missing file → fresh object;
+ * an unreadable/broken EXISTING file is an error — never clobbered silently.
+ * Returns an error message, or `undefined` on success.
+ */
+export function updateKeyBindingsFile(
+  path: string,
+  updates: ReadonlyArray<readonly [keyof KeyBindings, KeyId | null]>,
+): string | undefined {
+  const label = basename(path)
+  const existing: Record<string, unknown> = {}
+  let fileExisted = false
+  try {
+    const text = readFileSync(path, 'utf8')
+    fileExisted = true
+    const parsed: unknown = JSON.parse(text)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return `${label}: expected a JSON object — fix or delete the file, then retry`
+    }
+    Object.assign(existing, parsed)
+  } catch (error) {
+    if (fileExisted) return `${label}: ${(error as Error).message} — fix or delete the file, then retry`
+    // Absent file: start fresh.
+  }
+  for (const [field, value] of updates) {
+    if (value === null) delete existing[field]
+    else existing[field] = value
+  }
+  try {
+    writeFileSync(path, JSON.stringify(existing, null, 2) + '\n')
+  } catch (error) {
+    return `${label}: cannot write — ${(error as Error).message}`
+  }
+  return undefined
+}
+
+/** The `/hotkeys` EditField parse: empty = reset, else a validated key id. */
+export function parseKeyInput(text: string): ParseOutcome {
+  const trimmed = text.trim()
+  if (trimmed === '') return { kind: 'unset' }
+  if (!isValidKeyId(trimmed)) {
+    return { kind: 'error', error: `not a key id — ctrl/shift/alt/super + key (e.g. ctrl+x, f5, escape)` }
+  }
+  return { kind: 'value', value: trimmed }
+}
+
 // --------------------------------------------------------------- the table --
 
 /** One row of the `/hotkeys` table. */
 export interface HotkeyRow {
+  /** The app-key field this row edits. */
+  field: keyof KeyBindings
   /** Display key text (custom override reflected). */
   key: string
   /** What the key does. */
@@ -152,127 +207,145 @@ export interface HotkeyRow {
  * Pure, so the table content is unit-testable without a terminal.
  */
 export function appHotkeyRows(custom: Partial<KeyBindings>): HotkeyRow[] {
-  const rows: HotkeyRow[] = []
-  for (const field of APP_KEY_FIELDS) {
+  return APP_KEY_FIELDS.map(field => {
     const override = custom[field]
-    rows.push({
+    return {
+      field,
       key: displayKey(override ?? DEFAULT_KEYBINDINGS[field]),
       action: KEY_ACTIONS[field],
       custom: override !== undefined,
-    })
-  }
-  rows.push({ key: 'Enter', action: 'send the prompt', custom: false })
-  rows.push({ key: 'Tab', action: 'autocomplete', custom: false })
-  return rows
+    }
+  })
 }
 
-// ------------------------------------------------------------------ panel --
+// ------------------------------------------------------------- the manager --
 
-/** Everything the `/hotkeys` overlay renders. */
-export interface HotkeysPanelData {
+/** Options for the `/hotkeys` interactive flow. */
+export interface HotkeysManagerOptions {
   /** Absolute path of the user keybindings file. */
   filePath: string
-  /** Whether a custom file is active. */
-  fileExists: boolean
-  /** Load/validation problems to surface in the panel. */
-  warnings: readonly string[]
-  /** The app-key rows (defaults + overrides). */
-  rows: readonly HotkeyRow[]
-}
-
-/** Width of the key column in the table (fits Ctrl+Shift+PageUp). */
-const KEY_COLUMN_WIDTH = 17
-
-/**
- * One-shot read-only panel; Esc/Enter hides the overlay and resolves.
- * Mirrors the `/session` info panel: rows clipped to the framed content
- * width, the file status + editor-keys summary at the bottom.
- */
-class HotkeysPanel implements Component {
-  private readonly theme: TuiTheme
-  private readonly data: HotkeysPanelData
-  private readonly onClose: () => void
-
-  constructor(theme: TuiTheme, data: HotkeysPanelData, onClose: () => void) {
-    this.theme = theme
-    this.data = data
-    this.onClose = onClose
-  }
-
-  invalidate(): void {}
-
-  render(width: number): string[] {
-    const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
-    const p = this.theme.palette
-    const lines: string[] = [
-      fg(p.accent)(BOLD + '⚙ hotkeys' + RESET),
-      '',
-    ]
-    // Table header.
-    lines.push(fg(p.fgSubtle)('key'.padEnd(KEY_COLUMN_WIDTH)) + fg(p.fgSubtle)('action'))
-    // Separator under the header, full width.
-    const max = Math.max(4, width - KEY_COLUMN_WIDTH - 2)
-    const clip = (text: string): string => clipToWidth(text, max)
-    lines.push(fg(p.borderDefault)('─'.repeat(Math.min(width - 1, KEY_COLUMN_WIDTH + max + 1))))
-    for (const row of this.data.rows) {
-      // Pad the PLAIN key text first, then style — padEnd on ANSI-styled
-      // text would count the SGR escapes as visible columns (same rule as
-      // the /session panel; see AGENTS.md iron rule 3).
-      const keyText = row.custom
-        ? row.key.padEnd(KEY_COLUMN_WIDTH - 1) + '*'
-        : row.key.padEnd(KEY_COLUMN_WIDTH)
-      const styledKey = row.custom
-        ? fg(p.accent)(BOLD + keyText + RESET)
-        : fg(p.accent)(keyText)
-      lines.push(styledKey + fg(p.fgDefault)(clip(row.action)))
-    }
-    // Custom file status + warnings.
-    lines.push('')
-    const fileLabel = this.data.fileExists
-      ? fg(p.fgMuted)('custom:') + fg(p.fgDefault)(' ' + this.data.filePath)
-      : fg(p.fgSubtle)(`custom: ${this.data.filePath} (not found — defaults in use)`)
-    lines.push(clipToWidth(fileLabel, Math.max(20, width - 1)))
-    for (const warning of this.data.warnings) {
-      lines.push(clipToWidth(fg('#d1242f')('! ' + warning), Math.max(20, width - 1)))
-    }
-    // Editor keys come from pi-tui itself — one line, not a row per key.
-    lines.push('')
-    lines.push(clipToWidth(
-      fg(p.fgSubtle)('editor: pi-tui defaults — arrows · Ctrl+B/F · Alt+←→ word · Home/End · Ctrl+W/U/K delete · Ctrl+- undo · Shift+Enter newline'),
-      Math.max(20, width - 1),
-    ))
-    lines.push('')
-    lines.push(clipToWidth(
-      fg(p.fgSubtle)(`edit ${this.data.filePath} then /reload to apply — Esc to close`),
-      Math.max(20, width - 1),
-    ))
-    return lines
-  }
-
-  handleInput(data: string): void {
-    if (getKeybindings().matches(data, 'tui.select.cancel') || getKeybindings().matches(data, 'tui.select.confirm')) {
-      this.onClose()
-    }
-  }
+  /** Live-apply new bindings to the running TUI (called after every write). */
+  apply: (bindings: Partial<KeyBindings>) => void
+  /** Re-focus the CURRENT editor instance on close. */
+  restoreFocus: () => void
 }
 
 /**
- * Open the `/hotkeys` panel; resolves when the user closes it. Focus returns
- * to `restoreFocus` on close (re-focus the CURRENT editor instance — it is
- * rebuilt on theme hot-swap, so a stale reference would swallow input).
+ * Open the `/hotkeys` manager: a FieldPanel of the four app keys (binding,
+ * custom star, action, file status + warnings), Enter opens an EditField that
+ * writes the file and live-applies the change. Resolves with a summary when
+ * the user changed something and closed, or `undefined` when nothing changed.
  */
-export function showHotkeysPanel(
+export async function openHotkeysManager(
   tui: TUI,
   theme: TuiTheme,
-  data: HotkeysPanelData,
-  restoreFocus: () => void,
-): Promise<void> {
-  return new Promise(resolve => {
-    const panel = new HotkeysPanel(theme, data, () => {
-      overlay.hide()
-      restoreFocus()
-      resolve()
+  options: HotkeysManagerOptions,
+): Promise<string | undefined> {
+  let changed = false
+  /** Live status line of the FieldPanel (last commit result). */
+  let status: string | undefined
+  /** Settles the manager promise (assigned inside the executor below). */
+  let settle: ((value: string | undefined) => void) | undefined
+
+  const host = new PanelHost(tui, theme, message => {
+    options.restoreFocus()
+    settle?.(`✘ failed to open the hotkeys view: ${message}`)
+  })
+
+  /** Re-read the file after a write and push the change into the running TUI. */
+  const applyBindings = (): void => {
+    const loaded = loadKeyBindings(options.filePath)
+    options.apply(loaded.bindings)
+  }
+
+  /** Rebuild the field panel from the current file state. */
+  const show = (): void => {
+    const loaded = loadKeyBindings(options.filePath)
+    const fields = appHotkeyRows(loaded.bindings).map(row => ({
+      key: row.field,
+      value: `${row.key}${row.custom ? '*' : ''} — ${row.action}`,
+      editable: true,
+    }))
+    const customCount = Object.keys(loaded.bindings).length
+    const content: string[] = [
+      loaded.exists
+        ? `custom: ${options.filePath} (${customCount} override${customCount === 1 ? '' : 's'})`
+        : `custom: ${options.filePath} (not found — defaults in use)`,
+      'format: ctrl/shift/alt/super+key · Enter edits · empty input resets to the default',
+      'editor: pi-tui defaults — arrows · Ctrl+B/F · Alt+←→ word · Home/End · Ctrl+W/U/K delete · Ctrl+- undo',
+      ...loaded.warnings.map(warning => `! ${warning}`),
+    ]
+    const panel = new FieldPanel(theme, {
+      title: ansiFg(theme.palette.accent) + BOLD + '⚙ hotkeys' + RESET,
+      content,
+      fields,
+      status: () => status,
+      footer: '↑↓ key · Enter change · Esc close',
+      onEdit: index => edit(fields[index].key),
+      onCancel: () => {
+        host.close()
+        options.restoreFocus()
+        resolve(changed ? 'Keybindings updated.' : undefined)
+      },
     })
-    const overlay = tui.showOverlay(wrapFramedOverlay(theme, panel), { width: '78%', maxHeight: '100%' })
+    host.open(panel)
+  }
+
+  const resolve = (value: string | undefined): void => {
+    settle?.(value)
+  }
+
+  /** EditField for one app key: type a key id, empty = reset to default. */
+  const edit = (field: keyof KeyBindings): void => {
+    const loaded = loadKeyBindings(options.filePath)
+    const current = loaded.bindings[field]
+    const editor = new EditField(tui, {
+      title: `Key for ${field} — default ${displayKey(DEFAULT_KEYBINDINGS[field])}`
+        + (current !== undefined ? ` · custom ${displayKey(current)}` : ''),
+      subtitle: 'ctrl/shift/alt/super + key · empty resets to the default',
+      initial: current ?? '',
+      parse: parseKeyInput,
+      onCommit: async (outcome): Promise<CommitResult | undefined> => {
+        if (outcome.kind === 'value') {
+          const id = outcome.value as string
+          // Writing the default is a reset: keep the file minimal.
+          const reset = id === DEFAULT_KEYBINDINGS[field]
+          const fresh = loadKeyBindings(options.filePath)
+          if (reset && fresh.bindings[field] === undefined) return undefined // already default — no write
+          const error = updateKeyBindingsFile(options.filePath, [[field, reset ? null : (id as KeyId)]])
+          if (error !== undefined) return { error }
+          changed = true
+          applyBindings()
+          status = reset
+            ? `${field} → default (${displayKey(DEFAULT_KEYBINDINGS[field])}) — applied`
+            : `${field} → ${id} — applied`
+          return undefined
+        }
+        if (outcome.kind === 'unset') {
+          const fresh = loadKeyBindings(options.filePath)
+          if (fresh.bindings[field] === undefined) return undefined // nothing custom to reset
+          const error = updateKeyBindingsFile(options.filePath, [[field, null]])
+          if (error !== undefined) return { error }
+          changed = true
+          applyBindings()
+          status = `${field} → default (${displayKey(DEFAULT_KEYBINDINGS[field])}) — applied`
+          return undefined
+        }
+        return undefined
+      },
+      onDone: () => show(),
+      onError: message => {
+        status = `✘ ${message}`
+        show()
+      },
+    }, theme)
+    host.open(editor)
+  }
+
+  return new Promise<string | undefined>(resolve => {
+    settle = resolve
+    // First render inside the executor: a synchronous showOverlay failure in
+    // the initial show() must be able to settle the promise through settle.
+    show()
   })
 }

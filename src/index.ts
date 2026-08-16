@@ -37,7 +37,7 @@ import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from '
 import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 import { type KeyAction } from './keymap.ts'
-import { appHotkeyRows, keybindingsPath, loadKeyBindings, showHotkeysPanel } from './hotkeys.ts'
+import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.ts'
 import { startTui, type TuiHandle } from './tui.ts'
 
 export const name = 'dsh-tui-pi'
@@ -659,17 +659,16 @@ export function apply(ctx: Context): void {
       handler: invocation => reloadHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /reload')
 
-    // /hotkeys — pi's keybinding browser: the effective app-key table (custom
-    // overrides starred) + the keybindings file path. Customizing = editing
-    // the file and /reload (the file is re-read on every TUI start).
+    // /hotkeys — pi's keybinding browser, in the /agents select-panel style:
+    // a field list of the app keys, Enter opens an editor that writes
+    // ~/.dsh/keybindings.json and live-applies the change (no /reload).
     const hotkeysHandler: LocalCommandHandler = async () => {
-      await showHotkeysPanel(ui.tui, ui.theme, {
+      const summary = await openHotkeysManager(ui.tui, ui.theme, {
         filePath: keyFile,
-        fileExists: keyBindings.exists,
-        warnings: keyBindings.warnings,
-        rows: appHotkeyRows(keyBindings.bindings),
-      }, () => ui.tui.setFocus(ui.editor))
-      return { kind: 'success' as const, text: 'Keybindings shown.' }
+        apply: bindings => ui.setKeyBindings(bindings),
+        restoreFocus: () => ui.tui.setFocus(ui.editor),
+      })
+      return { kind: 'success' as const, text: summary ?? 'Keybindings unchanged.' }
     }
     commands.registerLocal('hotkeys', hotkeysHandler)
     ctx.effect(() => ctx.commands.register({
