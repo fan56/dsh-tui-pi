@@ -329,7 +329,7 @@ export interface CommitResult {
   notice?: string
 }
 
-interface EditOptions {
+export interface EditOptions {
   title: string
   subtitle: string
   initial: string

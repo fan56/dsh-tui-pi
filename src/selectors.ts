@@ -40,7 +40,7 @@ const DEFAULT_EFFORT_ITEM: SelectItem = {
  * model picker to hide the previous stage only after this one owns focus);
  * focus returns to `restoreFocus` on close.
  */
-function openEffortPicker(
+export function openEffortPicker(
   tui: TUI,
   theme: TuiTheme,
   efforts: readonly LlmReasoningEffortInfo[],

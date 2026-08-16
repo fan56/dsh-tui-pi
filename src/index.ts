@@ -30,6 +30,7 @@ import {
   registerThemeSettings,
   writeThemePreference,
 } from './theme-settings.ts'
+import { openAgentManager } from './agents.ts'
 import { openSettingsBrowser } from './settings.ts'
 import { reloadPlugin } from './reload.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
@@ -293,6 +294,25 @@ export function apply(ctx: Context): void {
       description: 'Select the model (and think level) for this conversation',
       handler: invocation => modelHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /model')
+
+    // /agents: manage agent definition markdown files (model, think level,
+    // spawn depth) — the terminal counterpart of pi's /fun-agent-cfg. An
+    // optional argument preselects one agent by name.
+    const agentsHandler: LocalCommandHandler = async rawInput => {
+      const trimmed = rawInput?.trim() ?? ''
+      const result = await openAgentManager(
+        ctx, ui.tui, ui.theme, () => ui.tui.setFocus(ui.editor),
+        trimmed === '' ? undefined : trimmed,
+      )
+      if (result === undefined) return { kind: 'success' as const, text: 'Agents unchanged.' }
+      return { kind: 'success' as const, text: result }
+    }
+    commands.registerLocal('agents', agentsHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'agents',
+      description: 'Manage agent definitions (model, think level, spawn depth) from markdown files',
+      handler: invocation => agentsHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /agents')
 
     // /think: cycle the current model's reasoning effort without re-picking
     // the model. A no-session /think still lands in the selection ref and
@@ -705,7 +725,7 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {
