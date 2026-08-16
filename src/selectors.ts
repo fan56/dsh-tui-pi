@@ -301,8 +301,11 @@ export async function pickModel(
         return
       }
 
+      // No kept effort: default the stage-2 cursor to `high` rather than the
+      // adapter-default row. openEffortPicker's findIndex guard falls back to
+      // the first row when the model does not offer the level.
       const chosen = await openEffortPicker(
-        tui, theme, efforts, keptEffort, restoreFocus,
+        tui, theme, efforts, keptEffort ?? ('high' as ReasoningEffortId), restoreFocus,
         // Hide stage 1 only after stage 2 took focus.
         () => overlay.hide(),
       )
