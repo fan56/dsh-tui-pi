@@ -43,7 +43,7 @@ completed — no pending or in-progress items remain — write an EMPTY todo lis
 `
 
 /** Default harness home: `$DSH_HOME` or `~/.dsh`. */
-function dshHome(): string {
+export function dshHome(): string {
   return process.env.DSH_HOME ?? join(homedir(), '.dsh')
 }
 

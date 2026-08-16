@@ -17,7 +17,7 @@ import { Loader, Text } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { PowerlineFooter, type FooterDataSource } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
-import { ensureAppendSystemFile, migrateAgentsMdTodoSection, readAppendSystem } from './append-system.ts'
+import { ensureAppendSystemFile, dshHome, migrateAgentsMdTodoSection, readAppendSystem } from './append-system.ts'
 import { TranscriptRenderer, type PanelHeight } from './messages.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
@@ -37,6 +37,7 @@ import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from '
 import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 import { type KeyAction } from './keymap.ts'
+import { appHotkeyRows, keybindingsPath, loadKeyBindings, showHotkeysPanel } from './hotkeys.ts'
 import { startTui, type TuiHandle } from './tui.ts'
 
 export const name = 'dsh-tui-pi'
@@ -119,10 +120,16 @@ export function apply(ctx: Context): void {
    * the effect disposer handed back to cordis on teardown.
    */
   function runTui(themePreference: ThemePreference, panelHeight: PanelHeight): () => void {
+    // User keybindings (`~/.dsh/keybindings.json`): a partial map of the app
+    // keys, read once per TUI start — `/reload` re-runs apply() and re-reads
+    // it. Broken entries surface as notices instead of breaking startup.
+    const keyFile = keybindingsPath(dshHome())
+    const keyBindings = loadKeyBindings(keyFile)
     const ui = startTui({
       onSubmit: text => {
         void submit(text)
       },
+      keyBindings: keyBindings.bindings,
       // App-level keys (pi interrupt chain): Esc stops the current task
       // (popup/autocomplete first, then cancel-active-turn, anti-misfire
       // no-op on a non-empty editor), Ctrl+C cancels a running turn or
@@ -180,6 +187,11 @@ export function apply(ctx: Context): void {
     }
 
     const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender(), panelHeight)
+    // Startup notices for a broken/misleading keybindings file — the TUI keeps
+    // running with defaults; the panel shows the same warnings via /hotkeys.
+    for (const warning of keyBindings.warnings) {
+      renderer.renderNotice(`keybindings: ${warning}`, 'error')
+    }
     // Live Todos widget, pinned above the chat window, plus the running-agent
     // activity merged into the last-request area below the editor: shown while
     // the model has (incomplete) todos or subagents running, collapsed when
@@ -646,6 +658,25 @@ export function apply(ctx: Context): void {
       description: 'Reload the TUI from the current source (apply code changes without restarting dsh)',
       handler: invocation => reloadHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /reload')
+
+    // /hotkeys — pi's keybinding browser: the effective app-key table (custom
+    // overrides starred) + the keybindings file path. Customizing = editing
+    // the file and /reload (the file is re-read on every TUI start).
+    const hotkeysHandler: LocalCommandHandler = async () => {
+      await showHotkeysPanel(ui.tui, ui.theme, {
+        filePath: keyFile,
+        fileExists: keyBindings.exists,
+        warnings: keyBindings.warnings,
+        rows: appHotkeyRows(keyBindings.bindings),
+      }, () => ui.tui.setFocus(ui.editor))
+      return { kind: 'success' as const, text: 'Keybindings shown.' }
+    }
+    commands.registerLocal('hotkeys', hotkeysHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'hotkeys',
+      description: 'Show the current keybindings (custom file: ~/.dsh/keybindings.json)',
+      handler: invocation => hotkeysHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /hotkeys')
 
     // ------------------------------------------------- powerline footer + git --
     const git = new GitBranchWatcher(process.cwd())

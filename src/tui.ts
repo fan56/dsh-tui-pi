@@ -31,7 +31,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import { CwdBorderEditor } from './editor.ts'
-import { resolveKeyAction, type KeyAction } from './keymap.ts'
+import { resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
 import { ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 
 export interface StartTuiOptions {
@@ -46,6 +46,8 @@ export interface StartTuiOptions {
   onKeyAction?: (action: KeyAction) => void
   /** Whether the agent is mid-turn; feeds the Esc/Ctrl+C decision. Defaults to false. */
   isRunning?: () => boolean
+  /** User keybindings overrides (`~/.dsh/keybindings.json`); partial merge. */
+  keyBindings?: Partial<KeyBindings>
   /** Persisted theme preference; 'auto' falls back to terminal detection. */
   themePreference?: ThemePreference
 }
@@ -258,7 +260,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       autocompleteOpen: editor.isShowingAutocomplete(),
       lastEscPress,
       lastCtrlCPress,
-    }, Date.now())
+    }, Date.now(), options.keyBindings)
     // Advance the double-press windows for the keys this chain owns. Only
     // the EMPTY-editor idle chain arms the double-Esc timer: an Esc that
     // cancels a running turn must not count as the first press of a pair,

@@ -78,6 +78,7 @@ dsh ▸ ☁ opencode-go ▸ 🤖 deepseek-v4-flash ▸ ● high ▸ 🧠 11.6k/1
 | `/permission` | permission-preset picker (whatever the deployment table advertises — read-only / workspace-write / danger-full-access). Select a preset to apply it through dsh's canonical `/permission <name>` command, or Esc to keep the current one. The editor's top border shows the live preset badge (danger-full-access → "Full access"). |
 | `/theme` | color-scheme picker (auto / light / dark). The choice applies immediately and is persisted to `dsh-tui.theme`. |
 | `/reload` | hot-reload the plugin from the current source (after `pnpm build`) without restarting dsh — the TUI and the live agent are torn down; the session log persists and can be rejoined with `/resume`. |
+| `/hotkeys` | keybinding browser: the effective app-key table (custom overrides starred) plus the keybindings file path — see [Custom keybindings](#custom-keybindings). |
 
 Anything that is not a resolvable command falls through to the model as an
 ordinary prompt, so dsh packages' commands (and future registrations) appear
@@ -204,9 +205,32 @@ Not supported yet (documented status): `Ctrl+O` collapse tool output, `Ctrl+X`
 copy the last assistant message, `Alt+Enter` follow-up queue, `Ctrl+G` external
 editor, `Ctrl+V` paste image, `Ctrl+Z` suspend,
 `Ctrl+P`/`Ctrl+Shift+P` model cycle, `Shift+Tab` think cycle, `Ctrl+T` collapse
-thinking, and app-level key remapping (pi's `~/.pi/agent/keybindings.json`):
-the decision logic in `src/keymap.ts` accepts injectable key ids, but no file
-loader is wired yet.
+thinking.
+
+### Custom keybindings
+
+The four app-level keys are remappable through `$DSH_HOME/keybindings.json`
+(`~/.dsh/keybindings.json` by default) — pi's
+`~/.pi/agent/keybindings.json` convention. The file is a **partial** map of
+the app keys to pi-tui key ids; anything missing keeps its default. Key id
+format: `modifier+key`, modifiers `ctrl`/`shift`/`alt`/`super` (combined with
+`+`), key a letter/digit/symbol or a named key (`escape`, `enter`, `tab`,
+`space`, `backspace`, `delete`, `home`, `end`, `pageUp`, `pageDown`, arrows,
+`f1`–`f24` …).
+
+```json
+{
+  "escape": "ctrl+x",
+  "ctrlC": "alt+c",
+  "ctrlD": "ctrl+w",
+  "modelPicker": "ctrl+m"
+}
+```
+
+The file is read when the TUI starts — edit it, then `/reload` (the panel
+also shows the path and any rejected entries, and a broken file never blocks
+startup: bad entries fall back to the defaults with a warning notice).
+`/hotkeys` shows the effective table, with overridden keys starred.
 
 ## Performance rules (from the pi-turbo findings)
 
