@@ -7,8 +7,10 @@
  *   │ scrollable transcript (ScrollView)   │  basis 0 / grow 1 — fills the rest
  *   ├──────────────────────────────────────┤
  *   │ statusContainer                      │  ┐
- *   │ widgetsContainer (Todos/Agents)      │  │ dock — basis auto / grow 0,
+ *   │ widgetsContainer (Todos)             │  │ dock — basis auto / grow 0,
  *   │ editor                               │  │ sized to its content
+ *   │ lastRequestContainer                 │  │  ← also hosts the merged
+ *   │   (last-request + activity lines)    │  │    running-agent activity
  *   │ footerContainer                      │  ┘
  *   └──────────────────────────────────────┘
  *
@@ -31,7 +33,6 @@ import {
 } from '@earendil-works/pi-tui'
 import { CwdBorderEditor } from './editor.ts'
 import { ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
-import { clipToWidth } from './text.ts'
 
 export interface StartTuiOptions {
   /** Submit handler for the editor. Defaults to a local echo (smoke-test mode). */
@@ -49,8 +50,13 @@ export interface TuiHandle {
   readonly tui: TUI
   /** The scrollable transcript document container. */
   readonly transcript: Container
-  /** Fixed slot pinned above the chat window — live Todos/Agents widgets. */
+  /** Fixed slot pinned above the chat window — the live Todos widget. */
   readonly widgets: Container
+  /**
+   * Fixed dock slot below the editor — the last-request line + merged
+   * running-agent activity (LiveWidgets owns both).
+   */
+  readonly lastRequest: Container
   /** Fixed dock slot rendered between transcript and editor. */
   readonly status: Container
   /** The input editor. */
@@ -65,12 +71,13 @@ export interface TuiHandle {
    */
   readonly theme: TuiTheme
   /**
-   * Hot-swap the theme bundle: repaints the editor border, the last-request
-   * line and (when empty) the placeholder, and updates every subsequent
-   * `theme` read. Transcript repainting is the TranscriptRenderer's job
-   * (`setTheme`), owned by the caller; call it before `applyTheme` so the
-   * one throttled render frame paints everything at once. No-op when the
-   * bundle is unchanged (themes are module singletons).
+   * Hot-swap the theme bundle: repaints the editor border and the placeholder,
+   * and updates every subsequent `theme` read. Transcript repainting is the
+   * TranscriptRenderer's job (`setTheme`), and the last-request / running-agent
+   * lines are the LiveWidgets' job (`setTheme`) — both owned by the caller;
+   * call them before `applyTheme` so the one throttled render frame paints
+   * everything at once. No-op when the bundle is unchanged (themes are module
+   * singletons).
    */
   applyTheme(theme: TuiTheme): void
   /** Autocomplete provider for the editor; re-applied across editor rebuilds. */
@@ -79,8 +86,6 @@ export interface TuiHandle {
   setEditorBranchProvider(provider: () => string | undefined): void
   /** Live permission-preset display-name source for the editor; re-applied across editor rebuilds. */
   setEditorPermissionProvider(provider: () => string | undefined): void
-  /** Show/hide the "last request" widget below the editor. */
-  setLastRequest(text: string | undefined): void
 }
 
 export function startTui(options: StartTuiOptions = {}): TuiHandle {
@@ -91,9 +96,9 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
 
   // ------------------------------------------------------------- component tree --
-  // Live Todos/Agents widgets, pinned ABOVE the chat input: a plain Container
-  // with auto height — it renders zero rows while empty and grows to its
-  // (bordered-panel) content while the model has todos or subagents running.
+  // Live Todos widget, pinned ABOVE the chat input: a plain Container with
+  // auto height — it renders zero rows while empty and grows to its
+  // (bordered-panel) content while the model has todos.
   const widgets = new Container()
   const transcript = new Container()
   const transcriptView = new ScrollView(transcript, {
@@ -113,10 +118,12 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   let autocompleteProvider: AutocompleteProvider | undefined
   let branchProvider: (() => string | undefined) | undefined
   let permissionProvider: (() => string | undefined) | undefined
+  // Last-request + merged running-agent activity, pinned BELOW the editor: a
+  // plain Container with auto height; LiveWidgets owns the ` ↳ ` line and the
+  // compact agent lines it hosts. It collapses to zero rows when both the
+  // last-request line is cleared and no subagent runs.
   const lastRequest = new Container()
   const footer = new Container()
-  let lastRequestText: Text | undefined
-  let lastRequestDisplay: string | undefined
 
   const dock = new VStack([
     { component: status, shrink: 1, minSize: 0 },
@@ -187,6 +194,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     tui,
     transcript,
     widgets,
+    lastRequest,
     status,
     get editor() {
       return editor
@@ -202,9 +210,6 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       if (theme === themeRef) return
       themeRef = theme
       rebuildEditor()
-      if (lastRequestDisplay !== undefined && lastRequestText !== undefined) {
-        lastRequestText.setText(ansiFg(themeRef.palette.fgMuted) + ` ↳ ${lastRequestDisplay}` + RESET)
-      }
       tui.requestRender()
     },
     setEditorAutocompleteProvider(provider: AutocompleteProvider) {
@@ -218,24 +223,6 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     setEditorPermissionProvider(provider: () => string | undefined) {
       permissionProvider = provider
       editor.setPermissionProvider(provider)
-    },
-    setLastRequest(text: string | undefined) {
-      if (text === undefined || text.trim() === '') {
-        if (lastRequestText !== undefined) {
-          lastRequest.removeChild(lastRequestText)
-          lastRequestText = undefined
-          lastRequestDisplay = undefined
-        }
-      } else {
-        const display = clipToWidth(text, 200)
-        if (lastRequestText === undefined) {
-          lastRequestText = new Text('', 1, 0)
-          lastRequest.addChild(lastRequestText)
-        }
-        lastRequestDisplay = display
-        lastRequestText.setText(ansiFg(themeRef.palette.fgMuted) + ` ↳ ${display}` + RESET)
-      }
-      tui.requestRender()
     },
   }
 

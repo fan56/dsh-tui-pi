@@ -2,11 +2,15 @@
  * Built-in provider directory for the Models category's add-provider flow —
  * pure data plus pure functions, no TTY and no services touched.
  *
- * The shape mirrors the web Models page and pi-agent's /login flow: the user
- * picks a provider from a curated built-in directory (never free-form JSON),
- * enters exactly one secret, and the flow finishes. The directory entry
- * carries everything the write needs so the TUI never asks for a field the
- * user should not have to see:
+ * The directory mirrors the web Models page: it lists every installed
+ * llm-pi-ai catalog route that takes an API key (36 routes in pi-ai 0.82.1),
+ * and the add-provider flow prefers the live `listConfigurableProviders()`
+ * directory at runtime (see `directoryProviderEntries`) with this static
+ * mirror as the fallback. The shape matches the web Models page and
+ * pi-agent's /login flow: the user picks a provider from the directory
+ * (never free-form JSON), enters exactly one secret, and the flow finishes.
+ * A directory entry carries everything the write needs so the TUI never asks
+ * for a field the user should not have to see:
  *
  * - friendly display name (row label; the pi-ai route key stays internal),
  * - one-line auth hint (the oauth-selector `[API key]` idea),
@@ -50,20 +54,50 @@ export interface ProviderCatalogEntry {
 }
 
 /**
- * The built-in provider directory the Add-provider picker offers. Sorted by
- * display name; every route key names a pi-ai catalog provider that takes an
- * api key, so each entry stores nothing but the credential.
+ * The built-in provider directory the Add-provider picker offers — mirrors
+ * the web Models directory: every installed llm-pi-ai catalog route that
+ * takes an API key (36 routes in pi-ai 0.82.1). Sorted by display name; every
+ * route key names a pi-ai catalog provider, so each entry stores nothing but
+ * the credential. At runtime the add flow prefers the live directory (see
+ * `directoryProviderEntries`); this list is the static fallback and the
+ * friendly name/hint source.
  */
 export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
+  { id: 'amazon-bedrock', name: 'Amazon Bedrock', hint: 'AWS credentials or bearer token', catalogRoute: true },
+  { id: 'ant-ling', name: 'Ant Ling', hint: 'API key', catalogRoute: true },
   { id: 'anthropic', name: 'Anthropic', hint: 'API key', catalogRoute: true },
+  { id: 'azure-openai-responses', name: 'Azure OpenAI', hint: 'API key', catalogRoute: true },
+  { id: 'cerebras', name: 'Cerebras', hint: 'API key', catalogRoute: true },
+  { id: 'cloudflare-ai-gateway', name: 'Cloudflare AI Gateway', hint: 'API key', catalogRoute: true },
+  { id: 'cloudflare-workers-ai', name: 'Cloudflare Workers AI', hint: 'API key', catalogRoute: true },
   { id: 'deepseek', name: 'DeepSeek', hint: 'API key', catalogRoute: true },
+  { id: 'fireworks', name: 'Fireworks', hint: 'API key', catalogRoute: true },
+  { id: 'github-copilot', name: 'GitHub Copilot', hint: 'GitHub Copilot token', catalogRoute: true },
   { id: 'google', name: 'Google Gemini', hint: 'API key', catalogRoute: true },
+  { id: 'google-vertex', name: 'Google Vertex AI', hint: 'Google Cloud credentials', catalogRoute: true },
   { id: 'groq', name: 'Groq', hint: 'API key', catalogRoute: true },
+  { id: 'huggingface', name: 'Hugging Face', hint: 'Hugging Face token', catalogRoute: true },
+  { id: 'kimi-coding', name: 'Kimi For Coding', hint: 'API key', catalogRoute: true },
+  { id: 'minimax', name: 'MiniMax', hint: 'API key', catalogRoute: true },
+  { id: 'minimax-cn', name: 'MiniMax CN', hint: 'API key', catalogRoute: true },
   { id: 'mistral', name: 'Mistral', hint: 'API key', catalogRoute: true },
+  { id: 'moonshotai', name: 'Moonshot AI', hint: 'API key', catalogRoute: true },
+  { id: 'moonshotai-cn', name: 'Moonshot AI CN', hint: 'API key', catalogRoute: true },
+  { id: 'nvidia', name: 'NVIDIA', hint: 'API key', catalogRoute: true },
   { id: 'openai', name: 'OpenAI', hint: 'API key', catalogRoute: true },
   { id: 'opencode-go', name: 'OpenCode Go', hint: 'API key · OpenAI-compatible gateway', catalogRoute: true },
+  { id: 'opencode', name: 'OpenCode Zen', hint: 'API key', catalogRoute: true },
   { id: 'openrouter', name: 'OpenRouter', hint: 'API key', catalogRoute: true },
+  { id: 'qwen-token-plan', name: 'Qwen Token Plan', hint: 'API key', catalogRoute: true },
+  { id: 'qwen-token-plan-cn', name: 'Qwen Token Plan CN', hint: 'API key', catalogRoute: true },
   { id: 'together', name: 'Together AI', hint: 'API key', catalogRoute: true },
+  { id: 'vercel-ai-gateway', name: 'Vercel AI Gateway', hint: 'API key', catalogRoute: true },
+  { id: 'xiaomi', name: 'Xiaomi', hint: 'API key', catalogRoute: true },
+  { id: 'xiaomi-token-plan-ams', name: 'Xiaomi Token Plan AMS', hint: 'API key', catalogRoute: true },
+  { id: 'xiaomi-token-plan-cn', name: 'Xiaomi Token Plan CN', hint: 'API key', catalogRoute: true },
+  { id: 'xiaomi-token-plan-sgp', name: 'Xiaomi Token Plan SGP', hint: 'API key', catalogRoute: true },
+  { id: 'zai', name: 'Z.AI', hint: 'API key', catalogRoute: true },
+  { id: 'zai-coding-cn', name: 'Z.AI Coding CN', hint: 'API key', catalogRoute: true },
   { id: 'xai', name: 'xAI', hint: 'API key', catalogRoute: true },
 ]
 
@@ -112,6 +146,31 @@ export function providerProfileFor(entry: ProviderCatalogEntry): {
 /** Directory entries the user has not configured yet (in directory order). */
 export function unconfiguredCatalogEntries(configured: ReadonlySet<string>): ProviderCatalogEntry[] {
   return PROVIDER_CATALOG.filter(entry => !configured.has(entry.id))
+}
+
+/**
+ * Build the add-provider picker entries from the live configurable-provider
+ * directory, in directory order — the same source the web Models page
+ * renders, so the TUI stays in lockstep with pi-ai without a hardcoded
+ * mirror. Static catalog entries supply the friendly name/hint when a route
+ * is known; unknown routes fall back to the route key itself. Configured and
+ * hand-declared routes are excluded (declared routes come from profiles, so
+ * the `configured` filter already covers them; `declared` is a defensive
+ * second guard). Callers fall back to `unconfiguredCatalogEntries` when the
+ * live directory is unavailable.
+ */
+export function directoryProviderEntries(
+  directory: ReadonlyArray<{ provider: string; declared?: boolean }>,
+  configured: ReadonlySet<string>,
+): ProviderCatalogEntry[] {
+  return directory
+    .filter(entry => !configured.has(entry.provider) && entry.declared !== true)
+    .map(entry => catalogEntry(entry.provider) ?? {
+      id: entry.provider,
+      name: entry.provider,
+      hint: 'API key',
+      catalogRoute: true,
+    })
 }
 
 /** One llm-pi-ai provider profile as stored in settings — the subset we read. */

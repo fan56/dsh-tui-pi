@@ -7,6 +7,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { normalizePreview, previewOfEvents } from '../lib/sessions.js'
+import { stashSessionIdForReload, takeStashedSessionId } from '../lib/session.js'
 
 const userMsg = (text, sourceKind = 'user', extra = {}) => ({
   type: 'user/message',
@@ -71,4 +72,15 @@ test('normalizePreview clips over-long previews with an ellipsis', () => {
   assert.equal(clipped.length, 141)
   assert.ok(clipped.endsWith('…'))
   assert.equal(normalizePreview('短文本'), '短文本')
+  // Folded reload stash round-trip (no extra test block): process-global
+  // stash holds the current session id across a hot-reload.
+  assert.equal(takeStashedSessionId(), undefined)
+  assert.equal(takeStashedSessionId(), undefined)
+  stashSessionIdForReload('session-a')
+  assert.equal(takeStashedSessionId(), 'session-a')
+  assert.equal(takeStashedSessionId(), undefined)
+  stashSessionIdForReload('session-b')
+  stashSessionIdForReload(undefined)
+  assert.equal(takeStashedSessionId(), undefined)
+  assert.equal(takeStashedSessionId(), undefined)
 })

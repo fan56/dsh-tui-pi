@@ -19,8 +19,10 @@ session.ts        DshSessionBridge: lazy create, followup, resume/replay,
                   (tool-workflow + child events → AgentView rows → onLive)
 dsh-events.ts     local types/guards for tool-workflow/subagent/llm-retry
                   events (declaring packages not installed) + AgentView
-live-widgets.ts   LiveWidgets: bordered Todos/Agents panels above the chat
-                  input (renderTodos/renderAgents/tickLive/setTheme;
+live-widgets.ts   LiveWidgets: bordered Todos panel above the chat input +
+                  compact ↳-prefixed running-agent lines merged into the
+                  last-request area below the chat input (renderTodos/
+                  renderAgents/setLastRequest/tickLive/setTheme;
                   show-when-content, clear-when-done)
 append-system.ts  APPEND_SYSTEM.md support (pi convention, dsh side
                   ~/.dsh/APPEND_SYSTEM.md — a RUNTIME user file): install
@@ -85,12 +87,12 @@ throttled render frame`.
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **171 tests** across 14 files (welcome 18 +
-  theme 17 + theme-switch 28 + settings 19 + messages 14 + frame 11 +
-  provider-catalog 11 + live 11 + permission 9 + sessions 8 + quotes 8 +
-  text 7 + reload 6 + theme-settings 5). New pure logic → new test file under
-  `test/` against built `lib/` (`node --test`, pretest builds). Update the
-  totals in HANDOFF.md.
+- `pnpm test` must stay green: **185 tests** across 15 files (welcome 18 +
+  theme 17 + theme-switch 27 + settings 19 + messages 14 + frame 11 +
+  provider-catalog 17 + live 14 + permission 9 + sessions 8 + quotes 7 +
+  text 7 + reload 6 + append-system 6 + theme-settings 5). New pure logic →
+  new test file under `test/` against built `lib/` (`node --test`, pretest
+  builds). Update the totals in HANDOFF.md.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
   `dsh --profile tui`, drive keys, `capture-pane` for assertions (see HANDOFF
   "验证命令速查"). Keep the 24-row terminal case in the matrix — overlay

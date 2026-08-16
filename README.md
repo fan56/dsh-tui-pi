@@ -16,16 +16,12 @@ pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 │ ├─ ☑ Todo 1: 启动 subagent A 执行 10s 任务并收集结果        │  ← fixed widgets
 │ └─ ◐ Todo 2: 启动 subagent B 执行 10s 任务并收集结果        │    above the input
 └─────────────────────────────────────────────────────────────┘
-┌─ ● Agents ─────────────────────────────────────────────────┐
-│ ├─ ⠼ spawn  Subagent A 10s 任务 · 1.2k token · 19.0s       │
-│ │    ⎿  running sleep…                                     │
-│ └─ ⠼ spawn  Subagent B 10s 任务 · 562 token · 6.0s         │
-│      ⎿  working…                                           │
-└─────────────────────────────────────────────────────────────┘
 ∴ working…                                                    ← status
 📁 ~/github (Full access) │ ⎇ main                            ← editor border
 [ 请输入指令…                                                ] ← input
  ↳ 创建 2 个 todo, 每个 todo 起一个 10s 的 subagent            ← last request
+  ↳ ⠼ Subagent A 10s 任务 · 1.2k token · 19.0s                 ← running agents
+  ↳ ⠼ Subagent B 10s 任务 · 562 token · 6.0s                   ← (compact lines)
 dsh ▸ ☁ opencode-go ▸ 🤖 deepseek-v4-flash ▸ ● high ▸ 🧠 11.6k/1.0M (1.2%) ▸ ⚡ CH98.9% ▸ 💬 8 ▸ 🔧 4       00:00:14   ← footer
 ⌨ Enter: send · Ctrl+C: cancel / double: quit                 ← hints
 ```
@@ -49,14 +45,17 @@ dsh ▸ ☁ opencode-go ▸ 🤖 deepseek-v4-flash ▸ ● high ▸ 🧠 11.6k/1
   provider / model+thinking / context / cache-hit / msgs / tools with U+E0B0
   arrows, right-aligned live clock, cwd+git-branch editor top border, and the
   `↳ last-request` widget.
-- **Live todos & subagents**: bordered panels pinned **above the chat input** —
-  a `● Todos (done/total)` tree (`☐`/`◐`/`☑` status icons) and a live
-  `● Agents` board (spinner, provider + label, retries, token count + context
-  percent, elapsed and the current tool) refreshed ~10×/s. Show while there is
-  content, clear when done — a settled child drops off the board and an empty
-  panel collapses to zero rows. Subagents are tracked from the child sessions
-  themselves (header `origin: subagent` + `parentSession`), so any spawn
-  mechanism works. The TUI also supports pi's `APPEND_SYSTEM.md` convention
+- **Live todos & subagents**: the `● Todos (done/total)` tree (`☐`/`◐`/`☑`
+  status icons) is a bordered panel pinned **above the chat input**; the
+  running subagent activity merges into the **last-request area below the
+  editor** as compact lines (`  ↳ ` prefix, spinner + agent **name** first,
+  retries, token count + context percent, elapsed — no provider) — no box, no
+  header, just one line per running
+  child. Both refresh ~10×/s. Show while there is content, clear when done —
+  a settled child drops off and an empty panel/area collapses to zero rows.
+  Subagents are tracked from the child sessions themselves (header `origin:
+  subagent` + `parentSession`), so any spawn mechanism works. The TUI also
+  supports pi's `APPEND_SYSTEM.md` convention
   (dsh side: `~/.dsh/APPEND_SYSTEM.md`): a user-editable file whose content is
   appended to the system prompt of every agent the TUI creates — read at each
   assembly, so edits apply to the next request without a restart. The TUI's
@@ -94,9 +93,9 @@ serves the route), and one-line API-key state (`API key set` / `missing` /
 document — with dedicated `DeepSeek (official)` and `Default model` rows and a
 `+ Add provider…` action. The add flow mirrors pi's `/login`:
 
-1. pick from the built-in directory (10 searchable catalog routes — Anthropic,
-   DeepSeek, Google Gemini, Groq, Mistral, OpenAI, OpenCode Go, OpenRouter,
-   Together AI, xAI);
+1. pick from the directory — every llm-pi-ai catalog route that takes an API
+   key (36 in the installed pi-ai 0.82.1), read live from the llm service with
+   a static fallback, the same directory as the web Models page;
 2. enter exactly one API key — masked dot-row editor, the value never echoes
    and never reaches the rendered output;
 3. the commit double-writes like the web Models page: `llm-pi-ai.providers.<id>`
@@ -170,12 +169,14 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 
 - Type a prompt → Enter. Streaming reply renders live; tool calls render as
   `⚙/✔/✘` cards.
-- Todos and subagent children the model spawns show in bordered panels pinned
-  **above the chat input** (they never scroll with the transcript): a
-  `● Todos (done/total)` tree and a live `● Agents` board — spinner, provider
-  + label, retries (`↻N≤M`), tokens (+ context percent), elapsed, and the
-  current tool (`⎿ running …`). A finished child drops off the board; when
-  nothing is left the panels collapse away.
+- Todos the model spawns show in a bordered panel pinned **above the chat
+  input** (never scrolls with the transcript): a `● Todos (done/total)` tree.
+  Subagent children render as **compact lines in the last-request area below
+  the editor** (` ↳ <last request>` then one line per running child) — `  ↳ `
+  prefix, spinner + agent **name** first, retries (`↻N≤M`), tokens
+  (+ context percent), elapsed (no box, no `● Agents` header, no provider). A
+  finished child drops off; when nothing is left the panel and the activity
+  lines collapse away.
 - `/` opens slash-command autocomplete (Tab/arrows/Enter).
 - Ctrl+C quits — while the agent is mid-turn the first press cancels the turn
   (`⏹ canceling current turn…`), any further press quits.
@@ -216,7 +217,7 @@ dsh-tui-pi avoids both by construction:
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (171 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (185 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -267,8 +268,9 @@ src/
                     subagent tracker (tool-workflow + child events → live rows)
   dsh-events.ts     local types + guards for tool-workflow/subagent/llm-retry
                     events (declaring packages not installed) + AgentView
-  live-widgets.ts   LiveWidgets: fixed Todos/Agents widgets pinned above the
-                    chat window (renderTodos/renderAgents/tickLive/setTheme)
+  live-widgets.ts   LiveWidgets: Todos boxed above the input + running-agent
+                    activity merged under the last-request line
+                    (renderTodos/renderAgents/setLastRequest/tickLive/setTheme)
   commands.ts       CommandService: slash autocomplete + dual-channel dispatch
                     (registerLocal agentless direct / ctx.commands host path)
   messages.ts       TranscriptRenderer: session events → pi-tui components;
@@ -278,8 +280,9 @@ src/
   editor.ts         CwdBorderEditor (top border: 📁 cwd │ ⎇ branch)
   git.ts            GitBranchWatcher (polled, cached)
   frame.ts          FramedOverlay: shared top/bottom ─ border for every popup
-  provider-catalog.ts  built-in provider directory + deriveKeyRef + row views
-                    (pure data/functions for the Models add-provider flow)
+  provider-catalog.ts  built-in provider directory (36 llm-pi-ai catalog
+                    routes, mirrors the web Models page) + deriveKeyRef + row
+                    views (pure data/functions for the Models add-provider flow)
   reload.ts         /reload hot-reload (cordis-plugin-hmr style partial reload)
   text.ts           clipToWidth / visibleWidth (grapheme-safe column clipping)
   theme-settings.ts dsh-tui settings namespace (applies: 'live') + watch sink
@@ -295,7 +298,7 @@ src/
     palette.ts      GitHub light/dark palettes + terminal-background detection
     index.ts        buildTheme: Editor/Markdown/SelectList/chat roles, POWERLINE
                     segment palette, resolveTheme (env > preference > detect)
-test/*.test.mjs     unit tests, node --test against lib/ (171 across 14 files)
+test/*.test.mjs     unit tests, node --test against lib/ (185 across 15 files)
 ```
 
 ## Status (2026-08-15)
@@ -305,7 +308,7 @@ All surface commands shipped and tmux-e2e verified: `/model /think /session
 add-provider flow; overlay chrome (backgrounds + borders); theme hot-switch
 (immediate apply, external-change watch, env pinning); graded Ctrl+C; live
 todos + subagent progress blocks; clean Ctrl+C exit. `pnpm check` clean,
-171 unit tests green, e2e run confirmed the settings/credentials files are
+185 unit tests green, e2e run confirmed the settings/credentials files are
 restored byte-for-byte.
 
 Known limitations (accepted, pi-tui 0.84.2 constraints):

@@ -573,3 +573,40 @@ export async function persistDefaultModel(ctx: Context, selection: ModelSelectio
     }
   }
 }
+
+// Reload survival for the current session. `/reload` evicts this plugin's
+// entire user-code module closure from the ESM/CJS caches, so module-level
+// state does not survive — but the reload happens in the SAME dsh process, so
+// process-global state does. These two helpers stash the current session id on
+// `globalThis` before a reload tears this fiber down, and the freshly re-imported
+// module consumes it in the new fiber so the TUI resumes the previously current
+// session instead of lazily creating a fresh one on the next prompt. A real dsh
+// process restart resets the stash, so a fresh start still lazily creates a new
+// session. The stash is one-shot: `takeStashedSessionId` reads and deletes.
+
+const LAST_SESSION_ID_KEY = Symbol.for('dsh-tui-pi.lastSessionId')
+
+/**
+ * Stash the current session id on the process-global store so a subsequent
+ * hot-reload in the same process can resume it. Pass undefined to clear the
+ * stash (no session current).
+ */
+export function stashSessionIdForReload(id: SessionId | undefined): void {
+  const store = globalThis as Record<symbol, unknown>
+  if (id === undefined) {
+    delete store[LAST_SESSION_ID_KEY]
+  } else {
+    store[LAST_SESSION_ID_KEY] = String(id)
+  }
+}
+
+/**
+ * Consume (read-and-delete) a previously stashed session id, or undefined when
+ * none was stashed. One-shot: a second call returns undefined.
+ */
+export function takeStashedSessionId(): SessionId | undefined {
+  const store = globalThis as Record<symbol, unknown>
+  const raw = store[LAST_SESSION_ID_KEY]
+  delete store[LAST_SESSION_ID_KEY]
+  return typeof raw === 'string' ? SessionId(raw) : undefined
+}

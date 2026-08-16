@@ -9,6 +9,7 @@ import {
   PROVIDER_CATALOG,
   catalogEntry,
   deriveKeyRef,
+  directoryProviderEntries,
   providerProfileFor,
   providerRowView,
   unconfiguredCatalogEntries,
@@ -49,7 +50,8 @@ test('deriveKeyRef follows the web Models page convention', () => {
 test('catalogEntry finds known routes and rejects unknown ones', () => {
   assert.equal(catalogEntry('openai')?.name, 'OpenAI')
   assert.equal(catalogEntry('opencode-go')?.hint.includes('gateway'), true)
-  assert.equal(catalogEntry('zai-coding-cn'), undefined)
+  assert.equal(catalogEntry('zai-coding-cn')?.name, 'Z.AI Coding CN')
+  assert.equal(catalogEntry('acme-gateway'), undefined)
 })
 
 test('unconfiguredCatalogEntries filters the configured set, preserving order', () => {
@@ -59,6 +61,56 @@ test('unconfiguredCatalogEntries filters the configured set, preserving order', 
   assert.ok(!rest.some(entry => ['openai', 'anthropic', 'opencode-go'].includes(entry.id)))
   assert.equal(rest.length, PROVIDER_CATALOG.length - 3)
   assert.deepEqual(rest.map(entry => entry.name), [...rest.map(entry => entry.name)].sort())
+})
+
+test('directoryProviderEntries maps known routes to static names/hints', () => {
+  const entries = directoryProviderEntries([{ provider: 'anthropic' }], new Set())
+  assert.equal(entries.length, 1)
+  assert.deepEqual(entries[0], {
+    id: 'anthropic',
+    name: 'Anthropic',
+    hint: 'API key',
+    catalogRoute: true,
+  })
+})
+
+test('directoryProviderEntries falls back to the route key for unknown routes', () => {
+  const entries = directoryProviderEntries([{ provider: 'acme-gateway' }], new Set())
+  assert.equal(entries.length, 1)
+  assert.deepEqual(entries[0], {
+    id: 'acme-gateway',
+    name: 'acme-gateway',
+    hint: 'API key',
+    catalogRoute: true,
+  })
+})
+
+test('directoryProviderEntries filters out configured routes', () => {
+  const entries = directoryProviderEntries(
+    [{ provider: 'anthropic' }, { provider: 'openai' }, { provider: 'groq' }],
+    new Set(['openai']),
+  )
+  assert.deepEqual(entries.map(entry => entry.id), ['anthropic', 'groq'])
+})
+
+test('directoryProviderEntries excludes declared: true entries', () => {
+  const entries = directoryProviderEntries(
+    [{ provider: 'anthropic' }, { provider: 'openai', declared: true }, { provider: 'groq' }],
+    new Set(),
+  )
+  assert.deepEqual(entries.map(entry => entry.id), ['anthropic', 'groq'])
+})
+
+test('directoryProviderEntries preserves directory order', () => {
+  const entries = directoryProviderEntries(
+    [{ provider: 'zai' }, { provider: 'anthropic' }, { provider: 'minimax' }],
+    new Set(),
+  )
+  assert.deepEqual(entries.map(entry => entry.id), ['zai', 'anthropic', 'minimax'])
+})
+
+test('directoryProviderEntries returns an empty list for an empty directory', () => {
+  assert.deepEqual(directoryProviderEntries([], new Set()), [])
 })
 
 test('providerProfileFor on a catalog route stores only the derived ref', () => {

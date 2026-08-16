@@ -22,7 +22,7 @@ import { TranscriptRenderer, type PanelHeight } from './messages.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts'
-import { DshSessionBridge, persistDefaultModel } from './session.ts'
+import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId } from './session.ts'
 import {
   currentThemePreference,
   readPanelHeightPreference,
@@ -33,7 +33,7 @@ import {
 import { openSettingsBrowser } from './settings.ts'
 import { reloadPlugin } from './reload.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
-import { ansiFg, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
+import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 import { startTui, type TuiHandle } from './tui.ts'
 
@@ -154,11 +154,12 @@ export function apply(ctx: Context): void {
     }
 
     const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender(), panelHeight)
-    // Live Todos/Agents widgets pinned above the chat window: show while the
-    // model has todos or subagents running, collapse when done. Owned here —
-    // fed by todo/write events and the bridge's subagent fold, ticked by the
-    // live timer, recolored by applyTheme.
-    const liveWidgets = new LiveWidgets(ui.widgets, ui.theme, () => ui.requestRender())
+    // Live Todos widget, pinned above the chat window, plus the running-agent
+    // activity merged into the last-request area below the editor: shown while
+    // the model has (incomplete) todos or subagents running, collapsed when
+    // done. Owned here — fed by todo/write events and the bridge's subagent
+    // fold, ticked by the live timer, recolored by applyTheme.
+    const liveWidgets = new LiveWidgets(ui.widgets, ui.lastRequest, ui.theme, () => ui.requestRender())
     // Arm the panel-height watch sink now that the renderer exists: a
     // committed panelHeight change sets the new height and relayouts the
     // transcript (the replay rebuild), repainting every panel at the new row
@@ -196,8 +197,8 @@ export function apply(ctx: Context): void {
         if (loader === undefined) {
           loader = new Loader(
             ui.tui,
-            text => ansiFg(ui.theme.palette.accent) + text + RESET,
-            text => ansiFg(ui.theme.palette.fgMuted) + text + RESET,
+            text => BOLD + ansiFg(ui.theme.palette.accent) + text + RESET,
+            text => BOLD + ansiFg(ui.theme.palette.accent) + text + RESET,
             'working…',
           )
           ui.status.addChild(loader)
@@ -440,6 +441,32 @@ export function apply(ctx: Context): void {
       description: 'Resume a persisted session',
       handler: invocation => resumeHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /resume')
+
+    // Auto-resume after a hot-reload: a `/reload` stashes the previously
+    // current session id before this fiber's teardown, and the freshly
+    // re-imported module consumes it best-effort here so the next prompt
+    // continues that session instead of lazily creating a fresh one. The stash
+    // is already one-shot-consumed by takeStashedSessionId, so on ANY failure
+    // we fall back silently to today's behavior (next prompt creates a new
+    // session); the apply must never crash on this. Guarded against re-entrant
+    // reloads: if a second reload happens while this runs, takeStashedSessionId
+    // returns undefined and the block no-ops.
+    const stashedSessionId = takeStashedSessionId()
+    if (stashedSessionId !== undefined) {
+      void (async () => {
+        try {
+          const resumed = await bridge.resume(stashedSessionId)
+          // Mirror the /resume flow: seed the badge cache, drop the previous
+          // session's render state, and replay only the seed history.
+          refreshPermissionPreset()
+          renderer.clear()
+          liveWidgets.clear()
+          const session = resumed.agent.session
+          bridge.replay(session.events.filter(event => event.seq < session.firstLiveSeq))
+          ui.requestRender()
+        } catch { /* best-effort: fall back to lazy session creation */ }
+      })()
+    }
 
     // Agentless guard: dsh's own /export addresses a live agent and would
     // mint a throwaway session just to report there is nothing to export —
@@ -684,7 +711,7 @@ export function apply(ctx: Context): void {
     const submit = async (text: string): Promise<void> => {
       const line = text.trim()
       if (line === '') return
-      ui.setLastRequest(line)
+      liveWidgets.setLastRequest(line)
       const tokens = line.startsWith('/') ? line.slice(1).split(/\s+/) : []
       const name = tokens[0]?.toLowerCase()
       let executeLine = line
@@ -792,6 +819,11 @@ export function apply(ctx: Context): void {
       // disables raw mode and pauses stdin out from under the new TUI.
       handle?.dispose()
       handle = undefined
+      // Stash the current session BEFORE the bridge clears its sessionId on
+      // dispose, so a same-process hot-reload (/reload) can resume it in the
+      // fresh fiber. On shutdown the process exits and the stash dies with it
+      // (harmless) — only /reload in the same process consumes it.
+      stashSessionIdForReload(bridge.getSessionId())
       try { await bridge.dispose() } catch { /* contained */ }
     }
   }

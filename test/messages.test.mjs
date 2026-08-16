@@ -208,11 +208,15 @@ test('the whale 🐳 prefixes the assistant\'s formal answer inline, once per me
   })
   const rendered = doc.children.map(c => c.render(200).join('\n')).join('\n')
   const plain = stripAnsi(rendered)
+  // The startup banner carries its own whale (`🐳 「…」` on the daily-quote
+  // caption), so count the whale within the assistant message only (children
+  // after the banner's spacer/banner/spacer/quote/spacer — index 5 onward).
+  const messageOnly = stripAnsi(doc.children.slice(5).map(c => c.render(200).join('\n')).join('\n'))
   // Inline prefix on the answer's first line (`🐳: hello there`), never a
   // line of its own — the old avatar-on-its-own-line behavior is gone.
   assert.ok(plain.includes('🐳: hello there'), 'whale prefix runs inline with the answer')
-  assert.ok(!plain.includes('🐳\n'), 'the whale never takes its own line')
-  assert.equal((plain.match(/🐳/g) ?? []).length, 1, 'one whale per message, not per text block')
+  assert.ok(!messageOnly.includes('🐳\n'), 'the whale never takes its own line')
+  assert.equal((messageOnly.match(/🐳/g) ?? []).length, 1, 'one whale per message, not per text block')
 
   renderer.setTheme(darkTheme)
   const after = doc.children.map(c => c.render(200).join('\n')).join('\n')

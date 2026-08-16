@@ -77,7 +77,12 @@ test('the quote renders as a muted caption Text right under the banner', () => {
   assert.ok(line.includes(ansiFg(lightTheme.palette.fgSubtle)), 'caption painted in the theme fgSubtle')
   assert.ok(line.trimEnd().endsWith(RESET), 'caption span closed (Text pads lines after the RESET)')
   assert.ok(plain.includes('「') && plain.includes('」'), 'bracketed line')
-  const inner = plain.trim().slice(1, -1)
+  // The whale icon prefixes the caption inline, exactly once, mirroring the
+  // assistant's `🐳: text` chat contract (never its own line).
+  assert.ok(plain.trim().startsWith('🐳 '), `caption is whale-prefixed (got: ${plain.trim()})`)
+  assert.equal((plain.match(/🐳/g) ?? []).length, 1, 'one whale icon inline, never on its own line')
+  assert.ok(!plain.includes('🐳\n'), 'the whale never takes its own line')
+  const inner = plain.trim().replace(/^🐳\s*/, '').slice(1, -1)
   assert.ok(DAILY_QUOTES.includes(inner), `the shown line is a pool quote (got: ${inner})`)
 })
 
@@ -101,14 +106,27 @@ test('one pick per session: relayout and theme switches keep the same quote', ()
 test('the quote line is clipped to the terminal width before styling', () => {
   const doc = new Container()
   withColumns(40, () => new TranscriptRenderer(doc, lightTheme, () => {}, '5'))
-  // "Never wraps" is the contract: rendered at its own terminal width the
-  // caption is exactly one line, whatever the pool rolled (longest
-  // formatted quote is 44 columns > 40, so a long roll must have been
-  // clipped — and even it stays one line).
+  // "Never wraps" is the contract, proven at the widest pool line: the max
+  // formatted quote is 35 columns (`「…」` brackets +4), so with the 🐳
+  // (2 cols) + space prefix the longest line is exactly 38 columns — the
+  // 40−2 = 38-column clip budget. Width 40 therefore clips nothing, and the
+  // longest roll stays one never-wrapping line.
   assert.equal(doc.children[3].render(40).length, 1, 'quote renders as exactly one line at 40 columns')
   const content = stripAnsi(doc.children[3].render(40)[0]).trimEnd().trimStart()
-  assert.ok(content.startsWith('「'), 'clipped content still starts at the bracket')
+  assert.ok(content.startsWith('🐳'), 'clipped content still starts with the whale icon')
+  assert.ok(content.includes('「') && content.includes('」'), 'and the bracketed quote still follows')
   assert.ok(visibleWidth(content) <= 38, `content is ${visibleWidth(content)} columns (≤ 40 − 2 padding)`)
+
+  // A genuinely clipping width: budget 30−2 = 28 is well below the 38-column
+  // max, so the emoji-clip guard is really exercised. Clip is width-safe and
+  // never splits a grapheme; 🐳 (2) + space + 「 (2) ⇒ 5 cols, kept.
+  const doc2 = new Container()
+  withColumns(30, () => new TranscriptRenderer(doc2, lightTheme, () => {}, '5'))
+  const clippedRows = doc2.children[3].render(30)
+  assert.equal(clippedRows.length, 1, 'even clipped, the caption is exactly one physical row (never wraps)')
+  const clippedContent = stripAnsi(clippedRows[0]).trimEnd().trimStart()
+  assert.ok(clippedContent.startsWith('🐳 「'), `clipped content still opens with the whale and 「 (got: ${clippedContent})`)
+  assert.ok(visibleWidth(clippedContent) <= 28, `clipped content is ${visibleWidth(clippedContent)} columns (≤ 30 − 2 padding)`)
 })
 
 test('clear() (/new) removes the quote with the rest of the startup screen', () => {

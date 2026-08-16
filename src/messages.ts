@@ -509,15 +509,20 @@ export class TranscriptRenderer {
    * built at the current terminal width: below 96 columns it degrades to
    * the whale alone, and every rebuild (relayout/setTheme replay) reads the
    * width afresh, so narrowing drops the wordmark and widening restores it.
-   * The quote line is clipped to the terminal width before styling (the
-   * repo rule — ANSI never goes through the clipper), so it never wraps.
+   * The quote line — whale-prefixed (`🐳 「…」`, the same 🐳 icon that
+   * speaks inline for the assistant in chat) — is clipped to the terminal
+   * width before styling (the repo rule — ANSI never goes through the
+   * clipper), so it never wraps.
    */
   private renderWelcome(): void {
     this.doc.addChild(new Spacer(1))
     this.doc.addChild(new Text(buildWelcomeBanner(process.stdout.columns), 1, 0))
     this.doc.addChild(new Spacer(1))
     // (columns ?? Infinity): non-TTY contexts (tests) get the full line.
-    const quote = clipToWidth(formatDailyQuote(this.dailyQuote), (process.stdout.columns ?? Infinity) - 2)
+    // 🐳 「…」: whale-prefix the caption (same icon that speaks inline in
+    // chat) before clipping so the clip is width-safe over the full plain
+    // text (🐳 is 2 visible columns, plus the one separating space).
+    const quote = clipToWidth(`🐳 ${formatDailyQuote(this.dailyQuote)}`, (process.stdout.columns ?? Infinity) - 2)
     this.doc.addChild(new Text(ansiFg(this.theme.palette.fgSubtle) + quote + RESET, 1, 0))
     this.doc.addChild(new Spacer(1))
     this.requestRender()

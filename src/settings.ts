@@ -64,6 +64,7 @@ import { wrapFramedOverlay } from './frame.ts'
 import {
   catalogEntry,
   deriveKeyRef,
+  directoryProviderEntries,
   providerProfileFor,
   providerRowView,
   unconfiguredCatalogEntries,
@@ -1035,6 +1036,37 @@ class SettingsBrowser {
     }
   }
 
+  /**
+   * Live llm-pi-ai configurable-provider directory entries, or `undefined`
+   * when the service is missing or throws (the caller then falls back to the
+   * static catalog). Same structural guard as `providerDirectory()`.
+   */
+  private llmPiAiDirectory(): ReadonlyArray<{ provider: string; declared?: boolean }> | undefined {
+    const llm = this.ctx.get('llm') as
+      | { listConfigurableProviders?: () => Array<{ provider: string; settingsNs?: string; declared?: boolean }> }
+      | undefined
+    if (llm?.listConfigurableProviders === undefined) return undefined
+    try {
+      return llm.listConfigurableProviders()
+        .filter(entry => entry.settingsNs === NS_LLM_PI_AI)
+        .map(entry => (
+          entry.declared !== undefined
+            ? { provider: entry.provider, declared: entry.declared }
+            : { provider: entry.provider }
+        ))
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Add-provider picker entries: live directory when available, else the static catalog. */
+  private addProviderEntries(configured: ReadonlySet<string>): readonly ProviderCatalogEntry[] {
+    const directory = this.llmPiAiDirectory()
+    return directory !== undefined && directory.length > 0
+      ? directoryProviderEntries(directory, configured)
+      : unconfiguredCatalogEntries(configured)
+  }
+
   private buildModelsList(): SettingsList {
     const exit = this.modelsExit ?? (() => {})
     const items: SettingItem[] = []
@@ -1127,7 +1159,7 @@ class SettingsBrowser {
           this.theme,
           this.listTheme,
           {
-            entries: unconfiguredCatalogEntries(configured),
+            entries: this.addProviderEntries(configured),
             onCommit: (entry, key) => this.commitNewProvider(entry, key),
             onExit: () => {
               done()

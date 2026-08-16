@@ -131,16 +131,25 @@ degrades to
 the whale alone) in `welcome.ts` is the first replay op; its art is
 reproducible from `assets/whale-source.png` via `node assets/whale-gen.mjs`
 (test-enforced). The whale also prefixes the assistant's first text block
-inline (`🐳: text`) instead of taking its own avatar line.
+inline (`🐳: text`) instead of taking its own avatar line, and the daily
+quote caption is whale-prefixed too (`🐳 「…」`).
 
 ### Live widgets (live-widgets.ts)
 
-`LiveWidgets` renders two **bordered panels** — the Todos tree and the Agents
-board — into a fixed container **pinned above the chat input** (`ui.widgets`,
-a `basis: auto / grow: 0` slot in the dock VStack directly above the editor,
-tui.ts); they never scroll with the transcript. Each panel is a box (top
-border + header row + body rows + bottom border, the same chrome as the
-thinking/tool panels, `borderDefault`). Show-when-content, clear-when-done:
+`LiveWidgets` owns two separate live surfaces across two fixed containers (both
+`basis: auto / grow: 0` slots that never scroll with the transcript):
+
+- **Todos** — a single **bordered panel** (top border + header row + body rows +
+  bottom border, the same chrome as the thinking/tool panels, `borderDefault`)
+  in the slot **pinned above the chat input** (`ui.widgets`, directly above the
+  editor). Show-when-content, clear-when-done.
+- **Running-agent activity** — merged into the **last-request area below the
+  editor** (`ui.lastRequest`, tui.ts): the ` ↳ <last request>` line followed by
+  one **compact line per running agent** — `  ↳ `-prefixed, name-first, NO box
+  chrome, NO `● Agents` header, NO connector and NO provider, just
+  `  ↳ ⠋ <name> · ↻N≤M · 562 token (4%) · 13.6s` (spinner muted, NAME default,
+  meta subtle). Each line is clipped (prefix included) to the terminal width
+  BEFORE any ANSI. The ↳ line persists while agents come and go.
 
 - `renderTodos(todos)` — `todo/write` events (routed from index.ts's
   `onEvent`, since the transcript no longer renders them): a boxed `● Todos
@@ -148,22 +157,28 @@ thinking/tool panels, `borderDefault`). Show-when-content, clear-when-done:
   icons. An empty snapshot (or `/new`) hides the panel — and so does an
   **all-completed** list (the model writes the whole-list snapshot and rarely
   clears it; all-done is the end-of-work signal).
-- `renderAgents(agents)` — the bridge's `onLive` fold: a boxed `● Agents`
-  panel with one line per **running** child (spinner, provider + label,
-  `↻retries≤max`, total tokens + context percent, elapsed, activity
-  `⎿ running {tool}…`). A settled child drops off the board immediately; when
-  none run the panel — and the whole slot when todos are gone too — collapses
-  to zero rows.
+- `renderAgents(agents)` — the bridge's `onLive` fold: one compact line per
+  **running** child in the activity area (`  ↳ ` prefix, spinner + agent NAME
+  first, `↻retries≤max`, total tokens + context percent, elapsed). A settled
+  child drops off immediately; when none run the agent lines vanish and the
+  slot collapses to just the ↳ line (or zero rows when that too is cleared).
+- `setLastRequest(text)` — renders the ` ↳ ` line (`fgMuted`) in the activity
+  area, clipped to the terminal width (`columns - 5`, fallback 195 outside a
+  TTY) so it always renders on one row and never wraps; `undefined` removes
+  it. This replaced tui.ts's ownership of the last-request line.
 - `tickLive()` — `AGENT_TICK_MS` (100 ms) timer in index.ts advances the
   spinner and re-reads the elapsed clock; no-op while nothing runs.
-- `setTheme(bundle)` — recolors in place on a theme hot-switch (the widget is
-  live state, not transcript history — no ReplayOp involvement).
+- `setTheme(bundle)` — recolors the Todos panel, the ↳ line and the agent lines
+  in place on a theme hot-switch (the widget is live state, not transcript
+  history — no ReplayOp involvement).
+- `clear()` (`/new`) — drops the Todos panel and the agent lines but **keeps**
+  the ↳ last-request line.
 
-Width discipline matches the panels: every line is clipped before styling to
-the boxed row's inner budget (`panelBoxWidth(columns) − 4`); the todo content
-gets the tree-chrome headroom, and the agent name (provider + label) is split
-from a shared budget measured against the actual chrome width, so no row ever
-wraps inside the box.
+Width discipline matches the panels: box lines are clipped before styling to
+the boxed row's inner budget (`panelBoxWidth(columns) − 4`); each compact agent
+line is clipped (`  ↳ ` prefix included) to the terminal width before any ANSI,
+with the agent NAMES split from a shared budget measured against that width,
+so no line ever wraps.
 
 **Model-side guidance** (append-system.ts): the TUI supports pi's
 `APPEND_SYSTEM.md` convention (dsh side: `~/.dsh/APPEND_SYSTEM.md`,
@@ -364,7 +379,7 @@ overlay open at switch time keeps the bundle it was built with until closed
 ```
 editor Enter
   → index.ts submit(text)
-      → ui.setLastRequest(line)
+      → liveWidgets.setLastRequest(line)
       → CommandService.tryExecute(line, signal)
           ├─ parseCommand fails → { handled: false }
           ├─ agentless + local handler → local dispatch → renderCommandEcho
@@ -404,7 +419,11 @@ switch never erases the only record of a failure.
   typed LoadCache), re-imports the entry, swaps the runtime
   (`registry.delete` then `setImmediate` + `fiber.await()` for the real
   teardown), re-registers the fresh plugin; failures roll back caches and
-  restart the previous code. Re-entrancy-guarded.
+  restart the previous code. Re-entrancy-guarded. After a reload the TUI
+  auto-resumes the previously current session: the old fiber stashes its
+  session id on `globalThis` (process-global, so it survives the module-cache
+  eviction) before teardown, and the fresh fiber consumes it best-effort; a
+  fresh dsh process start resets the stash, so it still creates a new session.
 
 ## 8. LLM layer
 
@@ -428,12 +447,18 @@ footer), `resolveCallConfig()` (live-switch validation).
 web Models page and the TUI's add-provider flow both write. Each entry
 carries `apiKeyEnv` — the credential reference, derived by **convention**
 (`deriveKeyRef`: route key uppercased, non-alphanumeric runs → `_`, `_API_KEY`
-suffix; `opencode-go → OPENCODE_GO_API_KEY`). API-key resolution for the
-status column is a three-way merge (`mergedEnv` in settings.ts):
-`process.env`, refs stored this browser session (`justStoredRefs`), and
-prefetched `ctx.credentials.describe(ref).configured` for the credentials
-document (`.credentials.yaml`) — keys stored by web never live in
-`process.env`. The key itself goes to `ctx.credentials.set`, never to
+suffix; `opencode-go → OPENCODE_GO_API_KEY`). The add-provider picker
+(`src/provider-catalog.ts`) mirrors the web Models directory: the static
+`PROVIDER_CATALOG` lists all 36 llm-pi-ai catalog routes that take an API key
+(pi-ai 0.82.1) as the fallback, but at runtime `addProviderEntries`
+(settings.ts) prefers the live `llm.listConfigurableProviders()` directory
+(→ `directoryProviderEntries`) so the TUI stays in lockstep with pi-ai; the
+static mirror supplies friendly names/hints and degrades gracefully when the
+service is missing. API-key resolution for the status column is a three-way
+merge (`mergedEnv` in settings.ts): `process.env`, refs stored this browser
+session (`justStoredRefs`), and prefetched `ctx.credentials.describe(ref).configured`
+for the credentials document (`.credentials.yaml`) — keys stored by web never
+live in `process.env`. The key itself goes to `ctx.credentials.set`, never to
 settings.yaml.
 
 **Default model composition**: `agent-default-model` holds
