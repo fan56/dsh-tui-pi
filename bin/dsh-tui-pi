@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Convenience launcher: boots the dsh `tui` profile that mounts dsh-tui-pi.
-# Requires the dsh CLI on PATH and dsh-tui-pi installed into that profile
-# (dsh plugin --profile tui add dsh-tui-pi).
+# Convenience launcher: boots the dsh `tui` profile that mounts @aiwayds/dsh-tui-pi.
+# Requires the dsh CLI on PATH and @aiwayds/dsh-tui-pi installed into that profile
+# (dsh plugin --profile tui add @aiwayds/dsh-tui-pi).
 exec dsh --profile tui "$@"

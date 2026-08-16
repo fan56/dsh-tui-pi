@@ -156,8 +156,8 @@ cd dsh-tui-pi && pnpm install && pnpm build
 dsh plugin --profile tui add link:/path/to/dsh-tui-pi
 
 # or an npm tarball
-npm pack                                   # → dsh-tui-pi-0.1.0.tgz
-dsh plugin --profile tui add /path/to/dsh-tui-pi-0.1.0.tgz
+npm pack                                   # → aiwayds-dsh-tui-pi-0.1.0.tgz
+dsh plugin --profile tui add /path/to/aiwayds-dsh-tui-pi-0.1.0.tgz
 ```
 
 Both paths auto-add `dsh-tui-pi` to the profile's `dsh.profile.bundles`.

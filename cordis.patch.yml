@@ -6,4 +6,4 @@
 
 - insert:
     - id: tui-pi
-      name: 'dsh-tui-pi'
+      name: '@aiwayds/dsh-tui-pi'
