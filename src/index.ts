@@ -39,6 +39,7 @@ import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
 import type { AgentView } from './dsh-events.ts'
 import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
+import { rgbIsLight } from './theme/palette.ts'
 import { clipToWidth } from './text.ts'
 import { type KeyAction } from './keymap.ts'
 import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.ts'
@@ -272,6 +273,9 @@ export function apply(ctx: Context): void {
       themePreference,
     })
     handle = ui
+    // Live theme preference, tracked so terminal-following (below) can tell
+    // 'auto' (follow the terminal) from an explicit light/dark pin.
+    let themePreferenceRef: ThemePreference = themePreference
     /**
      * Pending Ctrl+C quit confirmation (see the `ctrl-c-quit` case): armed by
      * a double press, fired after QUIT_CONFIRM_MS, aborted by a `key-repeat`
@@ -301,6 +305,10 @@ export function apply(ctx: Context): void {
     }
     // Arm the settings watch sink now that the renderer exists (see apply()).
     applyThemeRef = (pref: ThemePreference): void => {
+      themePreferenceRef = pref
+      // 'auto' subscribes to the terminal's live color-scheme pushes; an
+      // explicit pin opts out. resolveTheme guards env-pinned displays.
+      ui.tui.setTerminalColorSchemeNotifications(pref === 'auto')
       applyTheme(resolveTheme(process.env, pref))
     }
 
@@ -929,6 +937,34 @@ export function apply(ctx: Context): void {
       }
     }
 
+    // 'auto' refinement (the cmux/gostty case): COLORFGBG is often absent or
+    // wrong inside multiplexers, so the synchronous startup guess may be
+    // wrong. Ask the terminal itself — CSI ?996n color-scheme query first
+    // (Ghostty/cmux, kitty, iTerm answer), then the OSC 11 background color
+    // as ground truth — and hot-apply when the answer differs. Both queries
+    // time out silently on quiet terminals; the startup resolution stands.
+    if (themePreference === 'auto') {
+      ui.tui.setTerminalColorSchemeNotifications(true)
+      void (async () => {
+        const scheme = await ui.tui.queryTerminalColorScheme({ timeoutMs: 200 }).catch(() => undefined)
+        if (scheme === 'light' || scheme === 'dark') {
+          applyTheme(resolveTheme(process.env, scheme))
+          return
+        }
+        const background = await ui.tui.queryTerminalBackgroundColor({ timeoutMs: 200 }).catch(() => undefined)
+        if (background !== undefined) {
+          applyTheme(resolveTheme(process.env, rgbIsLight(background) ? 'light' : 'dark'))
+        }
+      })()
+    }
+    // Follow the terminal's live light/dark switches (CSI 997 pushes) while
+    // the preference is 'auto' — the terminal flips its OS appearance and the
+    // TUI repaints on the next frame, no restart. Explicit pins ignore it.
+    const stopTerminalFollow = ui.tui.onTerminalColorSchemeChange(scheme => {
+      if (themePreferenceRef !== 'auto') return
+      applyTheme(resolveTheme(process.env, scheme))
+    })
+
     // Live clock: the footer is the only thing that changes each second.
     const clockTimer = setInterval(() => ui.requestRender(), 1000)
     clockTimer.unref?.()
@@ -1046,6 +1082,7 @@ export function apply(ctx: Context): void {
     return async () => {
       if (relayoutTimer !== undefined) clearTimeout(relayoutTimer)
       process.stdout.removeListener('resize', onResize)
+      stopTerminalFollow()
       clearInterval(clockTimer)
       clearInterval(liveTimer)
       git.dispose()

@@ -10,9 +10,13 @@
  *   fills are solid approximations of alpha tints blended over `canvas`
  *   (the terminal can't carry alpha) — same values as `blend()` below.
  *
- * The TUI never paints the main canvas (the terminal background shows
- * through), so `canvas` is the semantic base used by the dark muted blends
- * and by contrast design; `canvasSubtle` is the visible raised surface.
+ * The TUI paints every rendered row with `canvas` (patched pi-tui
+ * `setCanvasBackground`, see src/tui.ts) — the app owns its background, so
+ * a theme switch recolors the whole screen and the terminal/multiplexer
+ * background never shows through. `canvasSubtle` stays the visible raised
+ * surface on top of it. DSH_TUI_TRANSPARENT=1 reverts to the old
+ * see-through canvas, where `canvas` is only the semantic base for the dark
+ * muted blends and contrast design.
  */
 
 export interface Palette {
@@ -51,9 +55,8 @@ export interface Palette {
 export const githubLight: Palette = {
   name: 'github-light',
   // Main canvas: near-white with a faint cool-green cast (not the harsh
-  // pure #fff); paper feel. The TUI never paints it — the terminal
-  // background (#f6f8fa) shows through; kept as the semantic base for the
-  // dark muted blends and contrast design.
+  // pure #fff); paper feel. Painted on every rendered row (see the module
+  // header) — the whole screen carries it.
   canvas: '#fcfdfc',
   // Raised surface (message bubbles, think/tool panels, overlays, code
   // blocks): one step darker than the canvas, clear gray-green.
@@ -187,4 +190,29 @@ export function detectDarkPalette(env: NodeJS.ProcessEnv = process.env): boolean
   }
   // Default to dark — GitHub's terminal default and the safer contrast choice.
   return true
+}
+
+/** RGB triple as reported by pi-tui's OSC 11 background query. */
+export interface Rgb {
+  r: number
+  g: number
+  b: number
+}
+
+/** WCAG relative luminance of an RGB triple (0 = black, 1 = white). */
+function rgbLuminance({ r, g, b }: Rgb): number {
+  const toLinear = (channel: number): number => {
+    const value = channel / 255
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b)
+}
+
+/**
+ * True when an OSC 11 background color reads as a light terminal (the same
+ * 0.5 luminance threshold pi uses for its terminal detection). Structural
+ * match for pi-tui's `RgbColor`, so the query result passes through as-is.
+ */
+export function rgbIsLight(rgb: Rgb): boolean {
+  return rgbLuminance(rgb) >= 0.5
 }

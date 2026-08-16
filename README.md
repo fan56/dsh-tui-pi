@@ -38,8 +38,11 @@ dsh ▸ ☁ opencode-go ▸ 🤖 deepseek-v4-flash ▸ ● high ▸ 🧠 11.6k/1
   `cmux-theme.sh` GitHub terminal themes). Hot-switchable at runtime: pick one
   with `/theme` (applies immediately), edit the `dsh-tui.theme` setting
   (external edits hot-apply too), or pin with `DSH_TUI_THEME=light|dark` — the
-  env var wins over every preference. Without a preference, terminal-background
-  detection (COLORFGBG).
+  env var wins over every preference. The app paints its own canvas, so a
+  switch recolors the whole screen (background included) even inside
+  multiplexers; without a preference, `auto` detects the terminal background
+  (COLORFGBG + a live OSC 11 / CSI 996n query) and follows the terminal's
+  light/dark switches in real time.
 - **Footer**: powerline segments ported from
   [pi-powerline-footer](https://github.com/fan56/pi-powerline-footer) —
   provider / model+thinking / context / cache-hit / msgs / tools with U+E0B0
@@ -118,13 +121,26 @@ Themes change live, no restart:
   `applies: 'live'`. The namespace's watch hook pushes the commit to the
   running TUI, which repaints everything on the next frame: transcript
   (replayed from its operation buffer), editor border, footer hint, spinner.
+- **The whole screen changes, background included.** The TUI paints its own
+  canvas (a patched pi-tui paints every rendered row with the palette's
+  canvas color), so a light→dark switch recolors the entire surface — the
+  terminal's own background never shows through, which is what makes the
+  switch look broken inside multiplexers like cmux/gostty where the pane
+  background belongs to the terminal, not the app. Set
+  `DSH_TUI_TRANSPARENT=1` to go back to the see-through canvas and keep your
+  terminal theme visible.
 - An **external edit** of `~/.dsh/settings.yaml` (`dsh-tui.theme: dark`)
   hot-applies through the same watch path.
 - `DSH_TUI_THEME=light|dark` **pins** the display regardless of preference —
   it wins at startup and keeps winning; `/theme` still persists the
   preference and honestly reports `Theme preference saved — display is pinned
   by DSH_TUI_THEME=…` instead of claiming it applied.
-- The choice survives restarts (`auto` falls back to terminal detection).
+- The choice survives restarts. `auto` detects the terminal: the synchronous
+  startup guess reads `COLORFGBG`; a background refinement then asks the
+  terminal itself (CSI `?996n` color-scheme query, falling back to an OSC 11
+  background-color query — both answered by Ghostty/cmux, kitty and iTerm),
+  and while `auto` stays selected the TUI follows live light/dark switches of
+  the terminal (CSI 997 push notifications) and repaints on the next frame.
 
 ## APPEND_SYSTEM.md
 

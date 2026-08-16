@@ -42,14 +42,18 @@ hotkeys.ts        /hotkeys — keybindings.json contract + validation + the
                   select-panel manager (FieldPanel + EditField, /agents style)
 theme-settings.ts dsh-tui settings namespace (applies: 'live') + watch sink
 theme/            palette.ts (GitHub light/dark) + index.ts (buildTheme,
-                  resolveTheme: env > preference > COLORFGBG detection)
+                  resolveTheme: env > preference > terminal detection —
+                  COLORFGBG sync guess, then CSI 996n / OSC 11 query + live
+                  CSI 997 follow for 'auto')
 text.ts           clipToWidth / visibleWidth — the only width vocabulary
 ```
 
 Theme hot-switch chain (read this before touching anything theme-related):
 `settings mutate → scope.watch → applyThemeRef (index.ts) → renderer.setTheme
-(ReplayOp replay) + tui.applyTheme (themeRef swap + editor rebuild) → one
-throttled render frame`.
+(ReplayOp replay) + tui.applyTheme (canvas background + themeRef swap +
+editor rebuild) → one throttled render frame`. `auto` also follows the
+terminal: a CSI 996n/OSC 11 query refines the startup guess, and CSI 997
+pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 
 ## Iron rules
 
@@ -89,12 +93,13 @@ throttled render frame`.
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **185 tests** across 15 files (welcome 18 +
-  theme 17 + theme-switch 27 + settings 19 + messages 14 + frame 11 +
-  provider-catalog 17 + live 14 + permission 9 + sessions 8 + quotes 7 +
-  text 7 + reload 6 + append-system 6 + theme-settings 5). New pure logic →
-  new test file under `test/` against built `lib/` (`node --test`, pretest
-  builds). Update the totals in HANDOFF.md.
+- `pnpm test` must stay green: **260 tests** across 21 files (theme-switch 27 +
+  settings 19 + welcome 18 + theme 17 + provider-catalog 17 + hotkeys 16 +
+  keymap 15 + messages 14 + live 14 + agent-manager 13 + frame 11 +
+  theme-canvas 10 + subagent-policy 10 + panels 9 + permission 9 + sessions 8 +
+  theme-settings 7 + text 7 + quotes 7 + reload 6 + append-system 6). New pure
+  logic → new test file under `test/` against built `lib/` (`node --test`,
+  pretest builds). Update the totals in HANDOFF.md.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
   `dsh --profile tui`, drive keys, `capture-pane` for assertions (see HANDOFF
   "验证命令速查"). Keep the 24-row terminal case in the matrix — overlay
@@ -129,6 +134,16 @@ throttled render frame`.
   tail body (`dsh-tui.panelHeight`: '5'/'7'/'10' rows, or 'all' with a
   bounded streaming tail and a 2000-line tool-result cap) are the accepted
   design — no inner scrolling.
+- **The TUI never paints the main canvas**: rows are written with erase-line
+  (`\x1b[2K`) + content, and content only carries an SGR background where a
+  component paints one — everything else shows the terminal's default
+  background. That's why a theme switch used to leave the background frozen
+  (most visible inside cmux/gostty). We patch `TuiAltScreen` with
+  `setCanvasBackground(sgr)` + `paintCanvasRow` (see
+  `patches/@earendil-works__pi-tui.patch`): every rendered row is prefixed
+  with the canvas SGR, the SGR is re-injected after every background-clearing
+  reset, and rows are padded to the full width. `DSH_TUI_TRANSPARENT=1`
+  (checked in `src/tui.ts`) opts back into the see-through canvas.
 - **SelectListTheme has no background hook for unselected rows**: the value
   part of unselected rows renders raw (`renderItem` → `prefix + truncatedValue`),
   so it cannot get the `canvasSubtle` backdrop. Only the selected row,

@@ -32,7 +32,7 @@ import {
 } from '@earendil-works/pi-tui'
 import { CwdBorderEditor } from './editor.ts'
 import { resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
-import { ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
+import { ansiBg, ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 
 export interface StartTuiOptions {
   /** Submit handler for the editor. Defaults to a local echo (smoke-test mode). */
@@ -82,13 +82,13 @@ export interface TuiHandle {
    */
   readonly theme: TuiTheme
   /**
-   * Hot-swap the theme bundle: repaints the editor border and the placeholder,
-   * and updates every subsequent `theme` read. Transcript repainting is the
-   * TranscriptRenderer's job (`setTheme`), and the last-request / running-agent
-   * lines are the LiveWidgets' job (`setTheme`) — both owned by the caller;
-   * call them before `applyTheme` so the one throttled render frame paints
-   * everything at once. No-op when the bundle is unchanged (themes are module
-   * singletons).
+   * Hot-swap the theme bundle: repaints the canvas background, the editor
+   * border and the placeholder, and updates every subsequent `theme` read.
+   * Transcript repainting is the TranscriptRenderer's job (`setTheme`), and
+   * the last-request / running-agent lines are the LiveWidgets' job
+   * (`setTheme`) — both owned by the caller; call them before `applyTheme`
+   * so the one throttled render frame paints everything at once. No-op when
+   * the bundle is unchanged (themes are module singletons).
    */
   applyTheme(theme: TuiTheme): void
   /** Autocomplete provider for the editor; re-applied across editor rebuilds. */
@@ -107,6 +107,16 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // Mutable theme ref: `applyTheme` swaps it and every later read (handle
   // getter, baked closures below) observes the new bundle on the next call.
   let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
+  // App-owned canvas: every rendered row is painted with the palette's
+  // canvas background (patched pi-tui — see setCanvasBackground), so a theme
+  // switch recolors the WHOLE screen, not only the surfaces that paint their
+  // own bg. Without it the terminal default background shows through the
+  // unpainted rows and "freezes" on switch — most visible inside cmux/gostty,
+  // where the pane background belongs to the multiplexer. DSH_TUI_TRANSPARENT=1
+  // opts back into the old see-through canvas for users who want their
+  // terminal theme to stay visible.
+  const paintCanvas = process.env.DSH_TUI_TRANSPARENT !== '1'
+  if (paintCanvas) tui.setCanvasBackground(ansiBg(themeRef.palette.canvas))
 
   // ------------------------------------------------------------- component tree --
   // Live Todos widget, pinned ABOVE the chat input: a plain Container with
@@ -225,6 +235,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     applyTheme(theme: TuiTheme): void {
       if (theme === themeRef) return
       themeRef = theme
+      if (paintCanvas) tui.setCanvasBackground(ansiBg(theme.palette.canvas))
       rebuildEditor()
       tui.requestRender()
     },

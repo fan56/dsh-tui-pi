@@ -317,7 +317,7 @@ expressed with `updateValue`).
 ## 5. Theme system
 
 ```
-palette.ts        githubLight / githubDark Palette (19 roles each) + detectDarkPalette
+palette.ts        githubLight / githubDark Palette (19 roles each) + detectDarkPalette + rgbIsLight
 theme/index.ts    buildTheme(palette) → TuiTheme { palette, editor, markdown,
                   selectList, chat } + POWERLINE (theme-agnostic) + resolveTheme
 theme-settings.ts dsh-tui namespace { theme: 'auto'|'light'|'dark' } applies: 'live'
@@ -325,8 +325,9 @@ theme-settings.ts dsh-tui namespace { theme: 'auto'|'light'|'dark' } applies: 'l
 text.ts           clipToWidth / visibleWidth — every width decision
 ```
 
-**Palette roles** (`Palette`): `canvas` (never painted — the terminal shows
-through; the semantic base for dark blends), `canvasSubtle` (raised surface:
+**Palette roles** (`Palette`): `canvas` (the app-owned background, painted on
+every rendered row — patched pi-tui `setCanvasBackground`; see below),
+`canvasSubtle` (raised surface:
 bubbles, panels, overlays, code), `canvasInset` (editor border row, footer),
 `fgDefault/Muted/Subtle`, `borderDefault/Muted`, `accent` +
 `accentMuted`, `success/+Muted`, `danger/+Muted`, `attention/+Muted`,
@@ -347,9 +348,27 @@ info / no-match — unselected values stay raw (pi-tui 0.84.2, accepted).
 `POWERLINE` segment colors are theme-agnostic (vivid backgrounds with white
 bold text on both themes).
 
+**Canvas background** (`patches/@earendil-works__pi-tui.patch`): pi-tui rows
+are written with erase-line + content, so the terminal's default background
+shows through every unpainted row — a theme switch used to leave the dominant
+background frozen (most visible inside multiplexers like cmux/gostty, where
+the pane background belongs to the terminal). `TuiAltScreen` gained
+`setCanvasBackground(sgr)`: `doRender` runs every non-image row through
+`paintCanvasRow` — prefix the canvas SGR, re-inject it after every
+background-clearing SGR (reset / 49), pad to the full width so the
+erase-line remainder carries the color, trailing reset. `startTui` sets the
+canvas at startup and under `applyTheme`; `DSH_TUI_TRANSPARENT=1` keeps the
+old see-through behavior.
+
 **Resolution order** (`resolveTheme`): `DSH_TUI_THEME=light|dark` **env
 pins** the bundle → explicit preference (light/dark) → `detectDarkPalette`
-(COLORFGBG bg ∈ {7,15} → light, else dark).
+(COLORFGBG bg ∈ {7,15} → light, else dark). With `auto`, the TUI then asks
+the terminal itself (index.ts): `queryTerminalColorScheme` (CSI `?996n`),
+falling back to `queryTerminalBackgroundColor` (OSC 11 → `rgbIsLight`
+luminance), and hot-applies the answer if it differs from the startup guess.
+While the preference stays `auto`, `setTerminalColorSchemeNotifications`
+enables CSI 997 pushes and `onTerminalColorSchemeChange` repaints on live
+terminal light/dark switches; an explicit pin disables the subscription.
 
 **Hot-switch**: the bundle is held in `themeRef` (tui.ts) — a mutable binding
 every read goes through. Commits flow:
