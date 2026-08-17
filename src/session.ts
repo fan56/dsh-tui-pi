@@ -36,10 +36,11 @@ import { installSpawnToolFence } from './subagent-policy.ts'
  * `ctx.effect`), so the section dies with the agent.
  */
 function installAppendSystem(agentCtx: Context): void {
+  const appendSystem = readAppendSystem()   // read once at session startup and cache
   agentCtx.systemPrompt.section({
     name: 'dsh-tui-pi:append-system',
     order: 200,
-    text: () => readAppendSystem(),
+    text: () => appendSystem,
   })
 }
 
