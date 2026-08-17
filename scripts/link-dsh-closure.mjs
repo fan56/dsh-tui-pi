@@ -29,6 +29,15 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+// Guard: this postinstall is a dev-machine convenience for THIS repo. A
+// published tarball carries scripts/ but no src/, and must never touch a
+// consumer's node_modules (it would delete their @deepseek-ai packages and
+// replace them with symlinks into their global dsh closure). pnpm ≥10 blocks
+// dependency lifecycle scripts by default, but npm would run this — exit
+// silently outside the repo.
+if (!existsSync(join(repoRoot, 'src'))) {
+  process.exit(0)
+}
 const scopeDir = join(repoRoot, 'node_modules', '@deepseek-ai')
 
 /** The global dsh package's own `node_modules/@deepseek-ai` closure dir. */

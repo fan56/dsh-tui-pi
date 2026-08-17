@@ -62,6 +62,21 @@ if (!existsSync(tarball)) {
 }
 console.log(`[dev-install] tarball: ${tarball}`)
 
+// B3: the profile's file: deps must reference THIS tarball. After a version
+// bump the profile still points at the old <name>-<oldversion>.tgz — installing
+// would silently load the stale package. Fail loudly instead.
+const profileManifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
+for (const key of ['dsh-tui-pi', '@aiwayds/dsh-tui-pi']) {
+  const ref = profileManifest.dependencies?.[key]
+  if (typeof ref !== 'string' || !ref.includes(tarballName)) {
+    console.error(
+      `[dev-install] profile ${profileName} dependency "${key}" does not reference ${tarballName} ` +
+      `(got: ${ref}); update ~/.dsh/profiles/${profileName}/package.json first.`,
+    )
+    process.exit(1)
+  }
+}
+
 // 3. refresh the profile's installed copies (remove forces reinstall of the
 //    changed file: tarball — pnpm skips re-reading it while the entry exists)
 for (const dir of ['dsh-tui-pi', join('@aiwayds', 'dsh-tui-pi')]) {

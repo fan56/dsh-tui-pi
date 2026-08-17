@@ -78,7 +78,7 @@ const AGENT_COLORS_DARK: Record<string, string> = {
 
 /** The label-dot color for an agent color name under the active theme. */
 function agentDotColor(theme: TuiTheme, name: string): string | undefined {
-  const table = theme.palette.name === 'github-dark' ? AGENT_COLORS_DARK : AGENT_COLORS
+  const table = theme.palette.dark ? AGENT_COLORS_DARK : AGENT_COLORS
   return table[name]
 }
 

@@ -22,6 +22,8 @@
 export interface Palette {
   /** Theme id, used by the theme switcher. */
   readonly name: string
+  /** True for dark themes — components pick bright/light color variants on it. */
+  readonly dark: boolean
   /** Main background (chat canvas). */
   readonly canvas: string
   /** Slightly offset surface (message bubbles, code blocks, tool cards). */
@@ -54,6 +56,7 @@ export interface Palette {
 
 export const githubLight: Palette = {
   name: 'github-light',
+  dark: false,
   // Main canvas: near-white with a faint cool-green cast (not the harsh
   // pure #fff); paper feel. Painted on every rendered row (see the module
   // header) — the whole screen carries it.
@@ -123,6 +126,7 @@ function blend(base: string, over: string, alpha: number): string {
 
 export const githubDark: Palette = {
   name: 'github-dark',
+  dark: true,
   // Main canvas: deep gray-blue (the GitHub dark family).
   canvas: '#0d1117',
   // Raised surface (bubbles, panels, overlays): one step lighter gray-blue.

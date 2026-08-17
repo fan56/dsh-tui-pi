@@ -120,7 +120,12 @@ test('powerline palette carries all segment colors', () => {
 
 test('dark theme is usable (no empty color roles)', () => {
   for (const [key, value] of Object.entries(darkTheme.palette)) {
-    if (key === 'name') continue
+    if (key === 'name' || key === 'dark') continue // name id + dark boolean flag
     assert.match(value, /^#[0-9a-fA-F]{6}$/, `palette.${key} must be a hex color`)
   }
+})
+
+test('palette dark flag flips with the theme', () => {
+  assert.equal(githubLight.dark, false, 'light palette is not dark')
+  assert.equal(githubDark.dark, true, 'dark palette is dark')
 })
