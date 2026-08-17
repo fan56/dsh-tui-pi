@@ -26,20 +26,35 @@ import type { ThemePreference } from './theme/index.ts'
 /** Settings namespace carrying the persisted dsh-tui preferences. */
 export const THEME_SETTINGS_NAMESPACE: SettingsNamespace = settingsNamespace('dsh-tui')
 
-/** Subagent concurrency/rounds knobs read by the subagent policy. */
+/** Subagent concurrency/rounds/roster knobs read by the subagent policy. */
 export interface SubagentLimits {
   /** Concurrent live children allowed; 0 lifts the cap (the guard stays off). */
   maxAgents: number
   /** Completed turns per child before a summary request is injected; 0 disables. */
   maxRounds: number
+  /**
+   * Only registered agents (the dsh-subagent-registry `use_agent` roster,
+   * `~/.dsh/agents/*.md`) may be spawned. The native ad-hoc spawn tools
+   * (`subagent`, `subagent_fork`, `workflow`, `ralph`) are denied for every
+   * agent in the process, so delegation always goes through a registered
+   * definition.
+   */
+  registeredOnly: boolean
 }
 
 /**
  * Default subagent limits, applied whenever the settings service, namespace,
  * or a field cannot be read. 4 concurrent children and 50 rounds per child are
- * the documented out-of-the-box behavior.
+ * the documented out-of-the-box behavior; registeredOnly is on by default —
+ * this TUI's user runs the registry plugin and wants ad-hoc spawns fenced off
+ * (toggle it in /settings → dsh-tui when a workflow/ralph fan-out is
+ * genuinely needed).
  */
-export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({ maxAgents: 4, maxRounds: 50 })
+export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({
+  maxAgents: 4,
+  maxRounds: 50,
+  registeredOnly: true,
+})
 
 /** Schema of the `dsh-tui` settings section. */
 const THEME_SETTINGS_SCHEMA = z.object({
@@ -65,6 +80,13 @@ const THEME_SETTINGS_SCHEMA = z.object({
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxRounds)
     .description('Max rounds per subagent before the TUI sends a summary request (0 = unlimited)'),
+  registeredOnly: z
+    .boolean()
+    .default(DEFAULT_SUBAGENT_LIMITS.registeredOnly)
+    .description(
+      'Only registered agents (~/.dsh/agents/*.md via use_agent) may spawn - '
+      + 'the native subagent/subagent_fork/workflow/ralph tools are denied',
+    ),
   footerHints: z
     .object({
       send: z.boolean().default(true).description('Show "Enter: send" in the footer hint bar'),
@@ -84,12 +106,14 @@ const THEME_SETTINGS_ENTRY: {
   panelHeight: PanelHeight
   maxAgents: number
   maxRounds: number
+  registeredOnly: boolean
   footerHints: FooterHints
 } = {
   theme: 'auto',
   panelHeight: DEFAULT_PANEL_HEIGHT,
   maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,
   maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
+  registeredOnly: DEFAULT_SUBAGENT_LIMITS.registeredOnly,
   footerHints: { ...DEFAULT_FOOTER_HINTS },
 }
 
@@ -350,18 +374,21 @@ export function readSubagentLimits(ctx: Context): SubagentLimits {
   const settings = ctx.get('settings') as SettingsProvider | undefined
   if (settings === undefined) return { ...DEFAULT_SUBAGENT_LIMITS }
   // The descriptor's `value` is the whole resolved section
-  // (`{ theme: ..., panelHeight: ..., maxAgents: ..., maxRounds: ... }`) — narrow
-  // the unknown to the two observed numeric fields.
+  // (`{ theme: ..., panelHeight: ..., maxAgents: ..., maxRounds: ...,
+  // registeredOnly: ... }`) — narrow the unknown to the observed fields.
   const section = settings
     .describe()
     .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { maxAgents?: unknown; maxRounds?: unknown }
+    | { maxAgents?: unknown; maxRounds?: unknown; registeredOnly?: unknown }
     | undefined
   const natural = (value: unknown, fallback: number): number =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
   return {
     maxAgents: natural(section?.maxAgents, DEFAULT_SUBAGENT_LIMITS.maxAgents),
     maxRounds: natural(section?.maxRounds, DEFAULT_SUBAGENT_LIMITS.maxRounds),
+    registeredOnly: typeof section?.registeredOnly === 'boolean'
+      ? section.registeredOnly
+      : DEFAULT_SUBAGENT_LIMITS.registeredOnly,
   }
 }
 

@@ -207,18 +207,26 @@ test('subagent limits resolve to defaults and round-trip through a committed wri
   registerThemeSettings(ctx)
   await settle()
 
-  // Base entry seeds the documented defaults.
-  const defaults = { maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents, maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds }
+  // Base entry seeds the documented defaults (registeredOnly on).
+  const defaults = {
+    maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,
+    maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
+    registeredOnly: DEFAULT_SUBAGENT_LIMITS.registeredOnly,
+  }
   assert.deepEqual(readSubagentLimits(ctx), defaults, 'base entry resolves to the defaults')
 
   // A committed write mutates the section; the live reader reflects it.
   assert.equal(await writeSubagentLimit(ctx, 'maxAgents', 2), undefined)
   assert.equal(await writeSubagentLimit(ctx, 'maxRounds', 10), undefined)
-  assert.deepEqual(readSubagentLimits(ctx), { maxAgents: 2, maxRounds: 10 }, 'committed limits read back')
+  assert.deepEqual(readSubagentLimits(ctx), { maxAgents: 2, maxRounds: 10, registeredOnly: true }, 'committed limits read back')
 })
 
 test('subagent limits fall back to defaults when the service or a field is missing', async () => {
-  const defaults = { maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents, maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds }
+  const defaults = {
+    maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,
+    maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
+    registeredOnly: DEFAULT_SUBAGENT_LIMITS.registeredOnly,
+  }
 
   // No settings service: read degrades, write reports the failure (no throw).
   const bare = new Context()
@@ -226,7 +234,8 @@ test('subagent limits fall back to defaults when the service or a field is missi
   const writeError = await writeSubagentLimit(bare, 'maxAgents', 1)
   assert.equal(writeError, 'Settings service is not available.', 'settings-less write surfaces the failure')
 
-  // Malformed fields (non-integer, negative, absent) narrow to the defaults.
+  // Malformed fields (non-integer, negative, absent, non-boolean) narrow to
+  // the defaults per-key.
   const ctx = new Context()
   const settings = makeSettings()
   ctx.provide('settings', settings)
@@ -235,10 +244,15 @@ test('subagent limits fall back to defaults when the service or a field is missi
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [
     { op: 'set', path: ['maxAgents'], value: 2.5 },
     { op: 'set', path: ['maxRounds'], value: -1 },
+    { op: 'set', path: ['registeredOnly'], value: 'yes' },
   ])
-  assert.deepEqual(readSubagentLimits(ctx), defaults, 'non-natural fields narrow to the defaults')
+  assert.deepEqual(readSubagentLimits(ctx), defaults, 'malformed fields narrow to the defaults')
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['maxAgents'] }])
   assert.deepEqual(readSubagentLimits(ctx), defaults, 'missing field falls back per-key')
+
+  // A committed boolean toggle round-trips through the live reader.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['registeredOnly'], value: false }])
+  assert.equal(readSubagentLimits(ctx).registeredOnly, false, 'committed registeredOnly read back')
 })
 
 test('committed footerHints changes flow register → watch → sink with per-key narrowing', async () => {

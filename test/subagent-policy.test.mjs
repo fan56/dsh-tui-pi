@@ -16,9 +16,13 @@ import {
   applySubagentPolicy,
 } from '../lib/subagent-policy.js'
 
-/** Fake settings provider: one `dsh-tui` section with the given limits. */
+/**
+ * Fake settings provider: one `dsh-tui` section with the given limits. The
+ * registeredOnly fence defaults to OFF here so the legacy maxAgents/maxRounds
+ * scenarios below exercise the cap in isolation; the fence has its own tests.
+ */
 function makeSettings(limits) {
-  return { describe: () => [{ ns: 'dsh-tui', value: { ...limits } }] }
+  return { describe: () => [{ ns: 'dsh-tui', value: { registeredOnly: false, ...limits } }] }
 }
 
 /**
@@ -105,11 +109,50 @@ test('the guard is disabled when maxAgents is 0 and defaults apply without setti
   assert.equal(zero.captured.guard({ name: 'subagent' }), undefined, 'maxAgents 0: never denied')
   zeroPolicy.dispose()
 
-  // No settings service: the documented defaults (4) still gate the guard.
+  // No settings service: the documented defaults still gate the guard. The
+  // fence is ALSO on by default, so the registry tool (`use_agent`) is the
+  // probe that reaches the cap check - the native names are fenced off first.
   const bare = makeCtx()
   const busy = applySubagentPolicy(bare.ctx, makeState({ live: [{ label: 'a' }, { label: 'b' }, { label: 'c' }, { label: 'd' }] }))
-  assert.equal(typeof bare.captured.guard({ name: 'subagent' }), 'string', 'settings-less: default cap enforced')
+  assert.equal(typeof bare.captured.guard({ name: 'use_agent' }), 'string', 'settings-less: default cap enforced')
+  assert.equal(typeof bare.captured.guard({ name: 'subagent' }), 'string', 'settings-less: default fence enforced')
   busy.dispose()
+})
+
+// ------------------------------------------------------- registeredOnly ----
+
+test('registeredOnly denies every native spawn tool and passes use_agent through', () => {
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 4, maxRounds: 50, registeredOnly: true }) })
+  const policy = applySubagentPolicy(ctx, makeState({ live: [] }))
+
+  for (const name of ['subagent', 'subagent_fork', 'workflow', 'ralph']) {
+    const reason = captured.guard({ name })
+    assert.equal(typeof reason, 'string', `${name} denied`)
+    assert.ok(reason.includes('use_agent'), `${name} deny reason points at use_agent`)
+  }
+  // The registry tool passes the fence (and the cap is not reached here).
+  assert.equal(captured.guard({ name: 'use_agent' }), undefined, 'use_agent: allowed')
+  // Non-spawn tools never see the fence.
+  assert.equal(captured.guard({ name: 'bash' }), undefined, 'non-spawn tool: allowed')
+  policy.dispose()
+})
+
+test('the fence wins over the cap reason, and turns off with the setting', () => {
+  // Both violations at once (over the cap AND a native tool): the fence is
+  // the reported reason - the roster rule is the primary contract.
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 1, maxRounds: 50, registeredOnly: true }) })
+  const policy = applySubagentPolicy(ctx, makeState({ live: [{ label: 'busy' }] }))
+  const reason = captured.guard({ name: 'subagent' })
+  assert.ok(reason.includes('use_agent') && !reason.includes('Agent limit reached'), 'fence reason wins')
+  // At the cap, the registry tool still reports the CAP (not the fence).
+  assert.ok(captured.guard({ name: 'use_agent' }).includes('Agent limit reached'), 'use_agent at cap reports the cap')
+  policy.dispose()
+
+  // Toggle off: native tools pass to the cap check again.
+  const off = makeCtx({ settings: makeSettings({ maxAgents: 4, maxRounds: 50, registeredOnly: false }) })
+  const offPolicy = applySubagentPolicy(off.ctx, makeState({ live: [] }))
+  assert.equal(off.captured.guard({ name: 'subagent' }), undefined, 'fence off: native tool allowed under the cap')
+  offPolicy.dispose()
 })
 
 test('onTurnCount injects nothing when maxRounds is 0', () => {

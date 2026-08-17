@@ -1,7 +1,7 @@
 /**
- * Subagent concurrency and round-limit policy for the TUI.
+ * Subagent policy for the TUI.
  *
- * Two knobs, both read live from the `dsh-tui` settings section at every
+ * Three knobs, all read live from the `dsh-tui` settings section at every
  * decision point — no watcher needed (the /settings browser hot-applies, so
  * the next guard execution / turn count reads the new value):
  * - `maxAgents` caps concurrent live children. A `tools.guard` registered on
@@ -11,6 +11,11 @@
  *   workflow/ralph fan-out bypasses the tool pipeline (its worker thread
  *   spawns through the subagent provider directly), so a `subagent/start`
  *   listener prunes any newcomer that slips past the guard.
+ * - `registeredOnly` fences delegation to REGISTERED agents: the native
+ *   ad-hoc spawn tools (subagent/subagent_fork/workflow/ralph) are denied
+ *   for every agent, so children can only be minted through a registered
+ *   definition (`~/.dsh/agents/*.md` via the registry's `use_agent`).
+ *   Already-running fan-outs started before the toggle are left to finish.
  * - `maxRounds` caps a child's completed turns: on the bridge's `onTurnCount`
  *   the policy injects one plugin-sourced user message telling the child to
  *   wrap up. Queued as the child's next turn, it never interrupts work
@@ -33,6 +38,21 @@ export const SPAWN_TOOLS: readonly string[] = [
   'workflow',
   'ralph',
   'use_agent',
+]
+
+/**
+ * The NATIVE ad-hoc spawn tools - everything in SPAWN_TOOLS except the
+ * registry's `use_agent`. While `registeredOnly` is on, the guard denies
+ * these for every agent in the process, so delegation can only go through a
+ * registered agent definition (`~/.dsh/agents/*.md` via `use_agent`). The
+ * deny-list (not an allow-list of one) is deliberate: it keeps working when
+ * the registry's tool is renamed (`toolName` is configurable).
+ */
+export const NATIVE_SPAWN_TOOLS: readonly string[] = [
+  'subagent',
+  'subagent_fork',
+  'workflow',
+  'ralph',
 ]
 
 /** Injected into a child that reached `maxRounds` — wrap up and report back. */
@@ -89,10 +109,19 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
   // spawn calls can briefly overshoot before the bridge's firehose discovery
   // counts the newcomers — the subagent/start backstop below prunes the
   // overshoot, and the next spawn's guard reads the caught-up count.
+  //
+  // registeredOnly fence: the native ad-hoc spawn tools are denied outright
+  // (checked before the cap — a roster violation is the reason even when the
+  // cap would also deny). `use_agent` and every non-spawn tool pass through
+  // to the cap check below.
   const tools = ctx.get('tools') as ToolsService | undefined
   if (tools?.guard !== undefined) {
     disposers.push(tools.guard((exec) => {
       if (!SPAWN_TOOLS.includes(exec.name)) return undefined
+      if (readSubagentLimits(ctx).registeredOnly && NATIVE_SPAWN_TOOLS.includes(exec.name)) {
+        return `Tool "${exec.name}" is disabled here: only registered agents are callable. `
+          + 'Dispatch the work through the use_agent tool with one of the registered agent names instead.'
+      }
       const maxAgents = readSubagentLimits(ctx).maxAgents
       if (maxAgents <= 0) return undefined
       const live = state.getLive()
