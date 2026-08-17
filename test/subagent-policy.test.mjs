@@ -11,9 +11,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  NATIVE_SPAWN_TOOLS,
   SPAWN_TOOLS,
   SUMMARY_MESSAGE,
   applySubagentPolicy,
+  installSpawnToolFence,
 } from '../lib/subagent-policy.js'
 
 /**
@@ -276,4 +278,32 @@ test('the subagent/start backstop is disabled when maxAgents is 0', () => {
   fireSubagentStart(captured, 'newcomer')
   assert.deepEqual(cancels, [], 'maxAgents 0: never pruned')
   policy.dispose()
+})
+
+// --------------------------------------------------- spawn-tool hide ----
+
+test('installSpawnToolFence hides exactly the native spawn tools via restrict', () => {
+  let filter
+  const agentCtx = {
+    get(name) {
+      assert.equal(name, 'tools')
+      return { restrict(f) { filter = f } }
+    },
+  }
+  installSpawnToolFence(agentCtx)
+  assert.deepEqual(filter.deny, [...NATIVE_SPAWN_TOOLS], 'deny list = the native spawn tools')
+  // use_agent is deliberately NOT in the hide list.
+  assert.ok(!filter.deny.includes('use_agent'), 'use_agent stays visible')
+})
+
+test('installSpawnToolFence is best-effort: no tools service or a throwing restrict never fails setup', () => {
+  // No tools service: silent no-op.
+  installSpawnToolFence({ get() { return undefined } })
+  // A throwing restrict (unknown tool name, registration race) is swallowed.
+  const throwing = {
+    get() {
+      return { restrict() { throw new Error('tools.restrict() names unknown global tool "workflow"') } }
+    },
+  }
+  assert.doesNotThrow(() => installSpawnToolFence(throwing), 'restrict failure degrades silently')
 })

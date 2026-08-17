@@ -55,6 +55,33 @@ export const NATIVE_SPAWN_TOOLS: readonly string[] = [
   'ralph',
 ]
 
+/**
+ * Hide the native ad-hoc spawn tools from ONE agent's tool catalog
+ * (best-effort). The registeredOnly guard DENIES calls at execution; this
+ * additionally makes the tools INVISIBLE to the model, so the agent sees a
+ * single spawn entry (`use_agent`) and never attempts a fenced tool.
+ *
+ * `tools.restrict` requires a scoped context (it throws on a plain plugin
+ * ctx) - the agent setup passes its scoped `agentCtx`, exactly the surface
+ * dsh-subagent uses for `deep: 0` leaves. Best-effort by design: an absent
+ * tools service, or a restrict failure (a named tool not loaded in this
+ * profile, a transient registration race), degrades silently - the live
+ * registeredOnly guard remains the enforcement backstop, so the fence is
+ * NEVER weaker for hiding. Restriction is a creation-time snapshot: a
+ * registeredOnly toggle takes effect for agents created afterwards (the
+ * guard, being live, applies immediately in both directions).
+ */
+export function installSpawnToolFence(agentCtx: Context): void {
+  const tools = agentCtx.get('tools') as { restrict?: (filter: { deny: readonly string[] }) => unknown } | undefined
+  if (tools?.restrict === undefined) return
+  try {
+    tools.restrict({ deny: [...NATIVE_SPAWN_TOOLS] })
+  } catch {
+    // Cosmetic hide only - never fail the agent setup over it. The guard
+    // below still denies the native spawn tools at execution time.
+  }
+}
+
 /** Injected into a child that reached `maxRounds` — wrap up and report back. */
 export const SUMMARY_MESSAGE: string = '总结和结束这个任务，汇报情况。'
 

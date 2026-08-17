@@ -19,6 +19,7 @@ import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-ses
 import { readAppendSystem } from './append-system.ts'
 import type { AgentView } from './dsh-events.ts'
 import { isAgentEnd, isAgentStart, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
+import { installSpawnToolFence } from './subagent-policy.ts'
 
 /**
  * Register the APPEND_SYSTEM.md section on ONE agent's scoped context, so the
@@ -387,11 +388,13 @@ export class DshSessionBridge {
         resumeSessionId: sessionId,
         agentOptions: this.selection ?? {},
         // Install the mutable selection so `/model` can live-switch the route,
-        // and the APPEND_SYSTEM.md section on this agent ONLY (never its
-        // subagents - see installAppendSystem).
+        // the APPEND_SYSTEM.md section on this agent ONLY (never its
+        // subagents), and the spawn-tool hide so the agent sees a single
+        // `use_agent` delegation entry.
         setup: async agentCtx => {
           installModelSelection(agentCtx, this.selectionRef)
           installAppendSystem(agentCtx)
+          installSpawnToolFence(agentCtx)
         },
       })
       this.handle = resumed
@@ -660,11 +663,13 @@ export class DshSessionBridge {
       meta: { cwd: process.cwd() },
       agentOptions: this.selection ?? {},
       // Install the mutable selection so `/model` can live-switch the route,
-      // and the APPEND_SYSTEM.md section on this agent ONLY (never its
-      // subagents - see installAppendSystem).
+      // the APPEND_SYSTEM.md section on this agent ONLY (never its
+      // subagents), and the spawn-tool hide so the agent sees a single
+      // `use_agent` delegation entry.
       setup: async agentCtx => {
         installModelSelection(agentCtx, this.selectionRef)
         installAppendSystem(agentCtx)
+        installSpawnToolFence(agentCtx)
       },
     })
   }

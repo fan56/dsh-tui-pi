@@ -85,7 +85,9 @@ const THEME_SETTINGS_SCHEMA = z.object({
     .default(DEFAULT_SUBAGENT_LIMITS.registeredOnly)
     .description(
       'Only registered agents (~/.dsh/agents/*.md via use_agent) may spawn - '
-      + 'the native subagent/subagent_fork/workflow/ralph tools are denied',
+      + 'the native subagent/subagent_fork/workflow/ralph tools are denied '
+      + 'and hidden from the main agent (hide is per-session; the deny applies '
+      + 'immediately)',
     ),
   footerHints: z
     .object({
