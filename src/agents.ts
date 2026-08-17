@@ -425,7 +425,7 @@ export async function openAgentManager(
 
     const showBody = (agent: AgentFile): void => {
       host.open(new ViewerPanel(theme, {
-        title: `ⓘ ${agent.meta.name} · system prompt`,
+        title: `ⓘ ${agent.meta.displayName ?? agent.meta.name} · system prompt`,
         lines: agent.body.split('\n'),
         footer: '  Esc to close',
         onClose: () => showFields(agent),
