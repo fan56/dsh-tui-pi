@@ -29,6 +29,16 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`pnpm install` no longer breaks the build** — the three `@deepseek-ai/*`
+  packages that were declared in `package.json` (`dsh-settings`,
+  `dsh-client-schema-form`, `schemastery`) are no longer declared: they are
+  host-provided by the dsh CLI (the public registry only has stale rc.1
+  versions and pulls a private `dsh-type-meta` → 404), and resolving a second
+  local copy split `@deepseek-ai/cordis` into two instances, breaking the
+  `settings` type augmentation (`Property 'settings' does not exist on type
+  'Context'`). A `postinstall` script (`scripts/link-dsh-closure.mjs`) now
+  points every `node_modules/@deepseek-ai/*` at the global dsh closure after
+  every install, so `pnpm check` stays green with no manual symlink repair.
 - **Powerline footer CH segment invisible (white-on-white)** — the app-owned
   canvas's background re-injection (`paintCanvasRow`) misread the `0` channel
   of truecolor SGRs (`48;2;0;121;107` cache-teal) as the reset param and
