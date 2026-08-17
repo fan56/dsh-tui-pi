@@ -52,7 +52,7 @@ import { openEffortPicker } from './selectors.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 
-/** zcode-style 8-color label palette (GitHub-flavored hexes). */
+/** zcode-style 8-color label palette — GitHub-flavored hexes, per theme. */
 const AGENT_COLORS: Record<string, string> = {
   red: '#d1242f',
   blue: '#0969da',
@@ -62,6 +62,24 @@ const AGENT_COLORS: Record<string, string> = {
   orange: '#bc4c00',
   pink: '#bf3989',
   cyan: '#1b7c83',
+}
+
+/** Bright variants for the dark theme (the light hexes are too dim on dark). */
+const AGENT_COLORS_DARK: Record<string, string> = {
+  red: '#ff7b72',
+  blue: '#58a6ff',
+  green: '#3fb950',
+  yellow: '#d29922',
+  purple: '#bc8cff',
+  orange: '#f0883e',
+  pink: '#db61a2',
+  cyan: '#39c5cf',
+}
+
+/** The label-dot color for an agent color name under the active theme. */
+function agentDotColor(theme: TuiTheme, name: string): string | undefined {
+  const table = theme.palette.name === 'github-dark' ? AGENT_COLORS_DARK : AGENT_COLORS
+  return table[name]
 }
 
 /** Depth editor parse: empty = keep, otherwise a non-negative integer. */
@@ -105,9 +123,8 @@ function agentCell(agent: AgentFile, column: { key: string }): string {
 
 /** The colored-dot title line of the fields window. */
 function agentTitle(theme: TuiTheme, meta: AgentMeta): string {
-  const dot = meta.color !== undefined && AGENT_COLORS[meta.color] !== undefined
-    ? ansiFg(AGENT_COLORS[meta.color]) + '● ' + RESET
-    : ''
+  const dotColor = agentDotColor(theme, meta.color ?? '')
+  const dot = dotColor !== undefined ? ansiFg(dotColor) + '● ' + RESET : ''
   const name = clipToWidth(meta.displayName ?? meta.name, 100)
   return ansiFg(theme.palette.accent) + BOLD + `${dot}${name}` + RESET
 }

@@ -1,8 +1,54 @@
+diff --git a/dist/components/editor.d.ts b/dist/components/editor.d.ts
+index a6fedc9e3b36d066e34860d040db6df47d88c432..f4d9afd8bc64f5ce5aafa06bb1aa8db3338c4f7d 100644
+--- a/dist/components/editor.d.ts
++++ b/dist/components/editor.d.ts
+@@ -24,6 +24,8 @@ export interface TextChunk {
+ export declare function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl.SegmentData[]): TextChunk[];
+ export interface EditorTheme {
+     borderColor: (str: string) => string;
++    /** Optional style for the editor's input text rows. Absent → the terminal default foreground is used (invisible on an app-painted dark canvas). */
++    textColor?: (str: string) => string;
+     selectList: SelectListTheme;
+ }
+ export interface EditorOptions {
 diff --git a/dist/components/editor.js b/dist/components/editor.js
-index 4786b46932b65785cfbd2304610ca77ccead910a..e0e4e39c3be8e5d4d828621ad2d3d8768984add8 100644
+index 4786b46932b65785cfbd2304610ca77ccead910a..93c5f7e1596a0b567cf9fc59600c16596a60e567 100644
 --- a/dist/components/editor.js
 +++ b/dist/components/editor.js
-@@ -463,14 +463,20 @@ export class Editor {
+@@ -433,13 +433,13 @@ export class Editor {
+                     const afterGraphemes = [...this.segment(after, "grapheme")];
+                     const firstGrapheme = afterGraphemes[0]?.segment || "";
+                     const restAfter = after.slice(firstGrapheme.length);
+-                    const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
++                    const cursor = `\x1b[7m${firstGrapheme}\x1b[27m`;
+                     displayText = before + marker + cursor + restAfter;
+                     // lineVisibleWidth stays the same - we're replacing, not adding
+                 }
+                 else {
+                     // Cursor is at the end - add highlighted space
+-                    const cursor = "\x1b[7m \x1b[0m";
++                    const cursor = "\x1b[7m \x1b[27m";
+                     displayText = before + marker + cursor;
+                     lineVisibleWidth = lineVisibleWidth + 1;
+                     // If cursor overflows content width into the padding, flag it
+@@ -451,8 +451,14 @@ export class Editor {
+             // Calculate padding based on actual visible width
+             const padding = " ".repeat(Math.max(0, contentWidth - lineVisibleWidth));
+             const lineRightPadding = cursorInPadding ? rightPadding.slice(1) : rightPadding;
+-            // Render the line (no side borders, just horizontal lines above and below)
+-            result.push(`${leftPadding}${displayText}${padding}${lineRightPadding}`);
++            // Render the line (no side borders, just horizontal lines above and below).
++            // The theme's optional textColor styles the input rows — without it they
++            // fall back to the terminal default foreground, which is invisible on an
++            // app-painted dark canvas. Applied per line; the cursor's reverse-video
++            // closes with ESC[27m (reverse off, not full reset) so the themed
++            // foreground survives past a mid-text cursor.
++            const styledText = this.theme.textColor ? this.theme.textColor(displayText) : displayText;
++            result.push(`${leftPadding}${styledText}${padding}${lineRightPadding}`);
+         }
+         // Render bottom border (with scroll indicator if more content below)
+         const linesBelow = layoutLines.length - (this.scrollOffset + visibleLines.length);
+@@ -463,14 +469,20 @@ export class Editor {
          else {
              result.push(horizontal.repeat(width));
          }
@@ -135,10 +181,10 @@ index 848119411c1ff2885b8d1efe97f2f297bd4cd470..96422839632a71e6382a1fc6fcd9b43e
      private getPrimaryScrollView;
      protected beforeTerminalStart(): void;
 diff --git a/dist/tui-alt-screen.js b/dist/tui-alt-screen.js
-index 4edcf845ba7866782a8ec7219508a2dce0073a91..eed1f61f58b5d380818671e2648ce075a6507a08 100644
+index 4edcf845ba7866782a8ec7219508a2dce0073a91..338f2b29e7ba926399f3d663b0b79669c8ac6c13 100644
 --- a/dist/tui-alt-screen.js
 +++ b/dist/tui-alt-screen.js
-@@ -21,6 +21,45 @@ const END_SYNCHRONIZED_OUTPUT = "\x1b[?2026l";
+@@ -21,6 +21,51 @@ const END_SYNCHRONIZED_OUTPUT = "\x1b[?2026l";
  const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
  const OSC133_PROMPT_START = /^\x1b\]133;A(?:\x07|\x1b\\)/;
  const PAGE_SCROLL_OVERLAP = 4;
@@ -151,6 +197,12 @@ index 4edcf845ba7866782a8ec7219508a2dce0073a91..eed1f61f58b5d380818671e2648ce075
 +function sgrClearsBackground(sequence) {
 +    const params = sequence.slice(2, -1);
 +    if (params === "") return true;
++    // A color-set (3x foreground / 4x background — ANSI 30-37/40-47, truecolor
++    // 38;2/48;2, 256-color 38;5/48;5) never clears the background, even when a
++    // channel is 0: 48;2;0;121;107 (teal) would otherwise read the 0 as the
++    // reset param and re-inject the canvas over the segment. (49 alone — bg →
++    // default — IS a clear and falls through to the loop below.)
++    if (/^(?:3[0-7]|38;|4[0-8]|48;)/.test(params)) return false;
 +    for (const param of params.split(";")) {
 +        const code = param === "" ? 0 : Number.parseInt(param, 10);
 +        if (Number.isNaN(code)) continue;
@@ -184,7 +236,7 @@ index 4edcf845ba7866782a8ec7219508a2dce0073a91..eed1f61f58b5d380818671e2648ce075
  const MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16;
  const MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024;
  const MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
-@@ -64,6 +103,7 @@ export class TuiAltScreen extends TuiBase {
+@@ -64,6 +109,7 @@ export class TuiAltScreen extends TuiBase {
      openUrl;
      onRightClickPaste;
      copySelection;
@@ -192,7 +244,7 @@ index 4edcf845ba7866782a8ec7219508a2dce0073a91..eed1f61f58b5d380818671e2648ce075
      constructor(terminal, showHardwareCursor, logDirectory, options = {}) {
          super(terminal, showHardwareCursor, logDirectory);
          this.implicitDocument = {
-@@ -100,6 +140,18 @@ export class TuiAltScreen extends TuiBase {
+@@ -100,6 +146,18 @@ export class TuiAltScreen extends TuiBase {
      render(width) {
          return this.layoutRoot?.render(width) ?? super.render(width);
      }
@@ -211,7 +263,7 @@ index 4edcf845ba7866782a8ec7219508a2dce0073a91..eed1f61f58b5d380818671e2648ce075
      getMountedRoots() {
          return this.layoutRoot ? [this.layoutRoot] : this.children;
      }
-@@ -1099,6 +1151,10 @@ export class TuiAltScreen extends TuiBase {
+@@ -1099,6 +1157,10 @@ export class TuiAltScreen extends TuiBase {
                  return line;
              return sliceByColumn(line, 0, width, true);
          });

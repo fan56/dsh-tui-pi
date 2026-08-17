@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@earendil-works/pi-tui':
-    hash: c7df21d2695ed10c036f715235a9b41c4c394babe092a52a3e56e542cbc7f112
+    hash: f6ac2ab7658383ae7eb69e59bee79782be820d1d4190b74ca74b0993c0e77ee6
     path: patches/@earendil-works__pi-tui.patch
 
 importers:
@@ -18,7 +18,7 @@ importers:
         version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
       '@earendil-works/pi-tui':
         specifier: 0.84.2
-        version: 0.84.2(patch_hash=c7df21d2695ed10c036f715235a9b41c4c394babe092a52a3e56e542cbc7f112)
+        version: 0.84.2(patch_hash=f6ac2ab7658383ae7eb69e59bee79782be820d1d4190b74ca74b0993c0e77ee6)
     devDependencies:
       '@deepseek-ai/dsh-settings':
         specifier: 0.1.0-rc.6
@@ -142,7 +142,7 @@ snapshots:
       '@deepseek-ai/cosmokit': 1.8.2
       '@standard-schema/spec': 1.1.0
 
-  '@earendil-works/pi-tui@0.84.2(patch_hash=c7df21d2695ed10c036f715235a9b41c4c394babe092a52a3e56e542cbc7f112)':
+  '@earendil-works/pi-tui@0.84.2(patch_hash=f6ac2ab7658383ae7eb69e59bee79782be820d1d4190b74ca74b0993c0e77ee6)':
     dependencies:
       get-east-asian-width: 1.6.0
       marked: 18.0.5

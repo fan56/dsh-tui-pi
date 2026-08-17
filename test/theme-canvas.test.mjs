@@ -59,6 +59,31 @@ test('paintCanvasRow re-injects after combined SGR resets (0;1)', () => {
   assert.ok(painted.includes(`\x1b[0;1m${BG}`), '0;1 sequence is a reset too')
 })
 
+test('paintCanvasRow does not clear a background whose RGB has a 0 channel', () => {
+  // Regression: cache-teal #00796B → 48;2;0;121;107. The 0 red channel used to
+  // be misread as the reset param, so the canvas was re-injected over the
+  // segment — white-on-white in light themes made the footer CH segment
+  // invisible. A truecolor background-set must never be treated as a clear.
+  const teal = '\x1b[48;2;0;121;107m'
+  const white = '\x1b[38;2;255;255;255m'
+  const painted = paintCanvasRow(`${teal}bold\x1b[1m${white} CH`, BG, 20)
+  assert.ok(painted.includes(teal), 'the teal background-set survives verbatim')
+  // The canvas must NOT be re-injected right after the teal set (that would
+  // override it); the text that follows comes directly after the set.
+  assert.ok(!painted.includes(`${teal}${BG}`), 'no canvas injected inside the teal segment')
+  assert.ok(painted.includes(`${teal}bold`), 'the text follows the teal set directly')
+  // Same for a truecolor foreground-set (white): not a clear either.
+  assert.ok(!painted.includes(`${white}${BG}`), 'no canvas injected after a truecolor fg set')
+  assert.ok(painted.includes(`${white} CH`), 'the text follows the white fg set directly')
+})
+
+test('paintCanvasRow does not clear a 256-color foreground with color index 0', () => {
+  const blackFg = '\x1b[38;5;0m'
+  const painted = paintCanvasRow(`${blackFg}plain`, BG, 12)
+  assert.ok(painted.includes(`${blackFg}plain`), '38;5;0 is a fg set, not a reset')
+  assert.ok(!painted.includes(`${blackFg}${BG}`), 'no canvas injected after the fg color-set')
+})
+
 // ------------------------------------------------------------- TuiAltScreen --
 
 /** Minimal fake terminal: records every write, reports a fixed size. */

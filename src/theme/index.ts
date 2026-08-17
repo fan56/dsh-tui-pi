@@ -109,6 +109,10 @@ export function buildTheme(palette: Palette): TuiTheme {
 
   const editor: EditorTheme = {
     borderColor: fg(palette.borderDefault),
+    // The editor's input rows are otherwise unstyled (terminal default
+    // foreground), which is invisible on the app-painted dark canvas — theme
+    // the typed text with the palette's body color (light text on dark).
+    textColor: fg(palette.fgDefault),
     selectList,
   }
 
