@@ -167,18 +167,25 @@ no reload, no watcher.
 ## Install (local)
 
 ```sh
-# build once
-cd dsh-tui-pi && pnpm install && pnpm build
+# build + pack + install into the profile in one step (the recommended dev loop)
+node scripts/dev-install.mjs        # = pnpm build → pnpm pack → refresh the profile's copies
 
-# live development link (recommended; edits to src/ + pnpm build apply on next launch)
-dsh plugin --profile tui add link:/path/to/dsh-tui-pi
-
-# or an npm tarball
-npm pack                                   # → aiwayds-dsh-tui-pi-0.2.0.tgz
+# or, manually, like a real user would:
+pnpm pack                            # → aiwayds-dsh-tui-pi-0.2.0.tgz
 dsh plugin --profile tui add /path/to/aiwayds-dsh-tui-pi-0.2.0.tgz
 ```
 
-Both paths auto-add `dsh-tui-pi` to the profile's `dsh.profile.bundles`.
+The profile's `package.json` carries **both** keys pointing at the tarball —
+`dsh-tui-pi` (dsh resolves the bundle by this name) and
+`@aiwayds/dsh-tui-pi` (the loader entry in `cordis.patch.yml` imports this
+name) — and its `pnpm-workspace.yaml` declares the pi-tui
+`patchedDependencies` (see `~/.dsh/profiles/tui/`). At runtime
+`@deepseek-ai/*` resolve through dsh's shared
+`~/.dsh/profiles/node_modules` fallback to the installed closure, so the
+profile never needs the repo's `node_modules`. Known quirk: pnpm does not
+re-read a changed `file:` tarball while its `node_modules` entry exists —
+`scripts/dev-install.mjs` removes the two installed copies before installing,
+which forces the refresh.
 
 ## Use
 
@@ -331,7 +338,7 @@ dsh-tui-pi avoids both by construction:
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (277 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (296 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -339,23 +346,13 @@ dsh closure (`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules`);
 at runtime those imports resolve to the same module instances the running dsh
 uses. Those symlinks stay out of any tarball (`files` ships lib/bin/patch only).
 
-⚠️ `pnpm install` regenerates the three type-check symlinks declared in
-`package.json` (`dsh-settings`, `dsh-client-schema-form`, `schemastery`)
-into local `.pnpm` copies, splitting the cordis module identity and breaking
-`pnpm check` — after any install, re-link them:
-
-```sh
-ln -sfn /opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/{dsh-settings,dsh-client-schema-form,schemastery} node_modules/@deepseek-ai/
-```
-
-`dsh-permission-presets` is a fourth, undeclared type-check link — the same
-extraneous-closure pattern as `cordis`/`dsh-agent` above: `pnpm install`
-never regenerates it (it is not in the dependency tree), but a wiped
-`node_modules` needs it re-created by hand:
-
-```sh
-ln -sfn /opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-permission-presets node_modules/@deepseek-ai/
-```
+`scripts/link-dsh-closure.mjs` (the package's `postinstall`) re-creates every
+`node_modules/@deepseek-ai/*` link to the global dsh closure after **each**
+`pnpm install`/`patch-commit`, and is a no-op without a global dsh install.
+That keeps a single `@deepseek-ai/cordis` module identity in the type graph
+(declaring any of them in `package.json` would make pnpm install a second
+local copy and break the cordis `settings` augmentation). A wiped
+`node_modules` self-heals on the next `pnpm install`.
 
 **pi-tui patch**: this plugin applies a small patch to the pinned
 `@earendil-works/pi-tui` 0.84.2 (`pnpm.patchedDependencies` in
@@ -428,7 +425,7 @@ src/
                     (rgbIsLight luminance)
     index.ts        buildTheme: Editor/Markdown/SelectList/chat roles, POWERLINE
                     segment palette, resolveTheme (env > preference > detect)
-test/*.test.mjs     unit tests, node --test against lib/ (277 across 21 files)
+test/*.test.mjs     unit tests, node --test against lib/ (296 across 24 files)
 ```
 
 ## Changelog
@@ -445,7 +442,7 @@ watch, env pinning) with an app-owned canvas background that recolors the
 whole screen; terminal-following `auto` theme; subagent viewer with live
 rounds/tokens/elapsed; subagent `maxAgents`/`maxRounds` limits; pi-aligned
 keybindings with double-press guards; live todos + subagent progress blocks;
-clean Ctrl+C exit. `pnpm check` clean, 277 unit tests green, e2e run
+clean Ctrl+C exit. `pnpm check` clean, 296 unit tests green, e2e run
 confirmed the settings/credentials files are restored byte-for-byte.
 
 Known limitations (accepted, pi-tui 0.84.2 constraints):
