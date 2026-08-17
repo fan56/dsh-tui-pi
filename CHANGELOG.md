@@ -4,6 +4,45 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Submitted-message history (`↑` / `↓`)** — the chat editor now browses
+  back through the messages you've submitted, shell-style: `↑` recalls the
+  most recent prompt and walks further back, `↓` moves forward again, and
+  past the newest entry it restores your in-progress draft. The history holds
+  up to **500 entries**, dropping the oldest ones beyond that. It survives a
+  theme hot-swap (the editor is rebuilt on switch, and its history — including
+  the mid-browse cursor and pre-browse draft — is reseeded into the
+  replacement). The history is in-memory for the current TUI run: it does
+  **not** survive `/reload` or a restart. Submitted slash commands (`/theme`,
+  `/hotkeys`, …) are recorded too. The browse itself is the pi-tui `Editor`
+  native up/down history path; this work populates it on submit and lifts the
+  base's hard-coded 100-entry cap to 500.
+- **Test suite** grew to **296 unit tests** across **24 files**, with
+  `history.test.mjs` (13 tests: the 500-cap, duplicate dedup, arrow
+  browse/walk, draft restore, copy-on-read `getHistory()`, single-entry and
+  multi-line recall, and mid-browse rebuild draft survival, plus a `FOOTER_HINT`
+  ≤ 103-width guard), `editor-theme.test.mjs` suites, and canvas regression
+  tests.
+
+### Fixed
+
+- **Powerline footer CH segment invisible (white-on-white)** — the app-owned
+  canvas's background re-injection (`paintCanvasRow`) misread the `0` channel
+  of truecolor SGRs (`48;2;0;121;107` cache-teal) as the reset param and
+  painted the canvas over the segment: white background + white text in light
+  themes. The pi-tui patch's `sgrClearsBackground` now treats 3x/4x color-sets
+  (ANSI, truecolor, 256-color) as never clearing the background.
+- **Dark theme leaking light colors** — the chat editor's input rows were
+  unstyled (terminal default foreground), so typed text was black-on-black on
+  the dark canvas. The patched `EditorTheme` gains an optional `textColor`
+  hook that paints input rows with the theme body color (light text on dark);
+  the cursor closes with `ESC[27m` (reverse-off) so the themed foreground
+  survives a mid-text cursor. Agent label dots also get bright dark-theme
+  variants instead of the dim light-theme hexes.
+
 ## [0.2.0] — 2026-08-17
 
 ### Added
