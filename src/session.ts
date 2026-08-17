@@ -16,8 +16,31 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { settingsNamespace, SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { readAppendSystem } from './append-system.ts'
 import type { AgentView } from './dsh-events.ts'
 import { isAgentEnd, isAgentStart, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
+
+/**
+ * Register the APPEND_SYSTEM.md section on ONE agent's scoped context, so the
+ * user's orchestrator identity applies to the TUI's main agent ONLY. A section
+ * registered from the TUI plugin's own (unscoped) context lands in the GLOBAL
+ * prompt layer, which every assembly merges - including every subagent's -
+ * and an "I am an orchestrator, never execute anything yourself" identity
+ * riding on child agents defeats its own purpose. Through the agent's scoped
+ * ctx (`agentCtx.systemPrompt` is caller-bound via cordis's traceable
+ * services) the section lands in that agent's own scope layer, which nothing
+ * else merges: subagent scopes are created without a parent binding, so the
+ * children never see it. Same mechanism dsh-subagent uses for per-child
+ * personas. Disposal is owned by the agent ctx (`ScopedLayers.effect` runs on
+ * `ctx.effect`), so the section dies with the agent.
+ */
+function installAppendSystem(agentCtx: Context): void {
+  agentCtx.systemPrompt.section({
+    name: 'dsh-tui-pi:append-system',
+    order: 200,
+    text: () => readAppendSystem(),
+  })
+}
 
 export interface BridgeCallbacks {
   /** One session-log event for the bridge's session, in log order. */
@@ -363,9 +386,12 @@ export class DshSessionBridge {
       const resumed = await this.ctx.agents.resume({
         resumeSessionId: sessionId,
         agentOptions: this.selection ?? {},
-        // Install the mutable selection so `/model` can live-switch the route.
+        // Install the mutable selection so `/model` can live-switch the route,
+        // and the APPEND_SYSTEM.md section on this agent ONLY (never its
+        // subagents - see installAppendSystem).
         setup: async agentCtx => {
           installModelSelection(agentCtx, this.selectionRef)
+          installAppendSystem(agentCtx)
         },
       })
       this.handle = resumed
@@ -633,9 +659,12 @@ export class DshSessionBridge {
       sessionId: SessionId(crypto.randomUUID()),
       meta: { cwd: process.cwd() },
       agentOptions: this.selection ?? {},
-      // Install the mutable selection so `/model` can live-switch the route.
+      // Install the mutable selection so `/model` can live-switch the route,
+      // and the APPEND_SYSTEM.md section on this agent ONLY (never its
+      // subagents - see installAppendSystem).
       setup: async agentCtx => {
         installModelSelection(agentCtx, this.selectionRef)
+        installAppendSystem(agentCtx)
       },
     })
   }

@@ -18,7 +18,7 @@ import { Loader } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { FooterHint, PowerlineFooter, type FooterDataSource, type FooterHints } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
-import { ensureAppendSystemFile, dshHome, migrateAgentsMdTodoSection, readAppendSystem } from './append-system.ts'
+import { ensureAppendSystemFile, dshHome, migrateAgentsMdTodoSection } from './append-system.ts'
 import { TranscriptRenderer, type PanelHeight } from './messages.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
@@ -67,20 +67,19 @@ const QUIT_CONFIRM_MS = 200
 const STOP_CONFIRM_MS = 200
 
 /** The TUI drives the agent factory and registers slash commands. */
-export const inject = ['agents', 'commands', 'systemPrompt']
+export const inject = ['agents', 'commands']
 
 export function apply(ctx: Context): void {
   let handle: TuiHandle | undefined
   // APPEND_SYSTEM.md (pi's convention; dsh side ~/.dsh/APPEND_SYSTEM.md): a
-  // user-editable file appended to the system prompt of every agent this TUI
-  // creates. The section text provider reads the file at each assembly, so
-  // edits apply to the next request without a restart or watcher. Empty
-  // content contributes nothing.
-  ctx.effect(() => ctx.systemPrompt.section({
-    name: 'dsh-tui-pi:append-system',
-    order: 200,
-    text: () => readAppendSystem(),
-  }), 'dsh-tui-pi: append-system')
+  // user-editable file appended to the system prompt of the MAIN agent this
+  // TUI creates - and to no subagent (an orchestrator identity riding on the
+  // children defeats its own purpose). The section is registered on the
+  // agent's scoped context inside DshSessionBridge's create/resume setup
+  // (see installAppendSystem in session.ts); the text provider reads the
+  // file at each assembly, so edits apply to the next request without a
+  // restart or watcher, and empty content contributes nothing.
+  //
   // The TUI's own todo-lifecycle guidance rides the same file (idempotent
   // marker); a fresh file is seeded with the orchestrator template. The
   // legacy AGENTS.md delivery is migrated out. All best-effort.
