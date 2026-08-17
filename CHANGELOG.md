@@ -4,7 +4,7 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] — 2026-08-17
 
 ### Added
 
@@ -162,6 +162,7 @@ Initial release.
 - Event-driven incremental state with O(1) render — no render-time session-log
   re-scan.
 
+[0.3.0]: https://github.com/fan56/dsh-tui-pi/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/fan56/dsh-tui-pi/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/fan56/dsh-tui-pi/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/fan56/dsh-tui-pi/releases/tag/v0.1.0
