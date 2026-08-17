@@ -12,3 +12,4 @@ node_modules
 
 # --- Session handoff (local only, never published) ---
 HANDOFF.md
+*.tgz
