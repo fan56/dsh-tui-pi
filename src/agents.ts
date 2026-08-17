@@ -442,20 +442,25 @@ export async function openAgentManager(
       const fields = [
         { key: 'maxAgents', value: `${limits.maxAgents} · concurrent live children (0 = unlimited)`, editable: true },
         { key: 'maxRounds', value: `${limits.maxRounds} · completed turns before wrap-up (0 = unlimited)`, editable: true },
+        { key: 'disableSubagent', value: `${limits.disableSubagent ? 'on' : 'off'} · native subagent tool`, editable: true },
       ]
       const content: string[] = [
-        'subagent delegation caps — read live at every spawn / turn decision',
+        'subagent delegation knobs — read live at every spawn / turn decision',
         ...(agents.length === 0
           ? [`no agents in ${dir} yet — drop a markdown file to define one`, ...(broken.length > 0 ? [`${broken.length} broken file(s) ignored`] : [])]
           : []),
       ]
       const panel = new FieldPanel(theme, {
-        title: ansiFg(theme.palette.accent) + BOLD + '⚙ subagent limits' + RESET,
+        title: ansiFg(theme.palette.accent) + BOLD + '⚙ subagent' + RESET,
         content,
         fields,
         status: () => limitsStatus,
-        footer: '↑↓ field · Enter edit (0 = unlimited) · Esc back',
-        onEdit: index => editLimit(index === 0 ? 'maxAgents' : 'maxRounds'),
+        footer: '↑↓ field · Enter edit (0 = unlimited) · d toggle subagent · Esc back',
+        shortcuts: { d: () => void toggleDisableSubagent() },
+        onEdit: index => {
+          if (index === 2) toggleDisableSubagent()
+          else editLimit(index === 0 ? 'maxAgents' : 'maxRounds')
+        },
         // With no agent files the table has nothing to go back to — Esc then
         // closes the whole manager (mirroring the old empty-directory reply).
         onCancel: () => (agents.length === 0 ? closeManager() : showTable()),
@@ -496,6 +501,21 @@ export async function openAgentManager(
         onError: message => { limitsStatus = `✘ ${message}` },
       }, theme)
       host.open(field)
+    }
+
+    /**
+     * Toggle the native `subagent` tool on/off (Enter on the disableSubagent
+     * row, or the `d` shortcut). Flips the live setting — the guard reads it
+     * at the next subagent call, and the tool-hide applies to agents created
+     * afterwards. The status line flashes the committed state.
+     */
+    const toggleDisableSubagent = async (): Promise<void> => {
+      const next = !readSubagentLimits(ctx).disableSubagent
+      const error = await writeSubagentLimit(ctx, 'disableSubagent', next)
+      limitsStatus = error !== undefined
+        ? `✘ ${error}`
+        : `subagent tool ${next ? 'disabled' : 'enabled'} — applies to future subagent spawns`
+      showLimits()
     }
 
     // No agent files? The manager still opens — straight into the limits

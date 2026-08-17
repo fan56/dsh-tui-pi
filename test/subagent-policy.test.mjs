@@ -20,11 +20,11 @@ import {
 
 /**
  * Fake settings provider: one `dsh-tui` section with the given limits. The
- * registeredOnly fence defaults to OFF here so the legacy maxAgents/maxRounds
+ * disableSubagent fence defaults to OFF here so the legacy maxAgents/maxRounds
  * scenarios below exercise the cap in isolation; the fence has its own tests.
  */
 function makeSettings(limits) {
-  return { describe: () => [{ ns: 'dsh-tui', value: { registeredOnly: false, ...limits } }] }
+  return { describe: () => [{ ns: 'dsh-tui', value: { disableSubagent: false, ...limits } }] }
 }
 
 /**
@@ -121,28 +121,28 @@ test('the guard is disabled when maxAgents is 0 and defaults apply without setti
   busy.dispose()
 })
 
-// ------------------------------------------------------- registeredOnly ----
+// ------------------------------------------------------- disableSubagent ----
 
-test('registeredOnly denies every native spawn tool and passes use_agent through', () => {
-  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 4, maxRounds: 50, registeredOnly: true }) })
+test('disableSubagent denies ONLY the plain subagent tool and passes the rest through', () => {
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 4, maxRounds: 50, disableSubagent: true }) })
   const policy = applySubagentPolicy(ctx, makeState({ live: [] }))
 
-  for (const name of ['subagent', 'subagent_fork', 'workflow', 'ralph']) {
-    const reason = captured.guard({ name })
-    assert.equal(typeof reason, 'string', `${name} denied`)
-    assert.ok(reason.includes('use_agent'), `${name} deny reason points at use_agent`)
+  const reason = captured.guard({ name: 'subagent' })
+  assert.equal(typeof reason, 'string', 'subagent denied')
+  assert.ok(reason.includes('use_agent'), 'deny reason points at use_agent')
+  // The fork/workflow/ralph variants and the registry tool are NOT fenced.
+  for (const name of ['subagent_fork', 'workflow', 'ralph', 'use_agent']) {
+    assert.equal(captured.guard({ name }), undefined, `${name}: allowed`)
   }
-  // The registry tool passes the fence (and the cap is not reached here).
-  assert.equal(captured.guard({ name: 'use_agent' }), undefined, 'use_agent: allowed')
   // Non-spawn tools never see the fence.
   assert.equal(captured.guard({ name: 'bash' }), undefined, 'non-spawn tool: allowed')
   policy.dispose()
 })
 
 test('the fence wins over the cap reason, and turns off with the setting', () => {
-  // Both violations at once (over the cap AND a native tool): the fence is
-  // the reported reason - the roster rule is the primary contract.
-  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 1, maxRounds: 50, registeredOnly: true }) })
+  // Both violations at once (over the cap AND the fenced tool): the fence is
+  // the reported reason - the tool rule is the primary contract.
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 1, maxRounds: 50, disableSubagent: true }) })
   const policy = applySubagentPolicy(ctx, makeState({ live: [{ label: 'busy' }] }))
   const reason = captured.guard({ name: 'subagent' })
   assert.ok(reason.includes('use_agent') && !reason.includes('Agent limit reached'), 'fence reason wins')
@@ -150,10 +150,10 @@ test('the fence wins over the cap reason, and turns off with the setting', () =>
   assert.ok(captured.guard({ name: 'use_agent' }).includes('Agent limit reached'), 'use_agent at cap reports the cap')
   policy.dispose()
 
-  // Toggle off: native tools pass to the cap check again.
-  const off = makeCtx({ settings: makeSettings({ maxAgents: 4, maxRounds: 50, registeredOnly: false }) })
+  // Toggle off: subagent passes to the cap check again.
+  const off = makeCtx({ settings: makeSettings({ maxAgents: 4, maxRounds: 50, disableSubagent: false }) })
   const offPolicy = applySubagentPolicy(off.ctx, makeState({ live: [] }))
-  assert.equal(off.captured.guard({ name: 'subagent' }), undefined, 'fence off: native tool allowed under the cap')
+  assert.equal(off.captured.guard({ name: 'subagent' }), undefined, 'fence off: subagent allowed under the cap')
   offPolicy.dispose()
 })
 

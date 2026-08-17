@@ -26,34 +26,33 @@ import type { ThemePreference } from './theme/index.ts'
 /** Settings namespace carrying the persisted dsh-tui preferences. */
 export const THEME_SETTINGS_NAMESPACE: SettingsNamespace = settingsNamespace('dsh-tui')
 
-/** Subagent concurrency/rounds/roster knobs read by the subagent policy. */
+/** Subagent concurrency/rounds/tool knobs read by the subagent policy. */
 export interface SubagentLimits {
   /** Concurrent live children allowed; 0 lifts the cap (the guard stays off). */
   maxAgents: number
   /** Completed turns per child before a summary request is injected; 0 disables. */
   maxRounds: number
   /**
-   * Only registered agents (the dsh-subagent-registry `use_agent` roster,
-   * `~/.dsh/agents/*.md`) may be spawned. The native ad-hoc spawn tools
-   * (`subagent`, `subagent_fork`, `workflow`, `ralph`) are denied for every
-   * agent in the process, so delegation always goes through a registered
-   * definition.
+   * Disable the native `subagent` tool for every agent in the process, so
+   * plain ad-hoc delegation goes through a registered agent definition
+   * (`~/.dsh/agents/*.md` via `use_agent`) instead. Deliberately narrow:
+   * `subagent_fork`, `workflow` and `ralph` stay available (they are not the
+   * plain one-shot spawn the TUI's user wants fenced off).
    */
-  registeredOnly: boolean
+  disableSubagent: boolean
 }
 
 /**
  * Default subagent limits, applied whenever the settings service, namespace,
  * or a field cannot be read. 4 concurrent children and 50 rounds per child are
- * the documented out-of-the-box behavior; registeredOnly is on by default —
- * this TUI's user runs the registry plugin and wants ad-hoc spawns fenced off
- * (toggle it in /settings → dsh-tui when a workflow/ralph fan-out is
- * genuinely needed).
+ * the documented out-of-the-box behavior; the native `subagent` tool is
+ * disabled by default — the TUI's user delegates through registered agents
+ * (toggle it in /agents → l limits when the plain tool is needed again).
  */
 export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({
   maxAgents: 4,
   maxRounds: 50,
-  registeredOnly: true,
+  disableSubagent: true,
 })
 
 /** Schema of the `dsh-tui` settings section. */
@@ -80,14 +79,13 @@ const THEME_SETTINGS_SCHEMA = z.object({
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxRounds)
     .description('Max rounds per subagent before the TUI sends a summary request (0 = unlimited)'),
-  registeredOnly: z
+  disableSubagent: z
     .boolean()
-    .default(DEFAULT_SUBAGENT_LIMITS.registeredOnly)
+    .default(DEFAULT_SUBAGENT_LIMITS.disableSubagent)
     .description(
-      'Only registered agents (~/.dsh/agents/*.md via use_agent) may spawn - '
-      + 'the native subagent/subagent_fork/workflow/ralph tools are denied '
-      + 'and hidden from the main agent (hide is per-session; the deny applies '
-      + 'immediately)',
+      'Disable the native subagent tool (delegation goes through registered '
+      + 'agents, ~/.dsh/agents/*.md via use_agent); subagent_fork/workflow/'
+      + 'ralph stay available',
     ),
   footerHints: z
     .object({
@@ -108,14 +106,14 @@ const THEME_SETTINGS_ENTRY: {
   panelHeight: PanelHeight
   maxAgents: number
   maxRounds: number
-  registeredOnly: boolean
+  disableSubagent: boolean
   footerHints: FooterHints
 } = {
   theme: 'auto',
   panelHeight: DEFAULT_PANEL_HEIGHT,
   maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,
   maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
-  registeredOnly: DEFAULT_SUBAGENT_LIMITS.registeredOnly,
+  disableSubagent: DEFAULT_SUBAGENT_LIMITS.disableSubagent,
   footerHints: { ...DEFAULT_FOOTER_HINTS },
 }
 
@@ -330,8 +328,8 @@ export function currentThemePreference(ctx: Context): ThemePreference {
  */
 async function writeDshTuiPreference(
   ctx: Context,
-  key: 'theme' | 'panelHeight' | 'maxAgents' | 'maxRounds',
-  value: string | number,
+  key: 'theme' | 'panelHeight' | 'maxAgents' | 'maxRounds' | 'disableSubagent',
+  value: string | number | boolean,
 ): Promise<string | undefined> {
   const settings = ctx.get('settings') as SettingsProvider | undefined
   if (settings === undefined) return 'Settings service is not available.'
@@ -377,36 +375,36 @@ export function readSubagentLimits(ctx: Context): SubagentLimits {
   if (settings === undefined) return { ...DEFAULT_SUBAGENT_LIMITS }
   // The descriptor's `value` is the whole resolved section
   // (`{ theme: ..., panelHeight: ..., maxAgents: ..., maxRounds: ...,
-  // registeredOnly: ... }`) — narrow the unknown to the observed fields.
+  // disableSubagent: ... }`) — narrow the unknown to the observed fields.
   const section = settings
     .describe()
     .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { maxAgents?: unknown; maxRounds?: unknown; registeredOnly?: unknown }
+    | { maxAgents?: unknown; maxRounds?: unknown; disableSubagent?: unknown }
     | undefined
   const natural = (value: unknown, fallback: number): number =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
   return {
     maxAgents: natural(section?.maxAgents, DEFAULT_SUBAGENT_LIMITS.maxAgents),
     maxRounds: natural(section?.maxRounds, DEFAULT_SUBAGENT_LIMITS.maxRounds),
-    registeredOnly: typeof section?.registeredOnly === 'boolean'
-      ? section.registeredOnly
-      : DEFAULT_SUBAGENT_LIMITS.registeredOnly,
+    disableSubagent: typeof section?.disableSubagent === 'boolean'
+      ? section.disableSubagent
+      : DEFAULT_SUBAGENT_LIMITS.disableSubagent,
   }
 }
 
 /**
- * Persist one subagent limit (maxAgents or maxRounds) to the `dsh-tui`
- * settings namespace. The namespace is `applies: 'live'`, so the commit
- * hot-applies without a restart — the policy reads `readSubagentLimits` at
- * the next decision point. Never throws: a deployment without the settings
- * provider, or an unregistered namespace, surfaces a failure message for the
- * caller.
+ * Persist one subagent policy knob (maxAgents, maxRounds, or disableSubagent)
+ * to the `dsh-tui` settings namespace. The namespace is `applies: 'live'`, so
+ * the commit hot-applies without a restart — the policy reads
+ * `readSubagentLimits` at the next decision point. Never throws: a deployment
+ * without the settings provider, or an unregistered namespace, surfaces a
+ * failure message for the caller.
  * @returns undefined on success, the failure message otherwise.
  */
 export async function writeSubagentLimit(
   ctx: Context,
-  key: 'maxAgents' | 'maxRounds',
-  value: number,
+  key: 'maxAgents' | 'maxRounds' | 'disableSubagent',
+  value: number | boolean,
 ): Promise<string | undefined> {
   return writeDshTuiPreference(ctx, key, value)
 }

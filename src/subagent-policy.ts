@@ -11,11 +11,11 @@
  *   workflow/ralph fan-out bypasses the tool pipeline (its worker thread
  *   spawns through the subagent provider directly), so a `subagent/start`
  *   listener prunes any newcomer that slips past the guard.
- * - `registeredOnly` fences delegation to REGISTERED agents: the native
- *   ad-hoc spawn tools (subagent/subagent_fork/workflow/ralph) are denied
- *   for every agent, so children can only be minted through a registered
- *   definition (`~/.dsh/agents/*.md` via the registry's `use_agent`).
- *   Already-running fan-outs started before the toggle are left to finish.
+ * - `disableSubagent` disables the plain native `subagent` tool: its calls
+ *   are denied for every agent (and it is hidden from the main agent's
+ *   catalog), so delegation goes through registered agent definitions
+ *   (`~/.dsh/agents/*.md` via the registry's `use_agent`). `subagent_fork`,
+ *   `workflow` and `ralph` stay available.
  * - `maxRounds` caps a child's completed turns: on the bridge's `onTurnCount`
  *   the policy injects one plugin-sourced user message telling the child to
  *   wrap up. Queued as the child's next turn, it never interrupts work
@@ -41,34 +41,30 @@ export const SPAWN_TOOLS: readonly string[] = [
 ]
 
 /**
- * The NATIVE ad-hoc spawn tools - everything in SPAWN_TOOLS except the
- * registry's `use_agent`. While `registeredOnly` is on, the guard denies
- * these for every agent in the process, so delegation can only go through a
- * registered agent definition (`~/.dsh/agents/*.md` via `use_agent`). The
- * deny-list (not an allow-list of one) is deliberate: it keeps working when
- * the registry's tool is renamed (`toolName` is configurable).
+ * The native plain one-shot spawn tool - the only spawn tool `disableSubagent`
+ * fences. Deliberately a single name: the TUI's user delegates through
+ * registered agents (`~/.dsh/agents/*.md` via `use_agent`) and wants ONLY the
+ * plain `subagent` tool off; `subagent_fork` (fork a running session),
+ * `workflow` and `ralph` (fan-out loops) stay available.
  */
 export const NATIVE_SPAWN_TOOLS: readonly string[] = [
   'subagent',
-  'subagent_fork',
-  'workflow',
-  'ralph',
 ]
 
 /**
- * Hide the native ad-hoc spawn tools from ONE agent's tool catalog
- * (best-effort). The registeredOnly guard DENIES calls at execution; this
- * additionally makes the tools INVISIBLE to the model, so the agent sees a
- * single spawn entry (`use_agent`) and never attempts a fenced tool.
+ * Hide the plain `subagent` tool from ONE agent's tool catalog (best-effort).
+ * The disableSubagent guard DENIES calls at execution; this additionally
+ * makes the tool INVISIBLE to the model, so the agent sees the registered
+ * `use_agent` as its delegation entry and never attempts the fenced tool.
  *
  * `tools.restrict` requires a scoped context (it throws on a plain plugin
  * ctx) - the agent setup passes its scoped `agentCtx`, exactly the surface
  * dsh-subagent uses for `deep: 0` leaves. Best-effort by design: an absent
- * tools service, or a restrict failure (a named tool not loaded in this
+ * tools service, or a restrict failure (an unknown tool name in this
  * profile, a transient registration race), degrades silently - the live
- * registeredOnly guard remains the enforcement backstop, so the fence is
+ * disableSubagent guard remains the enforcement backstop, so the fence is
  * NEVER weaker for hiding. Restriction is a creation-time snapshot: a
- * registeredOnly toggle takes effect for agents created afterwards (the
+ * disableSubagent toggle takes effect for agents created afterwards (the
  * guard, being live, applies immediately in both directions).
  */
 export function installSpawnToolFence(agentCtx: Context): void {
@@ -78,7 +74,7 @@ export function installSpawnToolFence(agentCtx: Context): void {
     tools.restrict({ deny: [...NATIVE_SPAWN_TOOLS] })
   } catch {
     // Cosmetic hide only - never fail the agent setup over it. The guard
-    // below still denies the native spawn tools at execution time.
+    // below still denies the subagent tool at execution time.
   }
 }
 
@@ -137,16 +133,16 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
   // counts the newcomers — the subagent/start backstop below prunes the
   // overshoot, and the next spawn's guard reads the caught-up count.
   //
-  // registeredOnly fence: the native ad-hoc spawn tools are denied outright
-  // (checked before the cap — a roster violation is the reason even when the
-  // cap would also deny). `use_agent` and every non-spawn tool pass through
-  // to the cap check below.
+  // disableSubagent fence: the plain native `subagent` tool is denied
+  // outright (checked before the cap - a tool violation is the reason even
+  // when the cap would also deny). `use_agent`, the fork/workflow/ralph
+  // variants and every non-spawn tool pass through to the cap check below.
   const tools = ctx.get('tools') as ToolsService | undefined
   if (tools?.guard !== undefined) {
     disposers.push(tools.guard((exec) => {
       if (!SPAWN_TOOLS.includes(exec.name)) return undefined
-      if (readSubagentLimits(ctx).registeredOnly && NATIVE_SPAWN_TOOLS.includes(exec.name)) {
-        return `Tool "${exec.name}" is disabled here: only registered agents are callable. `
+      if (readSubagentLimits(ctx).disableSubagent && NATIVE_SPAWN_TOOLS.includes(exec.name)) {
+        return `Tool "subagent" is disabled here - delegation goes through registered agents. `
           + 'Dispatch the work through the use_agent tool with one of the registered agent names instead.'
       }
       const maxAgents = readSubagentLimits(ctx).maxAgents
