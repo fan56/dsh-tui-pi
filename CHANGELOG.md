@@ -20,7 +20,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `/hotkeys`, …) are recorded too. The browse itself is the pi-tui `Editor`
   native up/down history path; this work populates it on submit and lifts the
   base's hard-coded 100-entry cap to 500.
-- **Test suite** grew to **298 unit tests** across **24 files**, with
+- **Test suite** grew to **297 unit tests** across **24 files**, with
   `history.test.mjs` (13 tests: the 500-cap, duplicate dedup, arrow
   browse/walk, draft restore, copy-on-read `getHistory()`, single-entry and
   multi-line recall, and mid-browse rebuild draft survival, plus a `FOOTER_HINT`

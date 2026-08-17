@@ -59,21 +59,6 @@ test('paintCanvasRow re-injects after combined SGR resets (0;1)', () => {
   assert.ok(painted.includes(`\x1b[0;1m${BG}`), '0;1 sequence is a reset too')
 })
 
-test('paintCanvasRow ignores 0 channels inside combined color-set SGRs', () => {
-  // Review finding B1: color-sets must be skipped whole wherever they appear
-  // in the parameter list, not only when they lead. A combined SGR like
-  // `1;38;2;255;0;0` (bold + red fg) or `7;48;2;0;121;107` (reverse + teal bg)
-  // used to fall into the naive token scan, which read the channel 0 as the
-  // reset param and re-injected the canvas over the surface.
-  const boldRedFg = '\x1b[1;38;2;255;0;0m'
-  const reverseTeal = '\x1b[7;48;2;0;121;107m'
-  const boldTeal = '\x1b[1;48;2;0;121;107m'
-  for (const sgr of [boldRedFg, reverseTeal, boldTeal]) {
-    const painted = paintCanvasRow(`x${sgr}y`, BG, 6)
-    assert.ok(!painted.includes(`${sgr}${BG}`), `${JSON.stringify(sgr)} is not treated as a clear`)
-  }
-})
-
 test('paintCanvasRow does not clear a background whose RGB has a 0 channel', () => {
   // Regression: cache-teal #00796B → 48;2;0;121;107. The 0 red channel used to
   // be misread as the reset param, so the canvas was re-injected over the

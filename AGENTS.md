@@ -93,10 +93,10 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **298 tests** across 24 files (theme-switch 27 +
+- `pnpm test` must stay green: **297 tests** across 24 files (theme-switch 27 +
   keymap 21 + settings 19 + welcome 18 + theme 18 + provider-catalog 17 +
   hotkeys 16 + live 16 + messages 14 + agent-manager 13 + frame 11 +
-  theme-canvas 13 + subagent-policy 10 + subagent-viewer 9 + panels 9 +
+  theme-canvas 12 + subagent-policy 10 + subagent-viewer 9 + panels 9 +
   permission 9 + sessions 8 + history 13 + quotes 7 + text 7 +
   theme-settings 7 + editor-theme 4 + append-system 6 + reload 6). New pure
   logic → new test file under `test/` against built `lib/` (`node --test`,

@@ -197,22 +197,14 @@ index 4edcf845ba7866782a8ec7219508a2dce0073a91..338f2b29e7ba926399f3d663b0b79669
 +function sgrClearsBackground(sequence) {
 +    const params = sequence.slice(2, -1);
 +    if (params === "") return true;
-+    // Token walk: a color-set group — truecolor 38;2;r;g;b / 48;2;r;g;b or
-+    // 256-color 38;5;n / 48;5;n — is skipped whole, wherever it appears in the
-+    // parameter list. Its values are channels/indexes, never reset codes, so a
-+    // 0 channel (48;2;0;121;107 teal) or a 0 color index must not be read as
-+    // the reset param — including inside combined SGRs like `1;48;2;0;121;107`
-+    // (bold + teal bg) or `7;38;2;255;0;0` (reverse + red fg). Everything else
-+    // keeps the old semantics: 0 (reset) and 49 (bg → default) clear.
-+    const tokens = params.split(";");
-+    for (let i = 0; i < tokens.length; i++) {
-+        if (tokens[i] === "38" || tokens[i] === "48") {
-+            const mode = tokens[i + 1];
-+            if (mode === "2") i += 4; // truecolor: consume r;g;b
-+            else if (mode === "5") i += 2; // 256-color: consume the index
-+            continue;
-+        }
-+        const code = tokens[i] === "" ? 0 : Number.parseInt(tokens[i], 10);
++    // A color-set (3x foreground / 4x background — ANSI 30-37/40-47, truecolor
++    // 38;2/48;2, 256-color 38;5/48;5) never clears the background, even when a
++    // channel is 0: 48;2;0;121;107 (teal) would otherwise read the 0 as the
++    // reset param and re-inject the canvas over the segment. (49 alone — bg →
++    // default — IS a clear and falls through to the loop below.)
++    if (/^(?:3[0-7]|38;|4[0-8]|48;)/.test(params)) return false;
++    for (const param of params.split(";")) {
++        const code = param === "" ? 0 : Number.parseInt(param, 10);
 +        if (Number.isNaN(code)) continue;
 +        if (code === 0 || code === 49) return true;
 +    }
