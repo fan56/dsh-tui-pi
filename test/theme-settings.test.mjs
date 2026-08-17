@@ -15,6 +15,7 @@ import { Context } from '@deepseek-ai/cordis'
 import {
   DEFAULT_SUBAGENT_LIMITS,
   THEME_SETTINGS_NAMESPACE,
+  readFooterHintsPreference,
   readPanelHeightPreference,
   readSubagentLimits,
   readThemePreference,
@@ -22,6 +23,7 @@ import {
   writeSubagentLimit,
   writeThemePreference,
 } from '../lib/theme-settings.js'
+import { DEFAULT_FOOTER_HINTS } from '../lib/footer.js'
 
 /**
  * Minimal fake of the settings-provider surface theme-settings.ts touches:
@@ -237,4 +239,37 @@ test('subagent limits fall back to defaults when the service or a field is missi
   assert.deepEqual(readSubagentLimits(ctx), defaults, 'non-natural fields narrow to the defaults')
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['maxAgents'] }])
   assert.deepEqual(readSubagentLimits(ctx), defaults, 'missing field falls back per-key')
+})
+
+test('committed footerHints changes flow register → watch → sink with per-key narrowing', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  const sink = []
+  registerThemeSettings(ctx, (_pref, _height, hints) => { sink.push(hints) })
+  await settle()
+
+  // Base entry seeds every hint on.
+  assert.deepEqual(await readFooterHintsPreference(ctx), { ...DEFAULT_FOOTER_HINTS }, 'base entry = all on')
+
+  // A committed footerHints change (a /settings toggle → mutate → watch)
+  // reaches the sink — the applyFooterHintsRef chain — with the narrowed map.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [
+    { op: 'set', path: ['footerHints'], value: { ...DEFAULT_FOOTER_HINTS, quit: false, history: false } },
+  ])
+  await settle()
+  assert.deepEqual(sink, [{ ...DEFAULT_FOOTER_HINTS, quit: false, history: false }], 'watch forwarded the hints')
+
+  // Partial / malformed sections narrow per-key back to the defaults.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['footerHints'], value: { send: false } }])
+  await settle()
+  assert.deepEqual(sink[1], { ...DEFAULT_FOOTER_HINTS, send: false }, 'missing keys default on, send off')
+
+  // Unset → the whole section is missing → all defaults.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['footerHints'] }])
+  await settle()
+  assert.deepEqual(sink[2], { ...DEFAULT_FOOTER_HINTS }, 'missing footerHints key narrows to all-on')
+
+  // The live value is readable back through the startup reader.
+  assert.deepEqual(await readFooterHintsPreference(ctx), { ...DEFAULT_FOOTER_HINTS }, 'live value read back')
 })

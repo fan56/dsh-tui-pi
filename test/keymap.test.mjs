@@ -10,11 +10,23 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DOUBLE_PRESS_MS, MIN_DOUBLE_PRESS_GAP_MS, resolveKeyAction } from '../lib/keymap.js'
+import {
+  DOUBLE_PRESS_MS,
+  MIN_DOUBLE_PRESS_GAP_MS,
+  OVERLAY_ESC_GUARD_MS,
+  QUIT_MIN_GAP_MS,
+  resolveKeyAction,
+} from '../lib/keymap.js'
 
 const ESC = '\x1b'
 const CTRL_C = '\x03'
 const CTRL_D = '\x04'
+// Kitty-protocol sequences (terminals reporting event types, e.g. Ghostty /
+// cmux / kitty / iTerm2): press, auto-repeat (flag 2), release (flag 3).
+const KITTY_CTRL_C_PRESS = '\x1b[99;5u'
+const KITTY_CTRL_C_REPEAT = '\x1b[99;5:2u'
+const KITTY_CTRL_C_RELEASE = '\x1b[99;5:3u'
+const KITTY_ESC_RELEASE = '\x1b[27;1:3u'
 
 function state(overrides = {}) {
   return {
@@ -26,6 +38,7 @@ function state(overrides = {}) {
     lastEscPress: 0,
     lastRunningEscPress: 0,
     lastCtrlCPress: 0,
+    lastOverlayEscPress: 0,
     ...overrides,
   }
 }
@@ -47,10 +60,10 @@ test('Esc while running: first press arms the stop window, second within it stop
 
 test('Esc with a popup open is left to the popup (no interception) — the subagent viewer closes, the task is untouched', () => {
   // Exactly the reported flow: Ctrl+G viewer open while the parent runs and
-  // the editor holds text — Esc must resolve to `overlay` (the viewer closes
-  // itself) and NEVER to interrupt-cancel/arm-stop.
+  // the editor holds text — Esc must resolve to `overlay-esc` (the viewer
+  // closes itself) and NEVER to interrupt-cancel/arm-stop.
   const action = resolveKeyAction(ESC, state({ overlayOpen: true, running: true, editorHasText: true }), 1000)
-  assert.equal(action.kind, 'overlay')
+  assert.equal(action.kind, 'overlay-esc')
   assert.equal(action.consumes, false)
   assert.notEqual(action.kind, 'interrupt-cancel')
   assert.notEqual(action.kind, 'interrupt-arm-stop')
@@ -210,8 +223,9 @@ test('double-press window constant is 500ms (pi app.clear)', () => {
 test('held-key auto-repeat never quits: repeat gaps under the floor are swallowed', () => {
   // A held Ctrl+C re-sends every ~30-50ms after the OS repeat delay. The
   // first repeat (here +400ms, inside the 500ms window) used to resolve as
-  // ctrl-c-quit — a single press-and-hold quit the TUI. Now anything closer
-  // than MIN_DOUBLE_PRESS_GAP_MS to the last press is inert key-repeat.
+  // ctrl-c-quit - a single press-and-hold quit the TUI. Now the gap between
+  // CONSECUTIVE arrivals must reach QUIT_MIN_GAP_MS before the second counts
+  // as a deliberate press.
   // Idle editor path:
   const idle1 = resolveKeyAction(CTRL_C, state({ editorHasText: false }), 1000)
   assert.equal(idle1.kind, 'ctrl-c-clear')
@@ -224,17 +238,85 @@ test('held-key auto-repeat never quits: repeat gaps under the floor are swallowe
   assert.equal(running1.kind, 'ctrl-c-cancel')
   const runningRepeat = resolveKeyAction(CTRL_C, state({ running: true, lastCtrlCPress: 2000 }), 2045)
   assert.equal(runningRepeat.kind, 'key-repeat')
-  // The repeat does not advance the window: a press 100ms after the ORIGINAL
-  // press (not after the repeat) is still a deliberate double press.
-  const deliberate = resolveKeyAction(CTRL_C, state({ lastCtrlCPress: 2000 }), 2100)
+  // A slow repeat rate (10/s = 100ms gaps) still never reaches the floor -
+  // the old 80ms floor let TWO such repeats read as a double quit.
+  const slowRepeat = resolveKeyAction(CTRL_C, state({ running: true, lastCtrlCPress: 2000 }), 2100)
+  assert.equal(slowRepeat.kind, 'key-repeat')
+  // A human-paced second press (>= QUIT_MIN_GAP_MS, <= DOUBLE_PRESS_MS) quits.
+  const deliberate = resolveKeyAction(CTRL_C, state({ lastCtrlCPress: 2000 }), 2200)
   assert.equal(deliberate.kind, 'ctrl-c-quit')
 })
 
-test('repeat floor boundary: exactly MIN_DOUBLE_PRESS_GAP_MS is a press, under it is a repeat', () => {
-  const atFloor = resolveKeyAction(CTRL_C, state({ lastCtrlCPress: 1000 }), 1000 + MIN_DOUBLE_PRESS_GAP_MS)
+test('quit gap boundary: exactly QUIT_MIN_GAP_MS is a deliberate press, under it is a repeat', () => {
+  const atFloor = resolveKeyAction(CTRL_C, state({ lastCtrlCPress: 1000 }), 1000 + QUIT_MIN_GAP_MS)
   assert.equal(atFloor.kind, 'ctrl-c-quit', 'gap == floor counts as a deliberate press')
-  const underFloor = resolveKeyAction(CTRL_C, state({ lastCtrlCPress: 1000 }), 1000 + MIN_DOUBLE_PRESS_GAP_MS - 1)
+  const underFloor = resolveKeyAction(CTRL_C, state({ lastCtrlCPress: 1000 }), 1000 + QUIT_MIN_GAP_MS - 1)
   assert.equal(underFloor.kind, 'key-repeat')
+})
+
+// ---------------------------------------------- kitty protocol key events ----
+
+test('kitty key-release events are swallowed - a slow key release is never a second press', () => {
+  // The reported bug: one physical Ctrl+C press quits when the user releases
+  // the key slowly. Terminals reporting event types send press + release,
+  // and matchesKey matches BOTH - without the filter the release landed
+  // 150-500ms after the press, right inside the double-press window.
+  for (const data of [KITTY_CTRL_C_RELEASE, KITTY_ESC_RELEASE]) {
+    const action = resolveKeyAction(data, state({ running: true, lastCtrlCPress: 1000, lastEscPress: 1000, lastRunningEscPress: 1000 }), 1300)
+    assert.equal(action.kind, 'key-release', JSON.stringify(data))
+    assert.equal(action.consumes, true)
+  }
+})
+
+test('kitty press events still resolve like legacy presses', () => {
+  const press = resolveKeyAction(KITTY_CTRL_C_PRESS, state(), 1000)
+  assert.equal(press.kind, 'ctrl-c-clear')
+})
+
+test('kitty auto-repeat events resolve to key-repeat regardless of the arrival gap', () => {
+  // Flag-2 repeats are the terminal TELLING us the key is held - no gap
+  // heuristic needed. Even 400ms after the press (a slow repeat-rate setup)
+  // the flagged repeat must not complete the double press.
+  const repeat = resolveKeyAction(KITTY_CTRL_C_REPEAT, state({ lastCtrlCPress: 1000 }), 1400)
+  assert.equal(repeat.kind, 'key-repeat')
+  assert.equal(repeat.key, 'ctrl-c')
+  assert.equal(repeat.consumes, true)
+})
+
+// ------------------------------------------------ post-popup Esc guard ----
+
+test('the trailing Esc of a panel-close double-press is swallowed, never a stop arm', () => {
+  // The reported flow: Esc closes the subagent detail panel, the user's
+  // habitual second Esc (within the guard window) used to arm the running
+  // stop. The popup-owned press arms the guard; the trailing press resolves
+  // to esc-after-overlay (inert) no matter whether the agent runs.
+  const running = resolveKeyAction(
+    ESC, state({ running: true, lastOverlayEscPress: 1000 }), 1200,
+  )
+  assert.equal(running.kind, 'esc-after-overlay')
+  assert.equal(running.consumes, true)
+  const idle = resolveKeyAction(
+    ESC, state({ lastOverlayEscPress: 1000 }), 1200,
+  )
+  assert.equal(idle.kind, 'esc-after-overlay')
+  // Past the guard window the Esc chain runs normally again.
+  const after = resolveKeyAction(
+    ESC, state({ running: true, lastOverlayEscPress: 1000 }), 1000 + OVERLAY_ESC_GUARD_MS + 1,
+  )
+  assert.equal(after.kind, 'interrupt-arm-stop')
+  // At the boundary exactly, the guard still holds.
+  const atBoundary = resolveKeyAction(
+    ESC, state({ running: true, lastOverlayEscPress: 1000 }), 1000 + OVERLAY_ESC_GUARD_MS,
+  )
+  assert.equal(atBoundary.kind, 'esc-after-overlay')
+})
+
+test('guard window constant is 300ms (a panel-close double-press, not a task stop)', () => {
+  assert.equal(OVERLAY_ESC_GUARD_MS, 300)
+})
+
+test('quit minimum gap constant is 150ms (above repeat rates, under human double-presses)', () => {
+  assert.equal(QUIT_MIN_GAP_MS, 150)
 })
 
 test('held Esc does not fire the empty-editor double-Esc action', () => {

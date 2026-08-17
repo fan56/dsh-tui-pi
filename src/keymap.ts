@@ -31,12 +31,19 @@
  *                                     turn settles, and vice versa.
  *
  * Ctrl+C chain (dsh convention, windowed): first press cancels a running
- * turn — or clears the editor while idle — and a second press within
- * `DOUBLE_PRESS_MS` quits. This keeps dsh's "first cancels / second quits"
- * while requiring a deliberate double-press before an idle exit. Held-key
- * auto-repeat never counts: repeats inside `MIN_DOUBLE_PRESS_GAP_MS` resolve
- * to `key-repeat` (consumed, inert — and the executor aborts a pending quit
- * confirmation on one, since a repeat betrays a held key; see index.ts).
+ * turn - or clears the editor while idle - and a second press within
+ * `DOUBLE_PRESS_MS` AND at least `QUIT_MIN_GAP_MS` after the previous arrival
+ * quits (the deliberate-press delay). This keeps dsh's "first cancels /
+ * second quits" while filtering held-key auto-repeat two ways: kitty-protocol
+ * repeats arrive explicitly flagged (`:2`) and resolve to `key-repeat` outright,
+ * and on terminals without event types the gap between consecutive arrivals
+ * (the ctrl+c clock advances on every arrival) stays under the floor for
+ * every realistic repeat rate. The executor additionally confirms a quit for
+ * QUIT_CONFIRM_MS and aborts on a follow-up repeat (see index.ts).
+ *
+ * Key-release events (kitty protocol flag 3) are matched by `matchesKey` like
+ * presses; they are swallowed at the top of `resolveKeyAction` so a slow key
+ * release can never masquerade as a fast second press.
  *
  * Ctrl+D chain (pi `app.exit`): only quits on an EMPTY editor; with text it
  * is left alone so the pi-tui Editor's existing `tui.editor.deleteCharForward`
@@ -52,18 +59,35 @@
  * Same overlay-yields-first rule as the other app keys.
  */
 
-import { matchesKey, type KeyId } from '@earendil-works/pi-tui'
+import { isKeyRelease, isKeyRepeat, matchesKey, type KeyId } from '@earendil-works/pi-tui'
 
 /** Double-press window (ms) for ctrl+c quit and empty-editor double-Esc. */
 export const DOUBLE_PRESS_MS = 500
 
 /**
+ * Window (ms) after an Esc was handed to a popup during which another Esc is
+ * still considered aimed at the (just-closed) popup - swallowed before the
+ * Esc chain runs. Users routinely double-press Esc to dismiss a panel; the
+ * second press must not arm the running-stop or the /session double.
+ */
+export const OVERLAY_ESC_GUARD_MS = 300
+
+/**
+ * Minimum gap (ms) between two ctrl+c arrivals for the second to count as a
+ * deliberate quit double-press (the user-requested delay). The ctrl+c clock
+ * advances on EVERY arrival (press or repeat), so the gap measures
+ * consecutive key events: a held key auto-repeats every ~30-100ms (slower
+ * repeat-rate settings sit under this floor), which can never complete the
+ * double. Human double-presses land above it.
+ */
+export const QUIT_MIN_GAP_MS = 150
+
+/**
  * Minimum gap (ms) between two presses of the same key for the second to
  * count as a deliberate press rather than terminal auto-repeat. A held key is
  * re-sent every ~30-50ms after the OS repeat delay (183ms-2s) and terminals
- * report no key-up, so gap alone is the discriminator: anything closer than
- * this floor is auto-repeat (see `key-repeat`). Human double-presses are
- * rarely faster than ~100ms; common repeat rates (20-33/s) sit well under it.
+ * report no key-up, so gap alone is the discriminator on non-kitty terminals:
+ * anything closer than this floor is auto-repeat (see `key-repeat`).
  */
 export const MIN_DOUBLE_PRESS_GAP_MS = 80
 
@@ -111,8 +135,14 @@ export interface KeyPressState {
    *  running-stop window (branch 3 above); 0 = none. Own clock: independent
    *  of `lastEscPress` so the two Esc windows never bleed into each other. */
   lastRunningEscPress: number
-  /** Timestamp (ms) of the last handled ctrl+c press; 0 = none. */
+  /** Timestamp (ms) of the last ctrl+c arrival (press OR repeat); 0 = none. */
   lastCtrlCPress: number
+  /**
+   * Timestamp (ms) of the last escape press handed to a popup (`overlay-esc`);
+   * 0 = none. Arms the `OVERLAY_ESC_GUARD_MS` window that swallows the
+   * trailing Esc of a panel-close double-press.
+   */
+  lastOverlayEscPress: number
 }
 
 /**
@@ -125,8 +155,8 @@ export type KeyAction =
   | { kind: 'overlay'; consumes: false }             // popup owns the key
   | { kind: 'autocomplete-close'; consumes: false }  // editor closes its list
   | { kind: 'noop'; consumes: false }                // nothing to do
-  | { kind: 'interrupt-arm-stop'; consumes: true }   // 1st Esc while running — arms the stop double-press
-  | { kind: 'interrupt-cancel'; consumes: true }     // 2nd Esc while running — cancels the task
+  | { kind: 'interrupt-arm-stop'; consumes: true }   // 1st Esc while running - arms the stop double-press
+  | { kind: 'interrupt-cancel'; consumes: true }     // 2nd Esc while running - cancels the task
   | { kind: 'interrupt-arm'; consumes: true }        // 1st Esc, empty editor
   | { kind: 'interrupt-double'; consumes: true }     // 2nd Esc within window
   | { kind: 'ctrl-c-cancel'; consumes: true }        // 1st Ctrl+C while running
@@ -136,11 +166,34 @@ export type KeyAction =
   | { kind: 'model-picker'; consumes: true }         // Ctrl+L opens the picker
   | { kind: 'subagent-viewer'; consumes: true }      // Ctrl+G while subagents run
   /**
-   * Auto-repeat of a windowed key (Ctrl+C / armed Esc) — the key is being
-   * held. Consumed so the editor never sees it, but no action fires and the
-   * double-press clock does NOT advance (a repeat must never arm or complete
-   * a double press). The executor can use the `key` to cancel a pending
-   * quit confirmation (a repeat betrays a held key).
+   * Esc handed to an open popup - the popup closes itself with it (the popup
+   * branch of the Esc chain). Not consumed (the focused popup sees the key);
+   * tui.ts arms the post-popup guard window from it.
+   */
+  | { kind: 'overlay-esc'; consumes: false }
+  /**
+   * Esc arriving inside the post-popup guard window - the trailing press of a
+   * panel-close double-press. Consumed and inert: it must never arm the
+   * running-stop or the idle /session double.
+   */
+  | { kind: 'esc-after-overlay'; consumes: true }
+  /**
+   * A kitty-protocol key-release event (flag 3) for one of the app keys.
+   * Terminals that report event types send one per physical key-up, and
+   * `matchesKey` matches them like presses - without this filter a slow key
+   * release lands inside the double-press window and reads as a fast second
+   * press (the "one Ctrl+C press quits" bug on kitty/Ghostty/cmux).
+   * Consumed and inert.
+   */
+  | { kind: 'key-release'; consumes: true }
+  /**
+   * Auto-repeat of a windowed key (Ctrl+C / armed Esc) - the key is being
+   * held. Either explicitly flagged by the kitty protocol (`:2`) or deduced
+   * from the arrival gap on terminals without event types. Consumed so the
+   * editor never sees it, but no action fires and the Esc double-press clocks
+   * do NOT advance (a repeat must never arm or complete an Esc double press).
+   * The executor can use the `key` to cancel a pending quit confirmation (a
+   * repeat betrays a held key).
    */
   | { kind: 'key-repeat'; key: 'ctrl-c' | 'escape'; consumes: true }
 
@@ -150,8 +203,13 @@ function isDoublePress(lastPress: number, now: number): boolean {
 }
 
 /** True when this press is auto-repeat of a held key (gap under the floor). */
-function isKeyRepeat(lastPress: number, now: number): boolean {
+function isGapRepeat(lastPress: number, now: number): boolean {
   return lastPress > 0 && now - lastPress < MIN_DOUBLE_PRESS_GAP_MS
+}
+
+/** True when `now` falls inside the post-popup Esc guard window. */
+function insideOverlayEscGuard(lastOverlayEscPress: number, now: number): boolean {
+  return lastOverlayEscPress > 0 && now - lastOverlayEscPress <= OVERLAY_ESC_GUARD_MS
 }
 
 /** The Esc chain — pi app.interrupt, popup and autocomplete first. */
@@ -159,15 +217,21 @@ function resolveEscape(state: KeyPressState, now: number): KeyAction {
   // 1. An open overlay owns Esc: the popup (subagent viewer, pickers,
   //    dialogs) closes itself and the running task is NEVER touched by that
   //    press — Esc is a per-popup cancel, not the global stop.
-  if (state.overlayOpen) return { kind: 'overlay', consumes: false }
+  if (state.overlayOpen) return { kind: 'overlay-esc', consumes: false }
   if (state.autocompleteOpen) return { kind: 'autocomplete-close', consumes: false }
+  // 1b. The trailing Esc of a panel-close double-press: the popup already
+  //     consumed the first press moments ago - this one is still aimed at the
+  //     (gone) popup, never at the task or the idle double.
+  if (insideOverlayEscGuard(state.lastOverlayEscPress, now)) {
+    return { kind: 'esc-after-overlay', consumes: true }
+  }
   // 2. Agent mid-turn: stopping the whole task (parent + subagents) is a
-  //    deliberate double-press — the first Esc only arms the stop window, so
+  //    deliberate double-press - the first Esc only arms the stop window, so
   //    a stray Esc (e.g. one aimed at a just-closed popup) can never kill a
   //    running turn. Its clock is the separate `lastRunningEscPress`; held
   //    auto-repeat never arms or fires it.
   if (state.running) {
-    if (isKeyRepeat(state.lastRunningEscPress, now)) return { kind: 'key-repeat', key: 'escape', consumes: true }
+    if (isGapRepeat(state.lastRunningEscPress, now)) return { kind: 'key-repeat', key: 'escape', consumes: true }
     return isDoublePress(state.lastRunningEscPress, now)
       ? { kind: 'interrupt-cancel', consumes: true }
       : { kind: 'interrupt-arm-stop', consumes: true }
@@ -177,26 +241,29 @@ function resolveEscape(state: KeyPressState, now: number): KeyAction {
   // 4. Empty editor, idle: first press arms, second within the window fires
   //    the double action (/session — dsh has no pi /tree). Auto-repeat of the
   //    armed key never fires the double action.
-  if (isKeyRepeat(state.lastEscPress, now)) return { kind: 'key-repeat', key: 'escape', consumes: true }
+  if (isGapRepeat(state.lastEscPress, now)) return { kind: 'key-repeat', key: 'escape', consumes: true }
   return isDoublePress(state.lastEscPress, now)
     ? { kind: 'interrupt-double', consumes: true }
     : { kind: 'interrupt-arm', consumes: true }
 }
 
 /**
- * Ctrl+C — dsh's "first cancels / second quits", windowed against misfires.
- * Auto-repeat (a held key) is swallowed: it neither cancels again nor ever
- * completes the quit double press.
+ * Ctrl+C - dsh's "first cancels / second quits", windowed against misfires.
+ * The gap is measured between CONSECUTIVE ctrl+c arrivals (tui.ts advances
+ * the clock on every arrival, repeats included), so a held key - whose
+ * repeats arrive every ~30-100ms, or are explicitly flagged by the kitty
+ * protocol before this function runs - never reaches the `QUIT_MIN_GAP_MS`
+ * floor and can never complete the quit double press.
  */
 function resolveCtrlC(state: KeyPressState, now: number): KeyAction {
   if (state.overlayOpen) return { kind: 'overlay', consumes: false }
-  if (isKeyRepeat(state.lastCtrlCPress, now)) return { kind: 'key-repeat', key: 'ctrl-c', consumes: true }
+  const gap = state.lastCtrlCPress > 0 ? now - state.lastCtrlCPress : Number.POSITIVE_INFINITY
+  if (gap < QUIT_MIN_GAP_MS) return { kind: 'key-repeat', key: 'ctrl-c', consumes: true }
+  const double = gap <= DOUBLE_PRESS_MS
   if (state.running) {
-    if (isDoublePress(state.lastCtrlCPress, now)) return { kind: 'ctrl-c-quit', consumes: true }
-    return { kind: 'ctrl-c-cancel', consumes: true }
+    return double ? { kind: 'ctrl-c-quit', consumes: true } : { kind: 'ctrl-c-cancel', consumes: true }
   }
-  if (isDoublePress(state.lastCtrlCPress, now)) return { kind: 'ctrl-c-quit', consumes: true }
-  return { kind: 'ctrl-c-clear', consumes: true }
+  return double ? { kind: 'ctrl-c-quit', consumes: true } : { kind: 'ctrl-c-clear', consumes: true }
 }
 
 /** Ctrl+D — pi app.exit: quit only on an empty editor, else let it delete. */
@@ -234,19 +301,42 @@ function resolveSubagentViewer(state: KeyPressState): KeyAction {
  * Any key outside the app bindings yields `noop` (not consumed — the focused
  * component, normally the editor, processes it).
  */
+/**
+ * Merge a PARTIAL binding override onto the defaults - the effective
+ * `KeyBindings` the app dispatches against. Exported so tui.ts can run the
+ * same `matchesKey` checks for its double-press clock bookkeeping.
+ */
+export function mergeKeyBindings(keys: Partial<KeyBindings> = DEFAULT_KEYBINDINGS): KeyBindings {
+  const bindings: KeyBindings = { ...DEFAULT_KEYBINDINGS }
+  for (const id of Object.keys(keys) as (keyof KeyBindings)[]) {
+    const value = keys[id]
+    if (value !== undefined) bindings[id] = value
+  }
+  return bindings
+}
+
 export function resolveKeyAction(
   data: string,
   state: KeyPressState,
   now: number,
   keys: Partial<KeyBindings> = DEFAULT_KEYBINDINGS,
 ): KeyAction {
-  const bindings: KeyBindings = { ...DEFAULT_KEYBINDINGS }
-  for (const id of Object.keys(keys) as (keyof KeyBindings)[]) {
-    const value = keys[id]
-    if (value !== undefined) bindings[id] = value
+  // Key-release events (kitty protocol flag 3) arrive as one sequence per
+  // physical key-up and `matchesKey` matches them like presses - swallow them
+  // before any binding can count one. Terminals without event types never
+  // send these sequences.
+  if (isKeyRelease(data)) return { kind: 'key-release', consumes: true }
+  const bindings = mergeKeyBindings(keys)
+  // Explicitly flagged auto-repeats (kitty protocol flag 2) of the windowed
+  // keys are held-key repeats no matter the arrival gap.
+  if (matchesKey(data, bindings.escape)) {
+    if (isKeyRepeat(data)) return { kind: 'key-repeat', key: 'escape', consumes: true }
+    return resolveEscape(state, now)
   }
-  if (matchesKey(data, bindings.escape)) return resolveEscape(state, now)
-  if (matchesKey(data, bindings.ctrlC)) return resolveCtrlC(state, now)
+  if (matchesKey(data, bindings.ctrlC)) {
+    if (isKeyRepeat(data)) return { kind: 'key-repeat', key: 'ctrl-c', consumes: true }
+    return resolveCtrlC(state, now)
+  }
   if (matchesKey(data, bindings.ctrlD)) return resolveCtrlD(state)
   if (matchesKey(data, bindings.modelPicker)) return resolveModelPicker(state)
   if (matchesKey(data, bindings.subagentViewer)) return resolveSubagentViewer(state)

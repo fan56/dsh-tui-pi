@@ -14,18 +14,90 @@
 
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import type { BridgeStats } from './session.ts'
-import { ansiBg, ansiFg, BOLD, POWERLINE, RESET } from './theme/index.ts'
+import { ansiBg, ansiFg, BOLD, POWERLINE, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 
 /**
- * The footer keybinding hint — plain text (no ANSI), exactly 103 visible
- * columns. This is the pre-feature README-documented width; the ANSI wrapping
- * lives in `paintFooterHint` (index.ts). The unit test in test/history.test.mjs
- * guards it against future length regressions (a longer hint word-wraps on
- * 105–118-column terminals and hides its suffix on ≤104).
+ * The footer keybinding hint, assembled from the user's `dsh-tui.footerHints`
+ * selection (see buildFooterHint) - the pre-feature full string is what the
+ * all-true default produces, and stays exactly 103 visible columns. The
+ * no-wrap rendering lives in `FooterHint` (a width-clipping component, not a
+ * word-wrapping Text). The unit test in test/history.test.mjs guards the
+ * default against future length regressions (a longer hint word-wraps on
+ * 105-118-column terminals and hides its suffix on <=104).
  */
 export const FOOTER_HINT =
   '⌨ Enter: send · Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents · ↑↓: history'
+
+/** The toggleable footer hint segments, keyed as in the `dsh-tui` settings. */
+export interface FooterHints {
+  send: boolean
+  stop: boolean
+  quit: boolean
+  quitEmpty: boolean
+  subagents: boolean
+  history: boolean
+}
+
+/** Every hint off - the footer hint bar renders nothing. */
+export const DEFAULT_FOOTER_HINTS: FooterHints = Object.freeze({
+  send: true,
+  stop: true,
+  quit: true,
+  quitEmpty: true,
+  subagents: true,
+  history: true,
+})
+
+/** The hint segments in display order, each without the `⌨ ` lead. */
+export const FOOTER_HINT_ITEMS: ReadonlyArray<{ id: keyof FooterHints; label: string }> = [
+  { id: 'send', label: 'Enter: send' },
+  { id: 'stop', label: 'Esc ×2: stop' },
+  { id: 'quit', label: 'Ctrl+C ×2: quit' },
+  { id: 'quitEmpty', label: 'Ctrl+D: quit (empty)' },
+  { id: 'subagents', label: 'Ctrl+G: subagents' },
+  { id: 'history', label: '↑↓: history' },
+]
+
+/**
+ * Assemble the footer hint from the user's per-segment on/off selection, in
+ * the fixed display order. `''` when every segment is off.
+ */
+export function buildFooterHint(shown: FooterHints): string {
+  const parts = FOOTER_HINT_ITEMS.filter(item => shown[item.id]).map(item => item.label)
+  if (parts.length === 0) return ''
+  return `⌨ ${parts.join(' · ')}`
+}
+
+/**
+ * The footer hint bar - a single width-clipped row, never word-wrapped. The
+ * old `Text` wrapped the 103-column hint on narrow terminals; this component
+ * clips it to the current width every frame (and re-reads the live hints
+ * selection through the getter, so a /settings change applies on the next
+ * repaint). Renders zero rows when the user turned every hint off.
+ */
+export class FooterHint implements Component {
+  private readonly getTheme: () => TuiTheme
+  private readonly getHints: () => FooterHints
+
+  constructor(getTheme: () => TuiTheme, getHints: () => FooterHints) {
+    this.getTheme = getTheme
+    this.getHints = getHints
+  }
+
+  invalidate(): void { /* stateless between renders - both sources are live getters */ }
+
+  render(width: number): string[] {
+    const hint = buildFooterHint(this.getHints())
+    if (hint === '') return []
+    // paddingX 1 on each side, matching the powerline segments' leading space.
+    const inner = Math.max(1, width - 2)
+    const clipped = clipToWidth(hint, inner)
+    const styled = ansiFg(this.getTheme().palette.fgSubtle) + clipped + RESET
+    const pad = ' '.repeat(Math.max(0, width - visibleWidth(clipped) - 2))
+    return [` ${styled}${pad} `]
+  }
+}
 
 const ARROW_RIGHT = '\uE0B0'
 const WHITE = ansiFg('#FFFFFF')

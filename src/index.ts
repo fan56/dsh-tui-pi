@@ -14,9 +14,9 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { Loader, Text } from '@earendil-works/pi-tui'
+import { Loader } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
-import { FOOTER_HINT, PowerlineFooter, type FooterDataSource } from './footer.ts'
+import { FooterHint, PowerlineFooter, type FooterDataSource, type FooterHints } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
 import { ensureAppendSystemFile, dshHome, migrateAgentsMdTodoSection, readAppendSystem } from './append-system.ts'
 import { TranscriptRenderer, type PanelHeight } from './messages.ts'
@@ -26,6 +26,7 @@ import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
 import {
   currentThemePreference,
+  readFooterHintsPreference,
   readPanelHeightPreference,
   readThemePreference,
   registerThemeSettings,
@@ -98,6 +99,12 @@ export function apply(ctx: Context): void {
    * the new row budget. Armed inside runTui once the renderer exists.
    */
   let applyPanelHeightRef: ((height: PanelHeight) => void) | undefined
+  /**
+   * Live footer-hints hot-reload sink, wired to the same watch hook: a
+   * committed `dsh-tui` footerHints change repaints the footer hint bar with
+   * the new segment selection. Armed inside runTui once the TUI exists.
+   */
+  let applyFooterHintsRef: ((hints: FooterHints) => void) | undefined
 
   ctx.effect(async () => {
     // The theme bundle is built once at TUI startup and held by every
@@ -106,7 +113,8 @@ export function apply(ctx: Context): void {
     // awaits it (bounded, degrades to the defaults without a settings
     // service). The registration also watches the namespace: `applies:
     // 'live'`, so later commits (the /theme picker, the /settings browser, an
-    // external edit) hot-apply through applyThemeRef / applyPanelHeightRef.
+    // external edit) hot-apply through applyThemeRef / applyPanelHeightRef /
+    // applyFooterHintsRef.
     // Panel height FIRST, theme second: a single commit of both fields (a
     // namespace-level reset, an external edit) must not replay twice at the
     // wrong height. setPanelHeight + relayout repaint the transcript at the
@@ -114,15 +122,17 @@ export function apply(ctx: Context): void {
     // that new height, so the theme rebuild is the one complete rebuild.
     // applyTheme carries the theme-bundle identity guard, so a height-only
     // commit never triggers a second rebuild.
-    registerThemeSettings(ctx, (pref, height) => {
+    registerThemeSettings(ctx, (pref, height, footerHints) => {
       applyPanelHeightRef?.(height)
       applyThemeRef?.(pref)
+      applyFooterHintsRef?.(footerHints)
     })
     const themePreference = await readThemePreference(ctx)
     const panelHeight = await readPanelHeightPreference(ctx)
+    const footerHints = await readFooterHintsPreference(ctx)
     let disposer: (() => void) | undefined
     try {
-      disposer = runTui(themePreference, panelHeight)
+      disposer = runTui(themePreference, panelHeight, footerHints)
     } catch (error) {
       // An async-effect failure after startTui would otherwise orphan the
       // terminal in raw mode — the disposer never registers, so nothing ever
@@ -136,13 +146,14 @@ export function apply(ctx: Context): void {
   }, 'dsh-tui-pi.render')
 
   /**
-   * Build the TUI and its slash commands for the resolved theme preference
-   * and panel height. Declared as a hoisted function so the effect body stays
-   * a thin wrapper: the whole build runs inside the try/catch above, so any
-   * failure disposes the TUI handle before the error reaches cordis. Returns
-   * the effect disposer handed back to cordis on teardown.
+   * Build the TUI and its slash commands for the resolved theme preference,
+   * panel height and footer-hint selection. Declared as a hoisted function so
+   * the effect body stays a thin wrapper: the whole build runs inside the
+   * try/catch above, so any failure disposes the TUI handle before the error
+   * reaches cordis. Returns the effect disposer handed back to cordis on
+   * teardown.
    */
-  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight): () => void {
+  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints): () => void {
     // User keybindings (`~/.dsh/keybindings.json`): a partial map of the app
     // keys, read once per TUI start — `/reload` re-runs apply() and re-reads
     // it. Broken entries surface as notices instead of breaking startup.
@@ -901,18 +912,18 @@ export function apply(ctx: Context): void {
     }
     ui.footer.clear()
     ui.footer.addChild(new PowerlineFooter(footerSource))
-    // Keybinding hint, added *after* the clear above: the placeholder line in
-    // tui.ts used to be wiped before first render. paddingX 1 aligns the text
-    // with the powerline segment labels (each starts with a leading space).
-    // The hint is the footer stack's only theme-dependent piece (the powerline
-    // segments carry fixed theme-agnostic colors) — `paintFooterHint` re-colors
-    // it under a theme hot-swap; the PowerlineFooter itself needs no rebuild.
-    const footerHint = new Text('', 1, 0)
-    const paintFooterHint = (): void => {
-      footerHint.setText(ansiFg(ui.theme.palette.fgSubtle) + FOOTER_HINT + RESET)
-    }
-    paintFooterHint()
+    // Keybinding hint, added *after* the clear above: a single width-clipped
+    // row (never word-wraps) reading the live footer-hints selection through
+    // its getter — a /settings toggle applies on the next repaint, and the
+    // theme colors follow `ui.theme` (see FooterHint in footer.ts).
+    let footerHintsRef: FooterHints = footerHints
+    const footerHint = new FooterHint(() => ui.theme, () => footerHintsRef)
     ui.footer.addChild(footerHint)
+    // Arm the footer-hints watch sink now that the TUI exists (see apply()).
+    applyFooterHintsRef = (hints: FooterHints): void => {
+      footerHintsRef = hints
+      ui.requestRender()
+    }
 
     /**
      * Hot-apply a theme bundle to the running TUI: the transcript rebuilds
@@ -928,7 +939,6 @@ export function apply(ctx: Context): void {
       renderer.setTheme(theme)
       liveWidgets.setTheme(theme)
       ui.applyTheme(theme)
-      paintFooterHint()
       if (loader !== undefined) {
         loader.stop()
         ui.status.removeChild(loader)
@@ -1088,6 +1098,7 @@ export function apply(ctx: Context): void {
       git.dispose()
       applyThemeRef = undefined
       applyPanelHeightRef = undefined
+      applyFooterHintsRef = undefined
       // Stop the TUI FIRST, before the (possibly slow) agent teardown: the
       // terminal must be released while the fiber is still alone with it.
       // Deferring tui.stop() until after `await bridge.dispose()` lets any

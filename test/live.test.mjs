@@ -72,7 +72,7 @@ function runningView(over = {}) {
 
 // ------------------------------------------------------------ todo panel ----
 
-test('todos render as a bordered panel with status icons, counts and connectors', () => {
+test('todos render as a bordered table panel with status icons, counts and aligned columns', () => {
   const { todosDoc, activityDoc, widget } = makeWidget()
   widget.renderTodos([
     { content: 'first', status: 'pending' },
@@ -82,11 +82,14 @@ test('todos render as a bordered panel with status icons, counts and connectors'
   const rows = widgetRows(todosDoc)
   assert.ok(rows[0].startsWith('┌'), 'panel has a top border')
   assert.ok(rows[rows.length - 1].startsWith('└'), 'panel has a bottom border')
+  // The panel-framework table: header row + column header + one aligned row
+  // per todo (index right-aligned, status icon column, flex content).
   assert.deepEqual(panelBody(todosDoc), [
     '● Todos (1/3)',
-    '├─ ☐ first',
-    '├─ ◐ second',
-    '└─ ☑ third',
+    '  # │ ✓  │ Task',
+    '  1 │ ☐  │ first',
+    '  2 │ ◐  │ second',
+    '  3 │ ☑  │ third',
   ])
   // Only the boxed Todos panel is up; the activity doc stays empty.
   assert.deepEqual(widgetRows(activityDoc), [], 'no last request, no agents → activity empty')
@@ -110,14 +113,42 @@ test('an all-completed todo list hides the panel (clear-when-done)', () => {
     { content: 'a', status: 'completed' },
     { content: 'b', status: 'in_progress' },
   ])
-  assert.deepEqual(panelBody(todosDoc), ['● Todos (1/2)', '├─ ☑ a', '└─ ◐ b'])
+  assert.deepEqual(panelBody(todosDoc), [
+    '● Todos (1/2)',
+    '  # │ ✓  │ Task',
+    '  1 │ ☑  │ a',
+    '  2 │ ◐  │ b',
+  ])
   widget.renderTodos([
     { content: 'a', status: 'completed' },
     { content: 'b', status: 'completed' },
   ])
   assert.deepEqual(widgetRows(todosDoc), [], 'all-completed todos hide the panel')
   widget.renderTodos([{ content: 'c', status: 'pending' }])
-  assert.deepEqual(panelBody(todosDoc), ['● Todos (0/1)', '└─ ☐ c'])
+  assert.deepEqual(panelBody(todosDoc), [
+    '● Todos (0/1)',
+    '  # │ ✓  │ Task',
+    '  1 │ ☐  │ c',
+  ])
+})
+
+test('the panel re-lays out at the current width - content is clipped per render (resize-follow)', () => {
+  // The regression this locks in: the old widget baked one clipped snapshot
+  // into a Text at build time, so a terminal resize either wrapped the rows
+  // (narrower) or left them truncated (wider). The table now re-renders at
+  // the CURRENT width every frame - render(40) must keep one physical row
+  // per todo (content clipped), render(120) must show the content untruncated.
+  const long = 'a task whose description is far longer than any narrow column could fit on one row'
+  const { todosDoc, widget } = makeWidget()
+  widget.renderTodos([{ content: long, status: 'in_progress' }])
+
+  const narrow = widgetRows(todosDoc, 40)
+  assert.equal(narrow.length, 5, 'one physical row per panel row at a narrow width (no wrap)')
+  const narrowContent = panelBody(todosDoc, 40)[2]
+  assert.ok(!narrowContent.includes(long), 'long content is clipped at a narrow width')
+
+  const wide = panelBody(todosDoc, 120)
+  assert.ok(wide[2].includes(long), 'the same content renders in full once the terminal widens')
 })
 
 // --------------------------------------------------------- running agents ----
@@ -317,7 +348,9 @@ test('boxed todos never wrap; each compact agent line stays one row', () => {
     const { todosDoc, activityDoc, widget } = makeWidget()
     widget.setLastRequest('query')
     widget.renderTodos([{ content: 'x'.repeat(500), status: 'pending' }])
-    assert.equal(todosDoc.render(width).length, 4, 'boxed todos: no row wraps')
+    // 5 rows at the new table shape: top border, panel header, column header,
+    // one data row, bottom border - no row wraps no matter the content width.
+    assert.equal(todosDoc.render(width).length, 5, 'boxed todos: no row wraps')
     widget.renderAgents([runningView({ label: 'y'.repeat(500), provider: 'p'.repeat(200) })])
     assert.equal(widgetRows(activityDoc).length, 2, '● line + one compact agent row, no wrap')
   } finally {

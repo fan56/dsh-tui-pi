@@ -19,6 +19,7 @@ import {
   type SettingsProvider,
 } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
+import { DEFAULT_FOOTER_HINTS, type FooterHints } from './footer.ts'
 import { DEFAULT_PANEL_HEIGHT, type PanelHeight } from './messages.ts'
 import type { ThemePreference } from './theme/index.ts'
 
@@ -64,6 +65,17 @@ const THEME_SETTINGS_SCHEMA = z.object({
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxRounds)
     .description('Max rounds per subagent before the TUI sends a summary request (0 = unlimited)'),
+  footerHints: z
+    .object({
+      send: z.boolean().default(true).description('Show "Enter: send" in the footer hint bar'),
+      stop: z.boolean().default(true).description('Show "Esc ×2: stop" in the footer hint bar'),
+      quit: z.boolean().default(true).description('Show "Ctrl+C ×2: quit" in the footer hint bar'),
+      quitEmpty: z.boolean().default(true).description('Show "Ctrl+D: quit (empty)" in the footer hint bar'),
+      subagents: z.boolean().default(true).description('Show "Ctrl+G: subagents" in the footer hint bar'),
+      history: z.boolean().default(true).description('Show "↑↓: history" in the footer hint bar'),
+    })
+    .default({ ...DEFAULT_FOOTER_HINTS })
+    .description('Footer shortcut hints to display (toggle each one on/off)'),
 })
 
 /** Composition entry below the user layer: fall back to the defaults. */
@@ -72,11 +84,13 @@ const THEME_SETTINGS_ENTRY: {
   panelHeight: PanelHeight
   maxAgents: number
   maxRounds: number
+  footerHints: FooterHints
 } = {
   theme: 'auto',
   panelHeight: DEFAULT_PANEL_HEIGHT,
   maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,
   maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
+  footerHints: { ...DEFAULT_FOOTER_HINTS },
 }
 
 /**
@@ -102,14 +116,14 @@ let registrationPromise: Promise<void> | undefined
  * startup.
  *
  * @param ctx - plugin context; does nothing while no settings service is mounted.
- * @param onPreferenceChange - hot-reload sink for committed `dsh-tui` theme
- * and panel-height changes; `undefined` when the namespace is already
- * registered (a reloaded plugin instance, a second mount of this bundle) or
- * registration fails.
+ * @param onPreferenceChange - hot-reload sink for committed `dsh-tui` theme,
+ * panel-height and footer-hints changes; `undefined` when the namespace is
+ * already registered (a reloaded plugin instance, a second mount of this
+ * bundle) or registration fails.
  */
 export function registerThemeSettings(
   ctx: Context,
-  onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight) => void,
+  onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints) => void,
 ): void {
   registrationPromise = new Promise<void>(resolve => {
     ctx.inject(['settings'], (sctx) => {
@@ -131,14 +145,15 @@ export function registerThemeSettings(
         })
         if (onPreferenceChange !== undefined) {
           scope.watch((next) => {
-            // The resolved section is `{ theme: ..., panelHeight: ... }` —
-            // narrow the unknown to the two observed fields.
-            const section = next as { theme?: unknown; panelHeight?: unknown }
+            // The resolved section is `{ theme: ..., panelHeight: ...,
+            // footerHints: {...} }` — narrow the unknown to the observed fields.
+            const section = next as { theme?: unknown; panelHeight?: unknown; footerHints?: unknown }
             const theme = section.theme
             const panelHeight = section.panelHeight
             onPreferenceChange(
               theme === 'light' || theme === 'dark' ? theme : 'auto',
               panelHeight === '7' || panelHeight === '10' || panelHeight === 'all' ? panelHeight : DEFAULT_PANEL_HEIGHT,
+              narrowFooterHints(section.footerHints),
             )
           })
         }
@@ -153,6 +168,17 @@ export function registerThemeSettings(
       resolve()
     })
   })
+}
+
+/** Validate an unknown `footerHints` value into the typed shape (defaults win). */
+function narrowFooterHints(value: unknown): FooterHints {
+  if (value === null || typeof value !== 'object') return { ...DEFAULT_FOOTER_HINTS }
+  const section = value as Partial<Record<keyof FooterHints, unknown>>
+  const hints: FooterHints = { ...DEFAULT_FOOTER_HINTS }
+  for (const key of Object.keys(DEFAULT_FOOTER_HINTS) as (keyof FooterHints)[]) {
+    if (typeof section[key] === 'boolean') hints[key] = section[key]
+  }
+  return hints
 }
 
 /**
@@ -170,7 +196,7 @@ export function registerThemeSettings(
  * @returns the resolved section, or `undefined` when no registration is in
  * flight, the settings service is absent, or the namespace has not landed.
  */
-async function readResolvedSection(ctx: Context): Promise<{ theme?: unknown; panelHeight?: unknown } | undefined> {
+async function readResolvedSection(ctx: Context): Promise<{ theme?: unknown; panelHeight?: unknown; footerHints?: unknown } | undefined> {
   if (registrationPromise === undefined) return undefined
   let fallback: ReturnType<typeof setTimeout> | undefined
   await Promise.race([
@@ -181,12 +207,12 @@ async function readResolvedSection(ctx: Context): Promise<{ theme?: unknown; pan
   const settings = ctx.get('settings') as SettingsProvider | undefined
   if (settings === undefined) return undefined
   // The descriptor's `value` is the whole resolved section
-  // (`{ theme: ..., panelHeight: ... }`), not the field itself — narrow the
-  // unknown to the two observed fields.
+  // (`{ theme: ..., panelHeight: ..., footerHints: {...} }`), not the field
+  // itself — narrow the unknown to the three observed fields.
   return settings
     .describe()
     .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { theme?: unknown; panelHeight?: unknown }
+    | { theme?: unknown; panelHeight?: unknown; footerHints?: unknown }
     | undefined
 }
 
@@ -214,6 +240,35 @@ export async function readPanelHeightPreference(ctx: Context): Promise<PanelHeig
   const height = (await readResolvedSection(ctx))?.panelHeight
   if (height === '7' || height === '10' || height === 'all') return height
   return DEFAULT_PANEL_HEIGHT
+}
+
+/**
+ * Read the persisted footer-hint selection (the startup snapshot).
+ *
+ * @param ctx - plugin context.
+ * @returns the resolved `dsh-tui` footerHints object, or DEFAULT_FOOTER_HINTS
+ * when the settings service is absent or the namespace/value cannot be read.
+ */
+export async function readFooterHintsPreference(ctx: Context): Promise<FooterHints> {
+  return narrowFooterHints((await readResolvedSection(ctx))?.footerHints)
+}
+
+/**
+ * Read the currently persisted footer-hint selection, synchronously.
+ * Unlike `readFooterHintsPreference` (the startup snapshot), this does not
+ * wait for the namespace registration - it describes whatever the settings
+ * service exposes right now, so a caller can honor a live change immediately.
+ * @returns DEFAULT_FOOTER_HINTS when the service, namespace, or value is absent.
+ */
+export function currentFooterHints(ctx: Context): FooterHints {
+  const settings = ctx.get('settings') as SettingsProvider | undefined
+  if (settings === undefined) return { ...DEFAULT_FOOTER_HINTS }
+  const hints = (settings
+    .describe()
+    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
+    | { footerHints?: unknown }
+    | undefined)?.footerHints
+  return narrowFooterHints(hints)
 }
 
 /**

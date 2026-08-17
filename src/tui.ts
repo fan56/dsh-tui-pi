@@ -21,6 +21,7 @@
 
 import {
   Container,
+  matchesKey,
   ProcessTerminal,
   ScrollView,
   Spacer,
@@ -31,7 +32,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import { CwdBorderEditor } from './editor.ts'
-import { resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
+import { mergeKeyBindings, resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
 import { ansiBg, ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 
 export interface StartTuiOptions {
@@ -290,10 +291,12 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   let lastEscPress = 0
   let lastRunningEscPress = 0
   let lastCtrlCPress = 0
+  let lastOverlayEscPress = 0
   const isRunning = options.isRunning ?? (() => false)
   const getRunningAgents = options.getRunningAgents ?? (() => 0)
 
   tui.addInputListener((data: string) => {
+    const now = Date.now()
     const action = resolveKeyAction(data, {
       running: isRunning(),
       overlayOpen: tui.hasOverlay(),
@@ -303,36 +306,46 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       lastEscPress,
       lastRunningEscPress,
       lastCtrlCPress,
-    }, Date.now(), keyBindingsRef)
+      lastOverlayEscPress,
+    }, now, keyBindingsRef)
     // Advance the double-press windows for the keys this chain owns. Two
     // separate Esc windows keep their own clocks: the running-stop arm
-    // (`interrupt-arm-stop` → `interrupt-cancel`) and the idle double-Esc
-    // (`interrupt-arm` → `interrupt-double`), so an Esc that armed a stop
+    // (`interrupt-arm-stop` -> `interrupt-cancel`) and the idle double-Esc
+    // (`interrupt-arm` -> `interrupt-double`), so an Esc that armed a stop
     // never pops /session once the turn settles inside the window, and vice
-    // versa. A fired stop re-arms the running clock at the cancel timestamp
-    // (Date.now() on `interrupt-cancel`): lashes of held-key Esc after the
-    // cancel land <80ms later and resolve as swallowable `key-repeat`
-    // instead of re-noticing another arm. `key-repeat` never advances a
-    // window — a held key must not arm or complete a double press
-    // (see keymap.ts).
+    // versa. A fired stop re-arms the running clock at the cancel timestamp:
+    // lashes of held-key Esc after the cancel land <80ms later and resolve as
+    // swallowable `key-repeat` instead of re-noticing another arm. Esc
+    // `key-repeat` never advances an Esc window - a held key must not arm or
+    // complete an Esc double press. A popup-owned Esc (`overlay-esc`) arms
+    // ONLY the post-popup guard clock - never the stop/idle windows.
     if (action.kind === 'interrupt-arm' || action.kind === 'interrupt-double') {
-      lastEscPress = Date.now()
+      lastEscPress = now
     } else if (action.kind === 'interrupt-arm-stop' || action.kind === 'interrupt-cancel') {
-      lastRunningEscPress = Date.now()
-    } else if (action.kind === 'ctrl-c-cancel' || action.kind === 'ctrl-c-clear' || action.kind === 'ctrl-c-quit') {
-      lastCtrlCPress = Date.now()
+      lastRunningEscPress = now
+    } else if (action.kind === 'overlay-esc') {
+      lastOverlayEscPress = now
+    }
+    // The ctrl+c clock advances on EVERY arrival (press, swallowed repeat,
+    // popup-owned - anything but a key-release) so the quit gap measures
+    // CONSECUTIVE key events: a held key's repeats keep the gap small and can
+    // never reach the QUIT_MIN_GAP_MS floor (see resolveCtrlC in keymap.ts).
+    if (action.kind !== 'key-release' && matchesKey(data, mergeKeyBindings(keyBindingsRef).ctrlC)) {
+      lastCtrlCPress = now
     }
     // Pass-through outcomes (popup, autocomplete, unbound keys) let the
-    // focused component handle the key; actionable ones (key-repeat included,
-    // so the executor can abort a pending quit confirmation on it) go to the
-    // caller.
-    if (action.kind !== 'overlay' && action.kind !== 'autocomplete-close' && action.kind !== 'noop') {
+    // focused component handle the key; inert swallows (key-release,
+    // overlay-esc, esc-after-overlay) go nowhere; actionable ones
+    // (key-repeat included, so the executor can abort a pending quit
+    // confirmation on it) go to the caller.
+    if (action.kind !== 'overlay' && action.kind !== 'autocomplete-close' && action.kind !== 'noop'
+      && action.kind !== 'key-release' && action.kind !== 'overlay-esc' && action.kind !== 'esc-after-overlay') {
       if (options.onKeyAction !== undefined) {
         options.onKeyAction(action)
       } else if (action.kind === 'ctrl-c-cancel' || action.kind === 'ctrl-c-clear'
         || action.kind === 'ctrl-c-quit' || action.kind === 'ctrl-d-quit') {
         // Smoke-test fallback: any Ctrl+C family press, or an empty-editor
-        // Ctrl+D, exits — Ctrl+C behaves like the pre-keymap build. (key-repeat
+        // Ctrl+D, exits - Ctrl+C behaves like the pre-keymap build. (key-repeat
         // deliberately excluded: no terminal is attached in smoke mode, but a
         // repeat must never be an exit path by itself.)
         handle.dispose()

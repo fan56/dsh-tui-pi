@@ -30,9 +30,10 @@
  * widget is live state, not transcript history).
  */
 
-import { Container, Text } from '@earendil-works/pi-tui'
+import { Container, Text, type Component } from '@earendil-works/pi-tui'
 import type { AgentView } from './dsh-events.ts'
-import { panelBodyText, panelBoxWidth, clipPanelLine } from './messages.ts'
+import { panelBoxWidth, clipPanelLine } from './messages.ts'
+import { columnWidths, padCell, TABLE_SEP, type TableColumn } from './panels.ts'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 
@@ -42,7 +43,7 @@ export const AGENT_TICK_MS = 100
 export const AGENT_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
 
 /**
- * Compact human-readable size: 1_500_000 → `1.5m`, 20_965 → `20k`, 999 → `999`.
+ * Compact human-readable size: 1_500_000 -> `1.5m`, 20_965 -> `20k`, 999 -> `999`.
  * Millions keep one decimal (a trailing `.0` dropped), thousands floor to `k`.
  */
 export function fmtCompact(n: number): string {
@@ -65,17 +66,110 @@ function panelTopBorder(boxWidth: number, borderFg: string): string {
   return `${borderFg}┌${'─'.repeat(Math.max(0, boxWidth - 2))}┐`
 }
 
+/** The todos table columns: right-aligned row number, status icon, flex content. */
+const TODO_COLUMNS: readonly TableColumn[] = [
+  { key: 'idx', title: '#', width: 3, align: 'right' },
+  { key: 'status', title: '✓', width: 2 },
+  { key: 'content', title: 'Task', flex: true },
+]
+
+/** Status icon of one todo: pending / in-progress / completed. */
+function todoIcon(status: string): string {
+  if (status === 'completed') return '☑'
+  if (status === 'in_progress') return '◐'
+  return '☐'
+}
+
+/**
+ * The live Todos panel - a self-drawing table on the panel framework
+ * (padCell/columnWidths from panels.ts), rendered at the CURRENT width on
+ * every frame. pi-tui's Container calls `render(width)` per frame with no
+ * caching, so a terminal resize re-lays the table out (clip + column widths)
+ * automatically - no stale baked rows, no word-wrap. Renders zero rows while
+ * the list is empty or every todo is completed (clear-when-done).
+ */
+export class TodosPanel implements Component {
+  private todos: readonly { content: string; status: string }[] = []
+  private readonly getTheme: () => TuiTheme
+
+  constructor(getTheme: () => TuiTheme) {
+    this.getTheme = getTheme
+  }
+
+  invalidate(): void { /* stateless between renders - the theme comes via getTheme */ }
+
+  /** Replace the todos snapshot (`todo/write` events, replay, /new). */
+  setTodos(todos: readonly { content: string; status: string }[]): void {
+    this.todos = todos
+  }
+
+  render(width: number): string[] {
+    if (this.todos.length === 0 || this.todos.every(todo => todo.status === 'completed')) return []
+    const theme = this.getTheme()
+    const p = theme.palette
+    const boxWidth = panelBoxWidth(width)
+    const borderFg = ansiFg(p.borderDefault)
+    const innerWidth = boxWidth - 4
+    const colWidths = columnWidths(innerWidth, TODO_COLUMNS)
+    const subtle = (text: string) => ansiFg(p.fgSubtle) + text + RESET
+
+    // Header row of the panel: `● Todos (done/total)` in the accent/subtle pair.
+    const done = this.todos.filter(todo => todo.status === 'completed').length
+    const headerInner = ansiFg(p.accent) + '● Todos ' + RESET
+      + subtle(`(${done}/${this.todos.length})`)
+    const out = [panelTopBorder(boxWidth, borderFg), borderedRow(boxWidth, borderFg, headerInner)]
+
+    // Table header: every cell padded to its column so the rows align.
+    out.push(borderedRow(
+      boxWidth,
+      borderFg,
+      TODO_COLUMNS.map((column, i) => padCell(column.title, colWidths[i], column.align)).join(TABLE_SEP),
+    ))
+
+    for (let i = 0; i < this.todos.length; i++) {
+      const todo = this.todos[i]
+      // Plain (clipped+padded) cells FIRST, ANSI after - the panel-line rule.
+      const idxCell = padCell(String(i + 1), colWidths[0], 'right')
+      const iconCell = padCell(todoIcon(todo.status), colWidths[1])
+      const contentCell = padClip(todo.content, colWidths[2])
+      // One color per status across the icon and content cells (the icon has
+      // its own column here - no baked-in prefix from theme.chat.todo*).
+      const color = todo.status === 'completed'
+        ? p.success
+        : todo.status === 'in_progress' ? p.attention : p.fgSubtle
+      const statusStyle = (text: string) => ansiFg(color) + text + RESET
+      out.push(borderedRow(
+        boxWidth,
+        borderFg,
+        subtle(idxCell) + TABLE_SEP + statusStyle(iconCell) + TABLE_SEP + statusStyle(contentCell),
+      ))
+    }
+
+    out.push(panelBottomRow(boxWidth, borderFg))
+    return out
+  }
+}
+
+/** Bottom border line (`└─…─┘`), `boxWidth` columns wide. */
+function panelBottomRow(boxWidth: number, borderFg: string): string {
+  return `${borderFg}└${'─'.repeat(Math.max(0, boxWidth - 2))}┘`
+}
+
+/** Clip one todo's content (a possibly multiline model string) to one row. */
+function padClip(content: string, width: number): string {
+  const flat = content.replace(/\r/g, '').replace(/\n/g, ' ').trim()
+  return padCell(flat, width)
+}
+
 export class LiveWidgets {
   private readonly todosDoc: Container
   private readonly activityDoc: Container
   private theme: TuiTheme
   private readonly requestRender: () => void
-  /** Latest todo list from `todo/write`, rendered while non-empty. */
-  private liveTodos: readonly { content: string; status: string }[] = []
+  /** The self-drawing Todos table, mounted once in `todosDoc`. */
+  private readonly todosPanel: TodosPanel
   /** Latest subagent views from the bridge's onLive fold. */
   private liveAgents: readonly AgentView[] = []
-  /** The Todos panel Text in `todosDoc`, replaced on rebuild. */
-  private todosText: Text | undefined
   /** The merged running-agent Text in `activityDoc`, replaced on rebuild. */
   private agentsText: Text | undefined
   /** The ` ● <last request>` Text in `activityDoc` (persists across churn). */
@@ -86,9 +180,9 @@ export class LiveWidgets {
   private spinnerFrame = 0
 
   /**
-   * @param todosDoc The dock slot ABOVE the chat input — the Todos boxed
+   * @param todosDoc The dock slot ABOVE the chat input - the Todos table
    *   panel lives here.
-   * @param activityDoc The lastRequest container BELOW the editor — the ` ● `
+   * @param activityDoc The lastRequest container BELOW the editor - the ` ● `
    *   last-request line plus the compact running-agent lines live here.
    */
   constructor(
@@ -101,6 +195,11 @@ export class LiveWidgets {
     this.activityDoc = activityDoc
     this.theme = theme
     this.requestRender = requestRender
+    // Mounted once: the panel re-renders at the live width every frame and
+    // reads the theme through the getter, so theme swaps and terminal
+    // resizes need no rebuild wiring here.
+    this.todosPanel = new TodosPanel(() => this.theme)
+    todosDoc.addChild(this.todosPanel)
   }
 
   /**
@@ -141,8 +240,8 @@ export class LiveWidgets {
 
   /** Replace the todos snapshot (`todo/write` events and replay). */
   renderTodos(todos: readonly { content: string; status: string }[]): void {
-    this.liveTodos = todos
-    this.rebuild()
+    this.todosPanel.setTodos(todos)
+    this.requestRender()
   }
 
   /** Replace the subagent views (the bridge's onLive fold). */
@@ -163,7 +262,8 @@ export class LiveWidgets {
   }
 
   /** Recolor the widget (Todos panel, ● line and agent lines) under a theme
-   * hot-switch (no-op on the same bundle). */
+   * hot-switch (no-op on the same bundle). The Todos panel reads the theme
+   * through its getter, so the swap needs only a repaint. */
   setTheme(theme: TuiTheme): void {
     if (theme === this.theme) return
     this.theme = theme
@@ -181,13 +281,9 @@ export class LiveWidgets {
    * fires `renderAgents([])`.
    */
   clear(): void {
-    this.liveTodos = []
     this.liveAgents = []
     this.spinnerFrame = 0
-    if (this.todosText !== undefined) {
-      this.todosDoc.removeChild(this.todosText)
-      this.todosText = undefined
-    }
+    this.todosPanel.setTodos([])
     if (this.agentsText !== undefined) {
       this.activityDoc.removeChild(this.agentsText)
       this.agentsText = undefined
@@ -196,26 +292,14 @@ export class LiveWidgets {
   }
 
   /**
-   * Rebuild the two live surfaces:
-   *  - `todosDoc`: one bordered Todos panel (or nothing when all completed).
-   *  - `activityDoc`: the ` ● ` line (managed separately, persists) followed
-   *    by ONE Text holding the compact running-agent lines joined by '\n'
-   *    (or nothing when no agent runs — the slot collapses to the ● line).
-   * Clear-when-done: the Todos panel hides once every todo is completed (the
-   * model writes the whole-list snapshot and rarely clears it — an
-   * all-completed list is the end-of-work signal); the agent lines hide once
-   * no child is running.
+   * Rebuild the running-agent surface of `activityDoc`: the ` ● ` line
+   * (managed separately, persists) followed by ONE Text holding the compact
+   * running-agent lines joined by '\n' (or nothing when no agent runs - the
+   * slot collapses to the ● line). The Todos table panel is NOT rebuilt
+   * here - it is a self-drawing component that re-renders each frame.
+   * Clear-when-done: the agent lines hide once no child is running.
    */
   private rebuild(): void {
-    if (this.liveTodos.some(todo => todo.status !== 'completed')) {
-      const panel = this.boxedPanel(this.todosHeader(), this.todoLines())
-      if (this.todosText !== undefined) this.todosDoc.removeChild(this.todosText)
-      this.todosText = new Text(panel, 1, 0)
-      this.todosDoc.addChild(this.todosText)
-    } else if (this.todosText !== undefined) {
-      this.todosDoc.removeChild(this.todosText)
-      this.todosText = undefined
-    }
     const running = this.liveAgents.filter(view => view.outcome === undefined)
     if (running.length > 0) {
       const lines = running.map((view, i) => this.compactAgentLine(view, i === running.length - 1))
@@ -232,49 +316,6 @@ export class LiveWidgets {
       this.agentsText = undefined
     }
     this.requestRender()
-  }
-
-  /** One bordered panel: top border + header row + body rows + bottom border. */
-  private boxedPanel(headerInner: string, bodyLines: string[]): string {
-    const boxWidth = panelBoxWidth(process.stdout.columns)
-    const borderFg = ansiFg(this.theme.palette.borderDefault)
-    const top = panelTopBorder(boxWidth, borderFg)
-    const header = borderedRow(boxWidth, borderFg, clipPanelLine(headerInner))
-    // 'all' body: every line kept verbatim (each already clipped to one
-    // physical row), bottom border appended.
-    const body = panelBodyText(bodyLines, boxWidth, borderFg, 'all')
-    return `${top}\n${header}\n${body}`
-  }
-
-  /** `● Todos (done/total)`, styled for the panel header row. */
-  private todosHeader(): string {
-    const done = this.liveTodos.filter(todo => todo.status === 'completed').length
-    return ansiFg(this.theme.palette.accent) + '● Todos ' + RESET
-      + ansiFg(this.theme.palette.fgSubtle) + `(${done}/${this.liveTodos.length})` + RESET
-  }
-
-  /**
-   * Tree-style todo body lines: `├─`/`└─` connectors with `☐`/`◐`/`☑` status
-   * icons. Content is model-controlled: clipped BEFORE styling to the boxed
-   * row's inner budget minus the tree chrome (connector 3 cols + icon+space
-   * 2 cols) — see clipPanelLine's contract.
-   */
-  private todoLines(): string[] {
-    const innerCap = panelBoxWidth(process.stdout.columns) - 4
-    const lines: string[] = []
-    const total = this.liveTodos.length
-    for (let i = 0; i < total; i++) {
-      const todo = this.liveTodos[i]
-      const content = clipToWidth(todo.content, Math.max(10, innerCap - 5))
-      const connector = ansiFg(this.theme.palette.fgSubtle) + (i === total - 1 ? '└─ ' : '├─ ') + RESET
-      const statusStyled = todo.status === 'completed'
-        ? this.theme.chat.todoDone(content)
-        : todo.status === 'in_progress'
-          ? ansiFg(this.theme.palette.attention) + `◐ ${content}` + RESET
-          : this.theme.chat.todoOpen(content)
-      lines.push(connector + statusStyled)
-    }
-    return lines
   }
 
   /**
