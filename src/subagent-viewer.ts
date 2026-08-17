@@ -34,7 +34,7 @@ import { DOUBLE_PRESS_MS, MIN_DOUBLE_PRESS_GAP_MS } from './keymap.ts'
 import { readSubagentLimits } from './theme-settings.ts'
 import { PanelHost, panelThemeFns, type PanelThemeFns } from './panels.ts'
 import { normalizePreview } from './sessions.ts'
-import { toolSubject } from './messages.ts'
+import { toolSubject } from './activity.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 

@@ -232,9 +232,9 @@ test('dsh-tui theme and panelHeight fields rehydrate as all-literal unions (cycl
   assert.deepEqual(unionLiterals(theme), { values: ['auto', 'light', 'dark'], all: true },
     'theme is an all-literal union → cycle row')
 
-  // PanelHeight field: same mechanism, the four configurable heights.
+  // PanelHeight field: same mechanism, the five configurable heights.
   const panelHeight = nodeAtPath(root, ['panelHeight'])
   assert.equal(panelHeight.type, 'union', 'panelHeight node is a union')
-  assert.deepEqual(unionLiterals(panelHeight), { values: ['5', '7', '10', 'all'], all: true },
-    'panelHeight is an all-literal union over the four heights → cycle row')
+  assert.deepEqual(unionLiterals(panelHeight), { values: ['1', '5', '7', '10', 'all'], all: true },
+    'panelHeight is an all-literal union over the five heights → cycle row')
 })

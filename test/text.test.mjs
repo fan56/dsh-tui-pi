@@ -6,7 +6,17 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { clipToWidth, visibleWidth } from '../lib/text.js'
+import { clipToWidth, lastNonBlankLine, visibleWidth } from '../lib/text.js'
+
+test('lastNonBlankLine returns the newest non-blank line, ANSI-stripped and folded', () => {
+  assert.equal(lastNonBlankLine('one\ntwo\n\n'), 'two', 'trailing blanks skipped')
+  assert.equal(lastNonBlankLine('a  b\tc'), 'a b c', 'interior whitespace folded to one space')
+  assert.equal(lastNonBlankLine('\x1b[3mstyled\x1b[23m'), 'styled', 'SGR sequences stripped')
+  assert.equal(lastNonBlankLine('crlf\r\nnext\r\n'), 'next', 'CR/LF normalized')
+  assert.equal(lastNonBlankLine('bare\rcr'), 'cr', 'a bare CR splits lines — the newest segment wins')
+  assert.equal(lastNonBlankLine('  \n\t\n'), undefined, 'blank-only text has no visible line')
+  assert.equal(lastNonBlankLine(''), undefined)
+})
 
 test('clipToWidth leaves text shorter than the budget untouched, no ellipsis', () => {
   assert.equal(clipToWidth('hello', 10), 'hello')

@@ -1,18 +1,19 @@
 /**
- * Live widget tests — the two live surfaces of src/live-widgets.ts:
+ * Live widget tests — the live surfaces of src/live-widgets.ts:
  *
  *  - `todosDoc` (the widgets slot ABOVE the chat input): the Todos boxed
- *    panel (top border + header row + body rows + bottom border) that appears
- *    only while it has content and collapses to zero rows when done (/new,
- *    todo/write [], an all-completed snapshot).
+ *    panel PLUS the fixed ThinkPanel/ToolPanel (src/activity.ts, driven by
+ *    `applyEvent`). One panel of each kind exists for the whole run: every
+ *    event refreshes it in place (never a transcript block), no content →
+ *    zero rows (hidden). Default height is ONE row — identifier + elapsed +
+ *    last content line, right-truncated; '5'/'7'/'10'/'all' box the panel.
  *  - `activityDoc` (the lastRequest container BELOW the editor): the
  *    ` ● <last request>` line (persisting across agent churn), followed by
- *    ONE compact line PER RUNNING agent — `├─ `/`└─ `-prefixed (todo-style
- *    tree connectors in the same column as the todo rows, the last running
- *    agent closing the list with `└─ `), name-first, NO box chrome, NO
- *    `● Agents` header, NO provider, plus the child's latest output line
- *    (` · <tail>`) when one exists. A settled child drops off; when none run
- *    and there is no last-request line the slot collapses to zero rows.
+ *    ONE compact line PER RUNNING agent — `├─ `/`└─ `-prefixed, name-first,
+ *    no box chrome, no provider, plus the child's latest CONTENT line
+ *    (` · <tail>`, live-refreshed, never a tool name) when one exists. A
+ *    settled child drops off; when none run and there is no last-request
+ *    line the slot collapses to zero rows.
  *
  * Runs against the built lib/ (npm test → pretest build).
  */
@@ -20,7 +21,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Container } from '@earendil-works/pi-tui'
+import { ALL_TOOL_RESULT_LINES, STREAMING_TAIL_LINES } from '../lib/activity.js'
 import { AGENT_SPINNER_FRAMES, LiveWidgets } from '../lib/live-widgets.js'
+import { SPAWN_TOOLS } from '../lib/subagent-policy.js'
 import { ansiFg, darkTheme, lightTheme } from '../lib/theme/index.js'
 import { visibleWidth } from '../lib/text.js'
 
@@ -47,11 +50,13 @@ function panelBody(doc, width = 200) {
     .map(row => row.replace(/^│ /, '').replace(/\s+$/, '').replace(/\s+│$/, ''))
 }
 
-/** Two-doc widget: a boxed Todos doc above the input + the activity doc below. */
-function makeWidget(theme = darkTheme) {
+/** Two-doc widget: a boxed panels doc above the input + the activity doc below. */
+function makeWidget(theme = darkTheme, panelHeight) {
   const todosDoc = new Container()
   const activityDoc = new Container()
-  const widget = new LiveWidgets(todosDoc, activityDoc, theme, () => {})
+  const widget = panelHeight === undefined
+    ? new LiveWidgets(todosDoc, activityDoc, theme, () => {})
+    : new LiveWidgets(todosDoc, activityDoc, theme, () => {}, panelHeight)
   return { todosDoc, activityDoc, widget }
 }
 
@@ -222,12 +227,13 @@ test('compact token meta: tokens[/contextWindow] with fmtCompact, no percent/uni
   assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · \d+\.\ds$/)
 })
 
-test('the child\'s latest line renders as a ` · <tail>` suffix, truncated with `..`', () => {
+test('the child\'s latest CONTENT line renders as a ` · <tail>` suffix, right-truncated', () => {
   const { activityDoc, widget } = makeWidget()
   const base = { childId: 't', label: 'T', tokens: 0, retries: 0 }
   widget.renderAgents([runningView({ ...base, lastLine: 'compiling src/main.ts' })])
   assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · \d+\.\ds · compiling src\/main\.ts$/)
-  // Over-wide tail: clipped to tailBudget-2 + `..` (80 cols → budget 24 → 22+2).
+  // Over-wide tail: takes everything the row has left and is truncated at the
+  // RIGHT edge (clipToWidth's ellipsis), one row, never wrapped, no tool name.
   const width = 80
   const prev = process.stdout.columns
   process.stdout.columns = width
@@ -235,8 +241,9 @@ test('the child\'s latest line renders as a ` · <tail>` suffix, truncated with 
     const longTail = 'x'.repeat(200)
     widget.renderAgents([runningView({ ...base, lastLine: longTail })])
     const row = widgetRows(activityDoc)[0]
-    assert.ok(row.endsWith('..'), `over-wide tail ends with ..: ${JSON.stringify(row)}`)
     assert.ok(visibleWidth(row) <= width, `row stays within ${width} cols`)
+    assert.ok(row.includes(' · ' + 'x'.repeat(20)), 'tail fills the row to the right edge')
+    assert.ok(!row.includes('⚙'), 'a tool name never appears in the tail')
   } finally {
     process.stdout.columns = prev
   }
@@ -389,4 +396,273 @@ test('clear() drops todos and agent lines but keeps the last-request echo', () =
   widget.clear()
   assert.deepEqual(widgetRows(todosDoc), [], '/new clears the todos panel')
   assert.deepEqual(widgetRows(activityDoc), [' ● keep me'], '/new keeps the last-request echo')
+})
+
+// ---------------------------------------------- fixed think/tool panels ----
+
+/** Event factories for the panel phase machine (plain shapes, log order irrelevant). */
+const chunkEvent = (type, text) => ({
+  type: 'assistant/chunk',
+  data: { turn: 0, step: 0, chunk: { type, text } },
+})
+const toolCallEvent = (callId, name, rawArguments) => ({
+  type: 'tool/call',
+  data: { turn: 0, step: 0, callId, name, arguments: rawArguments },
+})
+const toolResultEvent = (callId, text, isError = false) => ({
+  type: 'tool/result',
+  data: { turn: 0, step: 0, message: { content: [{ toolCallId: callId, isError, content: [{ type: 'text', text }] }] } },
+})
+
+test('think panel: one row — identifier + elapsed + last content line, refreshed in place', () => {
+  const { todosDoc, widget } = makeWidget()
+  assert.deepEqual(widgetRows(todosDoc), [], 'hidden while no content')
+  widget.applyEvent(chunkEvent('reasoning-delta', 'first thought'))
+  let rows = widgetRows(todosDoc)
+  assert.equal(rows.length, 1, 'exactly one borderless row')
+  assert.match(rows[0], /^💭 thinking · \d+\.\ds · first thought$/, 'identifier + elapsed + last line')
+  // More deltas refresh the SAME row: the newest non-blank line wins.
+  widget.applyEvent(chunkEvent('reasoning-delta', '\nsecond thought'))
+  rows = widgetRows(todosDoc)
+  assert.equal(rows.length, 1, 'still ONE row — the same panel refreshed, no new blocks')
+  assert.match(rows[0], /second thought$/, 'the last content line wins')
+  assert.ok(!rows[0].includes('first thought'), 'older lines do not render in the 1-line row')
+})
+
+test('think panel hides on the next phase event; reopens on the next burst', () => {
+  const { todosDoc, widget } = makeWidget()
+  widget.applyEvent(chunkEvent('reasoning-delta', 'thinking'))
+  assert.equal(widgetRows(todosDoc).length, 1)
+  // The answer streams into the transcript — the panel hides.
+  widget.applyEvent(chunkEvent('text-delta', 'the answer'))
+  assert.deepEqual(widgetRows(todosDoc), [], 'text delta hides the think panel')
+  widget.applyEvent(chunkEvent('reasoning-delta', 'again'))
+  assert.equal(widgetRows(todosDoc).length, 1, 'a new burst reopens the SAME panel')
+  // Assembled message, user message and turn end all hide it.
+  widget.applyEvent({ type: 'assistant/message', data: { turn: 0, step: 0, message: { content: [] } } })
+  assert.deepEqual(widgetRows(todosDoc), [], 'assembled message hides the think panel')
+  widget.applyEvent(chunkEvent('reasoning-delta', 'burst'))
+  widget.applyEvent({ type: 'turn/end', data: { turn: 0, reason: { kind: 'stop' } } })
+  assert.deepEqual(widgetRows(todosDoc), [], 'turn end hides the think panel')
+})
+
+test('tool panel: pending row with name + subject, settles with status icon and last result line', () => {
+  const { todosDoc, widget } = makeWidget()
+  assert.deepEqual(widgetRows(todosDoc), [], 'hidden while no content')
+  widget.applyEvent(toolCallEvent('c1', 'read', '{"path": "src/welcome.ts"}'))
+  let rows = widgetRows(todosDoc)
+  assert.equal(rows.length, 1)
+  assert.match(rows[0], /^⚙ read src\/welcome\.ts · \d+\.\ds · src\/welcome\.ts$/, 'pending: icon + name + subject + elapsed + args tail')
+  widget.applyEvent(toolResultEvent('c1', 'line one\nline two'))
+  rows = widgetRows(todosDoc)
+  assert.equal(rows.length, 1, 'the SAME panel settled — refreshed, no new block')
+  assert.match(rows[0], /^✔ read src\/welcome\.ts · \d+\.\ds · line two$/, 'settled: success icon, last result line')
+  // A second call refreshes the same panel (pending again), an error settles with ✘.
+  widget.applyEvent(toolCallEvent('c2', 'bash', '{"command": "ls"}'))
+  assert.match(widgetRows(todosDoc)[0], /^⚙ bash ls · \d+\.\ds · \$ ls$/, 'a new call refreshes the same panel')
+  widget.applyEvent(toolResultEvent('c2', 'boom', true))
+  assert.match(widgetRows(todosDoc)[0], /^✘ bash ls · \d+\.\ds · boom$/, 'error settle swaps the icon')
+})
+
+test('tool panel: a result for a non-tracked call is ignored (parallel calls)', () => {
+  const { todosDoc, widget } = makeWidget()
+  widget.applyEvent(toolCallEvent('a', 'read', '{"path": "one"}'))
+  widget.applyEvent(toolCallEvent('b', 'read', '{"path": "two"}'))
+  assert.match(widgetRows(todosDoc)[0], /two/, 'the panel tracks the newest call')
+  widget.applyEvent(toolResultEvent('a', 'late result'))
+  assert.match(widgetRows(todosDoc)[0], /^⚙ read two/, 'the stale result does not settle the tracked tool')
+  widget.applyEvent(toolResultEvent('b', 'right result'))
+  assert.match(widgetRows(todosDoc)[0], /^✔ read two .* right result$/, 'the matching result settles it')
+})
+
+test('tool panel hides on turn end / user message / text delta; reasoning swaps to the think panel', () => {
+  const { todosDoc, widget } = makeWidget()
+  widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
+  assert.equal(widgetRows(todosDoc).length, 1)
+  widget.applyEvent(chunkEvent('reasoning-delta', 'next thought'))
+  const rows = widgetRows(todosDoc)
+  assert.equal(rows.length, 1, 'one panel at a time — think replaced tool')
+  assert.match(rows[0], /^💭 thinking/)
+  widget.applyEvent(toolCallEvent('c2', 'bash', '{"command": "pwd"}'))
+  assert.match(widgetRows(todosDoc)[0], /^⚙ bash pwd/, 'tool replaced think')
+  widget.applyEvent({ type: 'turn/end', data: { turn: 0, reason: { kind: 'stop' } } })
+  assert.deepEqual(widgetRows(todosDoc), [], 'turn end hides the tool panel')
+  widget.applyEvent(toolCallEvent('c3', 'bash', '{"command": "ls"}'))
+  widget.applyEvent({ type: 'user/message', data: { content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } } })
+  assert.deepEqual(widgetRows(todosDoc), [], 'user message hides the tool panel')
+})
+
+test('delegation spawn tools never open the tool panel (their subagent shows below the editor)', () => {
+  const { todosDoc, widget } = makeWidget()
+  // Every spawn/delegation tool family member renders no tool block.
+  for (const name of SPAWN_TOOLS) {
+    widget.applyEvent(toolCallEvent(`d-${name}`, name, '{"description": "delegate this"}' ))
+    assert.deepEqual(widgetRows(todosDoc), [], `${name} opens no tool block`)
+  }
+  // A delegation call also clears a stale settled tool panel.
+  widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
+  widget.applyEvent(toolResultEvent('c1', 'done'))
+  assert.equal(widgetRows(todosDoc).length, 1, 'a real tool renders')
+  widget.applyEvent(toolCallEvent('d2', 'use_agent', '{"name": "workhorse"}'))
+  assert.deepEqual(widgetRows(todosDoc), [], 'delegation clears any stale tool panel')
+  // Its result does not resurrect a panel; non-spawn tools still render.
+  widget.applyEvent(toolResultEvent('d2', 'delegation returned'))
+  assert.deepEqual(widgetRows(todosDoc), [], 'a delegation result never opens a panel')
+  widget.applyEvent(toolCallEvent('c2', 'bash', '{"command": "pwd"}'))
+  assert.equal(widgetRows(todosDoc).length, 1, 'non-spawn tools still render')
+})
+
+test('1-line rows never wrap: long last lines truncate at the right edge', () => {
+  const width = 80
+  const prev = process.stdout.columns
+  process.stdout.columns = width
+  try {
+    const { todosDoc, widget } = makeWidget()
+    widget.applyEvent(chunkEvent('reasoning-delta', 'x'.repeat(300)))
+    let rows = widgetRows(todosDoc, width)
+    assert.equal(rows.length, 1, 'think row stays one physical row')
+    assert.ok(visibleWidth(rows[0]) <= width, `think row fits ${width} cols`)
+    widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
+    widget.applyEvent(toolResultEvent('c1', Array.from({ length: 50 }, () => 'y'.repeat(30)).join('\n')))
+    rows = widgetRows(todosDoc, width)
+    assert.equal(rows.length, 1, 'tool row stays one physical row')
+    assert.ok(visibleWidth(rows[0]) <= width, `tool row fits ${width} cols`)
+    // A long CJK content line is clipped whole-grapheme and never wraps.
+    widget.applyEvent(toolCallEvent('c2', 'bash', '{"command": "ls"}'))
+    widget.applyEvent(toolResultEvent('c2', '务'.repeat(200)))
+    rows = widgetRows(todosDoc, width)
+    assert.equal(rows.length, 1, 'CJK tail stays one row')
+    assert.ok(visibleWidth(rows[0]) <= width, `CJK row fits ${width} cols`)
+  } finally {
+    process.stdout.columns = prev
+  }
+})
+
+test('tickLive repaints while a panel is visible even with no running agents', () => {
+  const { todosDoc, activityDoc, widget } = makeWidget()
+  widget.applyEvent(chunkEvent('reasoning-delta', 'x'))
+  widget.tickLive()
+  assert.equal(widgetRows(todosDoc).length, 1, 'the panel survives the tick (elapsed refresh)')
+  widget.applyEvent({ type: 'turn/end', data: { turn: 0, reason: { kind: 'stop' } } })
+  widget.tickLive()
+  assert.deepEqual(widgetRows(todosDoc), [], 'nothing live — tick is a no-op')
+  assert.deepEqual(widgetRows(activityDoc), [], 'no stray activity rows')
+})
+
+test('clear() (/new) hides both panels', () => {
+  const { todosDoc, widget } = makeWidget()
+  widget.applyEvent(chunkEvent('reasoning-delta', 'x'))
+  widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
+  widget.clear()
+  assert.deepEqual(widgetRows(todosDoc), [])
+})
+
+// ------------------------------------------------------- boxed heights ----
+
+test("boxed '5': full box (border + header + 4 content rows + border), settle keeps the shape", () => {
+  const { todosDoc, widget } = makeWidget(darkTheme, '5')
+  widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
+  let rows = widgetRows(todosDoc, 200)
+  assert.equal(rows.length, 7, 'displayed 5 + 2 borders')
+  assert.match(rows[0], /^┌─+┐$/, 'top border')
+  assert.match(rows[6], /^└─+┘$/, 'bottom border')
+  assert.ok(rows[1].includes('⚙ bash'), 'pending header')
+  assert.ok(rows[2].includes('$ ls'), 'detail row inside the box')
+  widget.applyEvent(toolResultEvent('c1', 'a.txt'))
+  rows = widgetRows(todosDoc, 200)
+  assert.equal(rows.length, 7, 'settled box keeps its shape')
+  assert.ok(rows[1].includes('✔ bash'), 'header flipped to the success icon')
+  assert.ok(rows.join('\n').includes('a.txt'), 'result row inside the box')
+})
+
+test('boxed think panel carries the thinking color and italic header, box shape at every fixed height', () => {
+  const { todosDoc, widget } = makeWidget(darkTheme, '7')
+  widget.applyEvent(chunkEvent('reasoning-delta', 'one\ntwo\nthree\nfour\nfive\nsix'))
+  let rows = widgetRows(todosDoc, 200)
+  assert.equal(rows.length, 9, 'displayed 7 + 2 borders')
+  assert.ok(rows[1].includes('💭 thinking'), 'header row')
+  assert.ok(rows.join('\n').includes('three'), 'body keeps the tail at the row budget')
+  widget.setPanelHeight('10')
+  rows = widgetRows(todosDoc, 200)
+  assert.equal(rows.length, 12, 'displayed 10 + 2 borders')
+  widget.setPanelHeight('1')
+  rows = widgetRows(todosDoc, 200)
+  assert.equal(rows.length, 1, 'back to the 1-line row')
+})
+
+test("'all' boxes the full body: think keeps a bounded live tail, tool results cap at 2000 lines", () => {
+  const { todosDoc, widget } = makeWidget(darkTheme, 'all')
+  // Think: 500 streamed lines → only the newest 200 are boxed (bounded tail).
+  const thinkLines = Array.from({ length: 500 }, (_, i) => `think ${i + 1}`)
+  widget.applyEvent(chunkEvent('reasoning-delta', thinkLines.join('\n')))
+  let rows = widgetRows(todosDoc, 400)
+  assert.equal(rows.length, STREAMING_TAIL_LINES + 3, 'top border + header + bounded tail + bottom border')
+  assert.ok(!rows.join('\n').includes('think 1'), 'the head is not boxed while streaming')
+  assert.ok(rows[2].includes(`think ${500 - STREAMING_TAIL_LINES + 1}`), 'the tail starts at the newest 200 lines')
+  widget.applyEvent({ type: 'turn/end', data: { turn: 0, reason: { kind: 'stop' } } })
+
+  // Tool: 2100 result lines + 1 detail → capped at 2000 with the drop marker.
+  widget.setPanelHeight('all')
+  widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
+  const resultLines = Array.from({ length: 2100 }, (_, i) => `result ${i + 1}`)
+  widget.applyEvent(toolResultEvent('c1', resultLines.join('\n')))
+  rows = widgetRows(todosDoc, 400)
+  assert.equal(rows.length, ALL_TOOL_RESULT_LINES + 3, '2000 body rows + chrome — capped')
+  assert.ok(rows[2].includes('(+101 lines)'), 'marker reports the dropped count')
+  assert.ok(rows[3].includes('result 102'), 'newest result rows stay on screen')
+  assert.match(rows[ALL_TOOL_RESULT_LINES + 2], /^└─+┘$/, 'bottom border closes the box')
+})
+
+test('boxed panels keep their shape on narrow terminals (10/16/20 columns)', () => {
+  const prev = process.stdout.columns
+  try {
+    for (const columns of [10, 16, 20]) {
+      process.stdout.columns = columns
+      const { todosDoc, widget } = makeWidget(darkTheme, '5')
+      widget.applyEvent(chunkEvent('reasoning-delta', 'x'.repeat(120)))
+      widget.applyEvent({ type: 'turn/end', data: { turn: 0, reason: { kind: 'stop' } } })
+      widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
+      const rows = widgetRows(todosDoc, columns)
+      assert.equal(rows.length, 7, `tool panel stays 7 rows at ${columns} columns`)
+      for (const row of rows) {
+        assert.ok(visibleWidth(row) <= columns, `row fits ${columns} cols: ${JSON.stringify(row)}`)
+      }
+      // Carriage returns in a result never split the fixed rows either.
+      widget.applyEvent(toolResultEvent('c1', '50%|----|\r60%|----|\r\nfinished'))
+      const settled = widgetRows(todosDoc, columns)
+      assert.equal(settled.length, 7, 'carriage returns keep the 7-row shape')
+    }
+  } finally {
+    process.stdout.columns = prev
+  }
+})
+
+test('panels re-render at the current width each frame (resize-follow, no baked rows)', () => {
+  const { todosDoc, widget } = makeWidget(darkTheme, '5')
+  widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
+  const narrow = widgetRows(todosDoc, 40)
+  assert.equal(narrow.length, 7, 'box survives a narrow render')
+  const wide = widgetRows(todosDoc, 120)
+  assert.equal(wide.length, 7, 'box survives a wide render')
+  assert.ok(visibleWidth(wide[0]) > visibleWidth(narrow[0]), 'the box re-lays out at the live width')
+})
+
+// -------------------------------------------------------- theme + panels ----
+
+test('setTheme recolors the panels in place (live state, no rebuild)', () => {
+  const { todosDoc, widget } = makeWidget(darkTheme, '1')
+  widget.applyEvent(chunkEvent('reasoning-delta', 'colorful thought'))
+  const before = todosDoc.render(200).join('')
+  assert.ok(before.includes(ansiFg(darkTheme.palette.thinking)), 'think identifier painted with the dark thinking color')
+  widget.setTheme(lightTheme)
+  const after = todosDoc.render(200).join('')
+  assert.ok(after.includes(ansiFg(lightTheme.palette.thinking)), 'think identifier recolored to the light thinking color')
+  assert.ok(!after.includes(ansiFg(darkTheme.palette.thinking)), 'no dark thinking color left behind')
+  assert.ok(after.includes('colorful thought'), 'content survives the recolor')
+  // Boxed mode recolors its surfaces too.
+  widget.setPanelHeight('5')
+  widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
+  widget.applyEvent(toolResultEvent('c1', 'ok'))
+  const toolRows = todosDoc.render(200).join('')
+  assert.ok(toolRows.includes('✔'), 'settled tool renders after the recolor')
 })

@@ -15,6 +15,23 @@ export { visibleWidth }
 /** Truncation marker; U+2026 is one terminal column wide. */
 const ELLIPSIS = '…'
 
+/**
+ * Last non-blank line of `text`, ANSI-stripped, newline-normalized and
+ * whitespace-folded onto one row — the "latest visible line" every live
+ * status surface shows (think/tool 1-line panels, running-agent tails).
+ * Undefined when the text carries no visible line at all.
+ */
+export function lastNonBlankLine(text: string): string | undefined {
+  const body = text.replace(/\x1b\[[0-9;]*m/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = body.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (line === '') continue
+    return line.replace(/\s+/g, ' ')
+  }
+  return undefined
+}
+
 /** Grapheme-clustered iteration (Intl.Segmenter) — never splits a surrogate pair. */
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 

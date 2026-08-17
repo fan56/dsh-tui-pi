@@ -19,7 +19,8 @@ import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { FooterHint, PowerlineFooter, type FooterDataSource, type FooterHints } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
 import { ensureAppendSystemFile, dshHome, migrateAgentsMdTodoSection } from './append-system.ts'
-import { TranscriptRenderer, type PanelHeight } from './messages.ts'
+import { TranscriptRenderer } from './messages.ts'
+import type { PanelHeight } from './activity.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts'
@@ -94,8 +95,8 @@ export function apply(ctx: Context): void {
   let applyThemeRef: ((pref: ThemePreference) => void) | undefined
   /**
    * Live panel-height hot-reload sink, wired to the same watch hook: a
-   * committed `dsh-tui` panelHeight change rebuilds the transcript panels at
-   * the new row budget. Armed inside runTui once the renderer exists.
+   * committed `dsh-tui` panelHeight change re-budgets the fixed think/tool
+   * panels above the chat input. Armed inside runTui once the widgets exist.
    */
   let applyPanelHeightRef: ((height: PanelHeight) => void) | undefined
   /**
@@ -115,10 +116,9 @@ export function apply(ctx: Context): void {
     // external edit) hot-apply through applyThemeRef / applyPanelHeightRef /
     // applyFooterHintsRef.
     // Panel height FIRST, theme second: a single commit of both fields (a
-    // namespace-level reset, an external edit) must not replay twice at the
-    // wrong height. setPanelHeight + relayout repaint the transcript at the
-    // new row budget; the setTheme replay that follows already renders at
-    // that new height, so the theme rebuild is the one complete rebuild.
+    // namespace-level reset, an external edit) must not replay at the wrong
+    // height. setPanelHeight re-budgets the fixed think/tool panels; the
+    // setTheme replay that follows already renders at that new height.
     // applyTheme carries the theme-bundle identity guard, so a height-only
     // commit never triggers a second rebuild.
     registerThemeSettings(ctx, (pref, height, footerHints) => {
@@ -322,25 +322,24 @@ export function apply(ctx: Context): void {
       applyTheme(resolveTheme(process.env, pref))
     }
 
-    const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender(), panelHeight)
+    const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender())
     // Startup notices for a broken/misleading keybindings file — the TUI keeps
     // running with defaults; the panel shows the same warnings via /hotkeys.
     for (const warning of keyBindings.warnings) {
       renderer.renderNotice(`keybindings: ${warning}`, 'error')
     }
-    // Live Todos widget, pinned above the chat window, plus the running-agent
-    // activity merged into the last-request area below the editor: shown while
-    // the model has (incomplete) todos or subagents running, collapsed when
-    // done. Owned here — fed by todo/write events and the bridge's subagent
-    // fold, ticked by the live timer, recolored by applyTheme.
-    const liveWidgets = new LiveWidgets(ui.widgets, ui.lastRequest, ui.theme, () => ui.requestRender())
-    // Arm the panel-height watch sink now that the renderer exists: a
-    // committed panelHeight change sets the new height and relayouts the
-    // transcript (the replay rebuild), repainting every panel at the new row
-    // budget. setPanelHeight reports whether the height actually changed, so
-    // an echoed self-write is a no-op.
+    // Live widgets, pinned around the chat window: the Todos panel plus the
+    // fixed think/tool status panels ABOVE the input (one of each, refreshed
+    // in place, hidden while empty), and the running-agent activity merged
+    // into the last-request area BELOW the editor. Owned here — fed by
+    // session events and the bridge's subagent fold, ticked by the live
+    // timer, recolored by applyTheme.
+    const liveWidgets = new LiveWidgets(ui.widgets, ui.lastRequest, ui.theme, () => ui.requestRender(), panelHeight)
+    // Arm the panel-height watch sink now that the widgets exist: a committed
+    // panelHeight change re-budgets the think/tool panels — they are
+    // self-drawing, so the next frame already renders at the new height.
     applyPanelHeightRef = (height: PanelHeight): void => {
-      if (renderer.setPanelHeight(height)) renderer.relayout()
+      liveWidgets.setPanelHeight(height)
     }
 
     // Terminal resize: pi-tui re-renders every component at the new columns,
@@ -395,8 +394,10 @@ export function apply(ctx: Context): void {
     const bridgeCallbacks: BridgeCallbacks = {
       onEvent: (event: SessionEvent) => {
         renderer.applyEvent(event)
+        // Think/tool activity, todos and the panel phase machine: the fixed
+        // live surfaces above the chat input, never transcript blocks.
+        liveWidgets.applyEvent(event)
         if (event.type === 'todo/write') {
-          // Todos render in the fixed live widget, not the transcript.
           liveWidgets.renderTodos(event.data.todos)
         }
         if (PERMISSION_KNOB_EVENTS.has(event.type)) {

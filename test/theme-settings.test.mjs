@@ -134,8 +134,8 @@ test('committed panelHeight changes flow register → watch → sink with narrow
   registerThemeSettings(ctx, (pref, height) => { sink.push({ pref, height }) })
   await settle()
 
-  // Startup read: the base entry resolves to the default height.
-  assert.equal(await readPanelHeightPreference(ctx), '5')
+  // Startup read: the base entry resolves to the default height ('1').
+  assert.equal(await readPanelHeightPreference(ctx), '1')
 
   // A committed height change (a settings write → mutate → watch) must reach
   // the sink alongside the (unchanged, narrowed) theme value — the
@@ -178,7 +178,7 @@ test('a single commit of both fields forwards both narrowed values in one callba
   assert.equal(await readPanelHeightPreference(ctx), '10', 'height read back')
 })
 
-test('watch narrows unknown or missing panelHeight values to 5', async () => {
+test('watch narrows unknown or missing panelHeight values to 1', async () => {
   const ctx = new Context()
   const settings = makeSettings()
   ctx.provide('settings', settings)
@@ -188,16 +188,16 @@ test('watch narrows unknown or missing panelHeight values to 5', async () => {
 
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['panelHeight'], value: '12' }])
   await settle()
-  assert.deepEqual(heights, ['5'], 'unknown height narrows to 5')
+  assert.deepEqual(heights, ['1'], 'unknown height narrows to 1')
 
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['panelHeight'], value: '7' }])
   await settle()
-  assert.deepEqual(heights, ['5', '7'], 'valid height passes through')
+  assert.deepEqual(heights, ['1', '7'], 'valid height passes through')
 
-  // Unsetting the key removes it from the section: narrows back to 5.
+  // Unsetting the key removes it from the section: narrows back to 1.
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['panelHeight'] }])
   await settle()
-  assert.deepEqual(heights, ['5', '7', '5'], 'missing panelHeight key narrows to 5')
+  assert.deepEqual(heights, ['1', '7', '1'], 'missing panelHeight key narrows to 1')
 })
 
 test('subagent limits resolve to defaults and round-trip through a committed write', async () => {

@@ -1,22 +1,36 @@
 /**
- * Panel-line clipping tests — the boxed panels (think block / tool card: top
- * border + header + body rows + bottom border) must never exceed their
- * configured height: every body row's content is clipped to one physical
- * terminal row BEFORE styling, so pi-tui's wrapTextWithAnsi (the Text
- * component wraps at `width - paddingX*2`) has nothing to fold. The default
- * panel is 5 rows (2 body rows); heights are configurable ('5'/'7'/'10' rows
- * or 'all' = print the full body).
+ * Panel-line clipping tests — the boxed think/tool panels (src/activity.ts,
+ * pinned above the chat input: top border + header + body rows + bottom
+ * border) must never exceed their configured height: every body row's
+ * content is clipped to one physical terminal row BEFORE styling, so pi-tui's
+ * wrapTextWithAnsi (the Text component wraps at `width - paddingX*2`) has
+ * nothing to fold. The default panel is ONE row (identifier + elapsed + last
+ * line, right-truncated); boxed heights are configurable ('5'/'7'/'10' rows
+ * or 'all' = full body with caps). Plus transcript tests (whale prefix).
  * Runs against the built lib/ (pnpm build && pnpm test).
  */
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { Container, wrapTextWithAnsi } from '@earendil-works/pi-tui'
-import { clipPanelLine, panelBodyText, panelBoxWidth, panelLineCap, toolSubject, TranscriptRenderer } from '../lib/messages.js'
-import { ansiFg, darkTheme, lightTheme } from '../lib/theme/index.js'
+import { wrapTextWithAnsi } from '@earendil-works/pi-tui'
+import {
+  clipPanelLine,
+  panelBodyText,
+  panelBoxWidth,
+  panelLineCap,
+  toolSubject,
+  DEFAULT_PANEL_HEIGHT,
+} from '../lib/activity.js'
+import { TranscriptRenderer } from '../lib/messages.js'
+import { Container } from '@earendil-works/pi-tui'
+import { darkTheme, lightTheme } from '../lib/theme/index.js'
 import { visibleWidth } from '../lib/text.js'
 
 const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
+
+test('the default panel height is the single 1-line row', () => {
+  assert.equal(DEFAULT_PANEL_HEIGHT, '1')
+})
 
 test('panelLineCap leaves headroom for the box chrome and indent', () => {
   // Body Text paddingX = 1 → wraps at columns - 2; every row carries 4
@@ -175,25 +189,24 @@ test('toolSubject picks the argument\'s first word — file for read/write, comm
   assert.equal(toolSubject('{"path": "   "}'), '', 'blank strings are skipped, not trimmed into noise')
 })
 
-test('tool card header shows name + subject (read → file path, cli → command word)', () => {
-  const doc = new Container()
-  const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
-  renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'a', name: 'read', arguments: '{"path": "src/welcome.ts"}' }, ts: 0, seq: 1 })
-  renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'b', name: 'cli', arguments: '{"command": "python train.py"}' }, ts: 0, seq: 2 })
-  const out = doc.children.map(c => c.render(200).map(stripAnsi).join('\n')).join('\n')
-  assert.ok(out.includes('⚙ read src/welcome.ts'), 'pending read header carries the file path')
-  assert.ok(out.includes('⚙ cli python'), 'pending cli header carries the command word')
+// ------------------------------------------------------- whale avatar ----
 
+test('tool calls and reasoning render nothing in the transcript (the fixed panels own them)', () => {
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
+  renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'a', name: 'read', arguments: '{"path": "src/welcome.ts"}' }, ts: 0, seq: 1 })
+  renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 1, chunk: { type: 'reasoning-delta', text: 'thinking hard' } } })
   renderer.applyEvent({
     type: 'tool/result',
     data: { turn: 0, step: 0, callId: 'a', message: { content: [{ toolCallId: 'a', isError: false, content: [{ type: 'text', text: 'ok' }] }] } },
-    ts: 0, seq: 3,
+    ts: 0, seq: 2,
   })
-  const settled = doc.children.map(c => c.render(200).map(stripAnsi).join('\n')).join('\n')
-  assert.ok(settled.includes('✔ read src/welcome.ts'), 'settled header keeps the subject, swaps icon/status')
+  renderer.applyEvent({ type: 'assistant/message', data: { turn: 0, step: 1, message: { content: [{ type: 'reasoning', text: 'all done' }] } }, ts: 0, seq: 3 })
+  // After the welcome banner's 5 children the transcript stays empty — no
+  // tool cards, no thinking panels, no blocks at all.
+  assert.equal(doc.children.length, 5, 'only the welcome banner renders')
 })
 
-// ------------------------------------------------------- whale avatar ----
 
 test('the whale 🐳 prefixes the assistant\'s formal answer inline, once per message', () => {
   const doc = new Container()

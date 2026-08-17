@@ -65,6 +65,13 @@ const CHILD_LOG_CAP = 2000
 /** Tail marker for `llm/retry` events (no text content — the row shows it is re-working). */
 const RETRY_MARKER = '↻ retry'
 
+/**
+ * Bound of a child's live streaming buffer (text + reasoning deltas): enough
+ * to extract the last content line of any real stream, bounded so a runaway
+ * child cannot grow the fold unboundedly. Trimmed at line boundaries.
+ */
+const CHILD_STREAM_CAP = 16_384
+
 /** Strip ANSI SGR escape sequences (the only escapes collected into assistant text). */
 function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, '')
@@ -90,6 +97,38 @@ function lastTextLine(data: unknown): string | undefined {
   // Last non-blank line of the text body, whitespace-folded so a wrapped/
   // CRLF stream collapses onto one row.
   const body = stripAnsi(blockText).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = body.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (line === '') continue
+    return line.replace(/\s+/g, ' ')
+  }
+  return undefined
+}
+
+/**
+ * Append one delta to a child's bounded streaming buffer, trimming whole head
+ * lines past CHILD_STREAM_CAP (amortized O(1) per delta — the trim only
+ * fires when the buffer outgrows the cap, and each firing drops at least one
+ * whole line). The buffer feeds the live content tail: its last non-blank
+ * line is what the compact agent row shows while the child streams.
+ */
+function bumpChildStream(buffer: string, delta: string): string {
+  let next = buffer + delta
+  while (next.length > CHILD_STREAM_CAP) {
+    const nl = next.indexOf('\n')
+    if (nl === -1) {
+      next = next.slice(-Math.floor(CHILD_STREAM_CAP / 2))
+      break
+    }
+    next = next.slice(nl + 1)
+  }
+  return next
+}
+
+/** Last visible, whitespace-folded line of a raw streaming buffer (see lastTextLine). */
+function lastBufferLine(buffer: string): string | undefined {
+  const body = stripAnsi(buffer).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   const lines = body.split('\n')
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim()
@@ -144,6 +183,13 @@ export class DshSessionBridge {
    * when the cap is hit).
    */
   private readonly childLogs = new Map<string, SessionEvent[]>()
+  /**
+   * Per-child bounded streaming buffer (text + reasoning deltas) — the live
+   * content tail the compact agent row shows while the child streams. The
+   * assembled `assistant/message` replaces it with the authoritative last
+   * line and deletes the entry.
+   */
+  private readonly childStreams = new Map<string, string>()
   /** Per-child completed turn count — the "rounds" the policy caps. */
   private readonly turnCounts = new Map<string, number>()
   /**
@@ -319,6 +365,7 @@ export class DshSessionBridge {
     this.agentViews.clear()
     this.childSessions.clear()
     this.childLogs.clear()
+    this.childStreams.clear()
     this.turnCounts.clear()
     this.trackedSessions.clear()
     this.runSeqToChild.clear()
@@ -349,6 +396,7 @@ export class DshSessionBridge {
     this.agentViews.clear()
     this.childSessions.clear()
     this.childLogs.clear()
+    this.childStreams.clear()
     this.turnCounts.clear()
     this.trackedSessions.clear()
     this.runSeqToChild.clear()
@@ -536,13 +584,35 @@ export class DshSessionBridge {
           const tokensChanged = delta > 0
           const lineChanged = lastLine !== undefined && lastLine !== view.lastLine
           if (tokensChanged || lineChanged) {
-            // One set: neither delta nor lastLine may clobber the other.
+            // One set: neither delta nor lastLine may clobber the other. The
+            // assembled message is authoritative for the content tail — its
+            // streaming buffer is spent.
             this.agentViews.set(sessionId, {
               ...view,
               ...(tokensChanged ? { tokens: view.tokens + delta } : {}),
               ...(lineChanged ? { lastLine } : {}),
             })
             changed = true
+          }
+          this.childStreams.delete(sessionId)
+        } else if (event.type === 'assistant/chunk') {
+          // Live content tail: fold the child's streaming deltas (text AND
+          // reasoning) so the compact row's last line refreshes while the
+          // child works — never a tool name, always its own output. The
+          // assembled assistant/message later replaces it with the
+          // authoritative last line.
+          const chunk = (event.data as { chunk?: { type?: string; text?: string } }).chunk
+          if (chunk?.type === 'text-delta' || chunk?.type === 'reasoning-delta') {
+            const delta = chunk.text ?? ''
+            if (delta !== '') {
+              const buffer = bumpChildStream(this.childStreams.get(sessionId) ?? '', delta)
+              this.childStreams.set(sessionId, buffer)
+              const lastLine = lastBufferLine(buffer)
+              if (lastLine !== undefined && lastLine !== view.lastLine) {
+                this.agentViews.set(sessionId, { ...view, lastLine })
+                changed = true
+              }
+            }
           }
         } else if (isLlmRetry(event)) {
           // No text content — surface a fixed marker so the row shows the
@@ -561,13 +631,11 @@ export class DshSessionBridge {
             changed = true
           }
         } else if (event.type === 'tool/call') {
+          // Tool invocations do NOT touch the content tail: the compact row
+          // shows the child's own output (assistant text/reasoning), never a
+          // tool name. Only the lastTool activity marker is maintained.
           if (view.lastTool !== event.data.name) {
             this.agentViews.set(sessionId, { ...view, lastTool: event.data.name })
-            changed = true
-          }
-          const toolLine = `⚙ ${event.data.name}`
-          if (toolLine !== view.lastLine) {
-            this.agentViews.set(sessionId, { ...view, lastLine: toolLine })
             changed = true
           }
         } else if (event.type === 'request/context') {

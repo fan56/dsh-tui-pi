@@ -47,14 +47,23 @@ entry / wiring   index.ts          command registration, footer/git/clock,
                  editor.ts         editor rebuild on theme swap
                  footer.ts         powerline segments (O(segments) render)
   └─ renderer    messages.ts       session events → components, ReplayOp buffer
+                                   (chat-clean: think/tool/todo render in the
+                                   live widgets, never as transcript blocks)
+  └─ widgets     activity.ts       ThinkPanel/ToolPanel — the fixed think/tool
+                                   status panels above the chat input (one of
+                                   each per run, refreshed in place, hidden
+                                   while empty; '1'/'5'/'7'/'10'/'all' heights)
+                 live-widgets.ts   the pinned live surfaces — Todos + think +
+                                   tool panels above the chat window, the
+                                   last-request line + running-agent lines
+                                   below (applyEvent/renderTodos/renderAgents/
+                                   tickLive/setTheme)
   └─ bridge      session.ts        lazy session, O(1) stats, cancel, resume,
                                    replay, persistDefaultModel, subagent tracker
+                                   (child chunks fold a bounded content tail)
                  dsh-events.ts     local types/guards for tool-workflow,
                                    subagent/descriptor, llm/retry events
                                    (declaring packages not installed) + AgentView
-  └─ widgets     live-widgets.ts   fixed Todos/Agents widgets pinned above the
-                                   chat window (renderTodos/renderAgents/
-                                   tickLive/setTheme)
   └─ commands    commands.ts       parse + dual-channel dispatch + autocomplete
   └─ overlays    selectors.ts      /model /think /theme pickers
                  sessions.ts       /session panel, /resume picker
@@ -90,66 +99,95 @@ event does O(event) work:
 - `user/message` — bubble (`▎ ` prefix, `canvasSubtle` bg); the local prompt
   echo rendered on submit is deduped via `lastEcho` (trimmed text match).
 - `assistant/chunk` — `text-delta` appends to one streaming `Text`
-  (`setText`, never rebuild); `reasoning-delta` updates the thinking panel's
-  body rows in place (in 'all' mode the live body is a bounded tail, see
-  below).
+  (`setText`, never rebuild); `reasoning-delta` renders nothing here — the
+  fixed ThinkPanel consumes it (see below).
 - `assistant/message` — the streaming component is finalized (removed), the
-  message renders as `Markdown` once (no per-token parsing); a `reasoning`
-  block renders through the same height-configurable panel (full body).
-- `tool/call` / `tool/result` — a height-configurable card (status-colored
-  header `⚙/✔/✘ name`, body tail) keyed by `callId`; settled results keep at
-  most the body budget — or 2000 lines in 'all' mode, with a `… (+N lines)`
-  marker for the drop.
+  message renders as `Markdown` once (no per-token parsing); `reasoning`
+  blocks render nothing here (the ThinkPanel already showed the burst live).
+- `tool/call` / `tool/result` — render nothing here: the fixed ToolPanel
+  above the chat input tracks the current tool (see below).
 - `todo/write` — routed to the fixed live widget (see below), never rendered
   in the transcript.
 - `turn/end` — error / `⏹ interrupted` / `⚠ output token limit reached` line.
 - `command/run` / `command/done` — flow nodes, no render (the command echo
   path covers display).
 
+The transcript is chat-clean by design: user bubbles, assistant text,
+notices and echoes only. Think/tool/todo activity lives in the fixed live
+widgets above the chat input — one panel of each kind for the whole run,
+refreshed in place, never transcript blocks.
+
 Every applied operation is appended to a `ReplayOp` buffer (O(1) per event,
 never scanned by the render path). `setTheme` — an explicit user action — is
 the single reader: it clears the doc and replays the buffer against the new
-theme, so streaming state, tool cards, echoes and notices rebuild
-exactly as applied and an in-flight stream continues `setText` on its rebuilt
-component. Panels are height-configurable through `dsh-tui.panelHeight`
-(`'5'/'7'/'10'` total rows — top border + header row + body rows + bottom
-border — or `'all'` for the full body) with a padded tail (`panelBodyText`,
-pad rows carry the box characters `│ … │` so Text's empty-row fast path
-doesn't drop them); rows are clipped to one physical line with
-`clipPanelLine` (columns − 4, fallback 200) **before** styling. In 'all'
-mode a streaming reasoning panel boxes only the last 200 lines while chunks
-are in flight (per-chunk cost stays O(200) instead of O(accumulated)); the
-assembled `assistant/message` block and the replay rebuilds render the full
-body. The startup welcome banner (whale pixel art, plus the `DSH TUI`
-wordmark in a pixel font: classic Adafruit GFX 5×7 bitmap font glyphs
+theme, so streaming state, echoes and notices rebuild exactly as applied and
+an in-flight stream continues `setText` on its rebuilt component. The
+startup welcome banner (whale pixel art, plus the `DSH TUI` wordmark in a
+pixel font: classic Adafruit GFX 5×7 bitmap font glyphs
 (glcdfont.c, public domain) rendered at the whale's own 28 columns × 10
 rows tall (4-column strokes, 2-row horizontal bars), spaced 2 columns
 apart into an 88-column letter block, so the 118-column banner is whale
-(28) + 2-column gap + D (28) + 2 + S (28) + 2 + H (28); below 120
-terminal columns it
-degrades to
-the whale alone) in `welcome.ts` is the first replay op; its art is
-reproducible from `assets/whale-source.png` via `node assets/whale-gen.mjs`
-(test-enforced). The whale also prefixes the assistant's first text block
-inline (`🐳: text`) instead of taking its own avatar line, and the daily
-quote caption is whale-prefixed too (`🐳 「…」`).
+(28) + 2-column gap + D (28) + 2 + S (28) + 2 + H (28); below 120 terminal
+columns it degrades to the whale alone) in `welcome.ts` is the first replay
+op; its art is reproducible from `assets/whale-source.png` via
+`node assets/whale-gen.mjs` (test-enforced). The whale also prefixes the
+assistant's first text block inline (`🐳: text`) instead of taking its own
+avatar line, and the daily quote caption is whale-prefixed too (`🐳 「…」`).
+
+### Fixed activity panels (activity.ts)
+
+`ThinkPanel` and `ToolPanel` are the single fixed status surfaces for
+think/tool activity, mounted once in the widgets dock (above the chat input,
+like the Todos panel). One instance of each exists for the whole run:
+`LiveWidgets.applyEvent` (index.ts routes every parent-session event, replay
+included) drives the phase machine —
+
+- a `reasoning-delta` opens/feeds the ThinkPanel (elapsed from the burst's
+  first delta); the newest non-blank line is the live content;
+- a `tool/call` refreshes the ToolPanel pending (icon + name + subject +
+  args tail); a matching `tool/result` settles it (✔/✘, frozen time, result
+  tail); results for other callIds (parallel calls) are ignored. Delegation
+  spawn tools (`use_agent`/`subagent`/`workflow`/`ralph` — the `SPAWN_TOOLS`
+  family) never open a tool block: their children render in the running-agent
+  lines below the editor, and a delegation call clears any stale settled tool
+  panel;
+- a text delta, an assembled `assistant/message`, a user message or a
+  `turn/end` hides the finished phases — no content, zero rows.
+
+Panels are self-drawing Components (`render(width)` per frame, no cached
+rows — the TodosPanel pattern): a terminal resize re-lays the box out
+automatically and a theme hot-switch is just a repaint. Heights come from
+`dsh-tui.panelHeight` (`'1'` default: ONE borderless row — block identifier
++ elapsed + last content line, right-truncated at the terminal width, never
+wrapped; `'5'/'7'/'10'`: boxed header + content rows, borders add two more;
+`'all'`: full body with caps — a streaming reasoning panel boxes only a
+200-line live tail while chunks are in flight, a settled tool result keeps
+at most 2000 lines with a `… (+N lines)` marker). Every body row is clipped
+to one physical line (`clipRow` — plain text before ANSI) at the CURRENT
+render width, so no row ever wraps.
 
 ### Live widgets (live-widgets.ts)
 
-`LiveWidgets` owns two separate live surfaces across two fixed containers (both
+`LiveWidgets` owns the pinned live surfaces across three fixed containers
+(the widgets dock above the input plus the lastRequest area below it; both
 `basis: auto / grow: 0` slots that never scroll with the transcript):
 
 - **Todos** — a single **bordered panel** (top border + header row + body rows +
-  bottom border, the same chrome as the thinking/tool panels, `borderDefault`)
-  in the slot **pinned above the chat input** (`ui.widgets`, directly above the
-  editor). Show-when-content, clear-when-done.
+  bottom border, `borderDefault`) in the widgets dock, directly above the
+  think/tool status panels. Show-when-content, clear-when-done.
+- **Think/Tool activity** — the fixed `ThinkPanel`/`ToolPanel` (activity.ts,
+  see above), mounted once in the same dock; `applyEvent` drives their phase
+  machine, `setPanelHeight` re-budgets them live.
 - **Running-agent activity** — merged into the **last-request area below the
-  editor** (`ui.lastRequest`, tui.ts): the ` ↳ <last request>` line followed by
-  one **compact line per running agent** — `  ↳ `-prefixed, name-first, NO box
-  chrome, NO `● Agents` header, NO connector and NO provider, just
-  `  ↳ ⠋ <name> · ↻N≤M · 562 token (4%) · 13.6s` (spinner muted, NAME default,
-  meta subtle). Each line is clipped (prefix included) to the terminal width
-  BEFORE any ANSI. The ↳ line persists while agents come and go.
+  editor** (`ui.lastRequest`, tui.ts): the ` ● <last request>` line followed
+  by one **compact line per running agent** — `├─ `/`└─ `-prefixed (tree
+  connectors aligned with the todo rows), spinner + agent NAME, `↻retries≤max`,
+  compact `tokens/contextWindow`, elapsed, and the child's latest **content**
+  line (` · <tail>`): the live-refreshed last line of its streamed assistant
+  text/reasoning — never a tool name. The tail takes everything the row has
+  left and is truncated at the right edge; each line is clipped (prefix
+  included) to the terminal width BEFORE any ANSI. The ↳ line persists while
+  agents come and go; a settled child drops off immediately.
 
 - `renderTodos(todos)` — `todo/write` events (routed from index.ts's
   `onEvent`, since the transcript no longer renders them): a boxed `● Todos
@@ -158,21 +196,20 @@ quote caption is whale-prefixed too (`🐳 「…」`).
   **all-completed** list (the model writes the whole-list snapshot and rarely
   clears it; all-done is the end-of-work signal).
 - `renderAgents(agents)` — the bridge's `onLive` fold: one compact line per
-  **running** child in the activity area (`  ↳ ` prefix, spinner + agent NAME
-  first, `↻retries≤max`, total tokens + context percent, elapsed). A settled
-  child drops off immediately; when none run the agent lines vanish and the
-  slot collapses to just the ↳ line (or zero rows when that too is cleared).
-- `setLastRequest(text)` — renders the ` ↳ ` line (`fgMuted`) in the activity
+  **running** child (see above). When none run the agent lines vanish and the
+  slot collapses to just the ● line (or zero rows when that too is cleared).
+- `setLastRequest(text)` — renders the ` ● ` line (`fgMuted`) in the activity
   area, clipped to the terminal width (`columns - 5`, fallback 195 outside a
   TTY) so it always renders on one row and never wraps; `undefined` removes
-  it. This replaced tui.ts's ownership of the last-request line.
+  it.
 - `tickLive()` — `AGENT_TICK_MS` (100 ms) timer in index.ts advances the
-  spinner and re-reads the elapsed clock; no-op while nothing runs.
-- `setTheme(bundle)` — recolors the Todos panel, the ↳ line and the agent lines
-  in place on a theme hot-switch (the widget is live state, not transcript
-  history — no ReplayOp involvement).
-- `clear()` (`/new`) — drops the Todos panel and the agent lines but **keeps**
-  the ↳ last-request line.
+  spinner and re-reads the elapsed clocks; no-op while nothing runs and no
+  panel is visible.
+- `setTheme(bundle)` — recolors the Todos panel, the think/tool panels, the
+  ● line and the agent lines in place on a theme hot-switch (the widgets are
+  live state, not transcript history — no ReplayOp involvement).
+- `clear()` (`/new`) — drops the Todos panel, hides the think/tool panels
+  and the agent lines but **keeps** the ● last-request line.
 
 Width discipline matches the panels: box lines are clipped before styling to
 the boxed row's inner budget (`panelBoxWidth(columns) − 4`); each compact agent

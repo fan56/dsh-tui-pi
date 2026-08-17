@@ -4,6 +4,44 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Think/tool activity moved out of the transcript into fixed panels above
+  the chat input** (like the Todos panel): the transcript is now chat-clean
+  (user bubbles, assistant text, notices, echoes only). One `ThinkPanel` and
+  one `ToolPanel` exist for the whole run — every event refreshes the same
+  panel in place, and a panel with no content renders zero rows (hidden). A
+  reasoning delta feeds the think panel; a tool call refreshes the tool
+  panel (pending); a matching result settles it (✔/✘, frozen time, result
+  tail); results for other parallel callIds are ignored; a text delta, an
+  assembled message, a user message or a turn end hides the finished phase.
+  Panels are self-drawing components — terminal resizes and theme
+  hot-switches re-lay them out without any rebuild.
+- **`dsh-tui.panelHeight` gains `'1'` (the new default)**: the panel renders
+  ONE borderless row — block identifier + elapsed time + the last content
+  line (live-refreshed), right-truncated at the terminal width, never
+  wrapped. `'5'/'7'/'10'` keep the boxed panel (header row now also carries
+  the elapsed time); `'all'` keeps the full body with the 200-line streaming
+  tail and the 2000-line tool-result cap.
+- **The bottom running-agent line shows content, not tools**: the child's
+  latest line is the live-refreshed last line of its streamed assistant
+  text/reasoning (folded from a bounded per-child buffer, updated per
+  chunk; the assembled message is authoritative) — tool invocations no
+  longer overwrite it with `⚙ <name>`. The tail takes everything the row
+  has left and is truncated at the right edge; the agent name caps at 40%
+  of the space the meta leaves.
+- **Delegation spawn tools no longer open a tool block**: `use_agent`
+  (and the `subagent`/`subagent_fork`/`workflow`/`ralph` family) surface
+  their children in the running-agent lines below the editor — showing the
+  same work again as a tool panel above the input would duplicate it. A
+  delegation call clears any stale settled tool panel, and its result never
+  reopens one.
+- Test suite: panels/box/height/cap/narrow/theme coverage moved to
+  `live.test.mjs` (driven through `LiveWidgets.applyEvent`); the count
+  stands at **317 tests** across **25 files**.
+
 ## [0.3.0] — 2026-08-17
 
 ### Added

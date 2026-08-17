@@ -1,43 +1,55 @@
 /**
- * Live widgets: the Todos boxed panel pinned ABOVE the chat input, and the
- * running-subagent activity merged into the last-request area BELOW the
- * editor. Two separate plain containers keep the two live surfaces apart:
+ * Live widgets — every fixed live surface around the chat window:
  *
- *  - `todosDoc` — the dock slot above the input (`ui.widgets`): a single
- *    bordered Todos panel (top border + header row + tree body rows + bottom
- *    border, same chrome as the thinking/tool panels). Auto height — it
- *    renders zero rows while empty and grows to its content while the model
- *    has todos.
- *  - `activityDoc` — the lastRequest container below the editor
- *    (`ui.lastRequest`): the ` ● <last request>` line (persisting across
- *    agent churn) followed by one compact line PER RUNNING agent. NO box
- *    chrome, NO `● Agents` header, NO provider — just
- *    `├─ ⠋ <name> · ↻N≤M · 21k/1m · 13.6s · <latest output>`, the `├─ ` /
- *    `└─ ` prefix in the same column as the todo rows and the request ` ● `
- *    (the last running agent closes the list with `└─ `). Auto height — it
- *    collapses to zero rows when both the last-request line is cleared and no
- *    agent runs.
+ *  - `todosDoc` (the widgets slot ABOVE the chat input) hosts THREE pinned
+ *    panels: the bordered Todos table, the ThinkPanel and the ToolPanel
+ *    (src/activity.ts). Think/tool activity NEVER creates transcript blocks
+ *    — one panel of each kind exists for the whole run, every event
+ *    refreshes it in place, and a panel with no content renders zero rows.
+ *  - `activityDoc` (the lastRequest container BELOW the editor): the
+ *    ` ● <last request>` line (persisting across agent churn) followed by one
+ *    compact line PER RUNNING agent — `├─ ⠋ <name> · ↻N≤M · 21k/1m · 13.6s ·
+ *    <content tail>`. The tail is the child's latest CONTENT line (assistant
+ *    text/reasoning, live-refreshed — never a tool name) and takes whatever
+ *    the row has left, truncated at the right edge: one row, no wrap.
  *
- * Show-when-content, clear-when-done: the Todos panel appears only while it
- * has content and disappears when it empties (an all-completed snapshot or
- * `/new`); an agent line renders only while its child RUNS (a settled child
- * drops off immediately). `clear()` (/new) drops the Todos panel and the
- * agent lines but preserves the last-request echo.
+ * Event flow: index.ts routes every parent-session event through
+ * `applyEvent` (think/tool phase machine) and todo/write snapshots through
+ * `renderTodos`; the bridge's onLive fold feeds `renderAgents`. Phase rules
+ * for the panels: a reasoning delta shows the think panel; a tool call
+ * refreshes the tool panel (pending); a matching result settles it (status
+ * icon, frozen time, result tail); a text delta / assembled message / user
+ * message / turn end hides the finished phases. `clear()` (/new, resume)
+ * hides both panels.
  *
- * Live refresh: `tickLive` (the AGENT_TICK_MS timer in index.ts) advances the
- * spinner and re-reads the elapsed clock; it is a no-op while nothing runs.
- * `setTheme` recolors in place on a theme hot-switch (no replay buffer — the
- * widget is live state, not transcript history).
+ * Live refresh: `tickLive` (the AGENT_TICK_MS timer in index.ts) advances
+ * the spinner and repaints while any agent runs OR either panel is visible
+ * (the elapsed columns re-read the clock each frame); no-op otherwise.
+ * `setTheme` recolors in place on a theme hot-switch (the panels re-render
+ * each frame through their theme getters — no replay buffer, they are live
+ * state, not transcript history).
  */
 
 import { Container, Text, type Component } from '@earendil-works/pi-tui'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import {
+  DEFAULT_PANEL_HEIGHT,
+  ThinkPanel,
+  ToolPanel,
+  borderedRow,
+  clipPanelLine,
+  panelBottomBorder,
+  panelBoxWidth,
+  panelTopBorder,
+} from './activity.ts'
+import type { PanelHeight } from './activity.ts'
 import type { AgentView } from './dsh-events.ts'
-import { panelBoxWidth, clipPanelLine } from './messages.ts'
 import { columnWidths, padCell, TABLE_SEP, type TableColumn } from './panels.ts'
+import { SPAWN_TOOLS } from './subagent-policy.ts'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 
-/** Refresh interval of the live running-agent lines (spinner + elapsed). */
+/** Refresh interval of the live surfaces (spinner + elapsed columns). */
 export const AGENT_TICK_MS = 100
 /** Braille spinner cycle; the frame index advances once per tick. */
 export const AGENT_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
@@ -53,17 +65,6 @@ export function fmtCompact(n: number): string {
   }
   if (n >= 1_000) return `${Math.floor(n / 1_000)}k`
   return String(n)
-}
-
-/** One bordered row of the Todos panel: `│ ` + inner + ` │` (no trailing RESET). */
-function borderedRow(boxWidth: number, borderFg: string, inner: string): string {
-  const pad = Math.max(0, boxWidth - 4 - visibleWidth(inner))
-  return `${borderFg}│ ${inner}${' '.repeat(pad)}${borderFg} │`
-}
-
-/** Top border line (`┌─…─┐`), `boxWidth` columns wide. */
-function panelTopBorder(boxWidth: number, borderFg: string): string {
-  return `${borderFg}┌${'─'.repeat(Math.max(0, boxWidth - 2))}┐`
 }
 
 /** The todos table columns: right-aligned row number, status icon, flex content. */
@@ -145,14 +146,9 @@ export class TodosPanel implements Component {
       ))
     }
 
-    out.push(panelBottomRow(boxWidth, borderFg))
+    out.push(panelBottomBorder(boxWidth, borderFg))
     return out
   }
-}
-
-/** Bottom border line (`└─…─┘`), `boxWidth` columns wide. */
-function panelBottomRow(boxWidth: number, borderFg: string): string {
-  return `${borderFg}└${'─'.repeat(Math.max(0, boxWidth - 2))}┘`
 }
 
 /** Clip one todo's content (a possibly multiline model string) to one row. */
@@ -168,6 +164,9 @@ export class LiveWidgets {
   private readonly requestRender: () => void
   /** The self-drawing Todos table, mounted once in `todosDoc`. */
   private readonly todosPanel: TodosPanel
+  /** The fixed think/tool status panels, mounted once in `todosDoc`. */
+  private readonly thinkPanel: ThinkPanel
+  private readonly toolPanel: ToolPanel
   /** Latest subagent views from the bridge's onLive fold. */
   private liveAgents: readonly AgentView[] = []
   /** The merged running-agent Text in `activityDoc`, replaced on rebuild. */
@@ -180,26 +179,36 @@ export class LiveWidgets {
   private spinnerFrame = 0
 
   /**
-   * @param todosDoc The dock slot ABOVE the chat input - the Todos table
-   *   panel lives here.
+   * @param todosDoc The dock slot ABOVE the chat input - the Todos table and
+   *   the think/tool status panels live here.
    * @param activityDoc The lastRequest container BELOW the editor - the ` ● `
    *   last-request line plus the compact running-agent lines live here.
+   * @param panelHeight Configured think/tool panel height ('1' one row, or a
+   *   boxed budget - see activity.ts).
    */
   constructor(
     todosDoc: Container,
     activityDoc: Container,
     theme: TuiTheme,
     requestRender: () => void,
+    panelHeight: PanelHeight = DEFAULT_PANEL_HEIGHT,
   ) {
     this.todosDoc = todosDoc
     this.activityDoc = activityDoc
     this.theme = theme
     this.requestRender = requestRender
-    // Mounted once: the panel re-renders at the live width every frame and
-    // reads the theme through the getter, so theme swaps and terminal
-    // resizes need no rebuild wiring here.
+    // Mounted once, in display order: Todos (persistent plan) above the
+    // transient think/tool activity. The panels re-render at the live width
+    // every frame and read the theme through their getters, so theme swaps
+    // and terminal resizes need no rebuild wiring here.
     this.todosPanel = new TodosPanel(() => this.theme)
+    this.thinkPanel = new ThinkPanel(() => this.theme)
+    this.toolPanel = new ToolPanel(() => this.theme)
+    this.thinkPanel.setHeight(panelHeight)
+    this.toolPanel.setHeight(panelHeight)
     todosDoc.addChild(this.todosPanel)
+    todosDoc.addChild(this.thinkPanel)
+    todosDoc.addChild(this.toolPanel)
   }
 
   /**
@@ -244,6 +253,71 @@ export class LiveWidgets {
     this.requestRender()
   }
 
+  /**
+   * One parent-session session event, driving the think/tool phase machine:
+   * a reasoning delta opens/feeds the think panel; a tool call refreshes the
+   * tool panel (pending, replacing any tracked tool) — except delegation
+   * spawn tools (`use_agent`/`subagent`/`workflow`/`ralph`), whose children
+   * already render in the running-agent lines below the editor and never
+   * open a tool block; a matching result settles the tracked tool; a text
+   * delta, an assembled assistant message, a user message or a turn end
+   * hides the finished phases. Called for every event AND for replayed
+   * history (a resumed session replays its tool calls; its final turn/end
+   * leaves the panels hidden).
+   */
+  applyEvent(event: SessionEvent): void {
+    switch (event.type) {
+      case 'assistant/chunk': {
+        const chunk = event.data.chunk
+        if (chunk.type === 'reasoning-delta') {
+          if ((chunk.text ?? '') !== '') {
+            this.thinkPanel.feed(chunk.text)
+            this.toolPanel.hide()
+          }
+        } else if (chunk.type === 'text-delta' && (chunk.text ?? '') !== '') {
+          // The answer streams into the transcript — the panels are done.
+          this.thinkPanel.hide()
+          this.toolPanel.hide()
+        }
+        break
+      }
+      case 'assistant/message':
+        this.thinkPanel.hide()
+        break
+      case 'tool/call':
+        // Delegation spawn tools (`use_agent`, `subagent`, `workflow`, …)
+        // surface their children in the running-agent lines BELOW the editor
+        // — showing them again as a tool block above it would duplicate the
+        // display. They never open the tool panel, and a stale settled tool
+        // is cleared when the delegation starts.
+        if (SPAWN_TOOLS.includes(event.data.name)) {
+          this.toolPanel.hide()
+        } else {
+          this.toolPanel.begin(event.data.callId, event.data.name, event.data.arguments)
+        }
+        this.thinkPanel.hide()
+        break
+      case 'tool/result': {
+        const block = event.data.message.content[0]
+        this.toolPanel.settle(block?.toolCallId ?? '', {
+          error: event.data.error === undefined
+            ? undefined
+            : { name: event.data.error.name, code: event.data.error.code },
+          block: block === undefined ? undefined : { isError: block.isError, content: block.content },
+        })
+        break
+      }
+      case 'user/message':
+      case 'turn/end':
+        this.thinkPanel.hide()
+        this.toolPanel.hide()
+        break
+      default:
+        break
+    }
+    this.requestRender()
+  }
+
   /** Replace the subagent views (the bridge's onLive fold). */
   renderAgents(agents: readonly AgentView[]): void {
     this.liveAgents = agents
@@ -251,19 +325,33 @@ export class LiveWidgets {
   }
 
   /**
-   * Live refresh ~10x/sec while any subagent runs: advance the spinner and
-   * repaint (the elapsed column re-reads Date.now()). No-op when nothing runs
-   * — the activity area then holds its final (empty) state.
+   * Live refresh ~10x/sec while any subagent runs or either status panel is
+   * visible: advance the spinner and repaint (the elapsed columns re-read
+   * Date.now() each frame). No-op otherwise — the activity area then holds
+   * its final (empty) state.
    */
   tickLive(): void {
-    if (!this.liveAgents.some(view => view.outcome === undefined)) return
-    this.spinnerFrame += 1
+    const agentsLive = this.liveAgents.some(view => view.outcome === undefined)
+    const panelsLive = this.thinkPanel.isVisible() || this.toolPanel.isVisible()
+    if (!agentsLive && !panelsLive) return
+    if (agentsLive) this.spinnerFrame += 1
     this.rebuild()
   }
 
-  /** Recolor the widget (Todos panel, ● line and agent lines) under a theme
-   * hot-switch (no-op on the same bundle). The Todos panel reads the theme
-   * through its getter, so the swap needs only a repaint. */
+  /**
+   * Switch the configured think/tool panel height (the settings watch sink).
+   * The panels re-render at the new budget on the next frame — no rebuild
+   * wiring, they are self-drawing.
+   */
+  setPanelHeight(panelHeight: PanelHeight): void {
+    this.thinkPanel.setHeight(panelHeight)
+    this.toolPanel.setHeight(panelHeight)
+    this.requestRender()
+  }
+
+  /** Recolor the widget (Todos panel, think/tool panels, ● line and agent
+   * lines) under a theme hot-switch (no-op on the same bundle). The panels
+   * read the theme through their getters, so the swap needs only a repaint. */
   setTheme(theme: TuiTheme): void {
     if (theme === this.theme) return
     this.theme = theme
@@ -277,13 +365,15 @@ export class LiveWidgets {
 
   /**
    * Drop everything except the last-request echo (`/new`): clears the Todos
-   * panel and the running-agent lines, keeps the ` ● ` line. The bridge also
-   * fires `renderAgents([])`.
+   * panel, hides the think/tool panels and drops the running-agent lines,
+   * keeps the ` ● ` line. The bridge also fires `renderAgents([])`.
    */
   clear(): void {
     this.liveAgents = []
     this.spinnerFrame = 0
     this.todosPanel.setTodos([])
+    this.thinkPanel.hide()
+    this.toolPanel.hide()
     if (this.agentsText !== undefined) {
       this.activityDoc.removeChild(this.agentsText)
       this.agentsText = undefined
@@ -295,8 +385,8 @@ export class LiveWidgets {
    * Rebuild the running-agent surface of `activityDoc`: the ` ● ` line
    * (managed separately, persists) followed by ONE Text holding the compact
    * running-agent lines joined by '\n' (or nothing when no agent runs - the
-   * slot collapses to the ● line). The Todos table panel is NOT rebuilt
-   * here - it is a self-drawing component that re-renders each frame.
+   * slot collapses to the ● line). The pinned panels are NOT rebuilt here -
+   * they are self-drawing components that re-render each frame.
    * Clear-when-done: the agent lines hide once no child is running.
    */
   private rebuild(): void {
@@ -321,16 +411,15 @@ export class LiveWidgets {
   /**
    * One compact running-agent line for the last-request area, todo-style:
    * `├─ `/`└─ ` connector (same column as the todo rows and the request
-   * ` ● `) + spinner + the agent NAME (`view.label`, matching the boxed
-   * panel's main line) + the exact meta that main line showed (`↻retries≤max`,
-   * compact `tokens[/contextWindow]`, elapsed) + the child's latest output
-   * line when one exists (` · <tail>`, so the user sees it is alive). NO box
-   * chrome, NO provider — the name is the prominent element; the last running
-   * agent closes the list with `└─ `. The label is the only unbounded field;
-   * it is clipped against a budget measured from the terminal width so the
-   * whole plain line (prefix included) fits, then the assembled plain line is
-   * clipped to the terminal width BEFORE any ANSI is applied (clipToWidth
-   * counts SGR fragments as visible columns — style last).
+   * ` ● `) + spinner + the agent NAME (`view.label`) + the exact meta the
+   * boxed board showed (`↻retries≤max`, compact `tokens[/contextWindow]`,
+   * elapsed) + the child's latest CONTENT line — live-refreshed assistant
+   * text/reasoning, NEVER a tool name — as the ` · <tail>` suffix. NO box
+   * chrome, NO provider. Layout against the terminal width: the name caps at
+   * 40% of the space the meta leaves; the tail takes EVERYTHING else and is
+   * truncated at the right edge (single row, never wrapped). The assembled
+   * plain line is clipped to the terminal width BEFORE any ANSI is applied
+   * (clipToWidth counts SGR fragments as visible columns — style last).
    */
   private compactAgentLine(view: AgentView, isLast: boolean): string {
     // Todo-style tree connector: `├─ ` for non-final rows, `└─ ` for the last
@@ -351,45 +440,37 @@ export class LiveWidgets {
     }
     const elapsed = (Date.now() - view.startedAt) / 1000
     metaParts.push(`${elapsed.toFixed(1)}s`)
-    let metaPlain = ' · ' + metaParts.join(' · ')
-    // Tail: the child's latest visible output line, appended after the elapsed
-    // column so the user knows it is alive. Budget ≤30% of the terminal width
-    // (clamped 20..60 cols); when the folded line is wider, clip to
-    // tailBudget-2 and end with `..` (clipToWidth's own `…` is stripped).
-    const lastLine = view.lastLine
-    if (lastLine !== undefined && lastLine !== '') {
-      const folded = lastLine.replace(/\s+/g, ' ').trim()
-      if (folded !== '') {
-        const tailBudget = Math.min(60, Math.max(20, Math.floor(width * 0.3)))
-        if (visibleWidth(folded) > tailBudget) {
-          const clipped = clipToWidth(folded, tailBudget - 2).replace(/…$/, '')
-          metaPlain += ` · ${clipped}..`
-        } else {
-          metaPlain += ` · ${folded}`
-        }
-      }
-    }
+    const metaPlain = ' · ' + metaParts.join(' · ')
     // Defensive: never render an empty name — fall back to `subagent`.
     const rawLabel = clipPanelLine(view.label, 0).replace(/\r/g, '').trim()
     const namePlain = rawLabel === ''
       ? 'subagent'
       : rawLabel
     // Fixed chrome: prefix (3) + spinner (1) + following space (1) + a safety
-    // column. The label takes the remainder of the width budget after meta.
+    // column. The name caps at 40% of what the meta leaves; the tail gets the
+    // remainder of the width budget.
     const fixed = visibleWidth(PREFIX) + 1 + 1 + 1
-    const nameBudget = width - fixed - visibleWidth(metaPlain)
-    const nameClipped = clipToWidth(namePlain, Math.max(0, nameBudget))
+    const avail = width - fixed - visibleWidth(metaPlain)
+    const nameCap = Math.max(10, Math.floor(avail * 0.4))
+    const nameClipped = clipToWidth(namePlain, Math.max(0, nameCap))
+    const tailBudget = avail - visibleWidth(nameClipped) - 3
+    let tailText = ''
+    const folded = view.lastLine === undefined ? '' : view.lastLine.replace(/\s+/g, ' ').trim()
+    if (folded !== '' && tailBudget >= 4) {
+      tailText = ` · ${clipToWidth(folded, tailBudget - 3)}`
+    }
     // The full PLAIN line, clipped to the terminal width BEFORE styling.
-    const plain = PREFIX + glyph + ' ' + nameClipped + metaPlain
+    const plain = PREFIX + glyph + ' ' + nameClipped + metaPlain + tailText
     const clipped = clipToWidth(plain, width)
     // Style segments from the (clipped, guaranteed-identical-when-it-fits)
     // plain pieces: connector subtle, spinner muted, NAME default (prominent),
-    // meta (incl. the tail) subtle.
+    // meta subtle, content tail muted (the live signal the user watches).
     const connector = ansiFg(this.theme.palette.fgSubtle) + PREFIX + RESET
     const spinner = ansiFg(this.theme.palette.fgMuted) + glyph + RESET
     const metaStyled = ansiFg(this.theme.palette.fgSubtle) + metaPlain + RESET
+    const tailStyled = ansiFg(this.theme.palette.fgMuted) + tailText + RESET
     const nameStyled = ansiFg(this.theme.palette.fgDefault) + nameClipped + RESET
-    const base = connector + spinner + ' ' + nameStyled + metaStyled
+    const base = connector + spinner + ' ' + nameStyled + metaStyled + tailStyled
     // If clipping truncated the plain line (pathological meta), re-clip the
     // assembled styled line's visible width too; otherwise base is exact.
     if (visibleWidth(clipped) < visibleWidth(plain)) {

@@ -20,7 +20,7 @@ import {
 } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { DEFAULT_FOOTER_HINTS, type FooterHints } from './footer.ts'
-import { DEFAULT_PANEL_HEIGHT, type PanelHeight } from './messages.ts'
+import { DEFAULT_PANEL_HEIGHT, type PanelHeight } from './activity.ts'
 import type { ThemePreference } from './theme/index.ts'
 
 /** Settings namespace carrying the persisted dsh-tui preferences. */
@@ -62,12 +62,13 @@ const THEME_SETTINGS_SCHEMA = z.object({
     .default('auto')
     .description('Terminal color scheme (applies immediately)'),
   panelHeight: z
-    .union(['5', '7', '10', 'all'])
+    .union(['1', '5', '7', '10', 'all'])
     .default(DEFAULT_PANEL_HEIGHT)
     .description(
-      "Think/tool panel height in displayed rows ('5'/'7'/'10' — header + content lines; "
-      + "box borders add 2 more) or 'all' to print the full content — a streaming "
-      + 'reasoning panel shows a 200-line live tail and tool results cap at 2000 lines',
+      "Think/tool panel height ('1' = one row: identifier + elapsed + last line, "
+      + "right-truncated; '5'/'7'/'10' = boxed header + content rows, borders add 2 more; "
+      + "'all' = full content — streaming reasoning shows a 200-line live tail, "
+      + 'tool results cap at 2000 lines)',
     ),
   // `z.natural()` is schemastery's constraint for a non-negative integer
   // (the `z.number().int().min(0)` intent — no `.int()` chain exists here).
@@ -176,7 +177,9 @@ export function registerThemeSettings(
             const panelHeight = section.panelHeight
             onPreferenceChange(
               theme === 'light' || theme === 'dark' ? theme : 'auto',
-              panelHeight === '7' || panelHeight === '10' || panelHeight === 'all' ? panelHeight : DEFAULT_PANEL_HEIGHT,
+              panelHeight === '1' || panelHeight === '5' || panelHeight === '7' || panelHeight === '10' || panelHeight === 'all'
+                ? panelHeight
+                : DEFAULT_PANEL_HEIGHT,
               narrowFooterHints(section.footerHints),
             )
           })

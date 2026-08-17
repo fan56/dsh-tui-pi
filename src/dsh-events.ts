@@ -124,11 +124,14 @@ export interface AgentView {
   /** Context window from the child's `request/context`, for the % column. */
   readonly contextWindow?: number
   /**
-   * Latest visible last line of the child's own output (the tail-line the
+   * Latest visible last line of the child's own CONTENT output (the tail the
    * compact activity row shows so the user knows it is alive). Maintained
-   * O(1) as child events arrive: assistant text → its last non-blank line,
-   * `tool/call` → `⚙ <name>`, `llm/retry` → `↻ retry`. ANSI-stripped and
-   * whitespace-folded; absent when the child has produced no such output yet.
+   * O(1) as child events arrive: streaming chunks (text AND reasoning
+   * deltas, through a bounded per-child buffer) → their last non-blank line,
+   * `assistant/message` → the authoritative last text line, `llm/retry` →
+   * `↻ retry`. Tool invocations never overwrite it — the row shows the
+   * child's output, not tool names. ANSI-stripped and whitespace-folded;
+   * absent when the child has produced no such output yet.
    */
   readonly lastLine?: string
 }

@@ -319,16 +319,26 @@ dsh-tui-pi avoids both by construction:
 - **Streaming strategy**: deltas accumulate in a plain Text via `setText` on
   the same component (never remove+re-add per token); markdown renders once on
   the assembled `assistant/message` (no per-token markdown parsing).
-- **Configurable think/tool panels** (`dsh-tui.panelHeight`, default `'5'`):
-  `'5'/'7'/'10'` set the total panel rows (top border + header row + body rows
-  + bottom border); `'all'` prints the full body, with bounded on-screen
-  content — a streaming reasoning panel boxes a 200-line live tail while
-  chunks are in flight (the assembled message renders everything) and a
-  settled tool result keeps at most 2000 lines (a `… (+N lines)` marker
-  reports the drop). No inner scroll — pi-tui 0.84.2 never lays out nested
-  components, so a nested ScrollView cannot obtain a viewport. Body lines are
-  clipped to one physical row *before* styling, so long output can never wrap
-  the panel past its configured rows.
+- **Fixed think/tool status panels** (pinned above the chat input, like the
+  Todos panel): think/tool activity never creates transcript blocks — one
+  ThinkPanel and one ToolPanel exist for the whole run, every event refreshes
+  the same panel in place, and a panel with no content renders zero rows
+  (hidden). Delegation spawn tools (`use_agent`, `subagent`, `workflow`,
+  `ralph`) never open a tool block — their children show in the running-agent
+  lines below the editor. The bottom running-agent line shows the child's
+  latest CONTENT line (live-refreshed assistant text/reasoning, never a tool
+  name), truncated at the right edge without wrapping.
+- **Configurable panel height** (`dsh-tui.panelHeight`, default `'1'`):
+  `'1'` renders one borderless row — block identifier + elapsed time + the
+  last content line, right-truncated, never wrapped; `'5'/'7'/'10'` box the
+  panel (top border + header row + body rows + bottom border); `'all'` prints
+  the full body, with bounded on-screen content — a streaming reasoning panel
+  boxes a 200-line live tail while chunks are in flight and a settled tool
+  result keeps at most 2000 lines (a `… (+N lines)` marker reports the drop).
+  No inner scroll — pi-tui 0.84.2 never lays out nested components, so a
+  nested ScrollView cannot obtain a viewport. Body lines are clipped to one
+  physical row *before* styling, so long output can never wrap the panel past
+  its configured rows.
 - **Width safety**: every truncation goes through `clipToWidth` (src/text.ts)
   — CJK full-width characters count 2 columns and graphemes are never split.
   Bare `String.length` clipping is banned.

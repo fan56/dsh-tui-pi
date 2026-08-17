@@ -12,17 +12,25 @@ index.ts          cordis plugin entry (apply + effect) — all wiring: commands,
 tui.ts            UI shell: alt-screen, transcript ScrollView, dock, editor
                   rebuild on theme swap (themeRef mutable binding)
 messages.ts       TranscriptRenderer: session events → components; ReplayOp
-                  buffer + setTheme rebuild; height-configurable panels
-                  ('5'/'7'/'10'/'all'); streaming
+                  buffer + setTheme rebuild; chat-clean transcript (think/
+                  tool/todo render in the live widgets, never here)
+activity.ts       ThinkPanel/ToolPanel: the fixed think/tool status panels
+                  pinned above the chat input (one of each per run, refreshed
+                  in place, hidden while empty; '1' = one row with identifier
+                  + elapsed + last line, '5'/'7'/'10'/'all' = boxed heights;
+                  self-drawing, resize/theme-safe) + the panel helpers
+                  (panelBodyText/clipRow/toolSubject/…)
 session.ts        DshSessionBridge: lazy create, followup, resume/replay,
                   cancel, O(1) stats, persistDefaultModel, subagent tracker
-                  (tool-workflow + child events → AgentView rows → onLive)
+                  (tool-workflow + child events → AgentView rows → onLive;
+                  child chunks fold a bounded live content tail)
 dsh-events.ts     local types/guards for tool-workflow/subagent/llm-retry
                   events (declaring packages not installed) + AgentView
-live-widgets.ts   LiveWidgets: bordered Todos panel above the chat input +
-                  compact ↳-prefixed running-agent lines merged into the
-                  last-request area below the chat input (renderTodos/
-                  renderAgents/setLastRequest/tickLive/setTheme;
+live-widgets.ts   LiveWidgets: the pinned surfaces around the chat input —
+                  Todos panel + ThinkPanel + ToolPanel above (applyEvent
+                  phase machine), ` ● ` last-request line + compact
+                  running-agent lines below (content-line tail, right-
+                  truncated; renderTodos/renderAgents/tickLive/setTheme;
                   show-when-content, clear-when-done)
 append-system.ts  APPEND_SYSTEM.md support (pi convention, dsh side
                   ~/.dsh/APPEND_SYSTEM.md — a RUNTIME user file): install
@@ -67,7 +75,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
    `String.length` clipping is banned: CJK full-width = 2 columns, graphemes
    never split. **Clip plain text BEFORE applying ANSI** — `clipToWidth`
    counts SGR fragments as visible columns (verified on pi-tui 0.84.2);
-   `clipPanelLine` (messages.ts) encodes that order.
+   `clipRow`/`clipPanelLine` (activity.ts) encodes that order.
 4. **UI text is English-only** (user requirement). Chinese/emoji *content*
    must render correctly — that means width-safe clipping everywhere.
 5. **TypeScript constraints** (tsconfig): `NodeNext` +
@@ -93,13 +101,13 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **316 tests** across 25 files (theme-switch 27 +
-  keymap 27 + settings 19 + welcome 18 + theme 18 + provider-catalog 17 +
-  hotkeys 16 + live 17 + messages 14 + agent-manager 13 + frame 11 +
-  theme-canvas 12 + subagent-policy 14 + subagent-viewer 9 + panels 9 +
-  permission 9 + sessions 8 + history 13 + quotes 7 + text 7 +
-  theme-settings 8 + editor-theme 4 + append-system 6 + reload 6 +
-  footer-hints 7). New pure
+- `pnpm test` must stay green: **317 tests** across 25 files (keymap 27 +
+  live 32 + settings 19 + welcome 18 + theme 18 + provider-catalog 17 +
+  hotkeys 16 + messages 15 + agent-manager 13 + history 13 +
+  theme-canvas 12 + theme-switch 11 + frame 11 + subagent-policy 14 +
+  subagent-viewer 9 + panels 9 + permission 9 + sessions 8 +
+  theme-settings 8 + text 8 + quotes 7 + reload 6 + append-system 6 +
+  footer-hints 7 + editor-theme 4). New pure
   logic → new test file under `test/` against built `lib/` (`node --test`,
   pretest builds). Update the totals in HANDOFF.md.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
@@ -132,10 +140,10 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 
 - **Layout does not descend into a plain Container**: a Container without a
   layout node renders by concatenation, so a nested ScrollView inside the
-  transcript can never obtain a viewport. Height-configurable panels with a
-  tail body (`dsh-tui.panelHeight`: '5'/'7'/'10' rows, or 'all' with a
-  bounded streaming tail and a 2000-line tool-result cap) are the accepted
-  design — no inner scrolling.
+  transcript can never obtain a viewport. The fixed think/tool panels with a
+  tail body (`dsh-tui.panelHeight`: '1' one row, '5'/'7'/'10' boxed rows, or
+  'all' with a bounded streaming tail and a 2000-line tool-result cap) are
+  the accepted design — no inner scrolling.
 - **The TUI never paints the main canvas**: rows are written with erase-line
   (`\x1b[2K`) + content, and content only carries an SGR background where a
   component paints one — everything else shows the terminal's default
