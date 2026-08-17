@@ -174,8 +174,8 @@ cd dsh-tui-pi && pnpm install && pnpm build
 dsh plugin --profile tui add link:/path/to/dsh-tui-pi
 
 # or an npm tarball
-npm pack                                   # → aiwayds-dsh-tui-pi-0.1.0.tgz
-dsh plugin --profile tui add /path/to/aiwayds-dsh-tui-pi-0.1.0.tgz
+npm pack                                   # → aiwayds-dsh-tui-pi-0.2.0.tgz
+dsh plugin --profile tui add /path/to/aiwayds-dsh-tui-pi-0.2.0.tgz
 ```
 
 Both paths auto-add `dsh-tui-pi` to the profile's `dsh.profile.bundles`.
@@ -314,7 +314,7 @@ dsh-tui-pi avoids both by construction:
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (185 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (277 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -359,7 +359,8 @@ src/
   index.ts          cordis plugin entry + wiring: command registration, footer,
                     git watcher, clock, bridge, theme hot-swap sink, shutdown
   tui.ts            TUI bootstrap: alt-screen tree, transcript ScrollView,
-                    dock (status/editor/last-request/footer), editor rebuild
+                    dock (status/editor/last-request/footer), editor rebuild,
+                    app-owned canvas background (patched pi-tui)
   session.ts        DshSessionBridge: lazy agent create, followup, resume,
                     replay, cancel, O(1) incremental stats, persistDefaultModel,
                     subagent tracker (tool-workflow + child events → live rows)
@@ -377,6 +378,16 @@ src/
   editor.ts         CwdBorderEditor (top border: 📁 cwd │ ⎇ branch)
   git.ts            GitBranchWatcher (polled, cached)
   frame.ts          FramedOverlay: shared top/bottom ─ border for every popup
+  panels.ts         select-panel framework: TablePanel/FieldPanel/ViewerPanel/
+                    PanelHost + padCell/columnWidths/ListController
+  keymap.ts         pure key-action decision (resolveKeyAction) — Esc/Ctrl+C/
+                    Ctrl+D/Ctrl+L/Ctrl+G chains with double-press guards
+  hotkeys.ts        keybindings.json contract + validation + /hotkeys manager
+  agent-manager.ts  agent markdown files: parse/validate/write-back engine +
+                    ~/.zcode/agents seeding, `deep` policy
+  agents.ts         /agents table + fields window + subagent limits panel
+  subagent-policy.ts  maxAgents guard + maxRounds wrap-up injection (read live)
+  subagent-viewer.ts  Ctrl+G picker + live transcript panel (300 ms tick)
   provider-catalog.ts  built-in provider directory (36 llm-pi-ai catalog
                     routes, mirrors the web Models page) + deriveKeyRef + row
                     views (pure data/functions for the Models add-provider flow)
@@ -391,22 +402,34 @@ src/
   sessions.ts       /session info panel + /resume persisted-session picker
   settings.ts       /settings browser: categories, schema walk, inline editors,
                     serialized mutate write chain, add-provider flow
+  welcome.ts        startup whale banner (WHALE_ART + PIXEL_FONT glyphs)
+  quotes.ts         startup quote pool
+  append-system.ts  APPEND_SYSTEM.md support + todo-lifecycle section
+                    maintenance (idempotent, atomic)
   theme/
     palette.ts      GitHub light/dark palettes + terminal-background detection
+                    (rgbIsLight luminance)
     index.ts        buildTheme: Editor/Markdown/SelectList/chat roles, POWERLINE
                     segment palette, resolveTheme (env > preference > detect)
-test/*.test.mjs     unit tests, node --test against lib/ (185 across 15 files)
+test/*.test.mjs     unit tests, node --test against lib/ (277 across 21 files)
 ```
 
-## Status (2026-08-15)
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the release history.
+
+## Status (0.2.0)
 
 All surface commands shipped and tmux-e2e verified: `/model /think /session
-/resume /new /settings /export /theme /reload`; provider-first Models with the
-add-provider flow; overlay chrome (backgrounds + borders); theme hot-switch
-(immediate apply, external-change watch, env pinning); graded Ctrl+C; live
-todos + subagent progress blocks; clean Ctrl+C exit. `pnpm check` clean,
-185 unit tests green, e2e run confirmed the settings/credentials files are
-restored byte-for-byte.
+/resume /new /settings /export /theme /reload /agents /subagents /hotkeys`;
+provider-first Models with the add-provider flow; overlay chrome
+(backgrounds + borders); theme hot-switch (immediate apply, external-change
+watch, env pinning) with an app-owned canvas background that recolors the
+whole screen; terminal-following `auto` theme; subagent viewer with live
+rounds/tokens/elapsed; subagent `maxAgents`/`maxRounds` limits; pi-aligned
+keybindings with double-press guards; live todos + subagent progress blocks;
+clean Ctrl+C exit. `pnpm check` clean, 277 unit tests green, e2e run
+confirmed the settings/credentials files are restored byte-for-byte.
 
 Known limitations (accepted, pi-tui 0.84.2 constraints):
 
