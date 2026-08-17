@@ -172,6 +172,10 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
 
   editor.onSubmit = (text: string) => {
     if (text.trim() === '') return
+    // Record the submitted message for Up/Down browse before dispatching —
+    // covers both the real path and the smoke-test fallback echo path. The
+    // editor's own `submitValue()` never calls `addToHistory` in pi-tui 0.84.2.
+    editor.addToHistory(text)
     if (options.onSubmit !== undefined) {
       options.onSubmit(text)
       return
@@ -193,12 +197,23 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
    */
   function rebuildEditor(): void {
     const text = editor.getText()
+    // Preserve the Up/Down browse history AND the mid-browse cursor/draft
+    // across a theme-swap rebuild: the rebuild fires asynchronously (settings
+    // watch, CSI 997 terminal-follow) — precisely while the user may be sitting
+    // mid-browse with a pre-browse draft saved in the base. Copies `history`
+    // and `browse` so the swap restores exactly where the user was.
+    const history = editor.getHistory()
+    const browse = editor.getBrowseState()
     const hadFocus = editor.focused
     const next = new CwdBorderEditor(tui, themeRef.editor, process.cwd(), {
       infoColor: text => ansiFg(themeRef.palette.fgMuted) + text + RESET,
     })
     next.setText(text)
     next.onSubmit = editor.onSubmit
+    // `addToHistory` unshifts, so reseed oldest→newest to land in the same
+    // order on the new instance; then restore the browse cursor/draft.
+    next.reseedHistory(history)
+    next.restoreBrowseState(browse)
     if (autocompleteProvider !== undefined) next.setAutocompleteProvider(autocompleteProvider)
     if (branchProvider !== undefined) next.setBranchProvider(branchProvider)
     if (permissionProvider !== undefined) next.setPermissionProvider(permissionProvider)

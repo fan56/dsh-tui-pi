@@ -16,7 +16,7 @@ import { dirname, join, resolve } from 'node:path'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { Loader, Text } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
-import { PowerlineFooter, type FooterDataSource } from './footer.ts'
+import { FOOTER_HINT, PowerlineFooter, type FooterDataSource } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
 import { ensureAppendSystemFile, dshHome, migrateAgentsMdTodoSection, readAppendSystem } from './append-system.ts'
 import { TranscriptRenderer, type PanelHeight } from './messages.ts'
@@ -909,7 +909,7 @@ export function apply(ctx: Context): void {
     // it under a theme hot-swap; the PowerlineFooter itself needs no rebuild.
     const footerHint = new Text('', 1, 0)
     const paintFooterHint = (): void => {
-      footerHint.setText(ansiFg(ui.theme.palette.fgSubtle) + '⌨ Enter: send · Esc ×2: stop · Ctrl+C: cancel / double: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents' + RESET)
+      footerHint.setText(ansiFg(ui.theme.palette.fgSubtle) + FOOTER_HINT + RESET)
     }
     paintFooterHint()
     ui.footer.addChild(footerHint)

@@ -17,6 +17,16 @@ import type { BridgeStats } from './session.ts'
 import { ansiBg, ansiFg, BOLD, POWERLINE, RESET } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 
+/**
+ * The footer keybinding hint — plain text (no ANSI), exactly 103 visible
+ * columns. This is the pre-feature README-documented width; the ANSI wrapping
+ * lives in `paintFooterHint` (index.ts). The unit test in test/history.test.mjs
+ * guards it against future length regressions (a longer hint word-wraps on
+ * 105–118-column terminals and hides its suffix on ≤104).
+ */
+export const FOOTER_HINT =
+  '⌨ Enter: send · Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents · ↑↓: history'
+
 const ARROW_RIGHT = '\uE0B0'
 const WHITE = ansiFg('#FFFFFF')
 

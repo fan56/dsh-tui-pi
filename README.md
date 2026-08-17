@@ -213,12 +213,29 @@ App-level keys (key mappings mirror [pi](https://github.com/badlogic/pi-mono)):
 | `Tab` | autocomplete |
 
 Editor keys (movement/deletion/undo) come from the pi-tui `Editor` default
-bindings — no dsh code involved: `←→↑↓` / `Ctrl+B`/`Ctrl+F` move, `Alt+←→` /
+bindings — no dsh code involved: `←→` / `Ctrl+B`/`Ctrl+F` move, `Alt+←→` /
 `Ctrl+←→` / `Alt+B`/`Alt+F` word-move, `Home`/`End` / `Ctrl+A`/`Ctrl+E` line
 edges, `PageUp`/`PageDown` scroll, `Backspace` / `Delete`/`Ctrl+D` delete,
 `Ctrl+W`/`Alt+Backspace` delete word back, `Alt+D` delete word forward,
 `Ctrl+U`/`Ctrl+K` delete to line start/end, `Ctrl+-` undo, `Ctrl+Y`/`Alt+Y`
-yank, `Shift+Enter`/`Ctrl+J` newline.
+yank, `Shift+Enter`/`Ctrl+J` newline. `↑` / `↓` follow this interplay: on the
+first line `↑` moves the cursor to the line start, whereas on an **empty**
+editor (or with the cursor at the line start) it browses history instead (next
+paragraph).
+
+`↑` / `↓` browse the submitted-message history shell-style. `↑` recalls the
+most recent prompt and walks further back; `↓` moves forward again, and past
+the newest entry it restores your in-progress draft. Browsing starts when the
+cursor is at the start of the first line — including on an empty editor — and
+the text you were leaving is preserved as the draft, so `↓` all the way back
+hands you the draft again. The history holds up to **500 entries**, dropping
+the oldest ones beyond that; it survives a theme hot-swap (the editor is
+rebuilt on switch). The history is in-memory for the current TUI run — it does
+**not** survive `/reload` or a restart. Submitted slash commands (`/theme`,
+`/hotkeys`, …) are recorded too. Recalling a multi-line entry places the
+cursor at its start; `↓` then walks the entry's lines before advancing the
+history — but a single-line entry round-trips identically (do not fight the
+pi-tui behavior).
 
 Not supported yet (documented status): `Ctrl+O` collapse tool output, `Ctrl+X`
 copy the last assistant message, `Alt+Enter` follow-up queue, `Ctrl+V` paste
