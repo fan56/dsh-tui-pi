@@ -6,12 +6,13 @@
  *    only while it has content and collapses to zero rows when done (/new,
  *    todo/write [], an all-completed snapshot).
  *  - `activityDoc` (the lastRequest container BELOW the editor): the
- *    ` ↳ <last request>` line (persisting across agent churn), followed by
- *    ONE compact line PER RUNNING agent — `  ↳ `-prefixed (nested one column
- *    right of the request line's ` ↳ `, like a tree level), name-first, NO box
- *    chrome, NO `● Agents` header, NO connector, NO provider. A settled child
- *    drops off; when none run and there is no last-request line the slot
- *    collapses to zero rows.
+ *    ` ● <last request>` line (persisting across agent churn), followed by
+ *    ONE compact line PER RUNNING agent — `├─ `/`└─ `-prefixed (todo-style
+ *    tree connectors in the same column as the todo rows, the last running
+ *    agent closing the list with `└─ `), name-first, NO box chrome, NO
+ *    `● Agents` header, NO provider, plus the child's latest output line
+ *    (` · <tail>`) when one exists. A settled child drops off; when none run
+ *    and there is no last-request line the slot collapses to zero rows.
  *
  * Runs against the built lib/ (npm test → pretest build).
  */
@@ -29,7 +30,7 @@ const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
  * ANSI-stripped terminal rows of `doc`, or [] when it renders nothing.
  * Each row keeps its leading paddingX margin stripped and its trailing
  * right-margin padding dropped; interior padding is preserved (so boxed rows
- * keep their `│ ` chrome, compact agent lines keep their `  ↳ ` prefix).
+ * keep their `│ ` chrome, compact agent lines keep their `├─ `/`└─ ` prefix).
  */
 function widgetRows(doc, width = 200) {
   return doc.render(width).map(stripAnsi).map(line => line.replace(/^ /, '').replace(/\s+$/, ''))
@@ -121,31 +122,30 @@ test('an all-completed todo list hides the panel (clear-when-done)', () => {
 
 // --------------------------------------------------------- running agents ----
 
-test('running agent line: ↳ prefix, spinner + name first, meta, no provider', () => {
+test('running agent line: └─ prefix (single, last), spinner + name first, compact meta, no provider', () => {
   const { todosDoc, activityDoc, widget } = makeWidget()
   widget.setLastRequest('帮我把排序算法改成快排')
   widget.renderAgents([runningView()])
   // Compact line in the activity doc, no box chrome at all.
   const rows = widgetRows(activityDoc)
-  assert.equal(rows.length, 2, '↳ line + one compact agent line')
-  assert.ok(rows[0].startsWith(' ↳ '), 'last-request echo renders above the agents')
-  assert.equal(rows[0], ' ↳ 帮我把排序算法改成快排')
-  assert.match(rows[1], new RegExp(`^  ↳ ${AGENT_SPINNER_FRAMES[0]} Agent ① sleep 20s · ↻1≤60 · 562 token \\(4%\\) · 13\\.[0-9]s$`),
-    'compact line: ↳ prefix + spinner + name + meta, no provider')
-  // The line starts with the ↳ prefix and prominently shows the NAME.
-  assert.ok(rows[1].startsWith('  ↳ ⠋ '), 'compact line starts with \'  ↳ \' + spinner + space')
+  assert.equal(rows.length, 2, '● line + one compact agent line')
+  assert.ok(rows[0].startsWith(' ● '), 'last-request echo renders above the agents')
+  assert.equal(rows[0], ' ● 帮我把排序算法改成快排')
+  assert.match(rows[1], new RegExp(`^└─ ${AGENT_SPINNER_FRAMES[0]} Agent ① sleep 20s · ↻1≤60 · 562/14k · 13\\.[0-9]s$`),
+    'compact line: └─ prefix (the only agent is last) + spinner + name + compact meta, no provider')
+  // The line starts with the todo-style connector and prominently shows the NAME.
+  assert.ok(rows[1].startsWith('└─ ⠋ '), 'compact line starts with \'└─ \' + spinner + space')
   assert.ok(rows[1].includes('Agent ① sleep 20s'), 'the agent name appears in the line')
   assert.ok(!rows[1].includes('workhorse'), 'the provider is dropped from the line')
   // No box chrome anywhere.
   assert.ok(!rows.join('\n').includes('┌'), 'no top border')
   assert.ok(!rows.join('\n').includes('● Agents'), 'no Agents header')
-  assert.ok(!rows.join('\n').includes('├─') && !rows.join('\n').includes('└─'), 'no connectors')
   assert.ok(!rows.join('\n').includes('⎿'), 'no activity sub-line')
   // Only the activity doc is up; the todos doc stays empty.
   assert.deepEqual(widgetRows(todosDoc), [], 'todos doc empty while only agents run')
 })
 
-test('multiple running agents render one compact line each', () => {
+test('multiple running agents: one compact line each, last one closes with └─', () => {
   const { activityDoc, widget } = makeWidget()
   widget.renderAgents([
     runningView({ childId: 'a', label: 'A' }),
@@ -153,21 +153,62 @@ test('multiple running agents render one compact line each', () => {
   ])
   const rows = widgetRows(activityDoc)
   assert.equal(rows.length, 2, 'one line per running agent')
-  assert.match(rows[0], /^  ↳ ⠋ A ·/)
-  assert.match(rows[1], /^  ↳ ⠋ B ·/)
+  assert.match(rows[0], /^├─ ⠋ A ·/)
+  assert.match(rows[1], /^└─ ⠋ B ·/)
+  // The last row uses the todo `└─ ` connector and the non-last uses `├─ `.
+  assert.ok(!rows[0].startsWith('└─'), 'non-last agent line is ├─ ')
+  assert.ok(rows[1].startsWith('└─'), 'last agent line closes with └─ ')
 })
 
-test('an empty label falls back to `subagent <childId8>`; provider is dropped', () => {
+test('an empty label falls back to `subagent`; provider is dropped', () => {
   const { activityDoc, widget } = makeWidget()
   // No provider on the view — the line still renders, name first.
   widget.renderAgents([runningView({ provider: undefined })])
-  assert.match(widgetRows(activityDoc)[0], /^  ↳ ⠋ Agent ① sleep 20s ·/)
-  // A blank label must never render an empty name — fall back to the child id.
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ Agent ① sleep 20s ·/)
+  // A blank label must never render an empty name — fall back to `subagent`
+  // (no child id suffix).
   widget.renderAgents([runningView({ label: '   ', childId: 'deadbeef1234' })])
-  assert.match(widgetRows(activityDoc)[0], /^  ↳ ⠋ subagent deadbeef ·/)
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ subagent ·/)
   // Whitespace-only labels are treated as empty too.
   widget.renderAgents([runningView({ label: '', childId: 'abc' })])
-  assert.match(widgetRows(activityDoc)[0], /^  ↳ ⠋ subagent abc ·/)
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ subagent ·/)
+})
+
+test('compact token meta: tokens[/contextWindow] with fmtCompact, no percent/unit', () => {
+  const { activityDoc, widget } = makeWidget()
+  const base = { childId: 't', label: 'T', tokens: 0, retries: 0 }
+  // 20_965 tokens, 1_000_000 window → `20k/1m` (floor for k).
+  widget.renderAgents([runningView({ ...base, tokens: 20_965, contextWindow: 1_000_000 })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · 20k\/1m · \d+\.\ds$/)
+  // 1_500_000 window → `1.5m` (1 decimal, no trailing .0).
+  widget.renderAgents([runningView({ ...base, tokens: 20_965, contextWindow: 1_500_000 })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · 20k\/1\.5m · \d+\.\ds$/)
+  // No contextWindow → only the compact token count.
+  widget.renderAgents([runningView({ ...base, tokens: 20_965, contextWindow: undefined })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · 20k · \d+\.\ds$/)
+  // tokens === 0 → the token segment is dropped (unchanged guard).
+  widget.renderAgents([runningView({ ...base, tokens: 0, contextWindow: 1_000_000 })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · \d+\.\ds$/)
+})
+
+test('the child\'s latest line renders as a ` · <tail>` suffix, truncated with `..`', () => {
+  const { activityDoc, widget } = makeWidget()
+  const base = { childId: 't', label: 'T', tokens: 0, retries: 0 }
+  widget.renderAgents([runningView({ ...base, lastLine: 'compiling src/main.ts' })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · \d+\.\ds · compiling src\/main\.ts$/)
+  // Over-wide tail: clipped to tailBudget-2 + `..` (80 cols → budget 24 → 22+2).
+  const width = 80
+  const prev = process.stdout.columns
+  process.stdout.columns = width
+  try {
+    const longTail = 'x'.repeat(200)
+    widget.renderAgents([runningView({ ...base, lastLine: longTail })])
+    const row = widgetRows(activityDoc)[0]
+    assert.ok(row.endsWith('..'), `over-wide tail ends with ..: ${JSON.stringify(row)}`)
+    assert.ok(visibleWidth(row) <= width, `row stays within ${width} cols`)
+  } finally {
+    process.stdout.columns = prev
+  }
 })
 
 test('settled agents drop off — clear-when-done', () => {
@@ -202,7 +243,7 @@ test('renderAgents([]) empties the agent lines but keeps the last-request line',
   assert.equal(widgetRows(activityDoc).length, 2)
   widget.renderAgents([])
   const rows = widgetRows(activityDoc)
-  assert.deepEqual(rows, [' ↳ hello'], 'agents dropped, ↳ line persists')
+  assert.deepEqual(rows, [' ● hello'], 'agents dropped, ● line persists')
 })
 
 // ------------------------------------------------------------ combined ----
@@ -216,8 +257,8 @@ test('todos boxed panel + compact activity lines coexist on their own docs', () 
   assert.ok(todoRows[0].startsWith('┌'), 'todos stay boxed')
   assert.equal(panelBody(todosDoc)[0], '● Todos (0/1)')
   const activityRows = widgetRows(activityDoc)
-  assert.equal(activityRows[0], ' ↳ defrag the index')
-  assert.match(activityRows[1], /^  ↳ ⠋ Agent ① sleep 20s · ↻1≤60 · 562 token \(4%\) · 13\.[0-9]s$/)
+  assert.equal(activityRows[0], ' ● defrag the index')
+  assert.match(activityRows[1], /^└─ ⠋ Agent ① sleep 20s · ↻1≤60 · 562\/14k · 13\.[0-9]s$/)
 })
 
 // ------------------------------------------------------ width + lifecycle ----
@@ -244,15 +285,15 @@ test('every rendered row fits the terminal width (pathological content)', () => 
       assert.ok(visibleWidth(stripAnsi(row)) <= width, `activity row exceeds ${width}: ${JSON.stringify(stripAnsi(row))}`)
     }
     // The compact agent line stays a single physical row (no wrap).
-    assert.equal(widgetRows(activityDoc).length, 2, '↳ line + one agent row, no wrap')
+    assert.equal(widgetRows(activityDoc).length, 2, '● line + one agent row, no wrap')
     // A long last-request prompt is clipped to the one-row terminal budget
-    // (` columns - 5`: 2 padding cols + 3 ` ↳ ` prefix cols) so it NEVER wraps.
+    // (` columns - 5`: 2 padding cols + 3 ` ● ` prefix cols) so it NEVER wraps.
     const budget = Math.max(1, (process.stdout.columns ?? 200) - 5)
     const longRequest = 'x'.repeat(200)
     widget.setLastRequest(longRequest)
     const longRows = widgetRows(activityDoc)
     assert.equal(longRows.length, 2, 'long last-request line + one agent row, no wrap')
-    assert.equal(longRows[0], ` ↳ ${'x'.repeat(budget)}`,
+    assert.equal(longRows[0], ` ● ${'x'.repeat(budget)}`,
       `request display clipped to the ${budget}-col plain-text budget`)
     assert.ok(visibleWidth(longRows[0]) <= width - 2,
       `request line fits the <= columns-2 one-row budget (${visibleWidth(longRows[0])} <= ${width - 2})`)
@@ -278,7 +319,7 @@ test('boxed todos never wrap; each compact agent line stays one row', () => {
     widget.renderTodos([{ content: 'x'.repeat(500), status: 'pending' }])
     assert.equal(todosDoc.render(width).length, 4, 'boxed todos: no row wraps')
     widget.renderAgents([runningView({ label: 'y'.repeat(500), provider: 'p'.repeat(200) })])
-    assert.equal(widgetRows(activityDoc).length, 2, '↳ line + one compact agent row, no wrap')
+    assert.equal(widgetRows(activityDoc).length, 2, '● line + one compact agent row, no wrap')
   } finally {
     process.stdout.columns = prev
   }
@@ -295,14 +336,14 @@ test('setTheme recolors the widget and keeps its content', () => {
   widget.setTheme(lightTheme)
   // Todos boxed panel intact.
   assert.equal(panelBody(todosDoc)[0], '● Todos (0/1)')
-  // Compact agent line + ↳ line intact after recolor.
+  // Compact agent line + ● line intact after recolor.
   const rows = widgetRows(activityDoc)
-  assert.equal(rows[0], ' ↳ theme me')
-  assert.match(rows[1], /^  ↳ ⠋ Agent ① sleep 20s · ↻1≤60 · 562 token \(4%\) · 13\.[0-9]s$/)
-  // The ↳ line's fgMuted changed with the new (light) theme palette.
+  assert.equal(rows[0], ' ● theme me')
+  assert.match(rows[1], /^└─ ⠋ Agent ① sleep 20s · ↻1≤60 · 562\/14k · 13\.[0-9]s$/)
+  // The ● line's fgMuted changed with the new (light) theme palette.
   const after = activityDoc.render(200).join('')
   assert.notEqual(after, beforeDark, 'recolored away from the original dark palette')
-  assert.ok(after.includes(ansiFg(lightTheme.palette.fgMuted)), '↳ line recolored with the new theme')
+  assert.ok(after.includes(ansiFg(lightTheme.palette.fgMuted)), '● line recolored with the new theme')
 })
 
 test('clear() drops todos and agent lines but keeps the last-request echo', () => {
@@ -314,5 +355,5 @@ test('clear() drops todos and agent lines but keeps the last-request echo', () =
   assert.ok(widgetRows(activityDoc).length > 0)
   widget.clear()
   assert.deepEqual(widgetRows(todosDoc), [], '/new clears the todos panel')
-  assert.deepEqual(widgetRows(activityDoc), [' ↳ keep me'], '/new keeps the last-request echo')
+  assert.deepEqual(widgetRows(activityDoc), [' ● keep me'], '/new keeps the last-request echo')
 })

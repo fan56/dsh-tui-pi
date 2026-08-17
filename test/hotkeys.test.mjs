@@ -165,17 +165,17 @@ test('parseKeyInput: empty resets, valid ids pass, typos are rejected', () => {
 
 // --------------------------------------------------------------- table --
 
-test('appHotkeyRows: default table lists the four app keys', () => {
+test('appHotkeyRows: default table lists the five app keys', () => {
   const rows = appHotkeyRows({})
-  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L'])
-  assert.deepEqual(rows.map(row => row.field), ['escape', 'ctrlC', 'ctrlD', 'modelPicker'])
+  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Ctrl+G'])
+  assert.deepEqual(rows.map(row => row.field), ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer'])
   assert.ok(rows.every(row => !row.custom))
-  assert.equal(rows[0].action, 'stop the current task')
+  assert.equal(rows[0].action, 'stop the current task — requires two presses (1st arms, 2nd within 500ms fires)')
 })
 
 test('appHotkeyRows: a custom binding replaces the key display and flags the row', () => {
   const rows = appHotkeyRows({ escape: 'ctrl+x', modelPicker: 'ctrl+m' })
-  const escape = rows.find(row => row.action === 'stop the current task')
+  const escape = rows.find(row => row.field === 'escape')
   assert.equal(escape.key, 'Ctrl+X')
   assert.equal(escape.custom, true)
   // The rest of the table stays at its defaults, unstarred.
@@ -183,4 +183,5 @@ test('appHotkeyRows: a custom binding replaces the key display and flags the row
   assert.equal(model.custom, true)
   assert.equal(rows.find(row => row.key === 'Ctrl+L'), undefined)
   assert.equal(rows.find(row => row.key === 'Ctrl+C').custom, false)
+  assert.equal(rows.find(row => row.key === 'Ctrl+G').custom, false)
 })

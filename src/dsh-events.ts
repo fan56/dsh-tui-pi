@@ -95,6 +95,10 @@ export function isLlmRetry(event: SessionEvent): event is SessionEvent & { type:
 export interface AgentView {
   /** The child session id (raw string) — the stable identity key. */
   readonly childId: string
+  /** The delegating parent session id, when known (header discovery). */
+  readonly parentSession?: string
+  /** Delegation mode from the child's `subagent/descriptor`, when known. */
+  readonly mode?: 'one-shot' | 'continuable'
   /** Subagent type name from the child's `subagent/descriptor.provider`, when known. */
   readonly provider?: string
   /** Delegation label from `tool-workflow/agent-start` or the child's descriptor. */
@@ -119,4 +123,12 @@ export interface AgentView {
   readonly lastTool?: string
   /** Context window from the child's `request/context`, for the % column. */
   readonly contextWindow?: number
+  /**
+   * Latest visible last line of the child's own output (the tail-line the
+   * compact activity row shows so the user knows it is alive). Maintained
+   * O(1) as child events arrive: assistant text → its last non-blank line,
+   * `tool/call` → `⚙ <name>`, `llm/retry` → `↻ retry`. ANSI-stripped and
+   * whitespace-folded; absent when the child has produced no such output yet.
+   */
+  readonly lastLine?: string
 }

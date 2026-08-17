@@ -13,10 +13,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import {
+  DEFAULT_SUBAGENT_LIMITS,
   THEME_SETTINGS_NAMESPACE,
   readPanelHeightPreference,
+  readSubagentLimits,
   readThemePreference,
   registerThemeSettings,
+  writeSubagentLimit,
   writeThemePreference,
 } from '../lib/theme-settings.js'
 
@@ -193,4 +196,45 @@ test('watch narrows unknown or missing panelHeight values to 5', async () => {
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['panelHeight'] }])
   await settle()
   assert.deepEqual(heights, ['5', '7', '5'], 'missing panelHeight key narrows to 5')
+})
+
+test('subagent limits resolve to defaults and round-trip through a committed write', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  registerThemeSettings(ctx)
+  await settle()
+
+  // Base entry seeds the documented defaults.
+  const defaults = { maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents, maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds }
+  assert.deepEqual(readSubagentLimits(ctx), defaults, 'base entry resolves to the defaults')
+
+  // A committed write mutates the section; the live reader reflects it.
+  assert.equal(await writeSubagentLimit(ctx, 'maxAgents', 2), undefined)
+  assert.equal(await writeSubagentLimit(ctx, 'maxRounds', 10), undefined)
+  assert.deepEqual(readSubagentLimits(ctx), { maxAgents: 2, maxRounds: 10 }, 'committed limits read back')
+})
+
+test('subagent limits fall back to defaults when the service or a field is missing', async () => {
+  const defaults = { maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents, maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds }
+
+  // No settings service: read degrades, write reports the failure (no throw).
+  const bare = new Context()
+  assert.deepEqual(readSubagentLimits(bare), defaults, 'settings-less read degrades to defaults')
+  const writeError = await writeSubagentLimit(bare, 'maxAgents', 1)
+  assert.equal(writeError, 'Settings service is not available.', 'settings-less write surfaces the failure')
+
+  // Malformed fields (non-integer, negative, absent) narrow to the defaults.
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  registerThemeSettings(ctx)
+  await settle()
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [
+    { op: 'set', path: ['maxAgents'], value: 2.5 },
+    { op: 'set', path: ['maxRounds'], value: -1 },
+  ])
+  assert.deepEqual(readSubagentLimits(ctx), defaults, 'non-natural fields narrow to the defaults')
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['maxAgents'] }])
+  assert.deepEqual(readSubagentLimits(ctx), defaults, 'missing field falls back per-key')
 })

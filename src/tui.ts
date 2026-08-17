@@ -39,13 +39,15 @@ export interface StartTuiOptions {
   onSubmit?: (text: string) => void
   /**
    * Executes an app-level key action (see keymap.ts for the pi-aligned
-   * interrupt chain: Esc stop, windowed Ctrl+C, empty-editor Ctrl+D quit).
-   * Absent (smoke-test mode): Ctrl+C family and Ctrl+D quit fall back to a
-   * plain exit(130); interrupt-arm/double are no-ops.
+   * interrupt chain: double-Esc stop, windowed Ctrl+C, empty-editor Ctrl+D
+   * quit). Absent (smoke-test mode): Ctrl+C family and Ctrl+D quit fall back
+   * to a plain exit(130); interrupt-arm/arm-stop/double are no-ops.
    */
   onKeyAction?: (action: KeyAction) => void
   /** Whether the agent is mid-turn; feeds the Esc/Ctrl+C decision. Defaults to false. */
   isRunning?: () => boolean
+  /** Live running-subagent count; feeds the Ctrl+G viewer decision. Defaults to 0. */
+  getRunningAgents?: () => number
   /** User keybindings overrides (`~/.dsh/keybindings.json`); partial merge. */
   keyBindings?: Partial<KeyBindings>
   /** Persisted theme preference; 'auto' falls back to terminal detection. */
@@ -248,17 +250,22 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
 
   /**
    * App-level key dispatch — the pi interrupt chain (see keymap.ts):
-   * popup/overlay first, then the editor's autocomplete, then the running
-   * agent, then the empty-editor double-press windows. Every decision is
-   * delegated to the pure `resolveKeyAction`; the listener only composes
-   * live state, advances the double-press timestamps, and reports whether
-   * the key was consumed. `matchesKey('escape')` is true for the lone ESC
-   * byte `\x1b` — and, because legacy terminal Ctrl+[ sends the same byte,
-   * for Ctrl+[ too (pi-tui keys.js normalizes both to `escape`).
+   * popup/overlay first (a popup closes itself and never stops the running
+   * task), then the editor's autocomplete, then the running agent — where a
+   * DOUBLE Esc within `DOUBLE_PRESS_MS` stops the whole task (parent +
+   * subagents; the first press only arms the stop window) — and finally the
+   * empty-editor double-press windows. Every decision is delegated to the
+   * pure `resolveKeyAction`; the listener only composes live state, advances
+   * the double-press timestamps, and reports whether the key was consumed.
+   * `matchesKey('escape')` is true for the lone ESC byte `\x1b` — and,
+   * because legacy terminal Ctrl+[ sends the same byte, for Ctrl+[ too
+   * (pi-tui keys.js normalizes both to `escape`).
    */
   let lastEscPress = 0
+  let lastRunningEscPress = 0
   let lastCtrlCPress = 0
   const isRunning = options.isRunning ?? (() => false)
+  const getRunningAgents = options.getRunningAgents ?? (() => 0)
 
   tui.addInputListener((data: string) => {
     const action = resolveKeyAction(data, {
@@ -266,28 +273,42 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       overlayOpen: tui.hasOverlay(),
       editorHasText: editor.getText() !== '',
       autocompleteOpen: editor.isShowingAutocomplete(),
+      runningAgents: getRunningAgents(),
       lastEscPress,
+      lastRunningEscPress,
       lastCtrlCPress,
     }, Date.now(), keyBindingsRef)
-    // Advance the double-press windows for the keys this chain owns. Only
-    // the EMPTY-editor idle chain arms the double-Esc timer: an Esc that
-    // cancels a running turn must not count as the first press of a pair,
-    // or mashing Esc while stopping would pop /session right after (pi arms
-    // the double-escape only from the empty-editor branch too).
+    // Advance the double-press windows for the keys this chain owns. Two
+    // separate Esc windows keep their own clocks: the running-stop arm
+    // (`interrupt-arm-stop` → `interrupt-cancel`) and the idle double-Esc
+    // (`interrupt-arm` → `interrupt-double`), so an Esc that armed a stop
+    // never pops /session once the turn settles inside the window, and vice
+    // versa. A fired stop re-arms the running clock at the cancel timestamp
+    // (Date.now() on `interrupt-cancel`): lashes of held-key Esc after the
+    // cancel land <80ms later and resolve as swallowable `key-repeat`
+    // instead of re-noticing another arm. `key-repeat` never advances a
+    // window — a held key must not arm or complete a double press
+    // (see keymap.ts).
     if (action.kind === 'interrupt-arm' || action.kind === 'interrupt-double') {
       lastEscPress = Date.now()
+    } else if (action.kind === 'interrupt-arm-stop' || action.kind === 'interrupt-cancel') {
+      lastRunningEscPress = Date.now()
     } else if (action.kind === 'ctrl-c-cancel' || action.kind === 'ctrl-c-clear' || action.kind === 'ctrl-c-quit') {
       lastCtrlCPress = Date.now()
     }
     // Pass-through outcomes (popup, autocomplete, unbound keys) let the
-    // focused component handle the key; actionable ones go to the caller.
+    // focused component handle the key; actionable ones (key-repeat included,
+    // so the executor can abort a pending quit confirmation on it) go to the
+    // caller.
     if (action.kind !== 'overlay' && action.kind !== 'autocomplete-close' && action.kind !== 'noop') {
       if (options.onKeyAction !== undefined) {
         options.onKeyAction(action)
       } else if (action.kind === 'ctrl-c-cancel' || action.kind === 'ctrl-c-clear'
         || action.kind === 'ctrl-c-quit' || action.kind === 'ctrl-d-quit') {
         // Smoke-test fallback: any Ctrl+C family press, or an empty-editor
-        // Ctrl+D, exits — Ctrl+C behaves like the pre-keymap build.
+        // Ctrl+D, exits — Ctrl+C behaves like the pre-keymap build. (key-repeat
+        // deliberately excluded: no terminal is attached in smoke mode, but a
+        // repeat must never be an exit path by itself.)
         handle.dispose()
         process.exit(130)
       }

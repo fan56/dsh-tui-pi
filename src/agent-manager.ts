@@ -58,9 +58,39 @@ export type AgentParseResult =
   | { ok: true; agent: AgentFile }
   | { ok: false; error: string }
 
-/** The dsh agents directory (`~/dsh/agents`, user-chosen location). */
+/** The dsh agents directory (`~/.dsh/agents`, under the dsh home). */
 export function agentsDir(): string {
+  return join(homedir(), '.dsh', 'agents')
+}
+
+/**
+ * The legacy agents directory from the first shipped layout (`~/dsh/agents`,
+ * no dot). Kept only for one-time migration — see `migrateLegacyAgentsDir`.
+ */
+export function legacyAgentsDir(): string {
   return join(homedir(), 'dsh', 'agents')
+}
+
+/**
+ * One-time migration from the legacy `~/dsh/agents` layout into
+ * `~/.dsh/agents`: when the target directory holds no agents but the legacy
+ * one does, every legacy file is copied over. Idempotent.
+ */
+export function migrateLegacyAgentsDir(
+  targetDir: string = agentsDir(),
+  legacyDir: string = legacyAgentsDir(),
+): number {
+  const { agents } = listAgentFiles(targetDir)
+  if (agents.length > 0) return 0
+  if (!existsSync(legacyDir)) return 0
+  let migrated = 0
+  for (const entry of readdirSync(legacyDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue
+    mkdirSync(targetDir, { recursive: true })
+    writeFileSync(join(targetDir, entry.name), readFileSync(join(legacyDir, entry.name)))
+    migrated++
+  }
+  return migrated
 }
 
 /** zcode agent files are the one-time seeding source (model converted). */

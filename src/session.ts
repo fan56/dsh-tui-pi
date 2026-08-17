@@ -26,6 +26,52 @@ export interface BridgeCallbacks {
   onStatus(status: 'idle' | 'running'): void
   /** Live snapshot of tracked subagent (child session) rows, on any change. */
   onLive(agents: readonly AgentView[]): void
+  /** A tracked child completed one more turn (the "rounds" the policy caps). */
+  onTurnCount?(childId: string, count: number): void
+}
+
+/**
+ * Per-child transcript buffer cap. 2000 events covers a long delegated task's
+ * assistant/tool/user rows (~a few hundred KB at worst) while bounding a
+ * runaway child; the viewer flags truncation instead of dropping silently.
+ */
+const CHILD_LOG_CAP = 2000
+
+/** Tail marker for `llm/retry` events (no text content — the row shows it is re-working). */
+const RETRY_MARKER = '↻ retry'
+
+/** Strip ANSI SGR escape sequences (the only escapes collected into assistant text). */
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, '')
+}
+
+/**
+ * Last visible text line of an `assistant/message` event's content, or
+ * undefined when it carries no text block. Defensive: reads through an
+ * `unknown` shape (the declaring package's content model is not imported
+ * here) and never throws — a missing/unexpected field simply yields nothing.
+ */
+function lastTextLine(data: unknown): string | undefined {
+  const content = (data as { message?: { content?: unknown } })?.message?.content
+  if (!Array.isArray(content)) return undefined
+  let blockText: string | undefined
+  for (const block of content) {
+    const b = block as { type?: string; text?: unknown }
+    if (b?.type === 'text' && typeof b.text === 'string' && b.text !== '') {
+      blockText = b.text
+    }
+  }
+  if (blockText === undefined) return undefined
+  // Last non-blank line of the text body, whitespace-folded so a wrapped/
+  // CRLF stream collapses onto one row.
+  const body = stripAnsi(blockText).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = body.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (line === '') continue
+    return line.replace(/\s+/g, ' ')
+  }
+  return undefined
 }
 
 /** Incrementally maintained footer statistics (all O(1) reads). */
@@ -67,6 +113,15 @@ export class DshSessionBridge {
   /** Child session ids whose own events we fold into the agent views. */
   private readonly childSessions = new Set<string>()
   /**
+   * Per-child event ring buffer — the raw transcript the subagent viewer
+   * renders. Capped so a runaway child cannot grow the process unboundedly;
+   * the oldest events drop off (the viewer shows a "history truncated" hint
+   * when the cap is hit).
+   */
+  private readonly childLogs = new Map<string, SessionEvent[]>()
+  /** Per-child completed turn count — the "rounds" the policy caps. */
+  private readonly turnCounts = new Map<string, number>()
+  /**
    * Session ids that can own tracked children (this session first, then every
    * tracked child — delegation nests). Used to match `parentSession` headers
    * and to fold workflow events of the parent log.
@@ -102,6 +157,7 @@ export class DshSessionBridge {
         && !this.agentViews.has(sessionKey)) {
         this.agentViews.set(sessionKey, {
           childId: sessionKey,
+          parentSession: String(header.parentSession),
           label: `subagent ${sessionKey.slice(0, 8)}`,
           startedAt: event.time,
           tokens: 0,
@@ -114,6 +170,12 @@ export class DshSessionBridge {
       // Fold workflow + child events for every tracked session.
       if (this.trackedSessions.has(sessionKey)) {
         this.foldTracked(sessionKey, event)
+      }
+      // Buffer the child's OWN log for the viewer (not the parent's workflow
+      // rows, which carry no child transcript). The buffer is capped; the
+      // viewer reports truncation when the head dropped off.
+      if (this.childSessions.has(sessionKey)) {
+        this.appendChildLog(sessionKey, event)
       }
       if (this.sessionId !== undefined && session.id === this.sessionId) {
         this.applyEvent(event)
@@ -135,6 +197,38 @@ export class DshSessionBridge {
   /** Current session id, when one exists. */
   getSessionId(): SessionId | undefined {
     return this.sessionId
+  }
+
+  /** Sorted snapshot of every tracked child (running and settled). */
+  getAgentViews(): readonly AgentView[] {
+    return [...this.agentViews.values()].sort(
+      (a, b) => a.startedAt - b.startedAt || a.childId.localeCompare(b.childId),
+    )
+  }
+
+  /** Children still running (`outcome` unset) — the live count the guard caps. */
+  getLiveChildren(): readonly AgentView[] {
+    return this.getAgentViews().filter(view => view.outcome === undefined)
+  }
+
+  /** The buffered transcript of one child, in log order (capped, maybe truncated). */
+  getChildLog(childId: string): readonly SessionEvent[] {
+    return this.childLogs.get(childId) ?? []
+  }
+
+  /** Completed turn count of one child ("rounds"). */
+  getTurnCount(childId: string): number {
+    return this.turnCounts.get(childId) ?? 0
+  }
+
+  /** Whether one child settled (a continuable child may resume later). */
+  isChildSettled(childId: string): boolean {
+    return this.agentViews.get(childId)?.outcome !== undefined
+  }
+
+  /** True when the child's buffered transcript dropped its oldest events. */
+  isChildLogTruncated(childId: string): boolean {
+    return (this.childLogs.get(childId)?.length ?? 0) >= CHILD_LOG_CAP
   }
 
   /** Queue one user prompt, creating the session lazily on first use. */
@@ -199,6 +293,8 @@ export class DshSessionBridge {
     this.running = false
     this.agentViews.clear()
     this.childSessions.clear()
+    this.childLogs.clear()
+    this.turnCounts.clear()
     this.trackedSessions.clear()
     this.runSeqToChild.clear()
     if (handle !== undefined) await handle.dispose()
@@ -227,6 +323,8 @@ export class DshSessionBridge {
     this.stats.cacheHitRate = undefined
     this.agentViews.clear()
     this.childSessions.clear()
+    this.childLogs.clear()
+    this.turnCounts.clear()
     this.trackedSessions.clear()
     this.runSeqToChild.clear()
     this.emitLive()
@@ -377,40 +475,69 @@ export class DshSessionBridge {
       }
     }
     if (this.childSessions.has(sessionId)) {
+      // Round counting is view-independent: every completed turn of the child
+      // is one round, even once the view settled (continuable children resume).
+      if (event.type === 'turn/end') {
+        const count = (this.turnCounts.get(sessionId) ?? 0) + 1
+        this.turnCounts.set(sessionId, count)
+        this.callbacks.onTurnCount?.(sessionId, count)
+      }
       const view = this.agentViews.get(sessionId)
       if (view !== undefined) {
         if (isSubagentDescriptor(event)) {
           if (view.provider !== event.data.provider
+            || view.mode !== event.data.mode
             || (event.data.label !== undefined && view.label !== event.data.label)) {
             this.agentViews.set(sessionId, {
               ...view,
               provider: event.data.provider,
+              mode: event.data.mode,
               ...(event.data.label === undefined ? {} : { label: event.data.label }),
             })
             changed = true
           }
         } else if (event.type === 'assistant/message') {
           const usage = event.data.usage
-          if (usage !== undefined) {
-            const delta = usage.inputTokens + usage.outputTokens
+          const delta = usage === undefined
+            ? 0
+            : usage.inputTokens + usage.outputTokens
               + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
-            if (delta > 0) {
-              this.agentViews.set(sessionId, { ...view, tokens: view.tokens + delta })
-              changed = true
-            }
-          }
-        } else if (isLlmRetry(event)) {
-          if (view.retries !== event.data.retry || view.maxRetries !== event.data.maxRetries) {
+          const lastLine = lastTextLine(event.data)
+          const tokensChanged = delta > 0
+          const lineChanged = lastLine !== undefined && lastLine !== view.lastLine
+          if (tokensChanged || lineChanged) {
+            // One set: neither delta nor lastLine may clobber the other.
             this.agentViews.set(sessionId, {
               ...view,
-              retries: event.data.retry,
-              maxRetries: event.data.maxRetries,
+              ...(tokensChanged ? { tokens: view.tokens + delta } : {}),
+              ...(lineChanged ? { lastLine } : {}),
+            })
+            changed = true
+          }
+        } else if (isLlmRetry(event)) {
+          // No text content — surface a fixed marker so the row shows the
+          // child is (re)working. Merged into one set so the retry counters
+          // and the marker can't clobber each other.
+          const retryChanged = view.retries !== event.data.retry || view.maxRetries !== event.data.maxRetries
+          const lineChanged = view.lastLine !== RETRY_MARKER
+          if (retryChanged || lineChanged) {
+            this.agentViews.set(sessionId, {
+              ...view,
+              ...(retryChanged
+                ? { retries: event.data.retry, maxRetries: event.data.maxRetries }
+                : {}),
+              ...(lineChanged ? { lastLine: RETRY_MARKER } : {}),
             })
             changed = true
           }
         } else if (event.type === 'tool/call') {
           if (view.lastTool !== event.data.name) {
             this.agentViews.set(sessionId, { ...view, lastTool: event.data.name })
+            changed = true
+          }
+          const toolLine = `⚙ ${event.data.name}`
+          if (toolLine !== view.lastLine) {
+            this.agentViews.set(sessionId, { ...view, lastLine: toolLine })
             changed = true
           }
         } else if (event.type === 'request/context') {
@@ -437,9 +564,18 @@ export class DshSessionBridge {
 
   /** Push the current agent views (stable order) to the renderer. */
   private emitLive(): void {
-    this.callbacks.onLive(
-      [...this.agentViews.values()].sort((a, b) => a.startedAt - b.startedAt || a.childId.localeCompare(b.childId)),
-    )
+    this.callbacks.onLive(this.getAgentViews())
+  }
+
+  /** Append one child-session event to its transcript buffer, dropping the oldest at the cap. */
+  private appendChildLog(childId: string, event: SessionEvent): void {
+    let log = this.childLogs.get(childId)
+    if (log === undefined) {
+      log = []
+      this.childLogs.set(childId, log)
+    }
+    if (log.length >= CHILD_LOG_CAP) log.shift()
+    log.push(event)
   }
 
   private async ensureSession(): Promise<AgentHandle> {

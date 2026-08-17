@@ -77,6 +77,8 @@ dsh ▸ ☁ opencode-go ▸ 🤖 deepseek-v4-flash ▸ ● high ▸ 🧠 11.6k/1
 | `/export` | write the current session log as JSONL — default `~/Downloads/dsh-session-<id>.jsonl`, or a path argument. |
 | `/permission` | permission-preset picker (whatever the deployment table advertises — read-only / workspace-write / danger-full-access). Select a preset to apply it through dsh's canonical `/permission <name>` command, or Esc to keep the current one. The editor's top border shows the live preset badge (danger-full-access → "Full access"). |
 | `/theme` | color-scheme picker (auto / light / dark). The choice applies immediately and is persisted to `dsh-tui.theme`. |
+| `/agents` | manage agent definition markdown files (name/model/thinking/deep per agent) **and the subagent limits** — `l` from the table opens the limits panel: `maxAgents` (concurrent live children, default 4) and `maxRounds` (completed turns before the TUI queues a wrap-up request, default 50; both `0 = unlimited`). Limits are read live at every spawn/turn decision; writes go to the `dsh-tui` settings namespace and hot-apply. Also the initial view when no agent files exist yet. |
+| `/subagents` | the command twin of `Ctrl+G`: pick a running (or recently settled) subagent and watch its live transcript in the 80% viewer — status, rounds against the cap, tokens, tool calls. |
 | `/reload` | hot-reload the plugin from the current source (after `pnpm build`) without restarting dsh — the TUI and the live agent are torn down; the session log persists and can be rejoined with `/resume`. |
 | `/hotkeys` | keybinding browser: the effective app-key table (custom overrides starred) plus the keybindings file path — see [Custom keybindings](#custom-keybindings). |
 
@@ -187,10 +189,11 @@ App-level keys (key mappings mirror [pi](https://github.com/badlogic/pi-mono)):
 | Key | Action |
 | --- | --- |
 | `Enter` | send the prompt |
-| `Esc` | **stop the current task** — priority chain: a popup that is open closes itself first; the editor's autocomplete closes; a mid-turn agent is cancelled (`⏹ canceling current turn…`); a non-empty editor does **nothing** (anti-misfire); on an **empty** editor a second `Esc` within 500ms opens `/session` |
-| `Ctrl+C` | mid-turn: first press cancels the running turn, second press (within 500ms) quits; idle: first press clears the editor, second press quits. With a popup open it cancels the popup instead |
+| `Esc` | **stop the current task — as a deliberate double-press** — priority chain: a popup that is open closes itself first (Esc inside a popup *never* stops the running task); the editor's autocomplete closes; a mid-turn agent waits for a second `Esc` within 500ms to cancel the whole task (parent + subagents, `⏹ canceling current turn…`; the first press only arms the window and shows a hint); a non-empty editor does **nothing** (anti-misfire); on an **empty** editor a second `Esc` within 500ms opens `/session` |
+| `Ctrl+C` | mid-turn: first press cancels the running turn, second press (within 500ms) quits; idle: first press clears the editor, second press quits. With a popup open it cancels the popup instead. **Held-key auto-repeat never quits** — repeats under 80ms apart are swallowed, and the double-press quit is confirmed for 200ms (a follow-up repeat aborts it, a human-speed re-press fires it immediately) |
 | `Ctrl+D` | quit — only when the editor is **empty**, like pi's `app.exit`; with text it is the regular delete-character-forward |
 | `Ctrl+L` | open the model/think picker (pi's `app.model.select`) |
+| `Ctrl+G` | open the subagent picker while subagents run (see `/subagents`); idle the key falls through untouched. dsh's own mapping — pi spends this key on an external editor we don't have, remap in `keybindings.json` if you miss it |
 | `Tab` | autocomplete |
 
 Editor keys (movement/deletion/undo) come from the pi-tui `Editor` default
@@ -202,14 +205,39 @@ edges, `PageUp`/`PageDown` scroll, `Backspace` / `Delete`/`Ctrl+D` delete,
 yank, `Shift+Enter`/`Ctrl+J` newline.
 
 Not supported yet (documented status): `Ctrl+O` collapse tool output, `Ctrl+X`
-copy the last assistant message, `Alt+Enter` follow-up queue, `Ctrl+G` external
-editor, `Ctrl+V` paste image, `Ctrl+Z` suspend,
-`Ctrl+P`/`Ctrl+Shift+P` model cycle, `Shift+Tab` think cycle, `Ctrl+T` collapse
-thinking.
+copy the last assistant message, `Alt+Enter` follow-up queue, `Ctrl+V` paste
+image, `Ctrl+Z` suspend, `Ctrl+P`/`Ctrl+Shift+P` model cycle, `Shift+Tab` think
+cycle, `Ctrl+T` collapse thinking.
+
+### Subagent viewer & fine-grained control
+
+`Ctrl+G` (or `/subagents`) opens an 80% picker over the tracked children —
+running ones first (spinner, mode, rounds against `maxRounds`, tokens,
+elapsed), then the five most recently settled. Enter opens the transcript
+viewer: one readable line per buffered child event (user/assistant messages,
+tool calls paired with truncated results, turns, todos), refreshing ~3x/s
+with tail-follow (scroll up to detach, reach the bottom to re-attach), and a
+truncation note when the per-child 2000-event ring buffer dropped its head.
+`Esc` closes; a deliberate double-`x` within 500ms closes too.
+
+Two caps steer delegation (configure in `/agents` → `l`, both live-read at
+every decision):
+
+- **`maxAgents`** (default 4, `0` = unlimited) — a `tools.guard` denies
+  model-facing spawn tools (`subagent`, `subagent_fork`, `workflow`, `ralph`,
+  `use_agent`) once that many children run, with the running labels in the
+  deny reason so the model can wait or `list_agents`. The cap is approximate
+  under a burst of parallel spawns; workflow fan-out (which bypasses the tool
+  pipeline) is pruned after the fact on `subagent/start`.
+- **`maxRounds`** (default 50, `0` = unlimited) — when a child's completed
+  turns reach the cap, the TUI queues one wrap-up request
+  ("总结和结束这个任务，汇报情况。") as its next turn — it never interrupts
+  work underway, never repeats per child, and never re-awakens a child that
+  already settled. There is deliberately **no force stop**.
 
 ### Custom keybindings
 
-The four app-level keys are remappable through `$DSH_HOME/keybindings.json`
+The five app-level keys are remappable through `$DSH_HOME/keybindings.json`
 (`~/.dsh/keybindings.json` by default) — pi's
 `~/.pi/agent/keybindings.json` convention. The file is a **partial** map of
 the app keys to pi-tui key ids; anything missing keeps its default. Key id

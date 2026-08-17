@@ -13,6 +13,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { Loader, Text } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { PowerlineFooter, type FooterDataSource } from './footer.ts'
@@ -22,7 +23,7 @@ import { TranscriptRenderer, type PanelHeight } from './messages.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts'
-import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId } from './session.ts'
+import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
 import {
   currentThemePreference,
   readPanelHeightPreference,
@@ -34,6 +35,9 @@ import { openAgentManager } from './agents.ts'
 import { openSettingsBrowser } from './settings.ts'
 import { reloadPlugin } from './reload.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
+import { applySubagentPolicy } from './subagent-policy.ts'
+import { openSubagentViewer } from './subagent-viewer.ts'
+import type { AgentView } from './dsh-events.ts'
 import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 import { type KeyAction } from './keymap.ts'
@@ -41,6 +45,24 @@ import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.
 import { startTui, type TuiHandle } from './tui.ts'
 
 export const name = 'dsh-tui-pi'
+
+/**
+ * Delay (ms) before a double-Ctrl+C quit actually fires — a held key's first
+ * auto-repeat lands inside the 500ms double-press window looking like a
+ * deliberate second press, and a follow-up `key-repeat` (arriving within
+ * ~30-50ms) aborts the quit before this timer ever fires.
+ */
+const QUIT_CONFIRM_MS = 200
+
+/**
+ * Delay (ms) before the double-Esc stop actually fires — the same held-key
+ * defence as the Ctrl+C quit: the OS repeat delay (~183ms-2s) puts the first
+ * auto-repeat of a held Esc exactly at the 500ms stop-window boundary; the
+ * stop is confirmed for this long and a follow-up `key-repeat` (betraying
+ * the held key) aborts it. A second HUMAN-speed press during the window
+ * fires the stop immediately (see `interrupt-cancel`).
+ */
+const STOP_CONFIRM_MS = 200
 
 /** The TUI drives the agent factory and registers slash commands. */
 export const inject = ['agents', 'commands', 'systemPrompt']
@@ -130,28 +152,56 @@ export function apply(ctx: Context): void {
         void submit(text)
       },
       keyBindings: keyBindings.bindings,
-      // App-level keys (pi interrupt chain): Esc stops the current task
-      // (popup/autocomplete first, then cancel-active-turn, anti-misfire
-      // no-op on a non-empty editor), Ctrl+C cancels a running turn or
-      // clears the editor — a second press within 500ms quits — and Ctrl+D
-      // quits only on an empty editor. All decisions live in keymap.ts.
+      // App-level keys (pi interrupt chain): Esc on a running task is a
+      // deliberate double-press — the first press arms the window (with
+      // feedback), the second within 500ms stops the whole task (parent +
+      // subagents); popup/autocomplete first, anti-misfire no-op on a
+      // non-empty editor, and an empty idle editor double-Esc opens /session.
+      // Ctrl+C cancels a running turn or clears the editor — a second press
+      // within 500ms quits — and Ctrl+D quits only on an empty editor.
+      // Ctrl+G opens the subagent picker while children run. All decisions
+      // live in keymap.ts.
       isRunning: () => bridge.isRunning(),
+      getRunningAgents: () => bridge.getLiveChildren().length,
       onKeyAction: (action: KeyAction) => {
         switch (action.kind) {
-          case 'interrupt-cancel':
+          case 'interrupt-arm-stop':
+            // First Esc while the task runs: the stop is ARMED, not fired —
+            // a second Esc within the window confirms it, so a stray Esc can
+            // never kill a running turn. The notice keeps the armed first
+            // press from feeling dead and states the contract explicitly.
+            renderer.renderNotice('Press Esc again to stop the current task', 'info')
+            break
+          case 'interrupt-cancel': {
+            // Second Esc while the task runs (parent + subagents). Like the
+            // Ctrl+C quit, the stop is CONFIRMED, not immediate: a held
+            // Esc's FIRST auto-repeat lands at the OS repeat delay (right at
+            // the 500ms window boundary) looking exactly like a deliberate
+            // second press. The stop fires after STOP_CONFIRM_MS unless a
+            // follow-up `key-repeat` aborts it (a repeat betrays a held key),
+            // while another HUMAN-speed press during the window stops right
+            // away. The '⏹ stopping…' notice renders now, so the visible
+            // feedback is immediate even though the cancellation (and its
+            // '⏹ canceling current turn…' notice inside `stopTask`) is
+            // deferred by the confirm window.
+            if (stopConfirmTimer !== undefined) {
+              clearTimeout(stopConfirmTimer)
+              stopConfirmTimer = undefined
+              void stopTask()
+              break
+            }
+            renderer.renderNotice('⏹ stopping — Esc was double-pressed', 'info')
+            stopConfirmTimer = setTimeout(() => {
+              stopConfirmTimer = undefined
+              void stopTask()
+            }, STOP_CONFIRM_MS)
+            break
+          }
           case 'ctrl-c-cancel': {
-            // First press mid-turn: cancel with on-screen feedback (mirrors
-            // the web client's stop button; keepInbox preserves the queue).
-            // Transient notice: a second press quits and disposes the whole
-            // TUI, so the line's replay entry only matters for theme-switch
-            // repaints — buffering it keeps that rebuild faithful.
-            renderer.renderNotice('⏹ canceling current turn…', 'info')
-            void bridge.cancelActiveTurn().then(cancelled => {
-              // State raced idle between the decision and the cancel call —
-              // nothing to cancel. No exit: quitting needs the deliberate
-              // double-press, so a stale single press never kills the TUI.
-              if (!cancelled) renderer.renderNotice('Nothing running to cancel.', 'info')
-            })
+            // First Ctrl+C mid-turn: cancel straight away with the same
+            // on-screen feedback as Esc ×2 (mirrors the web client's stop
+            // button; keepInbox preserves the queue).
+            void stopTask()
             break
           }
           case 'interrupt-double':
@@ -166,13 +216,54 @@ export function apply(ctx: Context): void {
             ui.editor.setText('')
             ui.requestRender()
             break
-          case 'ctrl-c-quit':
+          case 'ctrl-c-quit': {
+            // Double Ctrl+C quits — but a held key must not. The terminal
+            // re-sends a held Ctrl+C every ~30-50ms after the OS repeat delay,
+            // and the FIRST repeat can land inside the 500ms double-press
+            // window looking exactly like a deliberate second press. So the
+            // quit is confirmed, not immediate: it fires after
+            // QUIT_CONFIRM_MS unless a `key-repeat` arrives (a repeat betrays
+            // a held key → abort), while another HUMAN-speed press during the
+            // window (a deliberate mash) quits right away.
+            if (quitConfirmTimer !== undefined) {
+              clearTimeout(quitConfirmTimer)
+              quitConfirmTimer = undefined
+              void disposeAndExit(0)
+              break
+            }
+            renderer.renderNotice('⏹ Ctrl+C ×2 — quitting…', 'info')
+            quitConfirmTimer = setTimeout(() => {
+              quitConfirmTimer = undefined
+              void disposeAndExit(0)
+            }, QUIT_CONFIRM_MS)
+            break
+          }
+          case 'key-repeat':
+            // Auto-repeat of a held key — betrays a hold, never a double:
+            // abort a pending Ctrl+C quit confirmation and/or a pending
+            // double-Esc stop confirmation.
+            if (action.key === 'ctrl-c' && quitConfirmTimer !== undefined) {
+              clearTimeout(quitConfirmTimer)
+              quitConfirmTimer = undefined
+              renderer.renderNotice('quit aborted — Ctrl+C was held, not double-pressed', 'info')
+            }
+            if (action.key === 'escape' && stopConfirmTimer !== undefined) {
+              clearTimeout(stopConfirmTimer)
+              stopConfirmTimer = undefined
+              renderer.renderNotice('stop aborted — Esc was held, not double-pressed', 'info')
+            }
+            break
           case 'ctrl-d-quit':
             void disposeAndExit(0)
             break
           case 'model-picker':
             // Ctrl+L: pi app.model.select — open the model/think picker.
             void modelHandler('', new AbortController().signal)
+            break
+          case 'subagent-viewer':
+            // Ctrl+G: open the subagent picker → transcript viewer while
+            // children run (modal overlay; Esc / double-x closes).
+            void openSubagentViewer(ctx, ui.tui, ui.theme, bridge, () => ui.tui.setFocus(ui.editor))
             break
           default:
             break
@@ -181,6 +272,33 @@ export function apply(ctx: Context): void {
       themePreference,
     })
     handle = ui
+    /**
+     * Pending Ctrl+C quit confirmation (see the `ctrl-c-quit` case): armed by
+     * a double press, fired after QUIT_CONFIRM_MS, aborted by a `key-repeat`
+     * (held key) or torn down with the TUI.
+     */
+    let quitConfirmTimer: ReturnType<typeof setTimeout> | undefined
+    /**
+     * Pending double-Esc stop confirmation (see the `interrupt-cancel` case):
+     * armed by the second Esc while running, fired after STOP_CONFIRM_MS,
+     * aborted by a `key-repeat` (held key) or torn down with the TUI. The
+     * Ctrl+C quit and the Esc stop never share a timer — distinct keys, both
+     * could theoretically be in flight.
+     */
+    let stopConfirmTimer: ReturnType<typeof setTimeout> | undefined
+    /**
+     * Stop the whole task (parent turn + subagents), mirroring the web
+     * client's stop button: `agent.cancel({ kind: 'user' }, { keepInbox:
+     * true })` via the bridge. Deferred by the confirm windows above (the
+     * ESC/Ctrl+C double-press guards); the notice renders immediately.
+     */
+    const stopTask = async (): Promise<void> => {
+      renderer.renderNotice('⏹ canceling current turn…', 'info')
+      const cancelled = await bridge.cancelActiveTurn()
+      // State raced idle between the decision and the cancel call — nothing
+      // to cancel (e.g. the turn settled inside the confirm window).
+      if (!cancelled) renderer.renderNotice('Nothing running to cancel.', 'info')
+    }
     // Arm the settings watch sink now that the renderer exists (see apply()).
     applyThemeRef = (pref: ThemePreference): void => {
       applyTheme(resolveTheme(process.env, pref))
@@ -256,8 +374,8 @@ export function apply(ctx: Context): void {
     // with a repaint request here. The badge reads the cached current preset
     // (see the provider below), so a knob change must refresh the cache too.
     const PERMISSION_KNOB_EVENTS = new Set(['permission/preset', 'sandbox/mode', 'approval/policy'])
-    const bridge = new DshSessionBridge(ctx, {
-      onEvent: event => {
+    const bridgeCallbacks: BridgeCallbacks = {
+      onEvent: (event: SessionEvent) => {
         renderer.applyEvent(event)
         if (event.type === 'todo/write') {
           // Todos render in the fixed live widget, not the transcript.
@@ -269,10 +387,23 @@ export function apply(ctx: Context): void {
         }
       },
       onStatus: setStatus,
-      onLive: agents => {
+      onLive: (agents: readonly AgentView[]) => {
         liveWidgets.renderAgents(agents)
       },
+    }
+    const bridge = new DshSessionBridge(ctx, bridgeCallbacks)
+    // Subagent fine-grained control, all in-process (see subagent-policy.ts):
+    // a tools.guard denies spawn-tool calls once `maxAgents` children run
+    // (workflow fan-out, which bypasses the tool pipeline, is pruned on
+    // `subagent/start`), and when a child's completed turns reach `maxRounds`
+    // the policy queues one wrap-up message into its next turn. Limits are
+    // read live from the `dsh-tui` settings namespace (/agents → l limits).
+    const subagentPolicy = applySubagentPolicy(ctx, {
+      getLive: () => bridge.getLiveChildren(),
+      getTurnCount: childId => bridge.getTurnCount(childId),
+      isSettled: childId => bridge.isChildSettled(childId),
     })
+    bridgeCallbacks.onTurnCount = (childId, count) => subagentPolicy.onTurnCount(childId, count)
 
     /**
      * One O(events) fold of the session log into the effective preset, stored
@@ -351,6 +482,20 @@ export function apply(ctx: Context): void {
       handler: invocation => agentsHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /agents')
 
+    // /subagents: the command twin of Ctrl+G — pick a running (or recently
+    // settled) subagent and inspect its live transcript in the 80% viewer.
+    // Same flow as the key path; empty board closes immediately.
+    const subagentsHandler: LocalCommandHandler = async () => {
+      await openSubagentViewer(ctx, ui.tui, ui.theme, bridge, () => ui.tui.setFocus(ui.editor))
+      return { kind: 'success' as const, text: 'Subagent viewer closed.' }
+    }
+    commands.registerLocal('subagents', subagentsHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'subagents',
+      description: 'Browse subagents and inspect their live transcript',
+      handler: invocation => subagentsHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /subagents')
+
     // /think: cycle the current model's reasoning effort without re-picking
     // the model. A no-session /think still lands in the selection ref and
     // survives the lazy session creation (bridge seeds only an empty ref).
@@ -398,6 +543,26 @@ export function apply(ctx: Context): void {
       description: 'Switch the current model\'s think (reasoning) level',
       handler: invocation => thinkHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /think')
+
+    // /models-sync: run one dsh-model-sync catalog round on demand and show
+    // its report. Agentless like the pickers above — the sync only touches the
+    // settings document, never a conversation, so no throwaway session. The
+    // service is optional: without the dsh-model-sync plugin loaded, the
+    // command says so instead of failing elsewhere.
+    const modelSyncHandler: LocalCommandHandler = async () => {
+      const modelSync = ctx.get('modelSync') as { syncNow(): Promise<string> } | undefined
+      if (modelSync === undefined) {
+        return { kind: 'error' as const, text: 'dsh-model-sync plugin is not loaded.' }
+      }
+      const report = await modelSync.syncNow()
+      return { kind: 'success' as const, text: report }
+    }
+    commands.registerLocal('models-sync', modelSyncHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'models-sync',
+      description: 'Sync the model catalog from configured providers (custom providers excluded)',
+      handler: invocation => modelSyncHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /models-sync')
 
     const sessionHandler: LocalCommandHandler = async () => {
       const agent = bridge.getAgent()
@@ -736,7 +901,7 @@ export function apply(ctx: Context): void {
     // it under a theme hot-swap; the PowerlineFooter itself needs no rebuild.
     const footerHint = new Text('', 1, 0)
     const paintFooterHint = (): void => {
-      footerHint.setText(ansiFg(ui.theme.palette.fgSubtle) + '⌨ Enter: send · Esc: stop · Ctrl+C: cancel / double: quit · Ctrl+D: quit (empty)' + RESET)
+      footerHint.setText(ansiFg(ui.theme.palette.fgSubtle) + '⌨ Enter: send · Esc ×2: stop · Ctrl+C: cancel / double: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents' + RESET)
     }
     paintFooterHint()
     ui.footer.addChild(footerHint)
@@ -780,7 +945,7 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {
@@ -899,6 +1064,9 @@ export function apply(ctx: Context): void {
       // fresh fiber. On shutdown the process exits and the stash dies with it
       // (harmless) — only /reload in the same process consumes it.
       stashSessionIdForReload(bridge.getSessionId())
+      if (quitConfirmTimer !== undefined) clearTimeout(quitConfirmTimer)
+      if (stopConfirmTimer !== undefined) clearTimeout(stopConfirmTimer)
+      subagentPolicy.dispose()
       try { await bridge.dispose() } catch { /* contained */ }
     }
   }

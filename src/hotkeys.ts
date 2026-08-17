@@ -34,15 +34,16 @@ export function keybindingsPath(home: string): string {
   return join(home, KEYBINDINGS_FILE)
 }
 
-/** The four app-level bindings the file may remap (order = display order). */
-export const APP_KEY_FIELDS: readonly (keyof KeyBindings)[] = ['escape', 'ctrlC', 'ctrlD', 'modelPicker']
+/** The five app-level bindings the file may remap (order = display order). */
+export const APP_KEY_FIELDS: readonly (keyof KeyBindings)[] = ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer']
 
 /** Action descriptions for the `/hotkeys` table. */
 const KEY_ACTIONS: Record<keyof KeyBindings, string> = {
-  escape: 'stop the current task',
+  escape: 'stop the current task — requires two presses (1st arms, 2nd within 500ms fires)',
   ctrlC: 'running: cancel turn · idle: clear editor · second press quits',
   ctrlD: 'quit — only on an empty editor',
   modelPicker: 'open the model / think picker',
+  subagentViewer: 'open the subagent picker / viewer',
 }
 
 // ------------------------------------------------------------- validation --
@@ -231,7 +232,7 @@ export interface HotkeysManagerOptions {
 }
 
 /**
- * Open the `/hotkeys` manager: a FieldPanel of the four app keys (binding,
+ * Open the `/hotkeys` manager: a FieldPanel of the five app keys (binding,
  * custom star, action, file status + warnings), Enter opens an EditField that
  * writes the file and live-applies the change. Resolves with a summary when
  * the user changed something and closed, or `undefined` when nothing changed.

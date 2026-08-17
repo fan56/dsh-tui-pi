@@ -1,8 +1,10 @@
 /**
- * Theme settings: persists the user's theme preference and the think/tool
- * panel height under the `dsh-tui` settings namespace, surfaced by the
- * /settings browser and the /theme command. The preferences are read once at
- * TUI startup (`readThemePreference` / `readPanelHeightPreference`), and the
+ * Theme settings: persists the user's theme preference, the think/tool panel
+ * height, and the subagent concurrency/rounds limits under the `dsh-tui`
+ * settings namespace, surfaced by the /settings browser and the /theme
+ * command. The theme and panel-height preferences are read once at TUI
+ * startup (`readThemePreference` / `readPanelHeightPreference`); the subagent
+ * limits are read live at every policy decision (`readSubagentLimits`). The
  * namespace is marked `applies: 'live'`: a committed change (the /theme
  * picker, the /settings browser, an external edit) is pushed through the
  * watch hook, so the running TUI repaints without a restart.
@@ -23,6 +25,21 @@ import type { ThemePreference } from './theme/index.ts'
 /** Settings namespace carrying the persisted dsh-tui preferences. */
 export const THEME_SETTINGS_NAMESPACE: SettingsNamespace = settingsNamespace('dsh-tui')
 
+/** Subagent concurrency/rounds knobs read by the subagent policy. */
+export interface SubagentLimits {
+  /** Concurrent live children allowed; 0 lifts the cap (the guard stays off). */
+  maxAgents: number
+  /** Completed turns per child before a summary request is injected; 0 disables. */
+  maxRounds: number
+}
+
+/**
+ * Default subagent limits, applied whenever the settings service, namespace,
+ * or a field cannot be read. 4 concurrent children and 50 rounds per child are
+ * the documented out-of-the-box behavior.
+ */
+export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({ maxAgents: 4, maxRounds: 50 })
+
 /** Schema of the `dsh-tui` settings section. */
 const THEME_SETTINGS_SCHEMA = z.object({
   theme: z
@@ -37,12 +54,29 @@ const THEME_SETTINGS_SCHEMA = z.object({
       + "box borders add 2 more) or 'all' to print the full content — a streaming "
       + 'reasoning panel shows a 200-line live tail and tool results cap at 2000 lines',
     ),
+  // `z.natural()` is schemastery's constraint for a non-negative integer
+  // (the `z.number().int().min(0)` intent — no `.int()` chain exists here).
+  maxAgents: z
+    .natural()
+    .default(DEFAULT_SUBAGENT_LIMITS.maxAgents)
+    .description('Max concurrently running subagents (0 = unlimited)'),
+  maxRounds: z
+    .natural()
+    .default(DEFAULT_SUBAGENT_LIMITS.maxRounds)
+    .description('Max rounds per subagent before the TUI sends a summary request (0 = unlimited)'),
 })
 
 /** Composition entry below the user layer: fall back to the defaults. */
-const THEME_SETTINGS_ENTRY: { theme: ThemePreference; panelHeight: PanelHeight } = {
+const THEME_SETTINGS_ENTRY: {
+  theme: ThemePreference
+  panelHeight: PanelHeight
+  maxAgents: number
+  maxRounds: number
+} = {
   theme: 'auto',
   panelHeight: DEFAULT_PANEL_HEIGHT,
+  maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,
+  maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
 }
 
 /**
@@ -203,17 +237,21 @@ export function currentThemePreference(ctx: Context): ThemePreference {
 }
 
 /**
- * Persist one `dsh-tui` preference (theme or panelHeight) to the settings
- * namespace. The namespace is `applies: 'live'`, so the commit (observed
- * through the registration's watch hook) hot-applies the change to the
- * running TUI. Best-effort: a deployment without a settings provider reports
- * the failure; a failed write returns its error message for the caller to
- * surface. A concurrent writer moving the namespace rejects with
- * `SettingsConflictError` — retried once against a fresh revision; a second
- * conflict surfaces a friendly message instead of the raw error.
+ * Persist one `dsh-tui` preference (theme, panelHeight, or a subagent limit)
+ * to the settings namespace. The namespace is `applies: 'live'`, so the
+ * commit (observed through the registration's watch hook) hot-applies the
+ * change to the running TUI. Best-effort: a deployment without a settings
+ * provider reports the failure; a failed write returns its error message for
+ * the caller to surface. A concurrent writer moving the namespace rejects
+ * with `SettingsConflictError` — retried once against a fresh revision; a
+ * second conflict surfaces a friendly message instead of the raw error.
  * @returns undefined on success, the failure message otherwise.
  */
-async function writeDshTuiPreference(ctx: Context, key: 'theme' | 'panelHeight', value: string): Promise<string | undefined> {
+async function writeDshTuiPreference(
+  ctx: Context,
+  key: 'theme' | 'panelHeight' | 'maxAgents' | 'maxRounds',
+  value: string | number,
+): Promise<string | undefined> {
   const settings = ctx.get('settings') as SettingsProvider | undefined
   if (settings === undefined) return 'Settings service is not available.'
   // The descriptor carries the namespace's revision (optimistic-concurrency
@@ -242,4 +280,49 @@ async function writeDshTuiPreference(ctx: Context, key: 'theme' | 'panelHeight',
  */
 export async function writeThemePreference(ctx: Context, pref: ThemePreference): Promise<string | undefined> {
   return writeDshTuiPreference(ctx, 'theme', pref)
+}
+
+/**
+ * Read the currently resolved subagent limits, synchronously. Unlike the
+ * startup-snapshot readers, this does not wait for the namespace registration
+ * — it describes whatever the settings service exposes right now, so every
+ * policy decision (the guard at each spawn, `onTurnCount` at each child turn)
+ * reflects the latest committed value without a watcher. Missing settings
+ * service or namespace, or a non-integer/negative field, degrades to the
+ * defaults — a settings-less deployment keeps the documented caps.
+ */
+export function readSubagentLimits(ctx: Context): SubagentLimits {
+  const settings = ctx.get('settings') as SettingsProvider | undefined
+  if (settings === undefined) return { ...DEFAULT_SUBAGENT_LIMITS }
+  // The descriptor's `value` is the whole resolved section
+  // (`{ theme: ..., panelHeight: ..., maxAgents: ..., maxRounds: ... }`) — narrow
+  // the unknown to the two observed numeric fields.
+  const section = settings
+    .describe()
+    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
+    | { maxAgents?: unknown; maxRounds?: unknown }
+    | undefined
+  const natural = (value: unknown, fallback: number): number =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
+  return {
+    maxAgents: natural(section?.maxAgents, DEFAULT_SUBAGENT_LIMITS.maxAgents),
+    maxRounds: natural(section?.maxRounds, DEFAULT_SUBAGENT_LIMITS.maxRounds),
+  }
+}
+
+/**
+ * Persist one subagent limit (maxAgents or maxRounds) to the `dsh-tui`
+ * settings namespace. The namespace is `applies: 'live'`, so the commit
+ * hot-applies without a restart — the policy reads `readSubagentLimits` at
+ * the next decision point. Never throws: a deployment without the settings
+ * provider, or an unregistered namespace, surfaces a failure message for the
+ * caller.
+ * @returns undefined on success, the failure message otherwise.
+ */
+export async function writeSubagentLimit(
+  ctx: Context,
+  key: 'maxAgents' | 'maxRounds',
+  value: number,
+): Promise<string | undefined> {
+  return writeDshTuiPreference(ctx, key, value)
 }

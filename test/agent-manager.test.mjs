@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import {
   convertZcodeModel,
   listAgentFiles,
+  migrateLegacyAgentsDir,
   parseAgentMarkdown,
   renderAgentMarkdown,
   seedFromZcode,
@@ -213,5 +214,25 @@ test('listAgentFiles: skips broken files and reports them aside', () => {
     assert.equal(broken.length, 1)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('migrateLegacyAgentsDir: copies legacy files only when the target is empty', () => {
+  const root = mkdtempSync(join(tmpdir(), 'agent-migrate-'))
+  const legacy = join(root, 'legacy')
+  const target = join(root, 'target')
+  mkdirSync(legacy, { recursive: true })
+  writeFileSync(join(legacy, 'a.md'), '---\nname: a\n---\nbody\n')
+  try {
+    assert.equal(migrateLegacyAgentsDir(target, legacy), 1)
+    const { agents } = listAgentFiles(target)
+    assert.deepEqual(agents.map(agent => agent.meta.name), ['a'])
+
+    // Idempotent: a populated target is never touched again.
+    writeFileSync(join(legacy, 'b.md'), '---\nname: b\n---\nbody\n')
+    assert.equal(migrateLegacyAgentsDir(target, legacy), 0)
+    assert.deepEqual(listAgentFiles(target).agents.map(agent => agent.meta.name), ['a'])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
