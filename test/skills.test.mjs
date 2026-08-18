@@ -13,6 +13,7 @@ import {
   badgeText,
   buildNativeSkillCandidates,
   buildSkillCompletionCandidates,
+  clampScrollOffset,
   clampSkillCursor,
   completionLabel,
   completionName,
@@ -164,23 +165,34 @@ test('skillSettingRowLabel states align across skills and with completionLabel',
   assert.equal(skillSettingRowLabel(false, 'data-analysis').replace(/^false\s/, ''), completionLabel('explicit-skill', 'data-analysis'))
 })
 
-test('skillPanelRowLine leads with cursor + state, state appears exactly once', () => {
+test('skillPanelRowLine leads with cursor + index + state, state appears exactly once', () => {
   // The self-drawn panel fixes the SettingsList double-state bug: the row
   // shows the toggle state once, in front, never repeated at the tail.
-  const selected = skillPanelRowLine(true, true, 'agent-browser')
-  assert.equal(selected, '▸ true  [skill] agent-browser')
+  const selected = skillPanelRowLine(true, true, 'agent-browser', 1)
+  assert.equal(selected, '▸   1 true  [skill] agent-browser')
   assert.equal(selected.indexOf('true'), selected.lastIndexOf('true'))
   assert.ok(!selected.endsWith('true'))
-  const unselected = skillPanelRowLine(false, false, 'data-analysis')
-  assert.equal(unselected, '  false [skill] data-analysis')
+  const unselected = skillPanelRowLine(false, false, 'data-analysis', 10)
+  assert.equal(unselected, '   10 false [skill] data-analysis')
   assert.equal(unselected.indexOf('false'), unselected.lastIndexOf('false'))
   assert.ok(!unselected.endsWith('false'))
 })
 
-test('skillPanelRowLine aligns names across states (single state column)', () => {
+test('skillPanelRowLine index is right-aligned and does not shift the name column', () => {
+  // 1-based index pads to 3 columns (padStart), so the name column is stable.
   const rows = [
-    skillPanelRowLine(false, false, 'data-analysis'),
-    skillPanelRowLine(true, true, 'statistical-analysis'),
+    skillPanelRowLine(false, true, 'a', 1),
+    skillPanelRowLine(false, true, 'b', 12),
+    skillPanelRowLine(false, true, 'c', 123),
+  ]
+  const nameCols = rows.map((row) => row.indexOf('[skill]'))
+  assert.deepEqual(nameCols, [nameCols[0], nameCols[0], nameCols[0]])
+})
+
+test('skillPanelRowLine aligns names across states (single state column, with index)', () => {
+  const rows = [
+    skillPanelRowLine(false, false, 'data-analysis', 1),
+    skillPanelRowLine(true, true, 'statistical-analysis', 2),
   ]
   const nameCols = rows.map((row) => row.indexOf('[skill]'))
   assert.deepEqual(nameCols, [nameCols[0], nameCols[0]])
@@ -193,6 +205,21 @@ test('clampSkillCursor bounds navigation to the row count', () => {
   assert.equal(clampSkillCursor(-1, 3), 0) // before the start → first row
   assert.equal(clampSkillCursor(0, 0), 0) // empty list → pinned at 0
   assert.equal(clampSkillCursor(5, 0), 0)
+})
+
+test('clampScrollOffset keeps cursor in visible window', () => {
+  // Empty list → 0
+  assert.equal(clampScrollOffset(0, 10, 0, 0), 0)
+  // Cursor within window → no change
+  assert.equal(clampScrollOffset(3, 10, 50, 0), 0)
+  // Cursor above window → scroll up
+  assert.equal(clampScrollOffset(2, 10, 50, 5), 2)
+  // Cursor below window → scroll down so cursor is at bottom
+  assert.equal(clampScrollOffset(15, 10, 50, 0), 6) // 15 - 10 + 1 = 6
+  // Cursor at exact boundary (last visible row) → no change
+  assert.equal(clampScrollOffset(9, 10, 50, 0), 0)
+  // Cursor one past the boundary → scroll down by 1
+  assert.equal(clampScrollOffset(10, 10, 50, 0), 1)
 })
 
 test('skillJumpCursor moves by one, a page, or jumps to an end', () => {

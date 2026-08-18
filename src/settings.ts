@@ -73,6 +73,8 @@ import {
 } from './provider-catalog.ts'
 import {
   applySkillFrontmatter,
+  BADGE_WIDTH,
+  clampScrollOffset,
   clampSkillCursor,
   readSkillToggle,
   skillDisableUpdates,
@@ -80,6 +82,8 @@ import {
   skillEnabled,
   skillJumpCursor,
   skillPanelRowLine,
+  SKILL_INDEX_WIDTH,
+  SKILL_STATE_WIDTH,
   skillToggleEnabled,
   type SkillJump,
   type SkillPanelRow,
@@ -625,8 +629,15 @@ class SkillsPanel implements Component {
   private readonly onExit: () => void
   private rows: SkillPanelRow[] = []
   private cursor = 0
+  private scrollOffset = 0
   /** One-line notice shown in place of the list (loading / empty / no service). */
   private status: string | undefined
+
+  /** The overlay renders at `maxHeight` of terminal rows; FramedOverlay adds
+   *  4 chrome rows (top border + spacer + bottom spacer + border); the child
+   *  also appends2 tail rows (description + footer) after the skill list. */
+  private static readonly FRAME_OVERHEAD = 4
+  private static readonly TAIL_ROWS = 2
 
   constructor(
     tui: TUI,
@@ -649,6 +660,7 @@ class SkillsPanel implements Component {
     this.rows = [...rows]
     this.status = undefined
     this.cursor = clampSkillCursor(this.cursor, this.rows.length)
+    this.scrollToCursor()
     this.tui.requestRender()
   }
 
@@ -657,6 +669,7 @@ class SkillsPanel implements Component {
     this.status = text
     this.rows = []
     this.cursor = 0
+    this.scrollOffset = 0
     this.tui.requestRender()
   }
 
@@ -666,27 +679,47 @@ class SkillsPanel implements Component {
     if (this.rows.length === 0) {
       return [fg(p.fgMuted)(clipToWidth(this.status ?? '', width))]
     }
+
+    // Calculate how many skill rows fit. The overlay is capped at80% of
+    // terminal rows (SettingsBrowser's maxHeight); FramedOverlay adds4 chrome
+    // rows; the child appends TAIL_ROWS (description + footer) after the
+    // skill list.
+    const overlayMax = Math.floor(this.tui.terminal.rows * 0.8)
+    const maxVisibleRows = Math.max(1,
+      overlayMax - SkillsPanel.FRAME_OVERHEAD - SkillsPanel.TAIL_ROWS)
+
+    // Ensure the cursor is in the visible window.
+    this.scrollToCursor(maxVisibleRows)
+
+    const visibleRows = this.rows.slice(this.scrollOffset, this.scrollOffset + maxVisibleRows)
+
+    // Fixed-width prefix segments: marker(2) + index(4) + state(6) + badge(8) = 20.
+    const prefixCols = 2 + (SKILL_INDEX_WIDTH + 1) + (SKILL_STATE_WIDTH + 1) + (BADGE_WIDTH + 1)
     const out: string[] = []
-    for (let i = 0; i < this.rows.length; i++) {
+    for (let vi = 0; vi < visibleRows.length; vi++) {
+      const i = this.scrollOffset + vi
       const row = this.rows[i]
       const selected = i === this.cursor
-      // One plain-text row (marker+space, state+space, badge+space+name),
-      // clipped once to width, then colored per fixed-width segment. The
-      // prefix segments are fixed ASCII width (2 + 6 + 8 = 16) so slicing the
-      // clipped line by index is column-exact; the name tail takes the rest,
-      // and clipToWidth guarantees no row ever exceeds `width`.
-      const plain = clipToWidth(skillPanelRowLine(selected, row.enabled, row.name), width)
+      // One plain-text row (marker+space, index+space, state+space,
+      // badge+space+name), clipped once to width, then colored per
+      // fixed-width segment. The prefix segments are fixed ASCII width so
+      // slicing the clipped line by index is column-exact; the name tail
+      // takes the rest, and clipToWidth guarantees no row ever exceeds
+      // `width`.
+      const plain = clipToWidth(skillPanelRowLine(selected, row.enabled, row.name, i + 1), width)
       out.push(
         fg(selected ? p.accent : p.fgMuted)(plain.slice(0, 2))
-        + fg(row.enabled ? p.success : p.fgMuted)(plain.slice(2, 8))
-        + fg(selected ? p.accent : p.fgDefault)(plain.slice(8)),
+        + fg(p.fgSubtle)(plain.slice(2, 2 + SKILL_INDEX_WIDTH + 1))
+        + fg(row.enabled ? p.success : p.fgMuted)(plain.slice(2 + SKILL_INDEX_WIDTH + 1, prefixCols))
+        + fg(selected ? p.accent : p.fgDefault)(plain.slice(prefixCols)),
       )
     }
     const sel = this.rows[this.cursor]
     if (sel !== undefined && sel.description !== '') {
       out.push(fg(p.fgSubtle)(clipToWidth(`  ${sel.description}`, width)))
+    } else {
+      out.push('')
     }
-    out.push('')
     out.push(fg(p.fgSubtle)(clipToWidth(this.footer, width)))
     return out
   }
@@ -732,10 +765,17 @@ class SkillsPanel implements Component {
     }
   }
 
-  /** Move the cursor by a jump kind and repaint. */
+  /** Move the cursor by a jump kind, then scroll into view and repaint. */
   private move(jump: SkillJump): void {
     this.cursor = skillJumpCursor(this.cursor, this.rows.length, jump)
     this.tui.requestRender()
+  }
+
+  /** Adjust scrollOffset so the cursor is within `[offset, offset+visibleRows)`. */
+  private scrollToCursor(visibleRows?: number): void {
+    const vr = visibleRows ?? Math.max(1,
+      Math.floor(this.tui.terminal.rows * 0.8) - SkillsPanel.FRAME_OVERHEAD - SkillsPanel.TAIL_ROWS)
+    this.scrollOffset = clampScrollOffset(this.cursor, vr, this.rows.length, this.scrollOffset)
   }
 
   private readonly footer = '↑↓ nav · PgUp/PgDn page · Home/End jump · Enter/Space toggle · Esc back'

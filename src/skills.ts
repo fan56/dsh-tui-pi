@@ -169,6 +169,18 @@ export function clampSkillCursor(cursor: number, length: number): number {
   return cursor
 }
 
+/**
+ * The scroll offset that keeps `cursor` inside `[offset, offset + visibleRows)`
+ * for a list of `length` items. An empty list or zero visible rows returns 0.
+ * Pure helper so the scrolling logic is unit-testable without a live TUI.
+ */
+export function clampScrollOffset(cursor: number, visibleRows: number, length: number, currentOffset: number): number {
+  if (length <= 0 || visibleRows <= 0) return 0
+  if (cursor < currentOffset) return cursor
+  if (cursor >= currentOffset + visibleRows) return cursor - visibleRows + 1
+  return currentOffset
+}
+
 /** Fixed page size for the settings Skills panel paged navigation (PgUp/PgDn). */
 export const SKILL_PAGE_SIZE = 10
 
@@ -203,16 +215,23 @@ export function skillJumpCursor(
   }
 }
 
+/** Column width of the 1-based row index in the settings Skills panel. */
+export const SKILL_INDEX_WIDTH = 3
+
 /**
  * Plain-text layout contract for one Skills panel row: a cursor-marker column
- * (`▸` selected / space otherwise), then the fixed-width state + `[skill]
- * <name>` row. The state appears exactly once, up front — the row never
- * repeats it at the tail (the bug the custom render fixes). The component
- * applies color per segment on top of this layout; tests assert the plain text.
+ * (`▸` selected / space otherwise), then a 1-based row index, then the
+ * fixed-width state + `[skill] <name>` row. The state appears exactly once,
+ * up front — the row never repeats it at the tail (the bug the custom render
+ * fixes). The component applies color per segment on top of this layout;
+ * tests assert the plain text.
+ *
+ * Prefix column widths: marker(2) + index(4) + state(6) + badge(8) = 20.
  */
-export function skillPanelRowLine(selected: boolean, enabled: boolean, name: string): string {
+export function skillPanelRowLine(selected: boolean, enabled: boolean, name: string, index: number): string {
   const marker = selected ? '▸' : ' '
-  return `${marker} ${skillSettingRowLabel(enabled, name)}`
+  const idx = String(index).padStart(SKILL_INDEX_WIDTH)
+  return `${marker} ${idx} ${skillSettingRowLabel(enabled, name)}`
 }
 
 /** The `kind` recorded on a completion item (`command` for unmarked rows). */
