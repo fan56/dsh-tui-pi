@@ -70,6 +70,16 @@ import {
   unconfiguredCatalogEntries,
   type ProviderCatalogEntry,
 } from './provider-catalog.ts'
+import {
+  applySkillFrontmatter,
+  completionLabel,
+  readSkillToggle,
+  skillDisableUpdates,
+  skillEnableUpdates,
+  skillEnabled,
+  skillToggleEnabled,
+} from './skills.ts'
+import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 
 /**
  * Structural face of the credential seam (`ctx.credentials`) the add-provider
@@ -108,6 +118,7 @@ export const CATEGORY_MAP: readonly SettingsCategory[] = [
   { id: 'models', label: 'Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
   { id: 'plugins', label: 'Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
   { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
+  { id: 'skills', label: 'Skills', namespaces: [] },
 ]
 
 /** Cap for a category row's member-name description line. */
@@ -121,7 +132,10 @@ const NS_AGENT_DEFAULT_MODEL = settingsNamespace('agent-default-model')
 /**
  * Group a describe() namespace list into ordered categories — general, models,
  * plugins, agent, then `other` for everything unmapped. Categories with no
- * members are dropped, including `other` when nothing falls into it.
+ * members are dropped, including `other` when nothing falls into it. The
+ * Skills category is the exception: it is not namespace-driven (it lists the
+ * `ctx.skills` registry's user skills, see the Skills category view) and
+ * always appears.
  *
  * Defensive: duplicate namespaces in the input count once (a namespace
  * registered twice must not be listed twice), and the `mapped` guard resolves
@@ -133,6 +147,11 @@ export function categorizeNamespaces(nses: string[]): SettingsCategory[] {
   const mapped = new Set<string>()
   const input = new Set(nses)
   for (const def of CATEGORY_MAP) {
+    if (def.id === 'skills') {
+      // Namespace-independent: the user-skill browser always shows.
+      categories.push({ id: def.id, label: def.label, namespaces: [] })
+      continue
+    }
     const members = [...new Set(def.namespaces)].filter(ns => input.has(ns) && !mapped.has(ns))
     if (members.length === 0) continue
     for (const ns of members) mapped.add(ns)
@@ -582,6 +601,32 @@ class ModelsCategoryView implements Component {
   }
 }
 
+/**
+ * Swappable shell around the Skills category's SettingsList. Rows change when
+ * a toggle writes the skill's frontmatter, so the browser rebuilds and swaps
+ * in a fresh list while staying the category list's stable submenu component —
+ * the same structural trick ModelsCategoryView uses for the provider list.
+ */
+class SkillsCategoryView implements Component {
+  private list: SettingsList | undefined
+
+  swap(list: SettingsList): void {
+    this.list = list
+  }
+
+  invalidate(): void {
+    this.list?.invalidate()
+  }
+
+  render(width: number): string[] {
+    return this.list === undefined ? [] : this.list.render(width)
+  }
+
+  handleInput(data: string): void {
+    this.list?.handleInput(data)
+  }
+}
+
 /** Commit a provider (profile + key); resolves with an outcome or none. */
 interface AddProviderOptions {
   /** Catalog entries still unconfigured, in directory order. */
@@ -700,6 +745,17 @@ export interface OpenSettingsBrowserOptions {
   restoreFocus: () => void
   /** Error sink for writes that fail outside an inline editor (transcript). */
   onError: (message: string) => void
+  /**
+   * The live agent, when one exists — the scope/cwd seed for the skills
+   * browser (project-relative skills). Absent on a fresh TUI, the browser
+   * reads the global skill layer / current working directory.
+   */
+  agent?: SkillScopeAgent
+}
+
+/** The couplet the Skills browser needs off an agent: its session cwd. */
+export interface SkillScopeAgent {
+  session: { header: { cwd?: string } }
 }
 
 /**
@@ -721,6 +777,7 @@ class SettingsBrowser {
   private readonly settings: SettingsProvider
   private readonly restoreFocus: () => void
   private readonly onError: (message: string) => void
+  private readonly agent: SkillScopeAgent | undefined
 
   private descriptors: SettingsDescriptor[] = []
   /** Rehydrated schema roots, cached per namespace (schemas never change). */
@@ -731,6 +788,8 @@ class SettingsBrowser {
   private nsList: SettingsList | undefined
   private modelsView: ModelsCategoryView | undefined
   private modelsExit: (() => void) | undefined
+  private skillsView: SkillsCategoryView | undefined
+  private skillsExit: (() => void) | undefined
   /**
    * Credential refs just stored by the add flow (possibly several in one
    * browser session) — their rows read as key set via the merged env.
@@ -754,6 +813,7 @@ class SettingsBrowser {
     this.settings = options.settings
     this.restoreFocus = options.restoreFocus
     this.onError = options.onError
+    this.agent = options.agent
     // Assigned here, not as a field initializer: a later field declaration
     // would `defineProperty(…, undefined)` over the promise's resolve.
     this.closed = new Promise<void>(resolve => { this.closeResolve = resolve })
@@ -795,6 +855,8 @@ class SettingsBrowser {
     this.nsList = undefined
     this.modelsView = undefined
     this.modelsExit = undefined
+    this.skillsView = undefined
+    this.skillsExit = undefined
     this.justStoredRefs.clear()
     this.restoreFocus()
     this.closeResolve()
@@ -841,14 +903,16 @@ class SettingsBrowser {
       description: this.categoryDescription(cat),
       submenu: cat.id === 'models'
         ? (_current, done) => this.openModelsSubmenu(done)
-        : (_current, done) => {
-            const list = this.namespaceList(
-              this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
-              done,
-            )
-            this.nsList = list
-            return list
-          },
+        : cat.id === 'skills'
+          ? (_current, done) => this.openSkillsSubmenu(done)
+          : (_current, done) => {
+              const list = this.namespaceList(
+                this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
+                done,
+              )
+              this.nsList = list
+              return list
+            },
     }))
     const list = new SettingsList(
       items,
@@ -1181,6 +1245,160 @@ class SettingsBrowser {
       () => { exit() },
       { enableSearch: true },
     )
+  }
+
+  /** Cap for a skill row's description line (columns; width-safe). */
+  private static readonly SKILL_DESC_MAX = 60
+
+  // ------------------------------------------------------------- skills category --
+
+  /**
+   * The Skills category is not namespace-driven: it lists the live
+   * `ctx.skills` registry's user skills, each with an enabled/disabled toggle
+   * that writes the skill's own SKILL.md frontmatter (`disable-model-
+   * invocation` / `user-invocable`). Listing is async (unlike the namespace
+   * walk), so the category opens with a skeleton and swaps in the real list
+   * when discovery settles. Degrades to an empty/notice list when the skills
+   * service is absent.
+   */
+  private openSkillsSubmenu(done: () => void): SkillsCategoryView {
+    this.skillsExit = () => {
+      this.refreshCategoryList()
+      done()
+    }
+    const view = new SkillsCategoryView()
+    this.skillsView = view
+    view.swap(this.buildSkillsList(undefined))
+    this.refreshSkillsList()
+    return view
+  }
+
+  /**
+   * Re-fetch the skill list onto the current view. An optional `diskEnabled`
+   * map overrides the enabled flag for the named skills with on-disk truth
+   * (readSkillToggle) — the toggle path passes it so a stale in-memory summary
+   * or a failed write never leaves a lying row.
+   */
+  private refreshSkillsList(diskEnabled?: ReadonlyMap<string, boolean>): void {
+    const view = this.skillsView
+    if (view === undefined) return
+    const skills = this.ctx.get('skills')
+    if (skills === undefined) {
+      // Skills service absent — the category degrades to a distinct notice
+      // row (vs. an empty list, which means "no user skills").
+      view.swap(this.buildSkillsList([], diskEnabled, true))
+      return
+    }
+    const cwd = this.agent?.session.header.cwd ?? process.cwd()
+    void skills
+      .list({ scope: this.agent, cwd })
+      .then(listed => {
+        // The category may have closed or re-opened while discovery ran.
+        if (this.skillsView !== view) return
+        view.swap(this.buildSkillsList(listed, diskEnabled))
+      })
+      .catch(() => {
+        if (this.skillsView !== view) return
+        view.swap(this.buildSkillsList([], diskEnabled))
+      })
+  }
+
+  private buildSkillsList(
+    listed: readonly SkillSummary[] | undefined,
+    diskEnabled?: ReadonlyMap<string, boolean>,
+    serviceMissing = false,
+  ): SettingsList {
+    const exit = this.skillsExit ?? (() => {})
+    const items: SettingItem[] = []
+    if (listed === undefined) {
+      items.push({ id: '\u0000loading', label: 'Loading skills…', currentValue: '', description: '' })
+    } else if (listed.length === 0) {
+      // Distinguish "no skills service" from "service up but nothing user
+      // invocable" so the user does not read the former as a broken setup.
+      items.push({
+        id: '\u0000empty',
+        label: serviceMissing
+          ? 'Skills are not available in this environment.'
+          : 'No user-invocable skills available.',
+        currentValue: '',
+        description: '',
+      })
+    } else {
+      for (const skill of listed) {
+        // On-disk truth (readSkillToggle) wins over the in-memory summary when
+        // present, so the toggle reflects the file even before the watcher.
+        const enabled = diskEnabled?.has(skill.name)
+          ? diskEnabled.get(skill.name)!
+          : skillEnabled(skill)
+        items.push({
+          id: skill.name,
+          // Reuse the completion badge so the enabled-skill rows read the same
+          // everywhere (`[skill] data-analysis true`). The name stays in the
+          // label, so SettingsList's label-only search still matches it.
+          label: completionLabel('explicit-skill', skill.name),
+          currentValue: enabled ? 'true' : 'false',
+          description: clipToWidth(skill.description, SettingsBrowser.SKILL_DESC_MAX),
+          values: ['false', 'true'],
+        })
+      }
+    }
+    return new SettingsList(
+      items,
+      12,
+      this.listTheme,
+      (id, newValue) => { void this.toggleSkill(id, newValue === 'true') },
+      () => { exit() },
+      { enableSearch: true },
+    )
+  }
+
+  /** The on-disk enabled flag for one skill, as a name→value disk-truth map. */
+  private diskToggleOverride(path: string, name: string): Map<string, boolean> | undefined {
+    const toggle = readSkillToggle(path)
+    if (toggle === undefined) return undefined
+    return new Map([[name, skillToggleEnabled(toggle)]])
+  }
+
+  /** Toggle one user skill by editing its SKILL.md frontmatter. */
+  private async toggleSkill(name: string, enable: boolean): Promise<void> {
+    const skills = this.ctx.get('skills')
+    if (skills === undefined) return
+    const cwd = this.agent?.session.header.cwd ?? process.cwd()
+    let path: string | undefined
+    try {
+      const skill = await skills.get(name, { scope: this.agent, cwd })
+      if (skill === undefined) {
+        this.onError(`Skill "${name}" is no longer available.`)
+        this.refreshSkillsList()
+        return
+      }
+      path = skill.path
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.onError(message)
+      this.refreshSkillsList()
+      return
+    }
+    if (path === undefined) {
+      // A non-local (runtime-registered) skill has no file to edit.
+      this.onError(`Skill "${name}" is not a local file and cannot be toggled.`)
+      this.refreshSkillsList()
+      return
+    }
+    const error = applySkillFrontmatter(path, enable ? skillEnableUpdates() : skillDisableUpdates())
+    // Read the file's actual toggle state as the row's disk truth: a failed
+    // write (or a watcher/summary lag) must not leave a lying on-screen value.
+    const diskOverride = this.diskToggleOverride(path, name)
+    if (error !== undefined) {
+      this.onError(error)
+      // Re-sync the row to the on-disk truth (the cycle already flipped the
+      // displayed value before the write was attempted).
+      this.refreshSkillsList(diskOverride)
+      return
+    }
+    // The skill-filesystem watcher rescans the file (no restart needed);
+    // refetch the list so the on-screen rows show the new state.
+    this.refreshSkillsList(diskOverride)
   }
 
   /** Value column of the Default model row: provider/model · think level. */

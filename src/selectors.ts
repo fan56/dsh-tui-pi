@@ -328,3 +328,60 @@ export async function pickModel(
     list.onCancel = () => finish(undefined)
   })
 }
+
+/**
+ * Open the skill picker overlay listing the user-invocable skills for the
+ * current agent/cwd. Resolves with the picked skill's name, or `undefined`
+ * when cancelled or when no skills service / user skills exist. Focus returns
+ * to `restoreFocus` on close.
+ */
+export async function pickSkill(
+  ctx: Context,
+  tui: TUI,
+  theme: TuiTheme,
+  agent: { session: { header: { cwd?: string } } } | undefined,
+  restoreFocus: () => void,
+): Promise<string | undefined> {
+  const skills = ctx.get('skills')
+  if (skills === undefined) return undefined
+  const cwd = agent?.session.header.cwd ?? process.cwd()
+
+  let userSkills: Array<{ name: string; description: string }>
+  try {
+    const listed = await skills.list({ scope: agent, cwd })
+    userSkills = listed
+      .filter(skill => skill.invocation.userInvocable)
+      .map(skill => ({ name: skill.name, description: skill.description }))
+  } catch {
+    return undefined
+  }
+  if (userSkills.length === 0) return undefined
+
+  const items: SelectItem[] = userSkills.map(skill => ({
+    value: skill.name,
+    label: skill.name,
+    description: skill.description === '' ? undefined : skill.description,
+  }))
+
+  return new Promise<string | undefined>(resolve => {
+    const list = new SelectList(items, 12, theme.selectList)
+
+    // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
+    let overlay: OverlayHandle
+    try {
+      overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
+    } catch (error) {
+      restoreFocus()
+      throw error
+    }
+
+    const finish = (picked: string | undefined): void => {
+      overlay.hide()
+      restoreFocus()
+      resolve(picked)
+    }
+
+    list.onSelect = item => finish(item.value)
+    list.onCancel = () => finish(undefined)
+  })
+}

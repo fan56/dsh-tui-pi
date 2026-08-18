@@ -18,16 +18,27 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { parseCommand, type CommandDescriptor, type CommandResult } from '@deepseek-ai/dsh-commands'
+import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from '@earendil-works/pi-tui'
+import {
+  buildNativeSkillCandidates,
+  buildSkillCompletionCandidates,
+  completionLabel,
+  isExplicitSkillItem,
+  mergeMixedSkillItems,
+  skillCompletionQuery,
+} from './skills.ts'
 import type { DshSessionBridge } from './session.ts'
 
 /**
  * Token ending at the cursor on one editor line, for command detection.
- * Returns the leading slash token when the caret sits inside one.
+ * Returns the leading slash token when the caret sits inside one. The token
+ * charset admits `:` (after the first letter) so the TUI's `/skill:<name>`
+ * form reads as a single token and drives skill completion.
  */
 function tokenAtCursor(line: string, cursorCol: number): { token: string; start: number } | undefined {
   const upto = line.slice(0, cursorCol)
-  const match = /(^|\s)\/([a-z][a-z0-9_-]*)?$/u.exec(upto)
+  const match = /(^|\s)\/([a-z][a-z0-9_:-]*)?$/u.exec(upto)
   if (match === null) return undefined
   const start = match.index + (match[1] ?? '').length
   return { token: upto.slice(start), start }
@@ -143,17 +154,34 @@ export class CommandService {
         // Only complete the command name itself (leading token, no arguments yet).
         if (at.start !== 0 && line.slice(0, at.start).trim() !== '') return null
 
-        const descriptors = await this.list()
-        if (descriptors.length === 0) return null
+        // A `/skill` or `/skill:<prefix>` token yields the explicit
+        // `/skill:<name>` candidates (a dedicated list, not the mixed one).
+        // skillCompletionQuery strips the token's leading `/`, so the
+        // canonical `/skill:da` token from tokenAtCursor matches here.
+        const skillQuery = skillCompletionQuery(at.token)
+        if (skillQuery !== undefined) {
+          const skillItems = await this.skillCandidates(skillQuery)
+          if (skillItems.length === 0) return null
+          return { items: skillItems, prefix: at.token } satisfies AutocompleteSuggestions
+        }
 
+        // Generic `/` completion: commands and the user skills' native `/name`
+        // rows in one mixed list, sorted by display name and filtered by the
+        // token after the slash. This keeps skills interleaved with commands
+        // (never grouped under their `/skill:` prefix, which would cluster all
+        // of them in a single `s` bucket).
         const query = at.token.slice(1).toLowerCase()
-        const items: AutocompleteItem[] = descriptors
+        const descriptors = await this.list()
+        const commandItems: AutocompleteItem[] = descriptors
           .filter(d => query === '' || d.name.toLowerCase().startsWith(query))
           .map(d => ({
             value: `/${d.name}`,
-            label: `/${d.name}`,
+            label: completionLabel('command', `/${d.name}`),
             description: d.description,
+            kind: 'command' as const,
           }))
+        const nativeSkillItems = await this.nativeSkillCandidates()
+        const items = mergeMixedSkillItems(commandItems, nativeSkillItems, query)
         if (items.length === 0) return null
         return { items, prefix: at.token } satisfies AutocompleteSuggestions
       },
@@ -169,15 +197,49 @@ export class CommandService {
         if (at === undefined) return { lines, cursorLine, cursorCol }
         const before = line.slice(0, at.start)
         const after = line.slice(cursorCol)
-        const completed = `${before}${item.value} ${after}`
+        // A completed explicit `/skill:<name>` is a full invocation — the
+        // trailing-space separator (which readies a command's arguments)
+        // would just be noise, so it is inserted exactly with the cursor at
+        // the end. Native `/name` skills and commands keep the space.
+        const isExplicit = isExplicitSkillItem(item)
+        const completed = `${before}${item.value}${isExplicit ? '' : ' '}${after}`
         const nextLines = lines.slice()
         nextLines[cursorLine] = completed
         return {
           lines: nextLines,
           cursorLine,
-          cursorCol: before.length + item.value.length + 1,
+          cursorCol: before.length + item.value.length + (isExplicit ? 0 : 1),
         }
       },
     }
+  }
+
+  /**
+   * The live (optional) `ctx.skills` registry's user-invocable summaries,
+   * scoped to the current agent/cwd. An absent or failing service yields none.
+   */
+  private async listSkills(): Promise<readonly SkillSummary[]> {
+    const skills = this.ctx.get('skills')
+    if (skills === undefined) return []
+    const agent = this.bridge.getAgent()
+    const cwd = agent?.session.header.cwd ?? process.cwd()
+    try {
+      return await skills.list({ scope: agent, cwd })
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Explicit `/skill:<name>` completion candidates for a `/skill:<prefix>`
+   * query. Only user-invocable skills appear.
+   */
+  private async skillCandidates(afterColon: string): Promise<AutocompleteItem[]> {
+    return buildSkillCompletionCandidates(await this.listSkills(), afterColon)
+  }
+
+  /** Native `/name` skill candidates for the mixed `/` command list. */
+  private async nativeSkillCandidates(): Promise<AutocompleteItem[]> {
+    return buildNativeSkillCandidates(await this.listSkills())
   }
 }

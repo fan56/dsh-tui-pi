@@ -138,6 +138,7 @@ test('categorizeNamespaces places the full known set with no other', () => {
     { id: 'models', label: 'Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
     { id: 'plugins', label: 'Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
     { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
+    { id: 'skills', label: 'Skills', namespaces: [] },
   ])
 })
 
@@ -146,25 +147,30 @@ test('categorizeNamespaces buckets unknown namespaces into trailing other', () =
     { id: 'general', label: 'General', namespaces: ['dsh-tui'] },
     { id: 'models', label: 'Models', namespaces: ['llm-deepseek'] },
     { id: 'plugins', label: 'Plugins', namespaces: ['shell'] },
+    { id: 'skills', label: 'Skills', namespaces: [] },
     { id: 'other', label: 'Other', namespaces: ['future-thing'] },
   ])
 })
 
-test('categorizeNamespaces returns only other for an all-unknown input', () => {
+test('categorizeNamespaces returns only skills plus other for an all-unknown input', () => {
   assert.deepEqual(categorizeNamespaces(['future-thing']), [
+    { id: 'skills', label: 'Skills', namespaces: [] },
     { id: 'other', label: 'Other', namespaces: ['future-thing'] },
   ])
 })
 
-test('categorizeNamespaces returns an empty list for empty input', () => {
-  assert.deepEqual(categorizeNamespaces([]), [])
+test('categorizeNamespaces returns only skills for empty input', () => {
+  // The Skills category is namespace-independent, so it survives an empty set.
+  assert.deepEqual(categorizeNamespaces([]), [
+    { id: 'skills', label: 'Skills', namespaces: [] },
+  ])
 })
 
-test('categorizeNamespaces orders categories general, models, plugins, agent, other', () => {
+test('categorizeNamespaces orders categories general, models, plugins, agent, skills, other', () => {
   const shuffled = [...KNOWN_NS, 'future-thing'].sort()
   assert.deepEqual(
     categorizeNamespaces(shuffled).map(cat => cat.id),
-    ['general', 'models', 'plugins', 'agent', 'other'],
+    ['general', 'models', 'plugins', 'agent', 'skills', 'other'],
   )
 })
 
@@ -172,9 +178,11 @@ test('categorizeNamespaces dedupes duplicate input namespaces', () => {
   assert.deepEqual(categorizeNamespaces(['shell', 'shell', 'llm-deepseek', 'llm-deepseek']), [
     { id: 'models', label: 'Models', namespaces: ['llm-deepseek'] },
     { id: 'plugins', label: 'Plugins', namespaces: ['shell'] },
+    { id: 'skills', label: 'Skills', namespaces: [] },
   ])
   // A duplicated unknown namespace shows up once in other, too.
   assert.deepEqual(categorizeNamespaces(['future-thing', 'future-thing']), [
+    { id: 'skills', label: 'Skills', namespaces: [] },
     { id: 'other', label: 'Other', namespaces: ['future-thing'] },
   ])
 })

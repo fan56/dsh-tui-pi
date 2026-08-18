@@ -57,7 +57,7 @@ interface StreamingState {
 type ReplayOp =
   | { kind: 'welcome' }
   | { kind: 'event'; event: SessionEvent }
-  | { kind: 'promptEcho'; text: string }
+  | { kind: 'promptEcho'; text: string; sessionEcho?: string; marker?: string }
   | { kind: 'commandEcho'; line: string; error?: string; text?: string }
   | { kind: 'notice'; text: string; level: 'error' | 'info' }
 
@@ -135,13 +135,24 @@ export class TranscriptRenderer {
     }
   }
 
-  /** Render a submitted prompt immediately, before the session echoes it back. */
-  renderPromptEcho(text: string): void {
+  /**
+   * Render a submitted prompt immediately, before the session echoes it back.
+   * `sessionEcho` overrides the dedup key when the session will echo a
+   * different string than the rendered text — the skill trigger renders the
+   * user's `/skill:<name>` but the session echoes the translated `/name `
+   * gesture, so the gesture's echo is dropped instead of shown twice.
+   * `marker` appends a light `ⓘ …` caption under the echo (the skill trigger
+   * uses it to say "skill <name> loaded"); an absent marker renders nothing.
+   */
+  renderPromptEcho(text: string, sessionEcho?: string, marker?: string): void {
     // Buffer the raw text: the echo bubble renders it verbatim, while the
     // session-echo dedup key is the trimmed form (lastEcho in renderUserText).
-    this.replay.push({ kind: 'promptEcho', text })
-    this.lastEcho = text.trim()
+    this.replay.push({ kind: 'promptEcho', text, sessionEcho, marker })
+    this.lastEcho = (sessionEcho ?? text).trim()
     this.renderUserText(text)
+    if (marker !== undefined) {
+      this.appendLine(ansiFg(this.theme.palette.fgSubtle) + `ⓘ ${marker}` + RESET)
+    }
   }
 
   /** Render one executed slash command line with its outcome. */
@@ -237,7 +248,7 @@ export class TranscriptRenderer {
         this.applyEvent(op.event)
         break
       case 'promptEcho':
-        this.renderPromptEcho(op.text)
+        this.renderPromptEcho(op.text, op.sessionEcho, op.marker)
         break
       case 'commandEcho':
         this.renderCommandEcho(op.line, op.error, op.text)
