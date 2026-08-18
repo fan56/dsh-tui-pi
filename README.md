@@ -6,10 +6,11 @@ pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 
 ## Screenshot
 
-[![asciicast](https://asciinema.org/a/BE212ZO8x1zEZyZn.svg)](https://asciinema.org/a/BE212ZO8x1zEZyZn)
+![dsh-tui-pi demo](./dsh-tui-pi-demo.gif)
 
-Click to play a live terminal recording of a session — todos, running
-subagents, think/tool panels and the powerline footer in action.
+A live terminal recording of a session — todos, running subagents, think/tool
+panels and the powerline footer in action. ([Interactive playback on
+asciinema](https://asciinema.org/a/BE212ZO8x1zEZyZn))
 
 ### Layout overview
 

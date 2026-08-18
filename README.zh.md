@@ -6,9 +6,9 @@
 
 ## 截图
 
-[![asciicast](https://asciinema.org/a/BE212ZO8x1zEZyZn.svg)](https://asciinema.org/a/BE212ZO8x1zEZyZn)
+![dsh-tui-pi 演示](./dsh-tui-pi-demo.gif)
 
-点击播放真实会话的终端录制——Todos、运行中的 subagent、思考/工具面板和 powerline footer 一览。
+真实会话的终端录制——Todos、运行中的 subagent、思考/工具面板和 powerline footer 一览。（[asciinema 交互播放](https://asciinema.org/a/BE212ZO8x1zEZyZn)）
 
 ### 布局总览
 
