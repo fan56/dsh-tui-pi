@@ -14,3 +14,4 @@ node_modules
 HANDOFF.md
 *.tgz
 dsh-tui-pi.png
+*.png
