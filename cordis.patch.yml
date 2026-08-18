@@ -4,18 +4,11 @@
 # directly (ctx.agents / ctx.commands / session events), keeping dsh's slash
 # commands untouched.
 #
-# The TUI ships the deterministic compaction backend @aiwayds/dsh-dcp: the
-# default LLM summarizer (compaction-basic) is disabled and dsh-dcp is mounted
-# alongside it, so every profile that bundles this TUI gets zero-LLM
-# compaction out of the box. The dependency is installed as `latest`.
+# dsh-dcp is NOT mounted here: it is a dependency of this package and ships
+# its own bundle patch (@aiwayds/dsh-dcp/cordis.patch.yml). Adding dsh-dcp to
+# the profile's bundles mounts it; mounting it here too would duplicate the
+# entry id and crash the loader.
 
-- id: compaction-basic
-  disabled: true
 - insert:
     - id: tui-pi
       name: '@aiwayds/dsh-tui-pi'
-    - id: dsh-dcp
-      name: '@aiwayds/dsh-dcp'
-      config:
-        thresholdRatio: 0.7
-        language: zh

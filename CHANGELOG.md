@@ -4,6 +4,16 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] — 2026-08-18
+
+### Changed
+
+- **dsh-dcp mounting moved out of this bundle** into the dsh-dcp package itself
+  (its own `cordis.patch.yml`, shipped since `@aiwayds/dsh-dcp@0.2.0`). This TUI
+  still depends on `@aiwayds/dsh-dcp` (latest); to activate it, add dsh-dcp to
+  the profile bundles (`dsh plugin add @aiwayds/dsh-dcp`). Mounting it here as
+  well would duplicate the entry id and crash the loader.
+
 ## [0.4.2] — 2026-08-18
 
 ### Added
