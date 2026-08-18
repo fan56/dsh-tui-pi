@@ -213,6 +213,47 @@ Profile 的 `package.json` 包含两个指向同一 tarball 的键：
 `dsh-tui-pi`（dsh 通过此名称解析 bundle）和
 `@aiwayds/dsh-tui-pi`（`cordis.patch.yml` 中的 loader 入口）。
 
+## 安装（npm）
+
+在全新 profile 里安装完整的 dsh 插件套件：
+
+```sh
+dsh plugin --profile tui add @aiwayds/dsh-tui-pi
+dsh plugin --profile tui add @aiwayds/dsh-subagent-registry
+dsh plugin --profile tui add @aiwayds/dsh-dcp
+```
+
+然后启动：
+
+```sh
+dsh --profile tui
+```
+
+**自动完成的事：**
+
+- dsh 将三个插件注册到 `dsh.profile.bundles`（通过 `reconcilePlugins`）。
+- dsh 在 profile 的 `pnpm-workspace.yaml` 里设置 `autoInstallPeers: false`。
+- 首次启动时 dsh 调用 `healProfilesModuleFallback`，在
+  `~/.dsh/profiles/node_modules/@deepseek-ai/*` 创建软链指向全局 dsh
+  闭包。所有插件共享同一个 `@deepseek-ai/cordis` 实例——无需手动建闭包。
+- `@aiwayds/dsh-dcp` 的补丁禁用 `compaction-basic`，dsh-dcp 接管上下文压缩。
+
+**不会自动完成的事：**
+
+- pi-tui patchedDependencies（编辑器补全边框、SelectList 全行背景）
+  **不会**为 npm 消费者自动应用——需要在 profile 的
+  `pnpm-workspace.yaml` 里手动添加条目。这是**纯外观**问题：TUI 不打
+  补丁照样启动，只是未选中行不会渲染全行背景。
+
+### 故障排查
+
+| 症状 | 原因 | 修复 |
+|---|---|---|
+| `Cannot find package '<name>' imported from ~/.dsh/profiles/...` | 某个 bundle 的 `cordis.patch.yml` 的 `name` 字段与 scoped 包名不匹配 | 更新插件（所有 `@aiwayds/*` 插件已修复补丁 `name` 字段） |
+| `Cannot read properties of undefined (reading 'prepare')` | profile 树里出现两个 `@deepseek-ai/cordis` 物理副本（模块重复安装） | 见 AGENTS.md 铁律 8。删掉物理副本：`rm -rf ~/.dsh/profiles/tui/node_modules/@deepseek-ai && dsh --profile tui`（dsh 会重新 heal 为软链） |
+| pnpm 提示 `Peer dependencies that should be installed: @deepseek-ai/...` | 某个插件把 `@deepseek-ai/*` 放在 `dependencies` 而非 `peerDependencies` | 更新插件（所有 `@aiwayds/*` dsh 插件已改用 optional peerDeps），警告无害 |
+| pnpm 提示 `Ignored build scripts: @aiwayds/dsh-tui-pi@...` | pnpm 10 默认阻止 build 脚本，tui-pi 的 postinstall 被跳过 | **正常且无害**——postinstall 只影响仓库开发流，npm 消费者由 dsh 的 `healProfilesModuleFallback` 处理闭包链接 |
+
 ---
 
 ## 使用

@@ -213,6 +213,52 @@ The profile's `package.json` carries two keys pointing at the tarball:
 `dsh-tui-pi` (dsh resolves the bundle by this name) and
 `@aiwayds/dsh-tui-pi` (the loader entry in `cordis.patch.yml`).
 
+## Install (npm)
+
+Install the full dsh plugin suite into a fresh profile:
+
+```sh
+dsh plugin --profile tui add @aiwayds/dsh-tui-pi
+dsh plugin --profile tui add @aiwayds/dsh-subagent-registry
+dsh plugin --profile tui add @aiwayds/dsh-dcp
+```
+
+Then launch:
+
+```sh
+dsh --profile tui
+```
+
+**What happens automatically:**
+
+- dsh registers all three plugins in `dsh.profile.bundles` (via `reconcilePlugins`).
+- dsh sets `autoInstallPeers: false` in the profile's `pnpm-workspace.yaml`.
+- On first boot, dsh calls `healProfilesModuleFallback` to create symlinks
+  under `~/.dsh/profiles/node_modules/@deepseek-ai/*` → the global dsh
+  closure (`$(which dsh)/../../node_modules/@deepseek-ai`). This gives all
+  plugins a single `@deepseek-ai/cordis` instance — no manual closure setup
+  is needed.
+- `compaction-basic` is disabled by `@aiwayds/dsh-dcp`'s patch; dsh-dcp
+  takes over as the compaction backend.
+
+**What does NOT happen automatically:**
+
+- The pi-tui patchedDependencies (editor autocomplete framing, SelectList
+  full-row backdrop) are **not** applied for npm consumers — they require
+  `pnpm-workspace.yaml` entries that dsh-tui-pi cannot inject into a
+  consumer's profile. This is **cosmetic only**: the TUI boots and works
+  without the patch; the unpatched select-list just renders unselected rows
+  as plain `prefix + value` instead of a full-row backdrop.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Cannot find package '<name>' imported from ~/.dsh/profiles/...` | A bundle's `cordis.patch.yml` `name` field doesn't match the scoped package name. | Update the plugin; all `@aiwayds/*` plugins now use `name: '@aiwayds/<pkg>'` in their patch. |
+| `Cannot read properties of undefined (reading 'prepare')` | Duplicate `@deepseek-ai/cordis` module instances (two physical copies in the profile tree). | See iron rule 8 in AGENTS.md. Delete physical `~/.dsh/profiles/tui/node_modules/@deepseek-ai` copies and let dsh heal the fallback: `rm -rf ~/.dsh/profiles/tui/node_modules/@deepseek-ai && dsh --profile tui` (the heal recreates them as symlinks). |
+| pnpm `Peer dependencies that should be installed: @deepseek-ai/...` warning | A plugin declares `@deepseek-ai/*` as regular `dependencies` instead of `peerDependencies`. | Update the plugin (all `@aiwayds/*` dsh plugins use optional peerDeps). The warning is harmless — pnpm doesn't auto-install optional peers. |
+| pnpm `Ignored build scripts: @aiwayds/dsh-tui-pi@...` warning | pnpm 10 blocks build scripts by default; the tui-pi postinstall (`link-dsh-closure.mjs`) was skipped. | This is expected and **harmless** — the postinstall only matters for the repo dev flow, not npm consumers. dsh handles closure linking via `healProfilesModuleFallback`. |
+
 ---
 
 ## Use
