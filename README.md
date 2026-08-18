@@ -2,9 +2,43 @@
 
 pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a plugin suite that turns dsh into a pi-like coding agent experience.
 
+> 中文说明: [README.zh.md](README.zh.md)
+
 ## Screenshot
 
 ![dsh-tui-pi screenshot](./dsh-tui-pi.png)
+
+### Layout overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Transcript (scrollable)                                            │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  💭 thinking — reasoning in progress                        │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│  ⚙ bash  python scripts/demo.py  …  ✔ bash                        │
+│  ↳ 生成 2 个 todo, 每个 todo 起一个 10s 的 subagent                 │
+│  ↳ ⠼ Workhorse 10s 任务 · 1.2k token · 19.0s                       │
+└─────────────────────────────────────────────────────────────────────┘
+┌─ ● Todos (0/8) ────────────────────────────────────────────────────┐
+│ ├─ ☑ 调研 dsh-tui-pi 斜杠命令/补全机制                                │
+│ ├─ ◐ 调研 harness ctx.skills API                                   │
+│ └─ ☐ 实现 /skill:<name> 补全并触发 skill                             │
+└─────────────────────────────────────────────────────────────────────┘
+∴ working…                                                            │
+~/github (Full access) │ ⎇ main                                       │
+[ 请输入指令…                                                       ] │
+ ↳ 第一 打slash 命令的时候 显示 /skill:<skill name> 选择后使用          │
+  ↳ ⠼ 牛马狗  · 1.5m/1m · 635.7s                                      │
+dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%)   │
+     ▸ ⚡ CH85.4% ▸ 15 msgs ▸ 11 tools                  00:02:13     │
+ Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+G: subagents · ↑↓: history   │
+└─────────────────────────────────────────────────────────────────────┘
+         │                       │                │
+         │                       │                └─ Footer (powerline)
+         │                       └─ Running subagents (last-request area)
+         └─ Todos panel (bordered, above editor)
+```
 
 ---
 
