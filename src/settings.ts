@@ -76,6 +76,8 @@ import {
   BADGE_WIDTH,
   clampScrollOffset,
   clampSkillCursor,
+  filterSkillRows,
+  isPrintableInput,
   readSkillToggle,
   skillDisableUpdates,
   skillEnableUpdates,
@@ -632,6 +634,8 @@ class SkillsPanel implements Component {
   private scrollOffset = 0
   /** One-line notice shown in place of the list (loading / empty / no service). */
   private status: string | undefined
+  /** Filter query accumulated from printable keystrokes; Backspace/Delete erases. */
+  private filterQuery = ''
 
   /** The overlay renders at `maxHeight` of terminal rows; FramedOverlay adds
    *  4 chrome rows (top border + spacer + bottom spacer + border); the child
@@ -655,11 +659,11 @@ class SkillsPanel implements Component {
     this.tui.requestRender()
   }
 
-  /** Replace the whole list (keeps the cursor clamped to the new length). */
+  /** Replace the whole list (keeps the cursor clamped to the filtered length). */
   setRows(rows: readonly SkillPanelRow[]): void {
     this.rows = [...rows]
     this.status = undefined
-    this.cursor = clampSkillCursor(this.cursor, this.rows.length)
+    this.cursor = clampSkillCursor(this.cursor, this.getFilteredRows().length)
     this.scrollToCursor()
     this.tui.requestRender()
   }
@@ -680,8 +684,16 @@ class SkillsPanel implements Component {
       return [fg(p.fgMuted)(clipToWidth(this.status ?? '', width))]
     }
 
-    // Calculate how many skill rows fit. The overlay is capped at80% of
-    // terminal rows (SettingsBrowser's maxHeight); FramedOverlay adds4 chrome
+    const filtered = this.getFilteredRows()
+    if (filtered.length === 0) {
+      return [
+        fg(p.fgMuted)(clipToWidth(`No matches for '${this.filterQuery}'`, width)),
+        fg(p.fgSubtle)(clipToWidth(this.footer, width)),
+      ]
+    }
+
+    // Calculate how many skill rows fit. The overlay is capped at 80% of
+    // terminal rows (SettingsBrowser's maxHeight); FramedOverlay adds 4 chrome
     // rows; the child appends TAIL_ROWS (description + footer) after the
     // skill list.
     const overlayMax = Math.floor(this.tui.terminal.rows * 0.8)
@@ -689,16 +701,16 @@ class SkillsPanel implements Component {
       overlayMax - SkillsPanel.FRAME_OVERHEAD - SkillsPanel.TAIL_ROWS)
 
     // Ensure the cursor is in the visible window.
-    this.scrollToCursor(maxVisibleRows)
+    this.scrollToCursor(maxVisibleRows, filtered.length)
 
-    const visibleRows = this.rows.slice(this.scrollOffset, this.scrollOffset + maxVisibleRows)
+    const visibleRows = filtered.slice(this.scrollOffset, this.scrollOffset + maxVisibleRows)
 
     // Fixed-width prefix segments: marker(2) + index(4) + state(6) + badge(8) = 20.
     const prefixCols = 2 + (SKILL_INDEX_WIDTH + 1) + (SKILL_STATE_WIDTH + 1) + (BADGE_WIDTH + 1)
     const out: string[] = []
     for (let vi = 0; vi < visibleRows.length; vi++) {
       const i = this.scrollOffset + vi
-      const row = this.rows[i]
+      const row = filtered[i]
       const selected = i === this.cursor
       // One plain-text row (marker+space, index+space, state+space,
       // badge+space+name), clipped once to width, then colored per
@@ -714,7 +726,7 @@ class SkillsPanel implements Component {
         + fg(selected ? p.accent : p.fgDefault)(plain.slice(prefixCols)),
       )
     }
-    const sel = this.rows[this.cursor]
+    const sel = filtered[this.cursor]
     if (sel !== undefined && sel.description !== '') {
       out.push(fg(p.fgSubtle)(clipToWidth(`  ${sel.description}`, width)))
     } else {
@@ -727,6 +739,14 @@ class SkillsPanel implements Component {
   handleInput(data: string): void {
     const kb = getKeybindings()
     if (kb.matches(data, 'tui.select.cancel')) {
+      // Esc with an active filter clears it first; a second Esc exits.
+      if (this.filterQuery !== '') {
+        this.filterQuery = ''
+        this.cursor = 0
+        this.scrollOffset = 0
+        this.tui.requestRender()
+        return
+      }
       this.onExit()
       return
     }
@@ -760,25 +780,57 @@ class SkillsPanel implements Component {
     // Enter (tui.select.confirm) or Space — the same toggle keys SettingsList
     // accepts (SettingsList treats a raw space as confirm when not searching).
     if (kb.matches(data, 'tui.select.confirm') || data === ' ') {
-      const row = this.rows[this.cursor]
+      const filtered = this.getFilteredRows()
+      const row = filtered[this.cursor]
       if (row !== undefined) this.onToggle(row.name, !row.enabled)
+      return
+    }
+    // Backspace / Delete — erase the last character of the filter query.
+    if (data === '\x7f' || matchesKey(data, 'backspace')) {
+      if (this.filterQuery !== '') {
+        this.filterQuery = this.filterQuery.slice(0, -1)
+        this.cursor = 0
+        this.scrollOffset = 0
+        this.tui.requestRender()
+      }
+      return
+    }
+    // Printable characters accumulate into the filter query.
+    if (isPrintableInput(data)) {
+      this.filterQuery += data
+      this.cursor = 0
+      this.scrollOffset = 0
+      this.tui.requestRender()
     }
   }
 
   /** Move the cursor by a jump kind, then scroll into view and repaint. */
   private move(jump: SkillJump): void {
-    this.cursor = skillJumpCursor(this.cursor, this.rows.length, jump)
+    const filtered = this.getFilteredRows()
+    this.cursor = skillJumpCursor(this.cursor, filtered.length, jump)
     this.tui.requestRender()
   }
 
   /** Adjust scrollOffset so the cursor is within `[offset, offset+visibleRows)`. */
-  private scrollToCursor(visibleRows?: number): void {
+  private scrollToCursor(visibleRows?: number, length?: number): void {
     const vr = visibleRows ?? Math.max(1,
       Math.floor(this.tui.terminal.rows * 0.8) - SkillsPanel.FRAME_OVERHEAD - SkillsPanel.TAIL_ROWS)
-    this.scrollOffset = clampScrollOffset(this.cursor, vr, this.rows.length, this.scrollOffset)
+    const len = length ?? this.getFilteredRows().length
+    this.scrollOffset = clampScrollOffset(this.cursor, vr, len, this.scrollOffset)
   }
 
-  private readonly footer = '↑↓ nav · PgUp/PgDn page · Home/End jump · Enter/Space toggle · Esc back'
+  /** The rows after applying the current filter query. */
+  private getFilteredRows(): SkillPanelRow[] {
+    return filterSkillRows(this.rows, this.filterQuery)
+  }
+
+  /** Footer hint changes when a filter is active. */
+  private get footer(): string {
+    if (this.filterQuery !== '') {
+      return `Filter: ${this.filterQuery} · Backspace clear · Esc clear filter`
+    }
+    return '↑↓ nav · PgUp/PgDn page · Home/End jump · Enter/Space toggle · Esc back'
+  }
 }
 
 /** Commit a provider (profile + key); resolves with an outcome or none. */

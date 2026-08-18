@@ -215,6 +215,30 @@ export function skillJumpCursor(
   }
 }
 
+// ------------------------------------------------------------------ filter --
+
+/**
+ * Filter skill-panel rows by a case-insensitive prefix match on the skill name.
+ * Returns a new array (never mutates the input). An empty query returns all
+ * rows. Pure helper so the filtering logic is unit-testable without a live TUI.
+ */
+export function filterSkillRows(
+  rows: readonly SkillPanelRow[],
+  query: string,
+): SkillPanelRow[] {
+  if (query === '') return [...rows]
+  const lower = query.toLowerCase()
+  return rows.filter(row => row.name.toLowerCase().startsWith(lower))
+}
+
+/**
+ * Detect a printable single-character input (ASCII visible, not DEL/0x7f).
+ * Returns `true` for characters that should accumulate into the filter query.
+ */
+export function isPrintableInput(data: string): boolean {
+  return data.length === 1 && data.charCodeAt(0) >= 0x20 && data.charCodeAt(0) !== 0x7f
+}
+
 /** Column width of the 1-based row index in the settings Skills panel. */
 export const SKILL_INDEX_WIDTH = 3
 

@@ -17,8 +17,10 @@ import {
   clampSkillCursor,
   completionLabel,
   completionName,
+  filterSkillRows,
   itemKind,
   isExplicitSkillItem,
+  isPrintableInput,
   isSkillCompletionItem,
   isUserSkill,
   mergeMixedSkillItems,
@@ -365,6 +367,63 @@ test('mergeMixedSkillItems never mutates the input lists', () => {
   mergeMixedSkillItems(commands, native, '')
   assert.equal(commands.length, 1)
   assert.equal(native.length, 1)
+})
+
+// ------------------------------------------------------------- filter --
+
+test('filterSkillRows returns all rows for an empty query', () => {
+  const rows = [
+    { name: 'data-analysis', description: '', enabled: true },
+    { name: 'lark-base', description: '', enabled: false },
+  ]
+  const result = filterSkillRows(rows, '')
+  assert.equal(result.length, 2)
+  assert.deepEqual(result.map(r => r.name), ['data-analysis', 'lark-base'])
+  // Returns a new array (never mutates input).
+  assert.notEqual(result, rows)
+})
+
+test('filterSkillRows filters by case-insensitive prefix match', () => {
+  const rows = [
+    { name: 'data-analysis', description: '', enabled: true },
+    { name: 'data-viz', description: '', enabled: true },
+    { name: 'lark-base', description: '', enabled: false },
+  ]
+  assert.deepEqual(filterSkillRows(rows, 'data').map(r => r.name), ['data-analysis', 'data-viz'])
+  assert.deepEqual(filterSkillRows(rows, 'Data').map(r => r.name), ['data-analysis', 'data-viz'])
+  assert.deepEqual(filterSkillRows(rows, 'LARK').map(r => r.name), ['lark-base'])
+  assert.deepEqual(filterSkillRows(rows, 'z'), [])
+})
+
+test('filterSkillRows returns empty for no matches', () => {
+  const rows = [{ name: 'x', description: '', enabled: true }]
+  assert.deepEqual(filterSkillRows(rows, 'zzz'), [])
+})
+
+test('filterSkillRows handles an empty input list', () => {
+  assert.deepEqual(filterSkillRows([], ''), [])
+  assert.deepEqual(filterSkillRows([], 'x'), [])
+})
+
+test('isPrintableInput accepts printable ASCII characters', () => {
+  assert.equal(isPrintableInput('a'), true)
+  assert.equal(isPrintableInput('Z'), true)
+  assert.equal(isPrintableInput('3'), true)
+  assert.equal(isPrintableInput(' '), true)
+  assert.equal(isPrintableInput('-'), true)
+})
+
+test('isPrintableInput rejects control characters and DEL', () => {
+  assert.equal(isPrintableInput('\x00'), false) // NUL
+  assert.equal(isPrintableInput('\x1b'), false) // ESC
+  assert.equal(isPrintableInput('\x7f'), false) // DEL
+  assert.equal(isPrintableInput('\n'), false)   // newline
+  assert.equal(isPrintableInput('\t'), false)    // tab
+})
+
+test('isPrintableInput rejects multi-character strings', () => {
+  assert.equal(isPrintableInput('ab'), false)
+  assert.equal(isPrintableInput(''), false)
 })
 
 test('skillToggleEnabled maps a disk toggle read onto enabled', () => {
