@@ -4,6 +4,19 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-08-18
+
+### Added
+
+- **Bundle of the full dsh plugin suite**: `@aiwayds/dsh-subagent-registry` is
+  now a dependency, so installing `@aiwayds/dsh-tui-pi` pulls the whole set —
+  TUI + subagent registry (`use_agent` tool) + DCP compaction. No
+  `@deepseek-ai/*` package is declared (they resolve to the single dsh closure
+  via the profile fallback), keeping the cordis module identity intact.
+- README rewrite: screenshot as a terminal recording (gif), feature sections
+  (footer / think & tool blocks / subagents / DCP), npm install flow and a
+  troubleshooting table; Chinese mirror (`README.zh.md`).
+
 ## [0.4.3] — 2026-08-18
 
 ### Changed
