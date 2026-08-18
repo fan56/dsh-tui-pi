@@ -28,6 +28,7 @@ import {
   skillEnableUpdates,
   skillEnabled,
   skillGesture,
+  skillJumpCursor,
   skillPanelRowLine,
   skillSettingRowLabel,
   skillToggleEnabled,
@@ -192,6 +193,28 @@ test('clampSkillCursor bounds navigation to the row count', () => {
   assert.equal(clampSkillCursor(-1, 3), 0) // before the start → first row
   assert.equal(clampSkillCursor(0, 0), 0) // empty list → pinned at 0
   assert.equal(clampSkillCursor(5, 0), 0)
+})
+
+test('skillJumpCursor moves by one, a page, or jumps to an end', () => {
+  // up/down step by one and clamp at the ends.
+  assert.equal(skillJumpCursor(1, 5, 'up'), 0)
+  assert.equal(skillJumpCursor(0, 5, 'up'), 0)
+  assert.equal(skillJumpCursor(3, 5, 'down'), 4)
+  assert.equal(skillJumpCursor(4, 5, 'down'), 4)
+  // pageUp/pageDown step by SKILL_PAGE_SIZE, clamped to the row count.
+  assert.equal(skillJumpCursor(30, 50, 'pageUp'), 20)
+  assert.equal(skillJumpCursor(3, 50, 'pageUp'), 0)
+  assert.equal(skillJumpCursor(20, 50, 'pageDown'), 30)
+  assert.equal(skillJumpCursor(49, 50, 'pageDown'), 49)
+  assert.equal(skillJumpCursor(5, 8, 'pageDown'), 7) // clamped to last row
+  // home/end pin to the first/last row; empty lists stay at 0.
+  assert.equal(skillJumpCursor(3, 5, 'home'), 0)
+  assert.equal(skillJumpCursor(0, 5, 'end'), 4)
+  assert.equal(skillJumpCursor(3, 0, 'home'), 0)
+  assert.equal(skillJumpCursor(3, 0, 'end'), 0)
+  // a custom page size is honored.
+  assert.equal(skillJumpCursor(20, 100, 'pageDown', 25), 45)
+  assert.equal(skillJumpCursor(20, 100, 'pageUp', 25), 0)
 })
 
 

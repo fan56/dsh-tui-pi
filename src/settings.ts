@@ -51,6 +51,7 @@ import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import {
   getKeybindings,
   Input,
+  matchesKey,
   SettingsList,
   type Component,
   type OverlayHandle,
@@ -72,14 +73,15 @@ import {
 } from './provider-catalog.ts'
 import {
   applySkillFrontmatter,
-  badgeText,
   clampSkillCursor,
   readSkillToggle,
-  SKILL_STATE_WIDTH,
   skillDisableUpdates,
   skillEnableUpdates,
   skillEnabled,
+  skillJumpCursor,
+  skillPanelRowLine,
   skillToggleEnabled,
+  type SkillJump,
   type SkillPanelRow,
 } from './skills.ts'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
@@ -609,8 +611,10 @@ class ModelsCategoryView implements Component {
  * (no pi-tui SettingsList) so a row shows its toggle state exactly once, in
  * front — SettingsList forces the currentValue into a right-hand value column
  * too, which duplicated the state (`true  [skill] x     true`). Navigation is
- * up/down, Enter/Space toggles (the same keys SettingsList accepts), Esc exits;
- * the selected row's description is shown under the list, plus a footer hint.
+ * up/down plus PgUp/PgDn paging and Home/End jump; Enter/Space toggles (the
+ * same keys SettingsList accepts), Esc exits; the selected row's description
+ * is shown under the list, plus a footer hint. Every rendered row is clipped
+ * to the panel width so narrow terminals truncate instead of overflowing.
  * The browser swaps rows in asynchronously (loading / empty / no-service states
  * come through setStatus).
  */
@@ -660,30 +664,30 @@ class SkillsPanel implements Component {
     const p = this.theme.palette
     const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
     if (this.rows.length === 0) {
-      return [fg(p.fgMuted)(this.status ?? '')]
+      return [fg(p.fgMuted)(clipToWidth(this.status ?? '', width))]
     }
     const out: string[] = []
     for (let i = 0; i < this.rows.length; i++) {
       const row = this.rows[i]
       const selected = i === this.cursor
-      const state = (row.enabled ? 'true' : 'false').padEnd(SKILL_STATE_WIDTH)
-      const badge = badgeText('explicit-skill')
-      // Marker + state in front (colored by state), then the `[skill]` badge
-      // and name — the name always starts at the same column. Prefix columns:
-      // marker(1)+space(1) + state(SKILL_STATE_WIDTH)+space(1) +
-      // badge(BADGE_WIDTH=7)+space(1) = 16, so the name is clipped to width−16.
+      // One plain-text row (marker+space, state+space, badge+space+name),
+      // clipped once to width, then colored per fixed-width segment. The
+      // prefix segments are fixed ASCII width (2 + 6 + 8 = 16) so slicing the
+      // clipped line by index is column-exact; the name tail takes the rest,
+      // and clipToWidth guarantees no row ever exceeds `width`.
+      const plain = clipToWidth(skillPanelRowLine(selected, row.enabled, row.name), width)
       out.push(
-        fg(selected ? p.accent : p.fgMuted)(`${selected ? '▸' : ' '} `)
-        + fg(row.enabled ? p.success : p.fgMuted)(`${state} `)
-        + fg(selected ? p.accent : p.fgDefault)(`${badge} ${clipToWidth(row.name, Math.max(1, width - 16))}`),
+        fg(selected ? p.accent : p.fgMuted)(plain.slice(0, 2))
+        + fg(row.enabled ? p.success : p.fgMuted)(plain.slice(2, 8))
+        + fg(selected ? p.accent : p.fgDefault)(plain.slice(8)),
       )
     }
     const sel = this.rows[this.cursor]
     if (sel !== undefined && sel.description !== '') {
-      out.push(fg(p.fgSubtle)(`  ${clipToWidth(sel.description, Math.max(1, width - 4))}`))
+      out.push(fg(p.fgSubtle)(clipToWidth(`  ${sel.description}`, width)))
     }
     out.push('')
-    out.push(fg(p.fgSubtle)('↑↓ navigate · Enter/Space toggle · Esc back'))
+    out.push(fg(p.fgSubtle)(clipToWidth(this.footer, width)))
     return out
   }
 
@@ -694,13 +698,30 @@ class SkillsPanel implements Component {
       return
     }
     if (kb.matches(data, 'tui.select.up')) {
-      this.cursor = clampSkillCursor(this.cursor - 1, this.rows.length)
-      this.tui.requestRender()
+      this.move('up')
       return
     }
     if (kb.matches(data, 'tui.select.down')) {
-      this.cursor = clampSkillCursor(this.cursor + 1, this.rows.length)
-      this.tui.requestRender()
+      this.move('down')
+      return
+    }
+    if (kb.matches(data, 'tui.select.pageUp')) {
+      this.move('pageUp')
+      return
+    }
+    if (kb.matches(data, 'tui.select.pageDown')) {
+      this.move('pageDown')
+      return
+    }
+    // There is no tui.select.home/end binding, so match the raw keys with
+    // matchesKey (the same check the keybindings manager uses internally,
+    // including ctrl+home/end variants).
+    if (matchesKey(data, 'home')) {
+      this.move('home')
+      return
+    }
+    if (matchesKey(data, 'end')) {
+      this.move('end')
       return
     }
     // Enter (tui.select.confirm) or Space — the same toggle keys SettingsList
@@ -710,6 +731,14 @@ class SkillsPanel implements Component {
       if (row !== undefined) this.onToggle(row.name, !row.enabled)
     }
   }
+
+  /** Move the cursor by a jump kind and repaint. */
+  private move(jump: SkillJump): void {
+    this.cursor = skillJumpCursor(this.cursor, this.rows.length, jump)
+    this.tui.requestRender()
+  }
+
+  private readonly footer = '↑↓ nav · PgUp/PgDn page · Home/End jump · Enter/Space toggle · Esc back'
 }
 
 /** Commit a provider (profile + key); resolves with an outcome or none. */

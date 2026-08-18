@@ -169,6 +169,40 @@ export function clampSkillCursor(cursor: number, length: number): number {
   return cursor
 }
 
+/** Fixed page size for the settings Skills panel paged navigation (PgUp/PgDn). */
+export const SKILL_PAGE_SIZE = 10
+
+/** The moves the settings Skills panel cursor supports. */
+export type SkillJump = 'up' | 'down' | 'pageUp' | 'pageDown' | 'home' | 'end'
+
+/**
+ * The next cursor for a `jump` from `cursor` over `length` rows, clamped by
+ * `clampSkillCursor`. `home` pins to the first row, `end` to the last; both
+ * are no-ops on an empty list. `pageSize` (PgUp/PgDn step) defaults to
+ * `SKILL_PAGE_SIZE`.
+ */
+export function skillJumpCursor(
+  cursor: number,
+  length: number,
+  jump: SkillJump,
+  pageSize = SKILL_PAGE_SIZE,
+): number {
+  switch (jump) {
+    case 'up':
+      return clampSkillCursor(cursor - 1, length)
+    case 'down':
+      return clampSkillCursor(cursor + 1, length)
+    case 'pageUp':
+      return clampSkillCursor(cursor - pageSize, length)
+    case 'pageDown':
+      return clampSkillCursor(cursor + pageSize, length)
+    case 'home':
+      return clampSkillCursor(0, length)
+    case 'end':
+      return clampSkillCursor(length - 1, length)
+  }
+}
+
 /**
  * Plain-text layout contract for one Skills panel row: a cursor-marker column
  * (`▸` selected / space otherwise), then the fixed-width state + `[skill]
