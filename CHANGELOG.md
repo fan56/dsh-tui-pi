@@ -4,6 +4,17 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] — 2026-08-18
+
+### Added
+
+- **Ship the deterministic compaction backend `@aiwayds/dsh-dcp`** (dependency,
+  tracked as `latest`). The bundle patch now disables the default LLM
+  summarizer (`compaction-basic`) and mounts dsh-dcp in its place, so every
+  profile that bundles this TUI gets zero-LLM compaction out of the box —
+  `/dcp`, automatic pressure compaction, and overflow recovery included. See
+  [dsh-dcp](https://github.com/fan56/dsh-dcp) for the backend's knobs.
+
 ## [0.4.1] — 2026-08-17
 
 ### Changed
