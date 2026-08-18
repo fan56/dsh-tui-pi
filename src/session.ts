@@ -62,6 +62,18 @@ export interface BridgeCallbacks {
  */
 const CHILD_LOG_CAP = 2000
 
+/**
+ * Cadence of the per-child turn-count reconcile. The TUI's discovery and fold
+ * assume child `session/event` streams bubble here, but in some deployments
+ * a subagent's own events never reach this plugin — the child shows up only
+ * through the parent's `tool-workflow/agent-start`, so "rounds" stays 0 and
+ * the `maxRounds` policy never fires. The reconcile re-derives each child's
+ * turn count from its authoritative session log (`ctx.sessions`) as a
+ * fallback; it only ever moves the count UP past what streamed events already
+ * recorded, so the two sources never double count.
+ */
+const TURN_RECONCILE_MS = 600
+
 /** Tail marker for `llm/retry` events (no text content — the row shows it is re-working). */
 const RETRY_MARKER = '↻ retry'
 
@@ -193,6 +205,13 @@ export class DshSessionBridge {
   /** Per-child completed turn count — the "rounds" the policy caps. */
   private readonly turnCounts = new Map<string, number>()
   /**
+   * Per-child session-log length already reconciled (see reconcileChildTurns).
+   * Incremental high-water, so the reconcile scans only newly-appended events.
+   */
+  private readonly reconciledLen = new Map<string, number>()
+  /** Per-child turn count derived from the session log by the reconcile. */
+  private readonly reconciledCount = new Map<string, number>()
+  /**
    * Session ids that can own tracked children (this session first, then every
    * tracked child — delegation nests). Used to match `parentSession` headers
    * and to fold workflow events of the parent log.
@@ -258,6 +277,61 @@ export class DshSessionBridge {
       this.running = status === 'running'
       this.callbacks.onStatus(status)
     }))
+    // Turn-count reconcile fallback: keep "rounds" and the maxRounds policy live
+    // even when a child's own events never bubble to this plugin (see
+    // TURN_RECONCILE_MS). Runs regardless of whether the viewer is open — the
+    // cap must still fire while the child works in the background.
+    const reconcile = setInterval(() => {
+      try {
+        this.reconcileChildTurns()
+      } catch {
+        // A throwing reconcile must never take the process down.
+      }
+    }, TURN_RECONCILE_MS)
+    reconcile.unref?.()
+    this.disposers.push(() => clearInterval(reconcile))
+  }
+
+  /**
+   * Re-derive each tracked child's turn count from its own session log
+   * (`ctx.sessions`), the authoritative append-only facts. The firehose
+   * assumption behind discovery/fold is unreliable in some deployments — a
+   * child is listed from the parent's `tool-workflow/agent-start` but its own
+   * `turn/end` never arrives, which leaves both the rounds display and the
+   * `maxRounds` policy dead at 0. This corrects the count UP past whatever the
+   * streamed events already recorded (never down, never re-adding what events
+   * counted), and fires `onTurnCount` so the cap still guards a child whose
+   * events were never delivered. Scans only newly-appended events per child.
+   */
+  private reconcileChildTurns(): void {
+    const sessions = (this.ctx as Context & { sessions?: { get(id: SessionId): Session | undefined } }).sessions
+    if (sessions === undefined) return
+    for (const childId of this.childSessions) {
+      const session = sessions.get(SessionId(childId))
+      if (session === undefined) continue
+      const events = session.events
+      const len = events.length
+      let from = this.reconciledLen.get(childId) ?? 0
+      // A torn-down / re-seeded child session restarts its log — recount it.
+      if (from > len) {
+        this.reconciledLen.set(childId, 0)
+        this.reconciledCount.set(childId, 0)
+        from = 0
+      }
+      if (from >= len) continue
+      let added = 0
+      for (let i = from; i < len; i++) {
+        if (events[i]!.type === 'turn/end') added += 1
+      }
+      const absolute = (this.reconciledCount.get(childId) ?? 0) + added
+      this.reconciledLen.set(childId, len)
+      this.reconciledCount.set(childId, absolute)
+      const current = this.turnCounts.get(childId) ?? 0
+      if (absolute > current) {
+        this.turnCounts.set(childId, absolute)
+        this.callbacks.onTurnCount?.(childId, absolute)
+      }
+    }
   }
 
   /** Snapshot of the incremental stats (footer reads this O(1)). */
@@ -367,6 +441,8 @@ export class DshSessionBridge {
     this.childLogs.clear()
     this.childStreams.clear()
     this.turnCounts.clear()
+    this.reconciledLen.clear()
+    this.reconciledCount.clear()
     this.trackedSessions.clear()
     this.runSeqToChild.clear()
     if (handle !== undefined) await handle.dispose()
@@ -398,6 +474,8 @@ export class DshSessionBridge {
     this.childLogs.clear()
     this.childStreams.clear()
     this.turnCounts.clear()
+    this.reconciledLen.clear()
+    this.reconciledCount.clear()
     this.trackedSessions.clear()
     this.runSeqToChild.clear()
     this.emitLive()
