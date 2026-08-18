@@ -101,8 +101,8 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **346 tests** across 26 files (live 32 +
-  keymap 27 + skills 29 + settings 19 + welcome 18 + theme 18 +
+- `pnpm test` must stay green: **348 tests** across 26 files (live 32 +
+  keymap 27 + skills 31 + settings 19 + welcome 18 + theme 18 +
   provider-catalog 17 + hotkeys 16 + messages 15 + subagent-policy 14 +
   agent-manager 13 + history 13 + theme-canvas 12 + theme-switch 11 +
   frame 11 + panels 9 + permission 9 + subagent-viewer 9 + sessions 8 +

@@ -134,6 +134,20 @@ export function completionLabel(kind: CompletionItemKind, value: string): string
   return `${badgeText(kind)} ${value}`
 }
 
+/** Fixed width of the toggle state prefix in the settings Skills row. */
+export const SKILL_STATE_WIDTH = 5
+
+/**
+ * The settings Skills-row label: a fixed-width toggle state in front, then the
+ * `[skill] <name>` completion row. Leading the row with the state (padded to a
+ * common width) keeps every skill name on the same column regardless of how
+ * long the state strings are — `'false'` is one column wider than `'true'`.
+ */
+export function skillSettingRowLabel(enabled: boolean, name: string): string {
+  const state = enabled ? 'true' : 'false'
+  return `${state.padEnd(SKILL_STATE_WIDTH)} ${completionLabel('explicit-skill', name)}`
+}
+
 /** The `kind` recorded on a completion item (`command` for unmarked rows). */
 export function itemKind(item: AutocompleteItem): CompletionItemKind {
   const tagged = item as { kind?: CompletionItemKind }

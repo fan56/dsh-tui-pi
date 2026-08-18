@@ -27,6 +27,7 @@ import {
   skillEnableUpdates,
   skillEnabled,
   skillGesture,
+  skillSettingRowLabel,
   skillToggleEnabled,
   sortCompletionItems,
 } from '../lib/skills.js'
@@ -137,6 +138,27 @@ test('completionLabel prefixes an aligned badge to the candidate value', () => {
   // verbatim (so the explicit form keeps the full `/skill:<name>`).
   assert.equal(completionLabel('explicit-skill', '/skill:data-analysis'), '[skill] /skill:data-analysis')
   assert.equal(completionLabel('command', '/model'), '[cmd]   /model')
+})
+
+test('skillSettingRowLabel leads with a fixed-width state then the [skill] row', () => {
+  // `false` (width 5) and `true` (width 4) both pad to SKILL_STATE_WIDTH, so
+  // every skill name starts on the same column regardless of the state.
+  assert.equal(skillSettingRowLabel(false, 'data-analysis'), 'false [skill] data-analysis')
+  assert.equal(skillSettingRowLabel(true, 'data-analysis'), 'true  [skill] data-analysis')
+})
+
+test('skillSettingRowLabel states align across skills and with completionLabel', () => {
+  const rows = [
+    skillSettingRowLabel(false, 'data-analysis'),
+    skillSettingRowLabel(true, 'statistical-analysis'),
+  ]
+  // Strip the state prefix: the name column starts at the same index.
+  const nameCols = rows.map((row) => row.indexOf('[skill]'))
+  assert.deepEqual(nameCols, [nameCols[0], nameCols[0]])
+  // The `[skill] <name>` tail is exactly completionLabel's output — the badge
+  // and name text are preserved verbatim, just preceded by the state.
+  assert.equal(skillSettingRowLabel(true, 'data-analysis').replace(/^true\s{2}/, ''), completionLabel('explicit-skill', 'data-analysis'))
+  assert.equal(skillSettingRowLabel(false, 'data-analysis').replace(/^false\s/, ''), completionLabel('explicit-skill', 'data-analysis'))
 })
 
 test('buildSkillCompletionCandidates filters by user-invocable and prefix', () => {

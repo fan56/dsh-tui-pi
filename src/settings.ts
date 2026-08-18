@@ -72,11 +72,11 @@ import {
 } from './provider-catalog.ts'
 import {
   applySkillFrontmatter,
-  completionLabel,
   readSkillToggle,
   skillDisableUpdates,
   skillEnableUpdates,
   skillEnabled,
+  skillSettingRowLabel,
   skillToggleEnabled,
 } from './skills.ts'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
@@ -1332,10 +1332,13 @@ class SettingsBrowser {
           : skillEnabled(skill)
         items.push({
           id: skill.name,
-          // Reuse the completion badge so the enabled-skill rows read the same
-          // everywhere (`[skill] data-analysis true`). The name stays in the
-          // label, so SettingsList's label-only search still matches it.
-          label: completionLabel('explicit-skill', skill.name),
+          // Lead the row with a fixed-width toggle state so every skill name
+          // lines up on the same column (`false [skill] data-analysis`). The
+          // `[skill]` badge + name stay in the label, so SettingsList's
+          // label-only search still matches the name. currentValue must remain
+          // the raw state text because SettingsList cycles by its position in
+          // `values` (values.indexOf(currentValue)).
+          label: skillSettingRowLabel(enabled, skill.name),
           currentValue: enabled ? 'true' : 'false',
           description: clipToWidth(skill.description, SettingsBrowser.SKILL_DESC_MAX),
           values: ['false', 'true'],
