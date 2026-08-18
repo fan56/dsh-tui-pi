@@ -13,6 +13,7 @@ import {
   badgeText,
   buildNativeSkillCandidates,
   buildSkillCompletionCandidates,
+  clampSkillCursor,
   completionLabel,
   completionName,
   itemKind,
@@ -27,6 +28,7 @@ import {
   skillEnableUpdates,
   skillEnabled,
   skillGesture,
+  skillPanelRowLine,
   skillSettingRowLabel,
   skillToggleEnabled,
   sortCompletionItems,
@@ -160,6 +162,38 @@ test('skillSettingRowLabel states align across skills and with completionLabel',
   assert.equal(skillSettingRowLabel(true, 'data-analysis').replace(/^true\s{2}/, ''), completionLabel('explicit-skill', 'data-analysis'))
   assert.equal(skillSettingRowLabel(false, 'data-analysis').replace(/^false\s/, ''), completionLabel('explicit-skill', 'data-analysis'))
 })
+
+test('skillPanelRowLine leads with cursor + state, state appears exactly once', () => {
+  // The self-drawn panel fixes the SettingsList double-state bug: the row
+  // shows the toggle state once, in front, never repeated at the tail.
+  const selected = skillPanelRowLine(true, true, 'agent-browser')
+  assert.equal(selected, '▸ true  [skill] agent-browser')
+  assert.equal(selected.indexOf('true'), selected.lastIndexOf('true'))
+  assert.ok(!selected.endsWith('true'))
+  const unselected = skillPanelRowLine(false, false, 'data-analysis')
+  assert.equal(unselected, '  false [skill] data-analysis')
+  assert.equal(unselected.indexOf('false'), unselected.lastIndexOf('false'))
+  assert.ok(!unselected.endsWith('false'))
+})
+
+test('skillPanelRowLine aligns names across states (single state column)', () => {
+  const rows = [
+    skillPanelRowLine(false, false, 'data-analysis'),
+    skillPanelRowLine(true, true, 'statistical-analysis'),
+  ]
+  const nameCols = rows.map((row) => row.indexOf('[skill]'))
+  assert.deepEqual(nameCols, [nameCols[0], nameCols[0]])
+})
+
+test('clampSkillCursor bounds navigation to the row count', () => {
+  assert.equal(clampSkillCursor(0, 3), 0)
+  assert.equal(clampSkillCursor(2, 3), 2)
+  assert.equal(clampSkillCursor(3, 3), 2) // past the end → last row
+  assert.equal(clampSkillCursor(-1, 3), 0) // before the start → first row
+  assert.equal(clampSkillCursor(0, 0), 0) // empty list → pinned at 0
+  assert.equal(clampSkillCursor(5, 0), 0)
+})
+
 
 test('buildSkillCompletionCandidates filters by user-invocable and prefix', () => {
   const skills = [

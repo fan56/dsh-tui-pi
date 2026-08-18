@@ -72,12 +72,15 @@ import {
 } from './provider-catalog.ts'
 import {
   applySkillFrontmatter,
+  badgeText,
+  clampSkillCursor,
   readSkillToggle,
+  SKILL_STATE_WIDTH,
   skillDisableUpdates,
   skillEnableUpdates,
   skillEnabled,
-  skillSettingRowLabel,
   skillToggleEnabled,
+  type SkillPanelRow,
 } from './skills.ts'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 
@@ -602,28 +605,110 @@ class ModelsCategoryView implements Component {
 }
 
 /**
- * Swappable shell around the Skills category's SettingsList. Rows change when
- * a toggle writes the skill's frontmatter, so the browser rebuilds and swaps
- * in a fresh list while staying the category list's stable submenu component —
- * the same structural trick ModelsCategoryView uses for the provider list.
+ * Self-drawn Skills panel for the `/settings` Skills category. Drawn directly
+ * (no pi-tui SettingsList) so a row shows its toggle state exactly once, in
+ * front — SettingsList forces the currentValue into a right-hand value column
+ * too, which duplicated the state (`true  [skill] x     true`). Navigation is
+ * up/down, Enter/Space toggles (the same keys SettingsList accepts), Esc exits;
+ * the selected row's description is shown under the list, plus a footer hint.
+ * The browser swaps rows in asynchronously (loading / empty / no-service states
+ * come through setStatus).
  */
-class SkillsCategoryView implements Component {
-  private list: SettingsList | undefined
+class SkillsPanel implements Component {
+  private readonly tui: TUI
+  private readonly theme: TuiTheme
+  private readonly onToggle: (name: string, enable: boolean) => void
+  private readonly onExit: () => void
+  private rows: SkillPanelRow[] = []
+  private cursor = 0
+  /** One-line notice shown in place of the list (loading / empty / no service). */
+  private status: string | undefined
 
-  swap(list: SettingsList): void {
-    this.list = list
+  constructor(
+    tui: TUI,
+    theme: TuiTheme,
+    onToggle: (name: string, enable: boolean) => void,
+    onExit: () => void,
+  ) {
+    this.tui = tui
+    this.theme = theme
+    this.onToggle = onToggle
+    this.onExit = onExit
   }
 
   invalidate(): void {
-    this.list?.invalidate()
+    this.tui.requestRender()
+  }
+
+  /** Replace the whole list (keeps the cursor clamped to the new length). */
+  setRows(rows: readonly SkillPanelRow[]): void {
+    this.rows = [...rows]
+    this.status = undefined
+    this.cursor = clampSkillCursor(this.cursor, this.rows.length)
+    this.tui.requestRender()
+  }
+
+  /** Show a one-line notice in place of the list. */
+  setStatus(text: string | undefined): void {
+    this.status = text
+    this.rows = []
+    this.cursor = 0
+    this.tui.requestRender()
   }
 
   render(width: number): string[] {
-    return this.list === undefined ? [] : this.list.render(width)
+    const p = this.theme.palette
+    const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
+    if (this.rows.length === 0) {
+      return [fg(p.fgMuted)(this.status ?? '')]
+    }
+    const out: string[] = []
+    for (let i = 0; i < this.rows.length; i++) {
+      const row = this.rows[i]
+      const selected = i === this.cursor
+      const state = (row.enabled ? 'true' : 'false').padEnd(SKILL_STATE_WIDTH)
+      const badge = badgeText('explicit-skill')
+      // Marker + state in front (colored by state), then the `[skill]` badge
+      // and name — the name always starts at the same column. Prefix columns:
+      // marker(1)+space(1) + state(SKILL_STATE_WIDTH)+space(1) +
+      // badge(BADGE_WIDTH=7)+space(1) = 16, so the name is clipped to width−16.
+      out.push(
+        fg(selected ? p.accent : p.fgMuted)(`${selected ? '▸' : ' '} `)
+        + fg(row.enabled ? p.success : p.fgMuted)(`${state} `)
+        + fg(selected ? p.accent : p.fgDefault)(`${badge} ${clipToWidth(row.name, Math.max(1, width - 16))}`),
+      )
+    }
+    const sel = this.rows[this.cursor]
+    if (sel !== undefined && sel.description !== '') {
+      out.push(fg(p.fgSubtle)(`  ${clipToWidth(sel.description, Math.max(1, width - 4))}`))
+    }
+    out.push('')
+    out.push(fg(p.fgSubtle)('↑↓ navigate · Enter/Space toggle · Esc back'))
+    return out
   }
 
   handleInput(data: string): void {
-    this.list?.handleInput(data)
+    const kb = getKeybindings()
+    if (kb.matches(data, 'tui.select.cancel')) {
+      this.onExit()
+      return
+    }
+    if (kb.matches(data, 'tui.select.up')) {
+      this.cursor = clampSkillCursor(this.cursor - 1, this.rows.length)
+      this.tui.requestRender()
+      return
+    }
+    if (kb.matches(data, 'tui.select.down')) {
+      this.cursor = clampSkillCursor(this.cursor + 1, this.rows.length)
+      this.tui.requestRender()
+      return
+    }
+    // Enter (tui.select.confirm) or Space — the same toggle keys SettingsList
+    // accepts (SettingsList treats a raw space as confirm when not searching).
+    if (kb.matches(data, 'tui.select.confirm') || data === ' ') {
+      const row = this.rows[this.cursor]
+      if (row !== undefined) this.onToggle(row.name, !row.enabled)
+    }
   }
 }
 
@@ -788,7 +873,7 @@ class SettingsBrowser {
   private nsList: SettingsList | undefined
   private modelsView: ModelsCategoryView | undefined
   private modelsExit: (() => void) | undefined
-  private skillsView: SkillsCategoryView | undefined
+  private skillsView: SkillsPanel | undefined
   private skillsExit: (() => void) | undefined
   /**
    * Credential refs just stored by the add flow (possibly several in one
@@ -1257,24 +1342,29 @@ class SettingsBrowser {
    * `ctx.skills` registry's user skills, each with an enabled/disabled toggle
    * that writes the skill's own SKILL.md frontmatter (`disable-model-
    * invocation` / `user-invocable`). Listing is async (unlike the namespace
-   * walk), so the category opens with a skeleton and swaps in the real list
-   * when discovery settles. Degrades to an empty/notice list when the skills
+   * walk), so the category opens with a "Loading…" notice and swaps in the
+   * rows when discovery settles. Degrades to a distinct notice when the skills
    * service is absent.
    */
-  private openSkillsSubmenu(done: () => void): SkillsCategoryView {
+  private openSkillsSubmenu(done: () => void): SkillsPanel {
     this.skillsExit = () => {
       this.refreshCategoryList()
       done()
     }
-    const view = new SkillsCategoryView()
-    this.skillsView = view
-    view.swap(this.buildSkillsList(undefined))
+    const panel = new SkillsPanel(
+      this.tui,
+      this.theme,
+      (name, enable) => { void this.toggleSkill(name, enable) },
+      () => { this.skillsExit?.() },
+    )
+    this.skillsView = panel
+    panel.setStatus('Loading skills…')
     this.refreshSkillsList()
-    return view
+    return panel
   }
 
   /**
-   * Re-fetch the skill list onto the current view. An optional `diskEnabled`
+   * Re-fetch the skill list onto the current panel. An optional `diskEnabled`
    * map overrides the enabled flag for the named skills with on-disk truth
    * (readSkillToggle) — the toggle path passes it so a stale in-memory summary
    * or a failed write never leaves a lying row.
@@ -1285,8 +1375,8 @@ class SettingsBrowser {
     const skills = this.ctx.get('skills')
     if (skills === undefined) {
       // Skills service absent — the category degrades to a distinct notice
-      // row (vs. an empty list, which means "no user skills").
-      view.swap(this.buildSkillsList([], diskEnabled, true))
+      // (vs. an empty list, which means "no user skills").
+      view.setStatus('Skills are not available in this environment.')
       return
     }
     const cwd = this.agent?.session.header.cwd ?? process.cwd()
@@ -1295,64 +1385,31 @@ class SettingsBrowser {
       .then(listed => {
         // The category may have closed or re-opened while discovery ran.
         if (this.skillsView !== view) return
-        view.swap(this.buildSkillsList(listed, diskEnabled))
+        if (listed.length === 0) {
+          view.setStatus('No user-invocable skills available.')
+        } else {
+          view.setRows(this.buildSkillRows(listed, diskEnabled))
+        }
       })
       .catch(() => {
         if (this.skillsView !== view) return
-        view.swap(this.buildSkillsList([], diskEnabled))
+        view.setStatus('No user-invocable skills available.')
       })
   }
 
-  private buildSkillsList(
-    listed: readonly SkillSummary[] | undefined,
+  private buildSkillRows(
+    listed: readonly SkillSummary[],
     diskEnabled?: ReadonlyMap<string, boolean>,
-    serviceMissing = false,
-  ): SettingsList {
-    const exit = this.skillsExit ?? (() => {})
-    const items: SettingItem[] = []
-    if (listed === undefined) {
-      items.push({ id: '\u0000loading', label: 'Loading skills…', currentValue: '', description: '' })
-    } else if (listed.length === 0) {
-      // Distinguish "no skills service" from "service up but nothing user
-      // invocable" so the user does not read the former as a broken setup.
-      items.push({
-        id: '\u0000empty',
-        label: serviceMissing
-          ? 'Skills are not available in this environment.'
-          : 'No user-invocable skills available.',
-        currentValue: '',
-        description: '',
-      })
-    } else {
-      for (const skill of listed) {
-        // On-disk truth (readSkillToggle) wins over the in-memory summary when
-        // present, so the toggle reflects the file even before the watcher.
-        const enabled = diskEnabled?.has(skill.name)
-          ? diskEnabled.get(skill.name)!
-          : skillEnabled(skill)
-        items.push({
-          id: skill.name,
-          // Lead the row with a fixed-width toggle state so every skill name
-          // lines up on the same column (`false [skill] data-analysis`). The
-          // `[skill]` badge + name stay in the label, so SettingsList's
-          // label-only search still matches the name. currentValue must remain
-          // the raw state text because SettingsList cycles by its position in
-          // `values` (values.indexOf(currentValue)).
-          label: skillSettingRowLabel(enabled, skill.name),
-          currentValue: enabled ? 'true' : 'false',
-          description: clipToWidth(skill.description, SettingsBrowser.SKILL_DESC_MAX),
-          values: ['false', 'true'],
-        })
-      }
-    }
-    return new SettingsList(
-      items,
-      12,
-      this.listTheme,
-      (id, newValue) => { void this.toggleSkill(id, newValue === 'true') },
-      () => { exit() },
-      { enableSearch: true },
-    )
+  ): SkillPanelRow[] {
+    return listed.map(skill => ({
+      name: skill.name,
+      description: clipToWidth(skill.description, SettingsBrowser.SKILL_DESC_MAX),
+      // On-disk truth (readSkillToggle) wins over the in-memory summary when
+      // present, so the toggle reflects the file even before the watcher.
+      enabled: diskEnabled?.has(skill.name)
+        ? diskEnabled.get(skill.name)!
+        : skillEnabled(skill),
+    }))
   }
 
   /** The on-disk enabled flag for one skill, as a name→value disk-truth map. */

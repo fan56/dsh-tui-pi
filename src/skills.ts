@@ -148,6 +148,39 @@ export function skillSettingRowLabel(enabled: boolean, name: string): string {
   return `${state.padEnd(SKILL_STATE_WIDTH)} ${completionLabel('explicit-skill', name)}`
 }
 
+// ------------------------------------------------------------- settings panel --
+
+/**
+ * One row in the self-drawn `/settings` Skills panel (drawn directly instead
+ * of through pi-tui's SettingsList, whose forced right-hand value column
+ * duplicated the toggle state).
+ */
+export interface SkillPanelRow {
+  name: string
+  description: string
+  enabled: boolean
+}
+
+/** Clamp a panel cursor into `[0, length)`; an empty list pins the cursor at 0. */
+export function clampSkillCursor(cursor: number, length: number): number {
+  if (length <= 0) return 0
+  if (cursor < 0) return 0
+  if (cursor >= length) return length - 1
+  return cursor
+}
+
+/**
+ * Plain-text layout contract for one Skills panel row: a cursor-marker column
+ * (`▸` selected / space otherwise), then the fixed-width state + `[skill]
+ * <name>` row. The state appears exactly once, up front — the row never
+ * repeats it at the tail (the bug the custom render fixes). The component
+ * applies color per segment on top of this layout; tests assert the plain text.
+ */
+export function skillPanelRowLine(selected: boolean, enabled: boolean, name: string): string {
+  const marker = selected ? '▸' : ' '
+  return `${marker} ${skillSettingRowLabel(enabled, name)}`
+}
+
 /** The `kind` recorded on a completion item (`command` for unmarked rows). */
 export function itemKind(item: AutocompleteItem): CompletionItemKind {
   const tagged = item as { kind?: CompletionItemKind }
