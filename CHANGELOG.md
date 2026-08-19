@@ -6,6 +6,45 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-20
+
+### Changed
+
+- **Removed the pi-tui patch — repo and npm installs are now identical.**
+  `patches/@earendil-works__pi-tui.patch` (applied via pnpm
+  `patchedDependencies`, which never propagated to consumers) is gone; the
+  package runs pristine `@earendil-works/pi-tui@0.84.2` from npm.
+- **Canvas background rebuilt on BCE**: the full-screen theme background is
+  now painted by `src/canvas-terminal.ts`, a write-stream decorator around
+  the terminal handed to `TuiAltScreen`. It prefixes the canvas SGR before
+  every erase-line (`\x1b[2K`) / erase-screen (`\x1b[2J`) sequence —
+  terminals with back color erase fill the erased regions with that
+  background, so the whole screen (including blank rows) carries the theme
+  color and a `/theme` switch recolors it in one forced full redraw
+  (`requestRender(true)`; a diff render would skip content-unchanged rows).
+  The alt-screen exit dump passes through unpainted, so quitting leaks no
+  background to the shell. `DSH_TUI_TRANSPARENT=1` still reverts to the
+  see-through canvas.
+
+### Removed (intentional cosmetic regressions vs the patched build)
+
+- Editor `textColor` hook: typed input uses the terminal default foreground
+  (matches pi itself, whose editor input is unstyled).
+- SelectList `unselectedText` hook: unselected picker rows render plain;
+  the selected row keeps its full-row `canvasSubtle` backdrop and bold text.
+- Autocomplete list box frame (`┌─┐`): back to the upstream bare list.
+- Reverse-off cursor close (`\x1b[27m`): moot without `textColor`.
+
+### Tests
+
+- theme-canvas suite rewritten for the decorator: CanvasTerminal unit tests
+  (erase-boundary injection, transparent passthrough, exit shutoff),
+  TuiAltScreen-driven integration tests, and a startTui/applyTheme e2e in a
+  child-process fixture (hijacking `process.stdout.write` inside a
+  `*.test.mjs` file corrupts node:test's own reporting stream under process
+  isolation). editor-theme suite deleted with the `textColor` hook.
+  392 → 386 tests / 28 → 27 files.
+
 ## [0.7.2] — 2026-08-19
 
 ### Fixed

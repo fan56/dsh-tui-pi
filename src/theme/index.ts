@@ -91,28 +91,22 @@ export function buildTheme(palette: Palette): TuiTheme {
   const bg = (hex: string) => (text: string) => ansiBg(hex) + text + RESET
   const bold = (text: string) => BOLD + text + RESET
 
-  // canvasSubtle backdrop behind every picker line. pi-tui 0.84.2 patched
-  // (see patches/@earendil-works__pi-tui.patch): SelectList renderItem now
-  // routes unselected rows through the optional `unselectedText` theme hook
-  // (they used to be raw `prefix + value` with no theme call), so every
-  // row — selected, unselected, description, scroll info — gets the
-  // backdrop. Editor-inline slash autocomplete shares this selectList
-  // theme, so its rows get the same full-row treatment.
+  // Picker rows. Upstream SelectList themes only the selected row (via
+  // selectedText, which receives the "→ value …" row whole), plus the
+  // description / scroll info / no-match lines; unselected value rows render
+  // plain (upstream has no hook for them). selectedPrefix is required by the
+  // SelectListTheme interface even though upstream 0.84.2 never calls it.
+  // Editor-inline slash autocomplete shares this selectList theme.
   const selectList: SelectListTheme = {
     selectedPrefix: text => bg(palette.canvasSubtle)(fg(palette.accent)(bold(`▸ ${text}`))),
     selectedText: text => bg(palette.canvasSubtle)(fg(palette.fgDefault)(bold(text))),
     description: text => bg(palette.canvasSubtle)(fg(palette.fgSubtle)(text)),
     scrollInfo: text => bg(palette.canvasSubtle)(fg(palette.fgSubtle)(text)),
     noMatch: text => bg(palette.canvasSubtle)(fg(palette.danger)(text)),
-    unselectedText: text => bg(palette.canvasSubtle)(fg(palette.fgDefault)(text)),
   }
 
   const editor: EditorTheme = {
     borderColor: fg(palette.borderDefault),
-    // The editor's input rows are otherwise unstyled (terminal default
-    // foreground), which is invisible on the app-painted dark canvas — theme
-    // the typed text with the palette's body color (light text on dark).
-    textColor: fg(palette.fgDefault),
     selectList,
   }
 

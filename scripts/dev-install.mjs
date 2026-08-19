@@ -19,8 +19,6 @@
  * The profile's package.json must declare BOTH keys pointing at the tarball:
  *   "dsh-tui-pi":        "file:<repo>/<name>-<version>.tgz"   (bundle resolution)
  *   "@aiwayds/dsh-tui-pi": "file:<repo>/<name>-<version>.tgz" (loader import)
- * and pnpm-workspace.yaml must carry the pi-tui patchedDependencies (see
- * ~/.dsh/profiles/tui/pnpm-workspace.yaml).
  *
  * After installing: restart dsh (or /reload inside the TUI) to load the new
  * copy.

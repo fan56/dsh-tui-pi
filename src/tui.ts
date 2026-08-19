@@ -31,6 +31,7 @@ import {
   type AutocompleteProvider,
   type TUI,
 } from '@earendil-works/pi-tui'
+import { CanvasTerminal } from './canvas-terminal.ts'
 import { CwdBorderEditor } from './editor.ts'
 import { mergeKeyBindings, resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
 import { ansiBg, ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
@@ -103,26 +104,22 @@ export interface TuiHandle {
 }
 
 export function startTui(options: StartTuiOptions = {}): TuiHandle {
-  const terminal = new ProcessTerminal()
+  const terminal = new CanvasTerminal(new ProcessTerminal())
   const tui = new TuiAltScreen(terminal, true)
   // Mutable theme ref: `applyTheme` swaps it and every later read (handle
   // getter, baked closures below) observes the new bundle on the next call.
   let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
-  // App-owned canvas: every rendered row is painted with the palette's
-  // canvas background (patched pi-tui — see setCanvasBackground), so a theme
-  // switch recolors the WHOLE screen, not only the surfaces that paint their
-  // own bg. Without it the terminal default background shows through the
-  // unpainted rows and "freezes" on switch — most visible inside cmux/gostty,
-  // where the pane background belongs to the multiplexer. DSH_TUI_TRANSPARENT=1
-  // opts back into the old see-through canvas for users who want their
-  // terminal theme to stay visible.
-  // Feature-detected: the repo patches pi-tui via pnpm patchedDependencies,
-  // which never propagates to consumers — an unpatched pi-tui has no
-  // setCanvasBackground, and calling it would crash TUI startup into a
-  // silent blank screen. Degrade to the transparent canvas instead.
+  // App-owned canvas: the write-stream decorator injects the palette's
+  // canvas background before every erase sequence (BCE — see
+  // canvas-terminal.ts), so a theme switch recolors the WHOLE screen, not
+  // only the surfaces that paint their own bg. Without it the terminal
+  // default background shows through the unpainted rows and "freezes" on
+  // switch — most visible inside cmux/gostty, where the pane background
+  // belongs to the multiplexer. DSH_TUI_TRANSPARENT=1 opts back into the
+  // old see-through canvas for users who want their terminal theme to stay
+  // visible.
   const paintCanvas = process.env.DSH_TUI_TRANSPARENT !== '1'
-    && typeof tui.setCanvasBackground === 'function'
-  if (paintCanvas) tui.setCanvasBackground(ansiBg(themeRef.palette.canvas))
+  if (paintCanvas) terminal.setCanvasBackground(ansiBg(themeRef.palette.canvas))
 
   // ------------------------------------------------------------- component tree --
   // Live Todos widget, pinned ABOVE the chat input: a plain Container with
@@ -256,9 +253,12 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     applyTheme(theme: TuiTheme): void {
       if (theme === themeRef) return
       themeRef = theme
-      if (paintCanvas) tui.setCanvasBackground(ansiBg(theme.palette.canvas))
+      if (paintCanvas) terminal.setCanvasBackground(ansiBg(theme.palette.canvas))
       rebuildEditor()
-      tui.requestRender()
+      // Forced full redraw: the diff renderer skips content-unchanged rows
+      // (blank fillers render as '' under both themes), which would leave
+      // them painted with the previous canvas color.
+      tui.requestRender(true)
     },
     setEditorAutocompleteProvider(provider: AutocompleteProvider) {
       autocompleteProvider = provider

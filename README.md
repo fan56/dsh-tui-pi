@@ -200,6 +200,10 @@ GitHub light / GitHub dark palettes, hot-switchable at runtime:
 - `DSH_TUI_TRANSPARENT=1` — see-through canvas (terminal background shows through).
 - `auto` mode detects the terminal and follows live light/dark switches.
 
+The full-screen canvas background ships inside the package — a write-stream
+decorator (`src/canvas-terminal.ts`) paints every erase sequence with the
+theme color via BCE, no patched dependencies.
+
 ---
 
 ## Install (local)
@@ -247,12 +251,10 @@ dsh --profile tui
 
 **What does NOT happen automatically:**
 
-- The pi-tui patchedDependencies (editor autocomplete framing, SelectList
-  full-row backdrop) are **not** applied for npm consumers — they require
-  `pnpm-workspace.yaml` entries that dsh-tui-pi cannot inject into a
-  consumer's profile. This is **cosmetic only**: the TUI boots and works
-  without the patch; the unpatched select-list just renders unselected rows
-  as plain `prefix + value` instead of a full-row backdrop.
+- Nothing patch-related anymore: since 0.8.0 the repo and the npm package
+  run the same pristine `@earendil-works/pi-tui` — the canvas background is
+  painted by our own write-stream decorator (BCE), which ships in the
+  package and needs no `pnpm-workspace.yaml` entries in consumer profiles.
 
 ### Troubleshooting
 
@@ -278,7 +280,7 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (296 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (386 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -286,9 +288,9 @@ dsh closure (`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules`);
 those symlinks stay out of any tarball. `scripts/link-dsh-closure.mjs` (the
 package's `postinstall`) re-creates every link after each `pnpm install`.
 
-**pi-tui patch**: a small patch to `@earendil-works/pi-tui` 0.84.2
-(`pnpm-workspace.yaml`, patch in `patches/`) adds `unselectedText` and
-`selectedPrefix` SelectListTheme hooks plus the editor autocomplete box frame.
+**pi-tui**: pristine `@earendil-works/pi-tui` 0.84.2 from npm — no patches,
+no fork. The full-screen canvas background is our own write-stream decorator
+(`src/canvas-terminal.ts`, BCE).
 
 ---
 

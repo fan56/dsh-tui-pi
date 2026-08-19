@@ -13,8 +13,8 @@
  *   `canvas` (the terminal can't carry alpha) — same values as `blend()`
  *   below.
  *
- * The TUI paints every rendered row with `canvas` (patched pi-tui
- * `setCanvasBackground`, see src/tui.ts) — the app owns its background, so
+ * The TUI paints every rendered row with `canvas` (BCE write-stream
+ * decorator, see src/canvas-terminal.ts) — the app owns its background, so
  * a theme switch recolors the whole screen and the terminal/multiplexer
  * background never shows through. `canvasSubtle` stays the visible raised
  * surface on top of it. DSH_TUI_TRANSPARENT=1 reverts to the old

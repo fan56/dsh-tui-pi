@@ -101,13 +101,13 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **392 tests** across 28 files (live 32 +
-  keymap 27 + skills 47 + settings 19 + welcome 18 + theme 22 +
-  provider-catalog 17 + login 14 + hotkeys 16 + messages 15 +
-  subagent-policy 14 + agent-manager 13 + history 13 + theme-canvas 13 +
-  theme-switch 11 + frame 12 + panels 15 + permission 9 + subagent-viewer 9 +
-  sessions 8 + text 8 + theme-settings 8 + quotes 7 + footer-hints 9 +
-  reload 6 + append-system 6 + editor-theme 4). New pure
+- `pnpm test` must stay green: **386 tests** across 27 files (skills 44 +
+  live 33 + keymap 27 + theme 21 + settings 19 + welcome 18 +
+  provider-catalog 17 + messages 16 + hotkeys 16 + panels 15 +
+  subagent-policy 14 + login 14 + history 13 + agent-manager 13 +
+  theme-switch 11 + theme-canvas 11 + frame 11 + subagent-viewer 9 +
+  permission 9 + footer-hints 9 + theme-settings 8 + text 8 + sessions 8 +
+  quotes 7 + reload 6 + append-system 6 + session-reconcile 3). New pure
   logic → new test file under `test/` against built `lib/` (`node --test`,
   pretest builds). Update the totals in HANDOFF.md.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
@@ -144,16 +144,18 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   tail body (`dsh-tui.panelHeight`: '1' one row, '5'/'7'/'10' boxed rows, or
   'all' with a bounded streaming tail and a 2000-line tool-result cap) are
   the accepted design — no inner scrolling.
-- **The TUI never paints the main canvas**: rows are written with erase-line
-  (`\x1b[2K`) + content, and content only carries an SGR background where a
-  component paints one — everything else shows the terminal's default
-  background. That's why a theme switch used to leave the background frozen
-  (most visible inside cmux/gostty). We patch `TuiAltScreen` with
-  `setCanvasBackground(sgr)` + `paintCanvasRow` (see
-  `patches/@earendil-works__pi-tui.patch`): every rendered row is prefixed
-  with the canvas SGR, the SGR is re-injected after every background-clearing
-  reset, and rows are padded to the full width. `DSH_TUI_TRANSPARENT=1`
-  (checked in `src/tui.ts`) opts back into the see-through canvas.
+- **The canvas background is painted by our write-stream decorator, not by
+  components**: rows are written with erase-line (`\x1b[2K`) + content, so
+  unpainted rows would show the terminal's default background and a theme
+  switch would leave it frozen (most visible inside cmux/gostty).
+  `src/canvas-terminal.ts` wraps the `ProcessTerminal` handed to
+  `TuiAltScreen` and prefixes the canvas SGR before every `\x1b[2K`/`\x1b[2J`
+  (BCE — terminals fill erased regions with the current SGR background);
+  zero pi-tui patches. Diff-rendered rows the renderer skips keep their last
+  paint, which is why `applyTheme` must force a full redraw via
+  `requestRender(true)`. `DSH_TUI_TRANSPARENT=1` (checked in `src/tui.ts`)
+  opts back into the see-through canvas. The alt-screen exit dump passes
+  through unpainted (decorator shutoff on `EXIT_ALT_SCREEN`).
 - **SelectListTheme has no background hook for unselected rows**: the value
   part of unselected rows renders raw (`renderItem` → `prefix + truncatedValue`),
   so it cannot get the `canvasSubtle` backdrop. Only the selected row,

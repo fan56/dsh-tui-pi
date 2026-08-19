@@ -4,11 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-patchedDependencies:
-  '@earendil-works/pi-tui':
-    hash: f6ac2ab7658383ae7eb69e59bee79782be820d1d4190b74ca74b0993c0e77ee6
-    path: patches/@earendil-works__pi-tui.patch
-
 importers:
 
   .:
@@ -21,7 +16,7 @@ importers:
         version: 0.1.3
       '@earendil-works/pi-tui':
         specifier: 0.84.2
-        version: 0.84.2(patch_hash=f6ac2ab7658383ae7eb69e59bee79782be820d1d4190b74ca74b0993c0e77ee6)
+        version: 0.84.2
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -119,7 +114,7 @@ snapshots:
 
   '@aiwayds/dsh-subagent-registry@0.1.3': {}
 
-  '@earendil-works/pi-tui@0.84.2(patch_hash=f6ac2ab7658383ae7eb69e59bee79782be820d1d4190b74ca74b0993c0e77ee6)':
+  '@earendil-works/pi-tui@0.84.2':
     dependencies:
       get-east-asian-width: 1.6.0
       marked: 18.0.5
