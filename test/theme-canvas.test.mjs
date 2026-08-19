@@ -194,3 +194,26 @@ test('rgbIsLight thresholds the OSC 11 background luminance', () => {
   // A mid-gray sits below the 0.5 luminance threshold.
   assert.ok(!rgbIsLight({ r: 128, g: 128, b: 128 }))
 })
+
+// ---------------------------------------------- unpatched pi-tui regression --
+
+test('startTui survives a pi-tui build without setCanvasBackground', async () => {
+  // Regression (v0.7.2): the repo patches pi-tui via pnpm patchedDependencies,
+  // which never propagates to npm consumers. An unpatched pi-tui has no
+  // setCanvasBackground, and startTui's unconditional call crashed TUI startup
+  // into a silent blank screen (fresh installs, containers). startTui must
+  // feature-detect and degrade to the transparent canvas instead of throwing.
+  // Each test file runs in its own process, so deleting the prototype method
+  // here cannot leak into the other canvas tests; restore it regardless.
+  const proto = TuiAltScreen.prototype
+  const original = proto.setCanvasBackground
+  delete proto.setCanvasBackground
+  const { startTui } = await import('../lib/tui.js')
+  try {
+    const handle = startTui({ onSubmit: () => {} })
+    assert.equal(typeof handle.dispose, 'function', 'handle returned without throwing')
+    handle.dispose()
+  } finally {
+    proto.setCanvasBackground = original
+  }
+})

@@ -6,6 +6,27 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-08-19
+
+### Fixed
+
+- **Blank screen on any unpatched-pi-tui install** (fresh `DSH_HOME`s, npm
+  consumers, containers): the repo patches pi-tui (`setCanvasBackground` +
+  canvas row painting) via pnpm `patchedDependencies`, which **never
+  propagates to consumers** — a pristine `@earendil-works/pi-tui` has no
+  `setCanvasBackground`, so `startTui`'s unconditional call threw inside the
+  render effect and the TUI died silently: no banner, no error, process
+  alive, only the pty's own input echo on screen (the `dsh --profile tui
+  --help` "hang" from the 0.7.1 container report was this, not a boot
+  stall). The canvas call is now feature-detected: unpatched builds degrade
+  to the transparent canvas (the pre-0.6.0 look) instead of crashing;
+  repo/patched installs keep full canvas painting. Regression test added
+  (`startTui survives a pi-tui build without setCanvasBackground`).
+- Pinned the meta-package dependencies to exact versions
+  (`@aiwayds/dsh-dcp` `latest` → `0.4.0`,
+  `@aiwayds/dsh-subagent-registry` `latest` → `0.1.3`) so installs are
+  reproducible and can't drift into an untested future release.
+
 ## [0.7.1] — 2026-08-19
 
 ### Fixed

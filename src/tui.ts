@@ -116,7 +116,12 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // where the pane background belongs to the multiplexer. DSH_TUI_TRANSPARENT=1
   // opts back into the old see-through canvas for users who want their
   // terminal theme to stay visible.
+  // Feature-detected: the repo patches pi-tui via pnpm patchedDependencies,
+  // which never propagates to consumers — an unpatched pi-tui has no
+  // setCanvasBackground, and calling it would crash TUI startup into a
+  // silent blank screen. Degrade to the transparent canvas instead.
   const paintCanvas = process.env.DSH_TUI_TRANSPARENT !== '1'
+    && typeof tui.setCanvasBackground === 'function'
   if (paintCanvas) tui.setCanvasBackground(ansiBg(themeRef.palette.canvas))
 
   // ------------------------------------------------------------- component tree --
