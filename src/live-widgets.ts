@@ -234,7 +234,9 @@ export class LiveWidgets {
     // cols) → the plain `display` must fit `columns - 5`. Non-TTY fallback
     // keeps the old 200-col behavior.
     const budget = Math.max(1, (process.stdout.columns ?? 200) - 5)
-    const display = clipToWidth(text, budget)
+    // Extract the first line only — the last-request echo never wraps.
+    const firstLine = text.split('\n')[0] ?? text
+    const display = clipToWidth(firstLine, budget)
     if (this.requestText === undefined) {
       this.requestText = new Text('', 1, 0)
       // Keep the ● line ABOVE the running-agent lines regardless of whether
