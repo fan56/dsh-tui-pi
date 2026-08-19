@@ -6,6 +6,23 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-19
+
+### Added
+
+- **`/login` and `/logout` slash commands** — the terminal counterparts of
+  pi's credential management, built on the Models category's add-provider
+  flow. `/login` opens the searchable provider directory
+  (already-configured routes included, so a re-login can overwrite a key),
+  collects the API key through the masked editor, and commits the provider
+  profile + credential exactly like the web Models page. An optional
+  argument names the provider: `/login openai` jumps straight to the key
+  editor on a unique exact/prefix match and opens a picker filtered to the
+  matches otherwise. `/logout` lists the providers with a stored credential
+  and removes only the key on selection — the settings.yaml provider entry
+  stays, matching pi's logout semantics (auth is dropped, the model
+  configuration is kept; the provider reads as "API key missing" afterwards).
+
 ### Changed
 
 - **`/settings` panels migrated to the project's select-panel FW**
@@ -19,6 +36,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   visually matches `/agents` and `/hotkeys`. Search (type-to-filter, Esc to
   clear) and every write path (revisioned `settings.mutate`, secret masking,
   reset-to-defaults, provider credential commits) are unchanged.
+
+## [0.6.0] — 2026-08-19
+
+### Changed
+
+- **Brightened dark palette** with better contrast (todo header and theme
+  popup border fixes included).
+- Footer's last-request echo shows only the first line of the user input —
+  multi-line content no longer wraps the footer area.
+- Added `repository` and `keywords` package metadata for dsh-plugin hub
+  discovery.
 
 ## [0.5.0] — 2026-08-18
 
