@@ -18,13 +18,19 @@
  * - `FieldPanel` — a title + read-only content block + editable field rows
  *   (Enter edits the focused row, optional single-key shortcuts).
  * - `ViewerPanel` — a read-only line viewer with a line cap.
+ * - `SettingsListPanel` — a searchable settings-list panel (title header,
+ *   whole-row selection, optional inline type-to-filter, footer + scroll
+ *   info, submenus rendered in place): the FW-native replacement for the
+ *   /settings browser's old pi-tui SettingsList.
  * - `PanelHost` — overlay lifecycle: swap to a new overlay (show-new-then-
  *   hide-old, no focus flash), teardown on showOverlay failure, one host
  *   per interactive flow.
  */
 
 import {
+  fuzzyFilter,
   getKeybindings,
+  matchesKey,
   type Component,
   type OverlayHandle,
   type TUI,
@@ -136,6 +142,8 @@ export interface PanelThemeFns {
   muted(text: string): string
   subtle(text: string): string
   attention(text: string): string
+  /** Success green — e.g. an enabled state in a toggle list. */
+  success(text: string): string
 }
 
 /** Build the standard fg wrappers from a TuiTheme. */
@@ -146,6 +154,7 @@ export function panelThemeFns(theme: TuiTheme): PanelThemeFns {
     muted: fg(theme.palette.fgMuted),
     subtle: fg(theme.palette.fgSubtle),
     attention: fg(theme.palette.attention),
+    success: fg(theme.palette.success),
   }
 }
 
@@ -386,6 +395,220 @@ export class ViewerPanel implements Component {
     if (kb.matches(data, 'tui.select.cancel') || kb.matches(data, 'tui.select.confirm')) {
       this.options.onClose()
     }
+  }
+}
+
+/** One row of a SettingsListPanel. */
+export interface SettingsRow {
+  id: string
+  /** Display label (left side; also the search text). */
+  label: string
+  /** Current value to display (right side). */
+  value: string
+  /** Optional description shown under the selected row. */
+  description?: string
+  /** Cycle-eligible rows: Enter advances to the next value, then onChange. */
+  values?: string[]
+  /** Rows with an action: Enter opens the submenu (rendered in place). */
+  submenu?: (currentValue: string, done: (selectedValue?: string) => void) => Component
+}
+
+/** Options for a SettingsListPanel. */
+export interface SettingsListPanelOptions {
+  /** Header line, rendered accent BOLD. */
+  title: string
+  rows: readonly SettingsRow[]
+  /** Called when a cycle row advances (id + new value). */
+  onChange?: (id: string, newValue: string) => void
+  onCancel(): void
+  footer?: string
+  /** Inline type-to-filter on the label; Esc clears the filter before popping. */
+  enableSearch?: boolean
+  /** Visible rows before scrolling (default 10). */
+  maxVisible?: number
+}
+
+/**
+ * Filter settings rows by a fuzzy query on the label — the same matching the
+ * old pi-tui SettingsList used, so search behavior is preserved (case-
+ * insensitive, whitespace/slash-separated tokens, best-match-first order).
+ * An empty query returns all rows unchanged.
+ */
+export function filterSettingsRows(rows: readonly SettingsRow[], query: string): SettingsRow[] {
+  return fuzzyFilter([...rows], query, row => row.label)
+}
+
+/** Single printable keystroke (filter accumulation); excludes DEL/control. */
+function isPrintable(data: string): boolean {
+  return data.length === 1 && data.charCodeAt(0) >= 0x20 && data.charCodeAt(0) !== 0x7f
+}
+
+/**
+ * A searchable list panel in the FW style — the native replacement for the
+ * /settings browser's pi-tui SettingsList. Renders an accent BOLD title, then
+ * aligned label/value rows with whole-row selection (accent BOLD when
+ * selected, muted otherwise), an optional inline type-to-filter (like the
+ * Skills panel), the selected row's description and a footer with scroll
+ * info. Submenus render in place (the same nested-overlay model as the old
+ * SettingsList), so the browser keeps a single framed overlay for the whole
+ * flow. Rows never paint their own background — the FramedOverlay fills the
+ * canvasSubtle backdrop.
+ */
+export class SettingsListPanel implements Component {
+  private readonly theme: TuiTheme
+  private readonly options: SettingsListPanelOptions
+  private readonly controller: ListController
+  private readonly rows: SettingsRow[]
+  private filterQuery = ''
+  private submenu: Component | undefined
+  private submenuIndex = 0
+
+  constructor(theme: TuiTheme, options: SettingsListPanelOptions) {
+    this.theme = theme
+    this.options = options
+    this.rows = [...options.rows]
+    this.controller = new ListController(() => this.filtered().length, options.maxVisible ?? 10)
+  }
+
+  invalidate(): void {
+    this.submenu?.invalidate()
+  }
+
+  /** Update one row's displayed value by id (the browser refreshes after writes). */
+  updateValue(id: string, newValue: string): void {
+    const row = this.rows.find(row => row.id === id)
+    if (row !== undefined) row.value = newValue
+  }
+
+  /** The rows after the active filter query (label-only fuzzy match). */
+  private filtered(): SettingsRow[] {
+    return filterSettingsRows(this.rows, this.options.enableSearch === true ? this.filterQuery : '')
+  }
+
+  render(width: number): string[] {
+    if (this.submenu !== undefined) return this.submenu.render(width)
+    const fns = panelThemeFns(this.theme)
+    const { title, footer, enableSearch } = this.options
+    const wrap = Math.max(2, width - 2)
+    const lines: string[] = [
+      fns.accent(BOLD + clipToWidth(title, wrap) + RESET),
+      '',
+    ]
+    const rows = this.filtered()
+    if (rows.length === 0) {
+      lines.push(fns.muted('  No matching settings'))
+      lines.push('')
+      lines.push(fns.subtle(clipToWidth(this.hint(footer, enableSearch === true), wrap)))
+      return lines
+    }
+
+    const controller = this.controller
+    // Align the value column across all rows (stable under filtering); the
+    // label column takes what the marker, value and separator leave over.
+    const valueWidth = Math.min(28, Math.max(...this.rows.map(row => visibleWidth(row.value)), 0))
+    const labelWidth = Math.max(4, wrap - MARKER_W - valueWidth - 2)
+    for (let i = controller.scroll; i < Math.min(rows.length, controller.scroll + controller.maxVisible); i++) {
+      const row = rows[i]
+      const selected = i === controller.index
+      const line = clipToWidth(
+        `${rowMarker(selected)}${padCell(row.label, labelWidth)}  ${padCell(row.value, valueWidth)}`,
+        wrap,
+      )
+      lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
+    }
+
+    const selectedRow = rows[controller.index]
+    if (selectedRow?.description !== undefined && selectedRow.description !== '') {
+      lines.push(fns.subtle(clipToWidth(`  ${selectedRow.description}`, wrap)))
+    }
+    lines.push('')
+    lines.push(fns.subtle(clipToWidth(
+      this.hint(footer, enableSearch === true) + scrollInfo(controller, rows.length),
+      wrap,
+    )))
+    return lines
+  }
+
+  handleInput(data: string): void {
+    if (this.submenu !== undefined) {
+      this.submenu.handleInput?.(data)
+      return
+    }
+    const kb = getKeybindings()
+    if (kb.matches(data, 'tui.select.cancel')) {
+      // Esc with an active filter clears it first; a second Esc pops back.
+      if (this.filterQuery !== '') {
+        this.filterQuery = ''
+        this.controller.setIndex(0)
+        return
+      }
+      this.options.onCancel()
+      return
+    }
+    if (handleListKeys(data, this.controller, this.filtered().length)) return
+    if (kb.matches(data, 'tui.select.confirm')) {
+      this.activateRow()
+      return
+    }
+    // Space confirms like Enter, unless it continues an active search query.
+    if (data === ' ') {
+      if (this.options.enableSearch === true && this.filterQuery !== '') {
+        this.filterQuery += ' '
+        this.controller.setIndex(0)
+        return
+      }
+      this.activateRow()
+      return
+    }
+    if (this.options.enableSearch !== true) return
+    if (data === '\x7f' || matchesKey(data, 'backspace')) {
+      if (this.filterQuery !== '') {
+        this.filterQuery = this.filterQuery.slice(0, -1)
+        this.controller.setIndex(0)
+      }
+      return
+    }
+    if (isPrintable(data)) {
+      this.filterQuery += data
+      this.controller.setIndex(0)
+    }
+  }
+
+  /** Open a row's submenu in place, or advance a cycle row. */
+  private activateRow(): void {
+    const rows = this.filtered()
+    const row = rows[this.controller.index]
+    if (row === undefined) return
+    if (row.submenu !== undefined) {
+      this.submenuIndex = this.controller.index
+      this.submenu = row.submenu(row.value, selectedValue => {
+        if (selectedValue !== undefined) {
+          row.value = selectedValue
+          this.options.onChange?.(row.id, selectedValue)
+        }
+        this.closeSubmenu()
+      })
+      return
+    }
+    if (row.values !== undefined && row.values.length > 0) {
+      const current = row.values.indexOf(row.value)
+      const next = (current + 1) % row.values.length
+      row.value = row.values[next]
+      this.options.onChange?.(row.id, row.value)
+    }
+  }
+
+  private closeSubmenu(): void {
+    this.submenu = undefined
+    this.controller.setIndex(this.submenuIndex)
+  }
+
+  /** Base footer hint; swaps to the filter hint while a query is active. */
+  private hint(footer: string | undefined, searchable: boolean): string {
+    if (this.filterQuery !== '') return `Filter: ${this.filterQuery} · Backspace clear · Esc clear filter`
+    return footer ?? (searchable
+      ? '↑↓ navigate · Enter select · Type to search · Esc back'
+      : '↑↓ navigate · Enter select · Esc back')
   }
 }
 

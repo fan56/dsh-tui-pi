@@ -7,10 +7,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   columnWidths,
+  filterSettingsRows,
   ListController,
   padCell,
+  SettingsListPanel,
   TABLE_SEP,
 } from '../lib/panels.js'
+import { githubLight } from '../lib/theme/palette.js'
 import { visibleWidth } from '../lib/text.js'
 
 test('padCell: pads short text to the exact visible width, CJK-aware', () => {
@@ -108,4 +111,112 @@ test('ListController: empty list never overflows', () => {
   c.setIndex(5)
   assert.equal(c.index, 0)
   assert.equal(c.scroll, 0)
+})
+
+// --------------------------------------------------------- SettingsListPanel --
+
+const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
+/** "r;g;b" triple of a #rrggbb hex color, for SGR assertions. */
+const hexRgb = hex => [
+  parseInt(hex.slice(1, 3), 16),
+  parseInt(hex.slice(3, 5), 16),
+  parseInt(hex.slice(5, 7), 16),
+].join(';')
+/** Minimal theme the panel reads (palette only). */
+const theme = { palette: githubLight }
+
+test('filterSettingsRows: empty query returns every row unchanged', () => {
+  const rows = [
+    { id: 'a', label: 'Models', value: '3 namespaces' },
+    { id: 'b', label: 'llm-deepseek', value: '5 fields' },
+  ]
+  const filtered = filterSettingsRows(rows, '')
+  assert.equal(filtered.length, 2)
+  assert.deepEqual(filtered.map(row => row.id), ['a', 'b'])
+  assert.notEqual(filtered, rows, 'returns a new array')
+})
+
+test('filterSettingsRows: case-insensitive fuzzy match on the label', () => {
+  const rows = [
+    { id: 'a', label: 'Models', value: '' },
+    { id: 'b', label: 'llm-deepseek', value: '' },
+    { id: 'c', label: 'web-search-deepseek', value: '' },
+    { id: 'd', label: 'Agent Presets', value: '' },
+  ]
+  // Subsequence matching (the old SettingsList search): 'deepseek' hits the
+  // namespaces that contain it, not Models / Agent Presets.
+  assert.deepEqual(filterSettingsRows(rows, 'deepseek').map(row => row.id), ['b', 'c'])
+  assert.deepEqual(filterSettingsRows(rows, 'MODELS').map(row => row.id), ['a'])
+  assert.deepEqual(filterSettingsRows(rows, 'z').length, 0)
+})
+
+test('filterSettingsRows: whitespace/slash tokens all must match', () => {
+  const rows = [
+    { id: 'a', label: 'web-search-deepseek', value: '' },
+    { id: 'b', label: 'shell', value: '' },
+  ]
+  assert.deepEqual(filterSettingsRows(rows, 'search deepseek').map(row => row.id), ['a'])
+  assert.deepEqual(filterSettingsRows(rows, 'search shell').length, 0)
+})
+
+test('SettingsListPanel render: accent BOLD title + whole-row selection + footer', () => {
+  const rows = [
+    { id: 'a', label: 'Models', value: '3 namespaces' },
+    { id: 'b', label: 'General', value: '2 namespaces' },
+    { id: 'c', label: 'Plugins', value: '1 namespace' },
+  ]
+  const panel = new SettingsListPanel(theme, {
+    title: '⚙ settings',
+    rows,
+    onCancel: () => {},
+  })
+  const lines = panel.render(40)
+  // Title row, blank, 3 rows, blank, footer.
+  assert.equal(lines.length, 7)
+  // Title: accent fg + BOLD, plain text is the title.
+  assert.equal(stripAnsi(lines[0]), '⚙ settings')
+  assert.ok(lines[0].includes('\x1b[1m'), 'title is bold')
+  assert.ok(lines[0].includes(`\x1b[38;2;${hexRgb(githubLight.accent)}m`), 'title uses accent')
+  // Selected row 0: accent + BOLD with the ▸ marker; label padded so the
+  // value column aligns.
+  assert.match(stripAnsi(lines[2]), /^▸ Models\s+3 namespaces$/)
+  assert.ok(lines[2].includes('\x1b[1m'), 'selected row is bold')
+  assert.ok(lines[2].includes(`\x1b[38;2;${hexRgb(githubLight.accent)}m`), 'selected row uses accent')
+  // Unselected rows: muted, no accent, no bold.
+  assert.match(stripAnsi(lines[3]), /^  General\s+2 namespaces$/)
+  assert.ok(!lines[3].includes('\x1b[1m'), 'unselected row not bold')
+  assert.ok(!lines[3].includes(`\x1b[38;2;${hexRgb(githubLight.accent)}m`), 'unselected row not accent')
+  assert.ok(lines[3].includes(`\x1b[38;2;${hexRgb(githubLight.fgMuted)}m`), 'unselected row is muted')
+  // Footer.
+  assert.equal(stripAnsi(lines[6]), '↑↓ navigate · Enter select · Esc back')
+  assert.ok(lines[6].includes(`\x1b[38;2;${hexRgb(githubLight.fgSubtle)}m`), 'footer is subtle')
+})
+
+test('SettingsListPanel render: rows never paint their own background', () => {
+  const rows = [
+    { id: 'a', label: 'one', value: '1' },
+    { id: 'b', label: 'two', value: '2' },
+  ]
+  const panel = new SettingsListPanel(theme, { title: 'T', rows, onCancel: () => {} })
+  const bg = `\x1b[48;2;${hexRgb(githubLight.canvasSubtle)}m`
+  for (const line of panel.render(30)) {
+    assert.ok(!line.includes(bg), `row must not paint canvasSubtle itself: "${line}"`)
+  }
+})
+
+test('SettingsListPanel render: description line + scroll info in the footer', () => {
+  const rows = Array.from({ length: 15 }, (_, i) => ({
+    id: String(i),
+    label: `row-${i}`,
+    value: String(i),
+    ...(i === 0 ? { description: 'the first row' } : {}),
+  }))
+  const panel = new SettingsListPanel(theme, { title: 'T', rows, onCancel: () => {} })
+  const lines = panel.render(60)
+  // Title, blank, 10 visible rows, description, blank, footer.
+  assert.equal(lines.length, 15)
+  assert.ok(stripAnsi(lines[12]).includes('the first row'), 'selected row description shown')
+  // The list overflows (15 > 10) so the footer carries the scroll info.
+  assert.ok(stripAnsi(lines[14]).includes('(1/15)'), 'footer carries scroll info')
+  assert.ok(stripAnsi(lines[14]).includes('Enter select'))
 })

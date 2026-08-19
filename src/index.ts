@@ -36,6 +36,7 @@ import {
 } from './theme-settings.ts'
 import { openAgentManager } from './agents.ts'
 import { openSettingsBrowser } from './settings.ts'
+import { openLoginFlow, openLogoutFlow } from './login.ts'
 import { reloadPlugin } from './reload.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
@@ -884,6 +885,73 @@ export function apply(ctx: Context): void {
       handler: invocation => hotkeysHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /hotkeys')
 
+    // /login: register provider credentials — the terminal counterpart of
+    // pi-agent's /login, on the Models category's add-provider flow. Opens a
+    // searchable provider directory (including already-configured routes, so
+    // a re-login can overwrite a key), collects one API key through the masked
+    // editor, and commits the provider profile + credential the way the web
+    // Models page does. An optional argument names the provider: `/login
+    // openai` jumps straight to the key editor on a unique match and to a
+    // filtered picker otherwise.
+    const loginHandler: LocalCommandHandler = async rawInput => {
+      if (ctx.get('settings') === undefined) {
+        return { kind: 'error' as const, text: 'Settings service is not available.' }
+      }
+      const result = await openLoginFlow({
+        ctx,
+        tui: ui.tui,
+        theme: ui.theme,
+        restoreFocus: () => ui.tui.setFocus(ui.editor),
+        onError: message => renderer.renderNotice(message, 'error'),
+        target: rawInput?.trim() ?? '',
+      })
+      if (result.kind === 'unknown') {
+        return {
+          kind: 'error' as const,
+          text: `Unknown provider '${result.target}' — run /login to pick from the directory.`,
+        }
+      }
+      if (result.kind === 'cancelled') return { kind: 'success' as const, text: 'Login cancelled.' }
+      return { kind: 'success' as const, text: `Provider ${result.name} configured.` }
+    }
+    commands.registerLocal('login', loginHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'login',
+      description: 'Configure a provider API key (register or replace credentials)',
+      handler: invocation => loginHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /login')
+
+    // /logout: remove a stored provider API key — pi-agent's /logout on the
+    // dsh side. Lists the providers with a stored credential and removes only
+    // the key on selection; the settings.yaml provider entry stays, exactly
+    // like pi's /logout keeps the model configuration while dropping auth.
+    const logoutHandler: LocalCommandHandler = async () => {
+      if (ctx.get('settings') === undefined) {
+        return { kind: 'error' as const, text: 'Settings service is not available.' }
+      }
+      const result = await openLogoutFlow({
+        ctx,
+        tui: ui.tui,
+        theme: ui.theme,
+        restoreFocus: () => ui.tui.setFocus(ui.editor),
+        onError: message => renderer.renderNotice(message, 'error'),
+      })
+      if (result.kind === 'none') {
+        return { kind: 'success' as const, text: 'No stored credentials to remove.' }
+      }
+      if (result.kind === 'cancelled') return { kind: 'success' as const, text: 'Logout cancelled.' }
+      if (result.kind === 'failed') {
+        return { kind: 'error' as const, text: `Failed to remove stored API key for ${result.name}.` }
+      }
+      return { kind: 'success' as const, text: `Removed stored API key for ${result.name}.` }
+    }
+    commands.registerLocal('logout', logoutHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'logout',
+      description: 'Remove a stored provider API key (keeps the provider configuration)',
+      handler: invocation => logoutHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /logout')
+
     // ------------------------------------------------- powerline footer + git --
     const git = new GitBranchWatcher(process.cwd())
     git.onChange = () => ui.requestRender()
@@ -1014,7 +1082,7 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'skill'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'skill', 'login', 'logout'])
 
     /**
      * Dispatch one user skill invocation (function 1). The skill is validated

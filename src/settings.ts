@@ -3,8 +3,8 @@
  * settings surface (schema-form driven there, pi-tui overlays here).
  *
  * Walks `ctx.settings.describe()` (registered namespaces → serialized
- * schemastery schemas → resolved values) and renders it as nested
- * SettingsList overlays, one level per schema depth:
+ * schemastery schemas → resolved values) and renders it as nested FW list
+ * panels (src/panels.ts SettingsListPanel), one level per schema depth:
  *
  *   level 0   category list (searchable): general / models / plugins / agent,
  *             then `other` for unmapped namespaces. Namespace→category comes
@@ -52,14 +52,17 @@ import {
   getKeybindings,
   Input,
   matchesKey,
-  SettingsList,
   type Component,
   type OverlayHandle,
-  type SettingItem,
-  type SettingsListTheme,
   type TUI,
 } from '@earendil-works/pi-tui'
-import { ansiBg, ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
+import {
+  panelThemeFns,
+  SettingsListPanel,
+  type SettingsRow,
+  ViewerPanel,
+} from './panels.ts'
+import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 import { wrapFramedOverlay } from './frame.ts'
 import {
@@ -379,6 +382,7 @@ export interface EditOptions {
 /** Inline value editor: title, current-value line, error/notice line, Input. */
 export class EditField implements Component {
   private readonly tui: TUI
+  private readonly theme: TuiTheme
   private readonly options: EditOptions
   private readonly input: Input
   private error: string | undefined
@@ -388,20 +392,13 @@ export class EditField implements Component {
   private pending = false
   /** Guards onDone: exactly one terminal transition (submit success/keep/escape). */
   private done = false
-  private readonly fg: (text: string) => string
-  private readonly fgMuted: (text: string) => string
   private readonly fgDanger: (text: string) => string
-  /** Popup-surface background for the secret mask line. */
-  private readonly maskBg: (text: string) => string
 
   constructor(tui: TUI, options: EditOptions, theme: TuiTheme) {
     this.tui = tui
+    this.theme = theme
     this.options = options
-    this.fg = text => ansiFg(theme.palette.accent) + text + RESET
-    this.fgMuted = text => ansiFg(theme.palette.fgMuted) + text + RESET
     this.fgDanger = text => ansiFg(theme.palette.danger) + text + RESET
-    // Same canvasSubtle backdrop the browser's listTheme paints on every row.
-    this.maskBg = text => ansiBg(theme.palette.canvasSubtle) + text + RESET
     this.input = new Input()
     this.input.setValue(options.initial)
     // A fresh pi Input starts with the cursor at position 0, so typed
@@ -468,17 +465,22 @@ export class EditField implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const lines: string[] = []
-    lines.push(this.fg(BOLD + `✎ ${this.options.title}` + RESET))
-    lines.push(this.fgMuted(this.options.subtitle))
+    const fns = panelThemeFns(this.theme)
+    const wrap = Math.max(2, width - 2)
+    const lines: string[] = [
+      fns.accent(BOLD + clipToWidth(this.options.title, wrap) + RESET),
+      fns.muted(clipToWidth(this.options.subtitle, wrap)),
+    ]
     if (this.error !== undefined) lines.push(this.fgDanger(`✘ ${this.error}`))
-    else if (this.notice !== undefined) lines.push(this.fgMuted(this.notice))
+    else if (this.notice !== undefined) lines.push(fns.muted(clipToWidth(this.notice, wrap)))
     lines.push('')
     if (this.options.secret === true) {
       lines.push(this.maskLine(width))
     } else {
       lines.push(...this.input.render(width))
     }
+    lines.push('')
+    lines.push(fns.subtle(clipToWidth('Enter save · Esc back', wrap)))
     return lines
   }
 
@@ -486,13 +488,15 @@ export class EditField implements Component {
    * Masked input line for secret fields: a dot row (one dot per visible
    * column of the value, capped to the popup width) with a `▎` marker at the
    * cursor position. The real cursor is not rendered — the marker only hints
-   * at the editing position; input semantics live in the internal Input.
+   * at the editing position; input semantics live in the internal Input. The
+   * row needs no background of its own — FramedOverlay fills the canvasSubtle
+   * backdrop.
    */
   private maskLine(width: number): string {
     const maxDots = Math.max(0, width - 2)
     const dots = '•'.repeat(Math.min(maxDots, visibleWidth(this.input.getValue())))
     const cursor = Math.min((this.input as unknown as { cursor: number }).cursor, dots.length)
-    return this.maskBg(dots.slice(0, cursor) + '▎' + dots.slice(cursor))
+    return dots.slice(0, cursor) + '▎' + dots.slice(cursor)
   }
 
   handleInput(data: string): void {
@@ -519,13 +523,11 @@ class ConfirmReset implements Component {
   invalidate(): void {}
 
   render(_width: number): string[] {
-    const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
+    const fns = panelThemeFns(this.theme)
     return [
-      fg(this.theme.palette.attention)(BOLD + `↺ ${this.label}` + RESET),
+      fns.accent(BOLD + this.label + RESET),
       '',
-      fg(this.theme.palette.fgMuted)(this.pending
-        ? '  resetting…'
-        : '  Enter: reset to defaults · Esc: cancel'),
+      fns.subtle(this.pending ? '  resetting…' : '  Enter: reset to defaults · Esc: cancel'),
     ]
   }
 
@@ -543,59 +545,17 @@ class ConfirmReset implements Component {
   }
 }
 
-/** Read-only JSON view for array / literal / unknown nodes. */
-class ReadOnlyViewer implements Component {
-  private readonly theme: TuiTheme
-  private readonly label: string
-  private readonly json: unknown
-  private readonly onClose: () => void
-
-  constructor(theme: TuiTheme, label: string, json: unknown, onClose: () => void) {
-    this.theme = theme
-    this.label = label
-    this.json = json
-    this.onClose = onClose
-  }
-
-  invalidate(): void {}
-
-  render(width: number): string[] {
-    const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
-    const lines: string[] = [
-      fg(this.theme.palette.accent)(BOLD + `ⓘ ${this.label}` + RESET),
-      '',
-    ]
-    const text = JSON.stringify(this.json, null, 2)
-    const max = Math.max(2, width - 2)
-    for (const line of text.split('\n').slice(0, 40)) {
-      lines.push(fg(this.theme.palette.fgMuted)(clipToWidth(line, max)))
-    }
-    lines.push('')
-    lines.push(fg(this.theme.palette.fgSubtle)(
-      '  read-only in the TUI — edit the settings document to change it · Esc to close',
-    ))
-    return lines
-  }
-
-  handleInput(data: string): void {
-    if (getKeybindings().matches(data, 'tui.select.cancel')
-      || getKeybindings().matches(data, 'tui.select.confirm')) {
-      this.onClose()
-    }
-  }
-}
-
 /**
- * Swappable shell around the Models category's SettingsList. Provider rows
+ * Swappable shell around the Models category's FW list panel. Provider rows
  * change structurally — a new provider row must appear after an add, and
- * SettingsList.updateValue cannot express that — so the shell swaps in a
+ * SettingsListPanel.updateValue cannot express that — so the shell swaps in a
  * freshly built list while staying the category list's stable submenu
  * component.
  */
 class ModelsCategoryView implements Component {
-  private list: SettingsList | undefined
+  private list: SettingsListPanel | undefined
 
-  swap(list: SettingsList): void {
+  swap(list: SettingsListPanel): void {
     this.list = list
   }
 
@@ -613,16 +573,17 @@ class ModelsCategoryView implements Component {
 }
 
 /**
- * Self-drawn Skills panel for the `/settings` Skills category. Drawn directly
- * (no pi-tui SettingsList) so a row shows its toggle state exactly once, in
- * front — SettingsList forces the currentValue into a right-hand value column
- * too, which duplicated the state (`true  [skill] x     true`). Navigation is
- * up/down plus PgUp/PgDn paging and Home/End jump; Enter/Space toggles (the
- * same keys SettingsList accepts), Esc exits; the selected row's description
- * is shown under the list, plus a footer hint. Every rendered row is clipped
- * to the panel width so narrow terminals truncate instead of overflowing.
- * The browser swaps rows in asynchronously (loading / empty / no-service states
- * come through setStatus).
+ * Self-drawn Skills panel for the `/settings` Skills category, aligned to the
+ * FW panel style (accent BOLD title + footer with scroll info; colors through
+ * panelThemeFns). Drawn directly (no pi-tui SettingsList) so a row shows its
+ * toggle state exactly once, in front — SettingsList forces the currentValue
+ * into a right-hand value column too, which duplicated the state
+ * (`true  [skill] x     true`). Navigation is up/down plus PgUp/PgDn paging
+ * and Home/End jump; Enter/Space toggles (the same keys SettingsList accepts),
+ * Esc exits; the selected row's description is shown under the list. Every
+ * rendered row is clipped to the panel width so narrow terminals truncate
+ * instead of overflowing. The browser swaps rows in asynchronously (loading /
+ * empty / no-service states come through setStatus).
  */
 class SkillsPanel implements Component {
   private readonly tui: TUI
@@ -639,9 +600,10 @@ class SkillsPanel implements Component {
 
   /** The overlay renders at `maxHeight` of terminal rows; FramedOverlay adds
    *  4 chrome rows (top border + spacer + bottom spacer + border); the child
-   *  also appends2 tail rows (description + footer) after the skill list. */
+   *  adds 5 tail rows after the skill list (title + spacer + description +
+   *  spacer + footer). */
   private static readonly FRAME_OVERHEAD = 4
-  private static readonly TAIL_ROWS = 2
+  private static readonly TAIL_ROWS = 5
 
   constructor(
     tui: TUI,
@@ -678,27 +640,30 @@ class SkillsPanel implements Component {
   }
 
   render(width: number): string[] {
-    const p = this.theme.palette
-    const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
+    const fns = panelThemeFns(this.theme)
+    const wrap = Math.max(2, width - 2)
+    const lines: string[] = [
+      fns.accent(BOLD + clipToWidth('⚙ Skills', wrap) + RESET),
+      '',
+    ]
     if (this.rows.length === 0) {
-      return [fg(p.fgMuted)(clipToWidth(this.status ?? '', width))]
+      lines.push(fns.muted(clipToWidth(this.status ?? '', wrap)))
+      return lines
     }
 
     const filtered = this.getFilteredRows()
     if (filtered.length === 0) {
-      return [
-        fg(p.fgMuted)(clipToWidth(`No matches for '${this.filterQuery}'`, width)),
-        fg(p.fgSubtle)(clipToWidth(this.footer, width)),
-      ]
+      lines.push(fns.muted(clipToWidth(`No matches for '${this.filterQuery}'`, wrap)))
+      lines.push('')
+      lines.push(fns.subtle(clipToWidth(this.footer + this.scrollText(filtered), wrap)))
+      return lines
     }
 
     // Calculate how many skill rows fit. The overlay is capped at 80% of
     // terminal rows (SettingsBrowser's maxHeight); FramedOverlay adds 4 chrome
-    // rows; the child appends TAIL_ROWS (description + footer) after the
-    // skill list.
-    const overlayMax = Math.floor(this.tui.terminal.rows * 0.8)
-    const maxVisibleRows = Math.max(1,
-      overlayMax - SkillsPanel.FRAME_OVERHEAD - SkillsPanel.TAIL_ROWS)
+    // rows; the child appends TAIL_ROWS (title + spacer + description +
+    // spacer + footer) after the skill list.
+    const maxVisibleRows = this.maxVisibleRows()
 
     // Ensure the cursor is in the visible window.
     this.scrollToCursor(maxVisibleRows, filtered.length)
@@ -707,7 +672,6 @@ class SkillsPanel implements Component {
 
     // Fixed-width prefix segments: marker(2) + index(4) + state(6) + badge(8) = 20.
     const prefixCols = 2 + (SKILL_INDEX_WIDTH + 1) + (SKILL_STATE_WIDTH + 1) + (BADGE_WIDTH + 1)
-    const out: string[] = []
     for (let vi = 0; vi < visibleRows.length; vi++) {
       const i = this.scrollOffset + vi
       const row = filtered[i]
@@ -719,21 +683,31 @@ class SkillsPanel implements Component {
       // takes the rest, and clipToWidth guarantees no row ever exceeds
       // `width`.
       const plain = clipToWidth(skillPanelRowLine(selected, row.enabled, row.name, i + 1), width)
-      out.push(
-        fg(selected ? p.accent : p.fgMuted)(plain.slice(0, 2))
-        + fg(p.fgSubtle)(plain.slice(2, 2 + SKILL_INDEX_WIDTH + 1))
-        + fg(row.enabled ? p.success : p.fgMuted)(plain.slice(2 + SKILL_INDEX_WIDTH + 1, prefixCols))
-        + fg(selected ? p.accent : p.fgDefault)(plain.slice(prefixCols)),
+      lines.push(
+        fns[selected ? 'accent' : 'muted'](plain.slice(0, 2))
+        + fns.subtle(plain.slice(2, 2 + SKILL_INDEX_WIDTH + 1))
+        + fns[row.enabled ? 'success' : 'muted'](plain.slice(2 + SKILL_INDEX_WIDTH + 1, prefixCols))
+        + fns[selected ? 'accent' : 'muted'](plain.slice(prefixCols)),
       )
     }
     const sel = filtered[this.cursor]
     if (sel !== undefined && sel.description !== '') {
-      out.push(fg(p.fgSubtle)(clipToWidth(`  ${sel.description}`, width)))
-    } else {
-      out.push('')
+      lines.push(fns.subtle(clipToWidth(`  ${sel.description}`, wrap)))
     }
-    out.push(fg(p.fgSubtle)(clipToWidth(this.footer, width)))
-    return out
+    lines.push('')
+    lines.push(fns.subtle(clipToWidth(this.footer + this.scrollText(filtered), wrap)))
+    return lines
+  }
+
+  /** Skill rows that fit under the framed overlay on this terminal. */
+  private maxVisibleRows(): number {
+    return Math.max(1,
+      Math.floor(this.tui.terminal.rows * 0.8) - SkillsPanel.FRAME_OVERHEAD - SkillsPanel.TAIL_ROWS)
+  }
+
+  /** Scroll suffix ` (x/y)` — only when the list overflows the viewport. */
+  private scrollText(filtered: readonly SkillPanelRow[]): string {
+    return filtered.length > this.maxVisibleRows() ? ` (${this.cursor + 1}/${filtered.length})` : ''
   }
 
   handleInput(data: string): void {
@@ -813,8 +787,7 @@ class SkillsPanel implements Component {
 
   /** Adjust scrollOffset so the cursor is within `[offset, offset+visibleRows)`. */
   private scrollToCursor(visibleRows?: number, length?: number): void {
-    const vr = visibleRows ?? Math.max(1,
-      Math.floor(this.tui.terminal.rows * 0.8) - SkillsPanel.FRAME_OVERHEAD - SkillsPanel.TAIL_ROWS)
+    const vr = visibleRows ?? this.maxVisibleRows()
     const len = length ?? this.getFilteredRows().length
     this.scrollOffset = clampScrollOffset(this.cursor, vr, len, this.scrollOffset)
   }
@@ -834,9 +807,15 @@ class SkillsPanel implements Component {
 }
 
 /** Commit a provider (profile + key); resolves with an outcome or none. */
-interface AddProviderOptions {
-  /** Catalog entries still unconfigured, in directory order. */
+export interface AddProviderOptions {
+  /** Catalog entries the picker offers, in directory order. */
   entries: readonly ProviderCatalogEntry[]
+  /**
+   * When set, skip the picker and open the key editor for this entry
+   * directly — the `/login <provider>` fast path. Esc in the editor pops the
+   * whole flow.
+   */
+  initialEntry?: ProviderCatalogEntry
   /** Commit the provider: write the profile, then store the key. */
   onCommit: (entry: ProviderCatalogEntry, key: string) => Promise<CommitResult | undefined>
   /** Pop the whole flow (Esc, or right after a successful commit). */
@@ -848,41 +827,49 @@ interface AddProviderOptions {
 /**
  * Add-provider flow for the Models category — the terminal counterpart of
  * pi-agent's /login, trimmed to the information a user actually needs: pick
- * a provider from the built-in directory (searchable, oauth-selector-style
- * title line), enter exactly one API key, done. The key editor reuses
+ * a provider from the built-in directory (searchable FW list panel, accent
+ * BOLD title), enter exactly one API key, done. The key editor reuses
  * EditField (pending guard, late-error sink); the picker is a searchable
- * SettingsList of the unconfigured directory entries.
+ * SettingsListPanel of the directory entries. `/login <provider>` reuses this
+ * flow through `initialEntry`, which swaps the picker for a direct key
+ * editor. Exported because /login instantiates it as a top-level overlay.
  */
-class AddProviderFlow implements Component {
+export class AddProviderFlow implements Component {
   private readonly tui: TUI
   private readonly theme: TuiTheme
-  private readonly list: SettingsList
+  private readonly list: SettingsListPanel | undefined
+  /** Direct-launch key editor (`initialEntry` set); replaces the picker list. */
+  private readonly direct: Component | undefined
   private readonly empty: boolean
   private readonly onExit: () => void
-  private readonly fg: (text: string) => string
-  private readonly fgMuted: (text: string) => string
 
-  constructor(tui: TUI, theme: TuiTheme, listTheme: SettingsListTheme, options: AddProviderOptions) {
+  constructor(tui: TUI, theme: TuiTheme, options: AddProviderOptions) {
     this.tui = tui
     this.theme = theme
     this.empty = options.entries.length === 0
     this.onExit = options.onExit
-    this.fg = text => ansiFg(theme.palette.accent) + text + RESET
-    this.fgMuted = text => ansiFg(theme.palette.fgMuted) + text + RESET
-    this.list = new SettingsList(
-      options.entries.map(entry => ({
+    if (options.initialEntry !== undefined) {
+      // Direct launch: the picker never shows. The key editor's `done` is a
+      // no-op (there is no list submenu to close); Esc pops the whole flow
+      // through onDone → onExit.
+      this.direct = this.keyEditor(options.initialEntry, options, () => {})
+      this.list = undefined
+      return
+    }
+    this.list = new SettingsListPanel(theme, {
+      title: '⚙ Add provider',
+      rows: options.entries.map(entry => ({
         id: entry.id,
         label: entry.name,
-        currentValue: '',
+        value: '',
         description: entry.hint,
         submenu: (_current, done) => this.keyEditor(entry, options, done),
       })),
-      12,
-      listTheme,
-      () => {},
-      () => options.onExit(),
-      { enableSearch: true },
-    )
+      maxVisible: 12,
+      enableSearch: true,
+      onCancel: () => options.onExit(),
+    })
+    this.direct = undefined
   }
 
   /** Key editor for one directory entry; commits through the write chain. */
@@ -916,20 +903,23 @@ class AddProviderFlow implements Component {
   }
 
   invalidate(): void {
-    this.list.invalidate()
+    this.direct?.invalidate()
+    this.list?.invalidate()
   }
 
   render(width: number): string[] {
-    const title = this.fg(BOLD + 'Select provider to configure:' + RESET)
+    if (this.direct !== undefined) return this.direct.render(width)
     if (this.empty) {
+      const fns = panelThemeFns(this.theme)
       return [
-        title,
+        fns.accent(BOLD + '⚙ Add provider' + RESET),
         '',
-        this.fgMuted('All built-in providers are already configured.'),
-        this.fgMuted('  Esc to close'),
+        fns.muted('All built-in providers are already configured.'),
+        '',
+        fns.subtle('  Esc to close'),
       ]
     }
-    return [title, '', ...this.list.render(width)]
+    return this.list!.render(width)
   }
 
   handleInput(data: string): void {
@@ -937,11 +927,58 @@ class AddProviderFlow implements Component {
       if (getKeybindings().matches(data, 'tui.select.cancel')) this.onExit()
       return
     }
-    this.list.handleInput(data)
+    if (this.direct !== undefined) {
+      this.direct.handleInput?.(data)
+      return
+    }
+    this.list!.handleInput(data)
   }
 }
 
 // -------------------------------------------------------------------- the browser --
+
+/**
+ * Commit a provider (profile + key) through the settings + credentials seams —
+ * the same two writes the web Models page performs. Shared by the Models
+ * category's add flow and the /login command; the caller supplies the profile
+ * write (each surface keeps its own serialized settings chain). A missing
+ * credentials service still commits the profile (it names the derived ref; the
+ * key then has to come from the environment).
+ *
+ * Outcome surface: a write failure is an `error`; a committed profile whose
+ * key could not be stored is an `error` with the manual fallback spelled out
+ * (B3); a committed profile with no credentials service at all is a `notice`
+ * (success + hint, no ✘ — C11). Resolves `undefined` on a full success.
+ */
+export async function commitProvider(
+  ctx: Context,
+  writeProfile: () => Promise<string | undefined>,
+  entry: ProviderCatalogEntry,
+  key: string,
+): Promise<CommitResult | undefined> {
+  const ref = deriveKeyRef(entry.id)
+  const error = await writeProfile()
+  if (error !== undefined) return { error }
+  const credentials = ctx.get('credentials') as CredentialSeam | undefined
+  if (credentials === undefined) {
+    // No credential store in this process — the row is configured and the
+    // key must come from the environment; this is a success with a hint,
+    // never an error. Enter re-runs the commit idempotently.
+    return { notice: `provider added — no credentials service in this process: export ${ref} to use it` }
+  }
+  try {
+    await credentials.set(ref, key)
+  } catch (cause) {
+    // The profile is committed but the key did not land: the row already
+    // counts as configured, so the user needs the manual path. The error
+    // stays retryable in place — Enter re-runs the whole commit (B3).
+    return {
+      error: `API key not stored: ${cause instanceof Error ? cause.message : String(cause)}`
+        + ` — provider added; export ${ref}=<key> to use it`,
+    }
+  }
+  return undefined
+}
 
 export interface OpenSettingsBrowserOptions {
   ctx: Context
@@ -979,7 +1016,6 @@ class SettingsBrowser {
   private readonly ctx: Context
   private readonly tui: TUI
   private readonly theme: TuiTheme
-  private readonly listTheme: SettingsListTheme
   private readonly settings: SettingsProvider
   private readonly restoreFocus: () => void
   private readonly onError: (message: string) => void
@@ -990,8 +1026,8 @@ class SettingsBrowser {
   private readonly roots = new Map<string, SchemaNode>()
   private readonly changes = { value: 0 }
   private overlay: OverlayHandle | undefined
-  private catList: SettingsList | undefined
-  private nsList: SettingsList | undefined
+  private catList: SettingsListPanel | undefined
+  private nsList: SettingsListPanel | undefined
   private modelsView: ModelsCategoryView | undefined
   private modelsExit: (() => void) | undefined
   private skillsView: SkillsPanel | undefined
@@ -1023,22 +1059,6 @@ class SettingsBrowser {
     // Assigned here, not as a field initializer: a later field declaration
     // would `defineProperty(…, undefined)` over the promise's resolve.
     this.closed = new Promise<void>(resolve => { this.closeResolve = resolve })
-    const p = options.theme.palette
-    const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
-    // canvasSubtle backdrop for every browser line. Raw lines (the search
-    // Input row, the bare "" separators from settings-list.js renderMainList,
-    // AddProviderFlow's title/blank lines, EditField's title/subtitle/error/
-    // notice rows) carry no theme styling of their own — the framed overlay
-    // (frame.ts fillLine) paints the full-width backdrop under them, so the
-    // popup stays one solid panel surface.
-    const bg = (hex: string) => (text: string) => ansiBg(hex) + text + RESET
-    this.listTheme = {
-      label: (text, selected) => bg(p.canvasSubtle)(fg(p.fgDefault)(selected ? BOLD + text + RESET : text)),
-      value: (text, selected) => bg(p.canvasSubtle)(fg(selected ? p.accent : p.fgMuted)(text)),
-      description: text => bg(p.canvasSubtle)(fg(p.fgSubtle)(text)),
-      cursor: bg(p.canvasSubtle)(fg(p.accent)(BOLD + '▸ ')),
-      hint: text => bg(p.canvasSubtle)(fg(p.fgSubtle)(text)),
-    }
   }
 
   async open(): Promise<number> {
@@ -1101,11 +1121,11 @@ class SettingsBrowser {
     return categoryDescription(cat.namespaces, CATEGORY_DESC_MAX)
   }
 
-  private categoryList(): SettingsList {
-    const items: SettingItem[] = this.categories().map(cat => ({
+  private categoryList(): SettingsListPanel {
+    const items: SettingsRow[] = this.categories().map(cat => ({
       id: cat.id,
       label: cat.label,
-      currentValue: this.categorySummary(cat),
+      value: this.categorySummary(cat),
       description: this.categoryDescription(cat),
       submenu: cat.id === 'models'
         ? (_current, done) => this.openModelsSubmenu(done)
@@ -1113,6 +1133,7 @@ class SettingsBrowser {
           ? (_current, done) => this.openSkillsSubmenu(done)
           : (_current, done) => {
               const list = this.namespaceList(
+                cat.label,
                 this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
                 done,
               )
@@ -1120,15 +1141,13 @@ class SettingsBrowser {
               return list
             },
     }))
-    const list = new SettingsList(
-      items,
-      10,
-      this.listTheme,
-      () => {},
-      () => this.close(),
-      { enableSearch: true },
-    )
-    return list
+    return new SettingsListPanel(this.theme, {
+      title: '⚙ settings',
+      rows: items,
+      maxVisible: 10,
+      enableSearch: true,
+      onCancel: () => this.close(),
+    })
   }
 
   private refreshCategoryList(): void {
@@ -1156,11 +1175,11 @@ class SettingsBrowser {
   }
 
   /** Namespace list for one category; Esc pops back to the category level. */
-  private namespaceList(descriptors: readonly SettingsDescriptor[], onExit: () => void): SettingsList {
-    const items: SettingItem[] = descriptors.map(desc => ({
+  private namespaceList(categoryLabel: string, descriptors: readonly SettingsDescriptor[], onExit: () => void): SettingsListPanel {
+    const items: SettingsRow[] = descriptors.map(desc => ({
       id: desc.ns,
       label: desc.ns,
-      currentValue: this.nsSummary(desc),
+      value: this.nsSummary(desc),
       description: this.nsDescription(desc),
       submenu: (_current, done) => {
         const section = this.sectionList(desc.ns, [], () => {
@@ -1170,18 +1189,16 @@ class SettingsBrowser {
         return section.list
       },
     }))
-    const list = new SettingsList(
-      items,
-      10,
-      this.listTheme,
-      () => {},
-      () => {
+    return new SettingsListPanel(this.theme, {
+      title: categoryLabel,
+      rows: items,
+      maxVisible: 10,
+      enableSearch: true,
+      onCancel: () => {
         this.refreshCategoryList()
         onExit()
       },
-      { enableSearch: true },
-    )
-    return list
+    })
   }
 
   private refreshNsList(): void {
@@ -1337,9 +1354,9 @@ class SettingsBrowser {
       : unconfiguredCatalogEntries(configured)
   }
 
-  private buildModelsList(): SettingsList {
+  private buildModelsList(): SettingsListPanel {
     const exit = this.modelsExit ?? (() => {})
-    const items: SettingItem[] = []
+    const items: SettingsRow[] = []
     const directory = this.providerDirectory()
 
       const piDesc = this.descriptor(NS_LLM_PI_AI)
@@ -1369,7 +1386,7 @@ class SettingsBrowser {
         items.push({
           id: `provider:${id}`,
           label: view.label,
-          currentValue: view.summary,
+          value: view.summary,
           description: view.status,
           // Read-only: the raw llm-pi-ai fields are deliberately not editable
           // here — Enter shows the stored profile, nothing more. A "re-store
@@ -1377,7 +1394,16 @@ class SettingsBrowser {
           // only) was considered for rows whose key never landed (B3) but
           // needs a multi-action submenu component (~60 lines); skipped —
           // the commit failure text names the manual fallback instead.
-          submenu: (_current, done) => new ReadOnlyViewer(this.theme, `providers.${id}`, profile, done),
+          submenu: (_current, done) => new ViewerPanel(this.theme, {
+            title: `providers.${id}`,
+            lines: [
+              'read-only in the TUI — edit the settings document to change it',
+              '',
+              ...JSON.stringify(profile, null, 2).split('\n'),
+            ],
+            maxLines: 40,
+            onClose: done,
+          }),
         })
       }
     }
@@ -1387,7 +1413,7 @@ class SettingsBrowser {
       items.push({
         id: 'llm-deepseek',
         label: 'DeepSeek (official)',
-        currentValue: this.nsSummary(deepseekDesc),
+        value: this.nsSummary(deepseekDesc),
         description: this.nsDescription(deepseekDesc),
         submenu: (_current, done) => {
           const section = this.sectionList(deepseekDesc.ns, [], () => {
@@ -1404,7 +1430,7 @@ class SettingsBrowser {
       items.push({
         id: 'agent-default-model',
         label: 'Default model',
-        currentValue: this.defaultModelSummary(agentDesc),
+        value: this.defaultModelSummary(agentDesc),
         description: this.nsDescription(agentDesc),
         submenu: (_current, done) => {
           const section = this.sectionList(agentDesc.ns, [], () => {
@@ -1422,12 +1448,11 @@ class SettingsBrowser {
       items.push({
         id: '\u0000add-provider',
         label: '+ Add provider…',
-        currentValue: '',
+        value: '',
         description: 'configure a built-in provider with its API key',
         submenu: (_current, done) => new AddProviderFlow(
           this.tui,
           this.theme,
-          this.listTheme,
           {
             entries: this.addProviderEntries(configured),
             onCommit: (entry, key) => this.commitNewProvider(entry, key),
@@ -1441,16 +1466,15 @@ class SettingsBrowser {
       })
     }
 
-    return new SettingsList(
-      items,
-      12,
-      this.listTheme,
-      () => {},
+    return new SettingsListPanel(this.theme, {
+      title: '⚙ Models',
+      rows: items,
+      maxVisible: 12,
+      enableSearch: true,
       // exit() (the modelsExit hook) already refreshes the category list —
       // calling it again here would double-refresh (C8).
-      () => { exit() },
-      { enableSearch: true },
-    )
+      onCancel: () => { exit() },
+    })
   }
 
   /** Cap for a skill row's description line (columns; width-safe). */
@@ -1601,7 +1625,7 @@ class SettingsBrowser {
   // ------------------------------------------------------------- section levels --
 
   /**
-   * Build the SettingsList for one schema node at `path` of `ns`.
+   * Build the FW list panel for one schema node at `path` of `ns`.
    * `onExit` runs when the list is popped (Esc) — it must refresh the parent
    * level and call the parent's submenu `done()`.
    */
@@ -1609,7 +1633,7 @@ class SettingsBrowser {
     ns: SettingsNamespace,
     path: string[],
     onExit: () => void,
-  ): { list: SettingsList; refresh: () => void } {
+  ): { list: SettingsListPanel; refresh: () => void } {
     const root = this.root(ns)
     const desc = this.descriptor(ns)
     const node = root !== undefined && path.length > 0
@@ -1618,17 +1642,17 @@ class SettingsBrowser {
     const rows = node === undefined ? [] : this.buildRows(ns, node, path, desc?.value)
     const refresh = (): void => { this.refreshRows(rows, list) }
     const items = rows.map(row => this.rowItem(row, refresh))
-    const list = new SettingsList(
-      items,
-      12,
-      this.listTheme,
-      (id, newValue) => { void this.onCycle(rows, list, id, newValue) },
-      () => {
+    const list = new SettingsListPanel(this.theme, {
+      title: path.length === 0 ? ns : path.join('.'),
+      rows: items,
+      maxVisible: 12,
+      enableSearch: true,
+      onChange: (id, newValue) => { void this.onCycle(rows, list, id, newValue) },
+      onCancel: () => {
         refresh()
         onExit()
       },
-      { enableSearch: true },
-    )
+    })
     return { list, refresh }
   }
 
@@ -1639,7 +1663,7 @@ class SettingsBrowser {
         id: '\u0000reset',
         ns,
         path,
-        label: `↺ Reset ${path.length === 0 ? 'this namespace' : path.join('.')} to defaults`,
+        label: `Reset ${path.length === 0 ? 'this namespace' : path.join('.')} to defaults`,
         kind: 'reset',
         node,
         value: undefined,
@@ -1742,12 +1766,12 @@ class SettingsBrowser {
     }
   }
 
-  /** SettingItem for one row; drill/input/reset/addkey attach their submenus. */
-  private rowItem(row: RowSpec, refresh: () => void): SettingItem {
-    const base: SettingItem = {
+  /** SettingsRow for one row; drill/input/reset/addkey attach their submenus. */
+  private rowItem(row: RowSpec, refresh: () => void): SettingsRow {
+    const base: SettingsRow = {
       id: row.id,
       label: row.label,
-      currentValue: row.display,
+      value: row.display,
       description: this.rowDescription(row),
     }
     switch (row.kind) {
@@ -1769,7 +1793,16 @@ class SettingsBrowser {
       // full instead of silently doing nothing (the module header's promise).
       default: return {
         ...base,
-        submenu: (_current, done) => new ReadOnlyViewer(this.theme, row.path.join('.'), row.value, done),
+        submenu: (_current, done) => new ViewerPanel(this.theme, {
+          title: row.path.join('.'),
+          lines: [
+            'read-only in the TUI — edit the settings document to change it',
+            '',
+            ...JSON.stringify(row.value, null, 2).split('\n'),
+          ],
+          maxLines: 40,
+          onClose: done,
+        }),
       }
     }
   }
@@ -1796,7 +1829,7 @@ class SettingsBrowser {
   }
 
   /** Recompute every row's value/display from a fresh descriptor. */
-  private refreshRows(rows: RowSpec[], list: SettingsList): void {
+  private refreshRows(rows: RowSpec[], list: SettingsListPanel): void {
     const ns = rows[0]?.ns
     if (ns === undefined) return
     this.refresh()
@@ -1838,41 +1871,18 @@ class SettingsBrowser {
    * Add-provider commit: write the llm-pi-ai profile through the serialized
    * settings chain (revision read at execution time), then store the key
    * through the credentials seam — the same two writes the web Models page
-   * performs. A missing credentials service still commits the profile (it
-   * names the derived ref; the key then has to come from the environment).
-   *
-   * Outcome surface: a write failure is an `error`; a committed profile whose
-   * key could not be stored is an `error` with the manual fallback spelled
-   * out (B3); a committed profile with no credentials service at all is a
-   * `notice` (success + hint, no ✘ — C11).
+   * performs. See `commitProvider` for the outcome surface; on success the
+   * browser also records the ref so the Models rows read as key set and
+   * rebuilds the list (B5).
    */
   private async commitNewProvider(entry: ProviderCatalogEntry, key: string): Promise<CommitResult | undefined> {
-    const ref = deriveKeyRef(entry.id)
-    const error = await this.write(NS_LLM_PI_AI, [{
+    const result = await commitProvider(this.ctx, () => this.write(NS_LLM_PI_AI, [{
       op: 'set',
       path: ['providers', entry.id],
       value: providerProfileFor(entry),
-    }])
-    if (error !== undefined) return { error }
-    const credentials = this.ctx.get('credentials') as CredentialSeam | undefined
-    if (credentials === undefined) {
-      // No credential store in this process — the row is configured and the
-      // key must come from the environment; this is a success with a hint,
-      // never an error. Enter re-runs the commit idempotently.
-      return { notice: `provider added — no credentials service in this process: export ${ref} to use it` }
-    }
-    try {
-      await credentials.set(ref, key)
-    } catch (cause) {
-      // The profile is committed but the key did not land: the row already
-      // counts as configured, so the user needs the manual path. The error
-      // stays retryable in place — Enter re-runs the whole commit (B3).
-      return {
-        error: `API key not stored: ${cause instanceof Error ? cause.message : String(cause)}`
-          + ` — provider added; export ${ref}=<key> to use it`,
-      }
-    }
-    this.justStoredRefs.add(ref)
+    }]), entry, key)
+    if (result !== undefined) return result
+    this.justStoredRefs.add(deriveKeyRef(entry.id))
     // Settle-time rebuild: if Esc closed the editor while the write was in
     // flight, the onExit refresh already ran against stale descriptors and
     // nothing else would repaint the new row. Idempotent (B5); on the normal
@@ -1881,7 +1891,7 @@ class SettingsBrowser {
     return undefined
   }
 
-  private onCycle(rows: RowSpec[], list: SettingsList, id: string, newValue: string): void {
+  private onCycle(rows: RowSpec[], list: SettingsListPanel, id: string, newValue: string): void {
     const row = rows.find(r => r.id === id)
     if (row === undefined || row.kind !== 'cycle' || row.toRaw === undefined) return
     let raw: unknown
