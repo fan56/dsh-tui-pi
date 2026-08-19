@@ -35,12 +35,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import {
-  getPath,
-  nodeAtPath,
-  rehydrateSchema,
-  type SchemaNode,
-} from '@deepseek-ai/dsh-client-schema-form'
+import { getPath, nodeAtPath, rehydrateSchema, type SchemaNode } from './schema-model.ts'
 import type {
   SettingsDescriptor,
   SettingsNamespace,

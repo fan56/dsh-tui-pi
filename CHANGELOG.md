@@ -6,6 +6,22 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-08-20
+
+### Fixed
+
+- **Plugin boot crash on npm-installed dsh**: the npm-distributed dsh
+  closure (0.1.0-rc.6 ~ rc.8) is missing `@deepseek-ai/dsh-client-schema-form`
+  (its in-repo consumers declare it only as a workspace peer — see
+  deepseek-harness discussion #3471), and our static import of it took the
+  whole plugin down at boot on every fresh npm-dsh install (Homebrew dsh
+  carries the package, which is why macOS kept working). The three helpers
+  the settings browser uses (`rehydrateSchema` / `nodeAtPath` / `getPath`)
+  are now vendored in `src/schema-model.ts` (MIT, attribution in the module
+  header); their only runtime dependency, `@deepseek-ai/schemastery`, is
+  present in every dsh closure. New schema-model test suite; 386 → 389
+  tests.
+
 ## [0.8.0] — 2026-08-20
 
 ### Changed

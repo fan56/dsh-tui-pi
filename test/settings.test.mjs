@@ -7,7 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
-import { nodeAtPath, rehydrateSchema } from '@deepseek-ai/dsh-client-schema-form'
+import { nodeAtPath, rehydrateSchema } from '../lib/schema-model.js'
 import {
   CATEGORY_MAP,
   categorizeNamespaces,
