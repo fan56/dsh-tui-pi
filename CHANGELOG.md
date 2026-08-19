@@ -6,6 +6,20 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-08-19
+
+### Fixed
+
+- **Plugin install fails on pnpm 11** (`ERR_PNPM_IGNORED_BUILDS`): the
+  published `postinstall` script was a no-op for consumers (the `src/` guard
+  exits immediately), but pnpm 11's default `strictDepBuilds=true` treats any
+  ignored build script as a hard error — exit code 1 prevented dsh from
+  registering the plugin in `dsh.profile.bundles`, leaving the TUI running a
+  headless `dsh-base`-only tree (blank screen, no banner). Removed the
+  `postinstall` lifecycle hook from the published manifest; the closure linker
+  now runs as `precheck` (repo dev flow only). Also dropped `pnpm-workspace.yaml`
+  from the published files (consumers don't use it).
+
 ## [0.7.0] — 2026-08-19
 
 ### Added

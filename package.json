@@ -1,6 +1,6 @@
 {
   "name": "@aiwayds/dsh-tui-pi",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "pi-style terminal UI for DeepSeek Harness (dsh) — pi-tui look & feel, dsh slash commands, GitHub light/dark themes, powerline footer",
   "repository": {
     "type": "git",
@@ -31,16 +31,16 @@
     "bin",
     "cordis.patch.yml",
     "patches",
-    "pnpm-workspace.yaml",
     "scripts",
     "templates",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node scripts/link-dsh-closure.mjs",
+    "link-closure": "node scripts/link-dsh-closure.mjs",
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json",
+    "precheck": "node scripts/link-dsh-closure.mjs",
     "pretest": "npm run build",
     "test": "node --test test/*.test.mjs"
   },
