@@ -1,7 +1,8 @@
 /**
  * Reusable select-panel framework — the shared building blocks behind every
  * picker/browser overlay in this TUI (agents table, field windows, viewers,
- * and future migrations of the /model, /settings and /resume surfaces).
+ * the /settings browser, and future migrations of the /model and /resume
+ * surfaces).
  *
  * What lives here:
  *

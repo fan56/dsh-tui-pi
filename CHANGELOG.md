@@ -4,6 +4,22 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`/settings` panels migrated to the project's select-panel FW**
+  (`src/panels.ts` + `src/frame.ts`): every list level (categories,
+  namespaces, schema fields, the Models category) renders through the new
+  `SettingsListPanel` — accent BOLD title, whole-row selection, PgUp/PgDn
+  paging, footer with scroll info — replacing the last pi-tui `SettingsList`
+  usages and the hand-written `listTheme` backdrop. Submenus (`EditField`,
+  reset confirmation, read-only viewers, the Skills panel, the add-provider
+  flow) share the same title/footer/color conventions, so `/settings` now
+  visually matches `/agents` and `/hotkeys`. Search (type-to-filter, Esc to
+  clear) and every write path (revisioned `settings.mutate`, secret masking,
+  reset-to-defaults, provider credential commits) are unchanged.
+
 ## [0.5.0] — 2026-08-18
 
 ### Added
