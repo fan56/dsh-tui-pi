@@ -12,9 +12,10 @@ import {
   FOOTER_HINT,
   FOOTER_HINT_ITEMS,
   FooterHint,
+  PowerlineFooter,
   buildFooterHint,
 } from '../lib/footer.js'
-import { darkTheme } from '../lib/theme/index.js'
+import { ansiBg, ansiFg, darkTheme, lightTheme, POWERLINE } from '../lib/theme/index.js'
 import { visibleWidth } from '../lib/text.js'
 
 const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
@@ -65,4 +66,43 @@ test('FooterHint renders zero rows when every hint is off', () => {
   const allOff = Object.fromEntries(FOOTER_HINT_ITEMS.map(item => [item.id, false]))
   const hint = new FooterHint(() => darkTheme, () => allOff)
   assert.deepEqual(hint.render(80), [])
+})
+
+/** FooterDataSource stub driving the powerline segments + clock. */
+function footerSource(overrides = {}) {
+  return {
+    getStats: () => ({
+      inputTokens: 600,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      msgCount: 1,
+      toolCallCount: 0,
+      ...overrides.stats,
+    }),
+    getSelection: () => overrides.selection ?? { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'off' },
+    getContextWindow: () => overrides.contextWindow ?? 1000,
+    getBranch: () => undefined,
+  }
+}
+
+test('PowerlineFooter styles the clock with the palette foreground (never terminal-default black)', () => {
+  for (const theme of [darkTheme, lightTheme]) {
+    const footer = new PowerlineFooter(footerSource(), () => theme)
+    const row = footer.render(200)[0]
+    const clock = new RegExp(ansiFg(theme.palette.fgDefault).replace(/[[\\]/g, '\\$&') + '\\d{2}:\\d{2}:\\d{2}\\x1b\\[0m$')
+    assert.match(row, clock, `${theme.palette.name}: trailing clock carries the palette fg color`)
+  }
+})
+
+test('PowerlineFooter uses near-black text on bright segment fills (amber warn), white on dark fills', () => {
+  // 600/1000 = 60% context → contextWarn (#FFC107, a bright fill); the brand
+  // segment (#4D6BFE) stays a dark fill with white bold text.
+  const footer = new PowerlineFooter(footerSource(), () => lightTheme)
+  const row = footer.render(200)[0]
+  assert.ok(row.includes(ansiFg('#1f2328')), 'bright amber segment carries near-black text')
+  assert.ok(row.includes(ansiFg('#FFFFFF')), 'dark segment fills keep white bold text')
+  const amber = row.indexOf(ansiBg(POWERLINE.contextWarn))
+  assert.ok(amber >= 0, 'context-warn segment present at 60% usage')
+  assert.ok(row.indexOf(ansiFg('#1f2328')) > amber, 'dark text sits on the amber segment')
 })

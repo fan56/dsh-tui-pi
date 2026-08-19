@@ -322,7 +322,10 @@ export class TranscriptRenderer {
 
   private renderUserText(text: string): void {
     const prefixed = text.split('\n').map(line => `▎ ${line}`).join('\n')
-    const bubble = new Text(prefixed, 1, 0, this.theme.chat.userMessageBg)
+    // userMessageText paints the text with the theme foreground (dark themes:
+    // light text) — without it the bubble text falls to the terminal default
+    // foreground, invisible on the dark canvas.
+    const bubble = new Text(this.theme.chat.userMessageText(prefixed), 1, 0, this.theme.chat.userMessageBg)
     this.doc.addChild(bubble)
     this.doc.addChild(new Spacer(1))
     this.requestRender()

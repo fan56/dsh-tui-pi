@@ -934,7 +934,7 @@ export function apply(ctx: Context): void {
       },
     }
     ui.footer.clear()
-    ui.footer.addChild(new PowerlineFooter(footerSource))
+    ui.footer.addChild(new PowerlineFooter(footerSource, () => ui.theme))
     // Keybinding hint, added *after* the clear above: a single width-clipped
     // row (never word-wraps) reading the live footer-hints selection through
     // its getter — a /settings toggle applies on the next repaint, and the

@@ -5,10 +5,13 @@
  * - Light: near-white canvas with a faint cool-green cast, clear gray-green
  *   surfaces, graphite-green body text and a steel-blue accent — white /
  *   pale green / pale blue / clear gray, no fluorescent hues.
- * - Dark: deep gray-blue canvas (#0d1117 family), accent/success/thinking
- *   hues mirror the light theme's families (brightened for dark), muted
- *   fills are solid approximations of alpha tints blended over `canvas`
- *   (the terminal can't carry alpha) — same values as `blend()` below.
+ * - Dark: deep gray-blue canvas (#0d1117 family); every status hue uses the
+ *   BRIGHT half of the user's cmux GitHub Dark 16-color palette
+ *   (`~/scripts/cmux-theme.sh`: #79c0ff blue, #56d364 green, #e3b341 gold,
+ *   #ffa198 red, #d2a8ff violet) so no text role falls into black-on-dark;
+ *   muted fills are solid approximations of alpha tints blended over
+ *   `canvas` (the terminal can't carry alpha) — same values as `blend()`
+ *   below.
  *
  * The TUI paints every rendered row with `canvas` (patched pi-tui
  * `setCanvasBackground`, see src/tui.ts) — the app owns its background, so
@@ -52,6 +55,22 @@ export interface Palette {
   readonly toolPanelBg: string
   /** Panel box border (think/tool boxes), one step stronger than borderDefault. */
   readonly panelBorder: string
+  /** FramedOverlay box border — accent-tinted, unifies every select panel / popup chrome with a theme color. */
+  readonly panelBoxBorder: string
+}
+
+/** #rrggbb hex matcher — shared by blend(), hexToRgb() and hexIsLight(). */
+const HEX6 = /^#[0-9a-fA-F]{6}$/
+
+/** Alpha tint of `over` on `base`, as a solid hex approximation of an alpha blend. */
+function blend(base: string, over: string, alpha: number): string {
+  if (!HEX6.test(base) || !HEX6.test(over)) {
+    throw new TypeError(`blend(): expected #rrggbb hex colors, got "${base}" and "${over}"`)
+  }
+  const b = [1, 3, 5].map(i => parseInt(base.slice(i, i + 2), 16))
+  const o = [1, 3, 5].map(i => parseInt(over.slice(i, i + 2), 16))
+  const mixed = b.map((v, i) => Math.round(v * (1 - alpha) + o[i]! * alpha))
+  return `#${mixed.map(v => v.toString(16).padStart(2, '0')).join('')}`
 }
 
 export const githubLight: Palette = {
@@ -74,11 +93,11 @@ export const githubLight: Palette = {
   // De-emphasized text (link URLs, unstarted todos, panel ellipsis rows):
   // clear gray-green, ~4.5:1 on canvasSubtle (WCAG AA for small text).
   fgSubtle: '#637269',
-  // Default border (editor border, separators): soft clear gray, derived
-  // from GitHub #d0d7de.
-  borderDefault: '#ccd6cc',
-  // Weak border: lighter clear gray.
-  borderMuted: '#d9e1d9',
+  // Default border (editor border, separators): clear gray-green, 3.3:1 on
+  // the canvas so panel lines stay clearly visible (was 1.4:1).
+  borderDefault: '#829087',
+  // Weak border: one step lighter, ~1.8:1 — auxiliary lines only.
+  borderMuted: '#b8c1b9',
   // Primary accent (selection, links, arrows, session status): soft steel
   // blue, 5.6:1 on canvasSubtle.
   accent: '#0a60b5',
@@ -106,22 +125,15 @@ export const githubLight: Palette = {
   // Tool card surface: pale ice blue, same family as accentMuted but a touch
   // bluer than the green-gray bubble surface.
   toolPanelBg: '#eef4fb',
-  // Panel box border (think/tool boxes): green-gray, one step stronger than
-  // borderDefault so the box lines read against the canvas.
-  panelBorder: '#a9c0ab',
-}
-
-const HEX6 = /^#[0-9a-fA-F]{6}$/
-
-/** Alpha tint of `over` on `base`, as a solid hex approximation of an alpha blend. */
-function blend(base: string, over: string, alpha: number): string {
-  if (!HEX6.test(base) || !HEX6.test(over)) {
-    throw new TypeError(`blend(): expected #rrggbb hex colors, got "${base}" and "${over}"`)
-  }
-  const b = [1, 3, 5].map(i => parseInt(base.slice(i, i + 2), 16))
-  const o = [1, 3, 5].map(i => parseInt(over.slice(i, i + 2), 16))
-  const mixed = b.map((v, i) => Math.round(v * (1 - alpha) + o[i]! * alpha))
-  return `#${mixed.map(v => v.toString(16).padStart(2, '0')).join('')}`
+  // Panel box border (think/tool boxes): green-gray, ~3.3:1 on canvasSubtle
+  // so the box lines read against the raised panel surface.
+  panelBorder: '#6f8c72',
+  // FramedOverlay box border (every select panel / popup): accent tinted
+  // over the canvas at a medium alpha — the whole popup chrome carries the
+  // theme color while staying readable (~3.3:1 on canvas). Light needs a
+  // stronger tint than dark (0.7 vs 0.55): 0.55 only reaches ~2.5:1 on the
+  // near-white canvas.
+  panelBoxBorder: blend('#fcfdfc', '#0a60b5', 0.7),
 }
 
 export const githubDark: Palette = {
@@ -135,48 +147,53 @@ export const githubDark: Palette = {
   canvasInset: '#010409',
   // Body text: cool off-white, 16:1 on canvas.
   fgDefault: '#e6edf3',
-  // Secondary text: gray-blue, ~6:1.
-  fgMuted: '#8b949e',
-  // De-emphasized text: brightened from the original #6e7681, 4.5:1 on
-  // canvas (low emphasis must still be legible).
-  fgSubtle: '#737d87',
-  // Default border: gray-blue.
-  borderDefault: '#30363d',
-  // Weak border: deeper gray-blue.
-  borderMuted: '#21262d',
-  // Primary accent: same blue family as the light accent, brightened for
-  // dark, 7.5:1 on canvas.
-  accent: '#58a6ff',
+  // Secondary text: bright gray (cmux GitHub Dark bright-black #b1bac4),
+  // 9.6:1 on canvas — secondary must read clearly on the dark canvas.
+  fgMuted: '#b1bac4',
+  // De-emphasized text (unstarted todos, panel ellipsis rows): 6.2:1 on
+  // canvas (low emphasis must still be legible, never near-black).
+  fgSubtle: '#8b949e',
+  // Default border: gray-blue, 4.1:1 on the canvas so panel lines stay
+  // clearly visible (was 1.5:1, nearly black-on-black).
+  borderDefault: '#6e7681',
+  // Weak border: one step up from the canvas, ~1.9:1 — auxiliary lines only.
+  borderMuted: '#3d444d',
+  // Primary accent: bright blue (cmux bright-blue), 9.7:1 on canvas.
+  accent: '#79c0ff',
   // Accent tint: 25% blue tint over canvas, one step brighter than
   // canvasSubtle for card faces.
-  accentMuted: blend('#0d1117', '#58a6ff', 0.25),
+  accentMuted: blend('#0d1117', '#79c0ff', 0.25),
   // Success: same green family as the light success, brightened, 4.9:1 on
   // successMuted.
-  success: '#3fb950',
+  success: '#56d364',
   // Success tint (successful tool cards): 25% green tint over canvas.
-  successMuted: blend('#0d1117', '#3fb950', 0.25),
-  // Danger: same red family as the light danger, brightened, 4.9:1 on
-  // dangerMuted.
-  danger: '#ff7b72',
+  successMuted: blend('#0d1117', '#56d364', 0.25),
+  // Danger (errors, ✘ tool cards): bright red (cmux bright-red), 9.7:1 on
+  // canvas, 5.8:1 on dangerMuted.
+  danger: '#ffa198',
   // Danger tint (failed tool cards): 25% red tint over canvas.
-  dangerMuted: blend('#0d1117', '#ff7b72', 0.25),
-  // Attention: same amber family as the light attention, brightened, 4.9:1
-  // on attentionMuted.
-  attention: '#d29922',
-  // Attention tint: 25% amber tint over canvas.
-  attentionMuted: blend('#0d1117', '#d29922', 0.25),
-  // Thinking text: same violet family as the light thinking, brightened,
-  // 6.9:1 on canvasSubtle.
-  thinking: '#bc8cff',
+  dangerMuted: blend('#0d1117', '#ffa198', 0.25),
+  // Attention (in-progress todos, token limit): bright gold (cmux
+  // bright-yellow), 9.7:1 on canvas, 5.8:1 on attentionMuted.
+  attention: '#e3b341',
+  // Attention tint: 25% gold tint over canvas.
+  attentionMuted: blend('#0d1117', '#e3b341', 0.25),
+  // Thinking text: bright violet (cmux bright-purple), 9.7:1 on canvas,
+  // 5.8:1 on thinkingPanelBg.
+  thinking: '#d2a8ff',
   // Think panel surface: 25% violet tint over canvas (same blend convention
   // as the other dark muted fills).
-  thinkingPanelBg: blend('#0d1117', '#bc8cff', 0.25),
+  thinkingPanelBg: blend('#0d1117', '#d2a8ff', 0.25),
   // Tool card surface: same 25% blue tint as accentMuted (the two surfaces
   // are one family; the blue reads as "tool" next to the purple "think").
-  toolPanelBg: blend('#0d1117', '#58a6ff', 0.25),
-  // Panel box border (think/tool boxes): green-gray, one step stronger than
-  // borderDefault so the box lines read against the dark canvas.
-  panelBorder: '#34433b',
+  toolPanelBg: blend('#0d1117', '#79c0ff', 0.25),
+  // Panel box border (think/tool boxes): green-gray, ~3.6:1 on canvasSubtle
+  // so the box lines read against the raised panel surface.
+  panelBorder: '#64766b',
+  // FramedOverlay box border (every select panel / popup): accent tinted
+  // over the canvasSubtle backdrop — 0.70 blend gives ~5:1 contrast, a
+  // clearly blue border that reads as the theme color (not dim gray).
+  panelBoxBorder: blend('#0d1117', '#79c0ff', 0.70),
 }
 
 /**
@@ -219,4 +236,35 @@ function rgbLuminance({ r, g, b }: Rgb): number {
  */
 export function rgbIsLight(rgb: Rgb): boolean {
   return rgbLuminance(rgb) >= 0.5
+}
+
+/** Parse a #rrggbb hex string into an RGB triple. */
+function hexToRgb(hex: string): Rgb {
+  if (!HEX6.test(hex)) {
+    throw new TypeError(`hexToRgb(): expected #rrggbb hex color, got "${hex}"`)
+  }
+  return {
+    r: parseInt(hex.slice(1, 3), 16),
+    g: parseInt(hex.slice(3, 5), 16),
+    b: parseInt(hex.slice(5, 7), 16),
+  }
+}
+
+/**
+ * True when a #rrggbb hex background reads as light — used to pick dark
+ * segment text on bright powerline fills (white text only on dark fills).
+ */
+export function hexIsLight(hex: string): boolean {
+  return rgbIsLight(hexToRgb(hex))
+}
+
+/**
+ * WCAG contrast ratio (1..21) between two #rrggbb colors — lets the theme
+ * tests gate border/surface visibility (UI components target ≥3:1).
+ */
+export function hexContrast(fg: string, bg: string): number {
+  const l1 = rgbLuminance(hexToRgb(fg))
+  const l2 = rgbLuminance(hexToRgb(bg))
+  const [lighter, darker] = l1 >= l2 ? [l1, l2] : [l2, l1]
+  return (lighter + 0.05) / (darker + 0.05)
 }

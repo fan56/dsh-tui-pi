@@ -15,6 +15,7 @@
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import type { BridgeStats } from './session.ts'
 import { ansiBg, ansiFg, BOLD, POWERLINE, RESET, type TuiTheme } from './theme/index.ts'
+import { hexIsLight } from './theme/palette.ts'
 import { clipToWidth } from './text.ts'
 
 /**
@@ -101,6 +102,13 @@ export class FooterHint implements Component {
 
 const ARROW_RIGHT = '\uE0B0'
 const WHITE = ansiFg('#FFFFFF')
+/** Segment text on bright fills (e.g. amber #FFC107): white is unreadable there. */
+const DARK_TEXT = ansiFg('#1f2328')
+
+/** Segment label text: white bold on dark fills, near-black on bright ones. */
+function segmentText(bgHex: string): string {
+  return hexIsLight(bgHex) ? DARK_TEXT : WHITE
+}
 
 interface Segment {
   label: string
@@ -129,7 +137,7 @@ function buildSegments(segs: readonly Segment[]): string {
   let out = ''
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i]!
-    out += `${ansiBg(s.bgHex)}${BOLD}${WHITE} ${s.label} `
+    out += `${ansiBg(s.bgHex)}${BOLD}${segmentText(s.bgHex)} ${s.label} `
     if (i + 1 < segs.length) {
       out += `${ansiBg(segs[i + 1]!.bgHex)}${ansiFg(s.bgHex)}${ARROW_RIGHT}`
     } else {
@@ -166,12 +174,14 @@ function contextBg(percent: number): string {
 
 export class PowerlineFooter implements Component {
   private readonly source: FooterDataSource
+  private readonly getTheme: () => TuiTheme
 
-  constructor(source: FooterDataSource) {
+  constructor(source: FooterDataSource, getTheme: () => TuiTheme) {
     this.source = source
+    this.getTheme = getTheme
   }
 
-  invalidate(): void { /* stateless between renders */ }
+  invalidate(): void { /* stateless between renders - the theme comes via getTheme */ }
 
   render(width: number): string[] {
     const stats = this.source.getStats()
@@ -210,7 +220,11 @@ export class PowerlineFooter implements Component {
     const left = buildSegments(segs)
     const leftWidth = visibleWidth(left)
 
-    const clock = new Date().toLocaleTimeString('en-GB', { hour12: false })
+    // The clock must carry the palette foreground: the app paints the canvas
+    // background itself, so unstyled text would fall back to the terminal's
+    // default fg (black on many dark profiles) and vanish on the dark canvas.
+    const time = new Date().toLocaleTimeString('en-GB', { hour12: false })
+    const clock = ansiFg(this.getTheme().palette.fgDefault) + time + RESET
     const clockWidth = visibleWidth(clock)
     const pad = Math.max(1, width - leftWidth - clockWidth)
 

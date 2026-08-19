@@ -109,10 +109,10 @@ test('over-wide child lines are left untouched (no negative padding)', () => {
   assert.ok(stripAnsi(line).startsWith('│'))
 })
 
-test('box lines use palette borderDefault on the backdrop and reset after', () => {
+test('box lines use palette panelBoxBorder on the backdrop and reset after', () => {
   const frame = new FramedOverlay(theme, new Stub())
   const lines = frame.render(10)
-  const [br, bg, bb] = hexToRgb(githubLight.borderDefault)
+  const [br, bg, bb] = hexToRgb(githubLight.panelBoxBorder)
   const [cr, cg, cb] = hexToRgb(githubLight.canvasSubtle)
   for (const line of [lines[0], lines[5]]) {
     assert.ok(line.startsWith(`\x1b[48;2;${cr};${cg};${cb}m`), 'panel backdrop first')

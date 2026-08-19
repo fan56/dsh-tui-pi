@@ -120,11 +120,13 @@ export class TodosPanel implements Component {
       + subtle(`(${done}/${this.todos.length})`)
     const out = [panelTopBorder(boxWidth, borderFg), borderedRow(boxWidth, borderFg, headerInner)]
 
-    // Table header: every cell padded to its column so the rows align.
+    // Table header: every cell padded to its column so the rows align, each
+    // painted in the subtle foreground (secondary info — matches the idx
+    // column below).
     out.push(borderedRow(
       boxWidth,
       borderFg,
-      TODO_COLUMNS.map((column, i) => padCell(column.title, colWidths[i], column.align)).join(TABLE_SEP),
+      TODO_COLUMNS.map((column, i) => subtle(padCell(column.title, colWidths[i], column.align))).join(TABLE_SEP),
     ))
 
     for (let i = 0; i < this.todos.length; i++) {

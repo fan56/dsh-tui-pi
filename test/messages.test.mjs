@@ -235,3 +235,58 @@ test('the whale 🐳 prefixes the assistant\'s formal answer inline, once per me
   const after = doc.children.map(c => c.render(200).join('\n')).join('\n')
   assert.ok(stripAnsi(after).includes('🐳: hello there'), 'whale survives the theme rebuild (replayed with the message)')
 })
+
+// ------------------------------------------------------- user bubble ----
+
+test('user bubbles carry the dark foreground SGR (visible on the dark canvas)', () => {
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, darkTheme, () => {})
+  renderer.applyEvent({
+    type: 'user/message',
+    data: {
+      content: [{ type: 'text', text: 'hello there' }],
+      source: { kind: 'user' },
+    },
+    ts: 0,
+    seq: 1,
+  })
+  const bubble = doc.children.find(c => stripAnsi(c.render(200).join('\n')).includes('▎ hello there'))
+  assert.ok(bubble, 'user bubble is rendered')
+  const rendered = bubble.render(200).join('\n')
+  // The bubble text must be painted with the dark palette's foreground
+  // (#e6edf3 → 230;237;243), never the terminal default (dark-on-dark is
+  // invisible). Regression: userMessageText was previously not applied.
+  assert.ok(rendered.includes('\x1b[38;2;230;237;243m'), 'user text carries the dark fg SGR, not the terminal default')
+
+  // Plan-B core semantics: userMessageText ends with a foreground-only
+  // reset (\x1b[39m), not a full \x1b[0m. The bubble's right padding is
+  // appended by Text.render AFTER the text and wrapped together by
+  // userMessageBg — bgFn(withPadding) = ansiBg(canvasSubtle) + content +
+  // padding + RESET — so a full reset here would drop the padding back to
+  // the canvas background (#0d1117). Lock the expected row order on the
+  // content line: canvasSubtle bg opens the row, then fg prefix + text +
+  // \x1b[39m, then padding only, then the single trailing RESET.
+  const contentLine = rendered.split('\n').find(line => line.includes('\x1b[38;2;230;237;243m'))
+  assert.ok(contentLine, 'the fg SGR marks the bubble content line')
+  assert.ok(
+    contentLine.startsWith('\x1b[48;2;22;27;34m'),
+    'bubble row opens on the canvasSubtle surface (dark #161b22 → 48;2;22;27;34)',
+  )
+  const fgReset = '\x1b[39m'
+  assert.ok(contentLine.includes(fgReset), 'text is closed with a foreground-only reset, never a full \x1b[0m')
+  const afterFgReset = contentLine.slice(contentLine.indexOf(fgReset) + fgReset.length)
+  // Between \x1b[39m and the line's end there is nothing but the right
+  // padding: the canvasSubtle background set at the row start stays active
+  // across it. A full reset here would leave padding-colored canvas behind.
+  assert.match(
+    afterFgReset,
+    /^ *\x1b\[0m$/,
+    'right padding keeps the canvasSubtle backdrop until the single trailing RESET',
+  )
+  assert.ok(
+    !rendered.includes('\x1b[48;2;13;17;23m'),
+    'the canvas background SGR (dark #0d1117) never leaks into the bubble',
+  )
+
+  assert.ok(stripAnsi(rendered).includes('▎ hello there'), 'bubble content survives')
+})

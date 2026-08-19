@@ -136,7 +136,11 @@ export function buildTheme(palette: Palette): TuiTheme {
 
   const chat: ChatTheme = {
     userMessageBg: bg(palette.canvasSubtle),
-    userMessageText: fg(palette.fgDefault),
+    // Foreground-only reset (\x1b[39m): the bubble's right padding is added
+    // after the text and wrapped by userMessageBg, so a full \x1b[0m reset
+    // here would drop that padding back to the canvas background. Resetting
+    // only the foreground keeps the canvasSubtle backdrop across the row.
+    userMessageText: text => ansiFg(palette.fgDefault) + text + '\x1b[39m',
     // Tool card surfaces share the blue tool surface; only the settle status
     // swaps the header tint (success green / error red).
     toolPendingBg: bg(palette.toolPanelBg),

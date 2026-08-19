@@ -64,16 +64,18 @@ const AGENT_COLORS: Record<string, string> = {
   cyan: '#1b7c83',
 }
 
-/** Bright variants for the dark theme (the light hexes are too dim on dark). */
+/** Bright variants for the dark theme — the cmux GitHub Dark bright half
+ * (#ffa198/#79c0ff/#56d364/#e3b341/#d2a8ff + GitHub emphasis orange/pink),
+ * matching the theme palette's brightened status hues. */
 const AGENT_COLORS_DARK: Record<string, string> = {
-  red: '#ff7b72',
-  blue: '#58a6ff',
-  green: '#3fb950',
-  yellow: '#d29922',
-  purple: '#bc8cff',
-  orange: '#f0883e',
-  pink: '#db61a2',
-  cyan: '#39c5cf',
+  red: '#ffa198',
+  blue: '#79c0ff',
+  green: '#56d364',
+  yellow: '#e3b341',
+  purple: '#d2a8ff',
+  orange: '#ffa657',
+  pink: '#f778ba',
+  cyan: '#56d4dd',
 }
 
 /** The label-dot color for an agent color name under the active theme. */

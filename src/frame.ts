@@ -38,9 +38,10 @@ function fillLine(theme: TuiTheme, line: string, width: number): string {
 /**
  * Full-box wrapper for one overlay component: `┌─┐` top border, `│`-bordered
  * content rows, `└─┘` bottom border — each with a blank spacer row inside
- * the box for breathing room, colored `palette.borderDefault` on the panel's
- * canvasSubtle backdrop. Every row spans the full overlay width on that
- * backdrop (see fillLine); the child renders at width − 2.
+ * the box for breathing room, colored `palette.panelBoxBorder` (accent-tinted
+ * so every popup reads as the theme color) on the panel's canvasSubtle
+ * backdrop. Every row spans the full overlay width on that backdrop (see
+ * fillLine); the child renders at width − 2.
  */
 export class FramedOverlay implements Component {
   private readonly theme: TuiTheme
@@ -57,7 +58,7 @@ export class FramedOverlay implements Component {
 
   render(width: number): string[] {
     const contentWidth = Math.max(1, width - 2)
-    const borderFg = ansiFg(this.theme.palette.borderDefault)
+    const borderFg = ansiFg(this.theme.palette.panelBoxBorder)
     const border = (chars: string) => borderFg + chars + RESET
     // Side-bordered content row: the child's own styling runs between the
     // two `│`s; fillLine re-applies the backdrop after any mid-line RESETs.

@@ -100,6 +100,14 @@ test('todos render as a bordered table panel with status icons, counts and align
   assert.deepEqual(widgetRows(activityDoc), [], 'no last request, no agents → activity empty')
 })
 
+test('todos table header row is painted in fgSubtle', () => {
+  const { todosDoc, widget } = makeWidget()
+  widget.renderTodos([{ content: 'a', status: 'pending' }])
+  const headerRow = todosDoc.render(200).find(row => stripAnsi(row).includes('Task'))
+  assert.ok(headerRow, 'header row renders')
+  assert.ok(headerRow.includes(ansiFg(darkTheme.palette.fgSubtle)), 'header painted with fgSubtle')
+})
+
 test('empty todos render no panel; the widgets doc collapses to zero rows', () => {
   const { todosDoc, activityDoc, widget } = makeWidget()
   widget.renderTodos([])
