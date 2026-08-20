@@ -3,7 +3,7 @@
  *
  * dsh-tui-pi never re-implements a command: autocomplete lists
  * `ctx.commands.list(agent)` and submission routes through
- * `ctx.commands.execute(agent, line, signal)`. Anything that is not a
+ * `executeCommand(ctx.commands, agent, line, signal)`. Anything that is not a
  * resolvable command falls through to the model as an ordinary prompt, so
  * every command registered by dsh packages (plan, compact, feedback, export,
  * permission, goal, …) works here unchanged and future registrations appear
@@ -17,7 +17,13 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { parseCommand, type CommandDescriptor, type CommandResult } from '@deepseek-ai/dsh-commands'
+import {
+  parseCommand,
+  type CommandDescriptor,
+  type CommandExecution,
+  type CommandResult,
+} from '@deepseek-ai/dsh-commands'
+import type { EncodedImageAttachment } from '@deepseek-ai/dsh-attachment/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from '@earendil-works/pi-tui'
 import {
@@ -42,6 +48,60 @@ function tokenAtCursor(line: string, cursorCol: number): { token: string; start:
   if (match === null) return undefined
   const start = match.index + (match[1] ?? '').length
   return { token: upto.slice(start), start }
+}
+
+/**
+ * Call `commands.execute` across dsh-commands API versions.
+ *
+ * rc.7 signature: execute(agent, line, signal)               — 3 params
+ * rc.8 signature: execute(agent, line, images, signal)       — 4 params
+ *
+ * The overloaded declaration accepts both call shapes so callers always
+ * pass `(commands, agent, line, signal)`.  The implementation body
+ * dispatches to the correct argument count: for rc.7 the 3-arg form
+ * (signal in position 3); for rc.8 the 4-arg form (empty images array
+ * in position 3, signal in position 4).
+ *
+ * @internal — exported for unit testing.
+ */
+export function executeCommand(
+  commands: { execute: (...args: never[]) => unknown },
+  agent: Agent,
+  line: string,
+  signal: AbortSignal,
+): Promise<CommandExecution | undefined>
+export function executeCommand(
+  commands: { execute: (...args: never[]) => unknown },
+  agent: Agent,
+  line: string,
+  images: readonly EncodedImageAttachment[],
+  signal: AbortSignal,
+): Promise<CommandExecution | undefined>
+export function executeCommand(
+  commands: { execute: (...args: never[]) => unknown },
+  agent: Agent,
+  line: string,
+  imagesOrSignal: readonly EncodedImageAttachment[] | AbortSignal,
+  maybeSignal?: AbortSignal,
+): Promise<CommandExecution | undefined> {
+  if (maybeSignal !== undefined) {
+    // Explicit 4-arg call: caller provided images + signal directly.
+    return (commands.execute as (...args: unknown[]) => unknown)(
+      agent, line, imagesOrSignal, maybeSignal,
+    ) as Promise<CommandExecution | undefined>
+  }
+  // Caller passed only (agent, line, signal) — route by runtime arity.
+  // rc.8 added an `images` parameter before `signal`; detect via .length
+  // and insert an empty images array when needed.
+  const signal = imagesOrSignal as AbortSignal
+  if (commands.execute.length >= 4) {
+    return (commands.execute as (...args: unknown[]) => unknown)(
+      agent, line, [], signal,
+    ) as Promise<CommandExecution | undefined>
+  }
+  return (commands.execute as (...args: unknown[]) => unknown)(
+    agent, line, signal,
+  ) as Promise<CommandExecution | undefined>
 }
 
 /** A TUI-owned command body that needs no receiving agent. */
@@ -112,7 +172,7 @@ export class CommandService {
     }
 
     try {
-      const execution = await commands.execute(agent, line, signal)
+      const execution = await executeCommand(commands, agent, line, signal)
       if (execution === undefined) return { handled: false }
       if (execution.result.kind === 'error') return { handled: true, error: execution.result.text }
       return { handled: true, ...execution.result.text === undefined ? {} : { text: execution.result.text } }
