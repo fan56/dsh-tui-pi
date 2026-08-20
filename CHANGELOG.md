@@ -6,6 +6,35 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Subagent discovery: budget-aware header gate + persisted-header safety**.
+  In-process children (spawn and fork-driven alike) are created through
+  dsh's `childSessionMeta`, which writes `origin: 'subagent'` AND a
+  `delegationDepth` budget (>= 1) together, so the origin marker alone
+  already identifies them; the gate additionally admits an origin-less
+  header that carries a positive budget as a defensive fallback (label
+  `fork <id8>` — current dsh does not produce this shape). Crucially, BOTH
+  this gate and `/resume`'s `isResumableSessionHeader` judge the budget BY
+  VALUE (`> 0` / `=== 0`), never by field presence: the jsonl persistence
+  backend materialises `delegationDepth: 0` on every restored header (write
+  `?? 0`, read back unconditionally), so a presence test would (a) pull
+  user-facing `Session.fork` conversations and other restored non-children
+  onto the live board / Ctrl+G, and (b) filter EVERY persisted session out
+  of `/resume` (empty picker). `/resume` excludes exactly the delegated
+  children (`origin: 'subagent'` or budget > 0) and keeps root sessions and
+  user-facing forks resumable. Two regression tests pin the persisted
+  shapes (jsonl round-trip materialises `delegationDepth: 0`; a restored
+  depth-0 fork with a tracked parent must stay off the board). 455 → 457
+  tests.
+- **DCP compaction visibility inside subagents**: dsh-dcp appends one
+  `user/message` `notice`-form row per committed compaction on the child's own
+  log (`source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice', summary }`).
+  The Ctrl+G transcript now renders that row with a `🧹` marker — distinct
+  from the generic `ⓘ` — and the picker rows carry the per-child compaction
+  count (`🧹 N×` in the description). Every tracked child shows its
+  compactions the same way.
+
 ### Changed
 
 - **Icon-set self-adaptation (方案 C)**: the TUI's only Private-Use-Area
@@ -27,7 +56,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it and best-effort flips the terminal (macOS iTerm2 via PlistBuddy on the
   default bookmark, Linux GNOME Terminal via gsettings + kitty/alacritty/
   wezterm config files backed up first; Terminal.app/SSH/Windows skipped) —
-  or set any Nerd Font by hand (README → Fonts). 419 → 433 tests.
+  or set any Nerd Font by hand (README → Fonts). 419 → 439 tests.
 - **Subagent "rounds" now count assistant messages, not completed turns**:
   a round is one `assistant/message` (one LLM round-trip) on the child's own
   session events, so a one-shot child — which lives its whole life inside a
@@ -79,6 +108,25 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the dropped `\x1b[23m` never leaks past the row (regression-tested against
   the real SelectList). The `/settings` Skills panel keeps the plain `[s]` tag
   (its row-line is a fixed-column plain-text contract). 394 → 398 tests.
+
+### Fixed
+
+- **Subagent round count no longer inflates when a streamed event lands after
+  the session-log reconcile**: the `reconcileChildRounds` fallback derives a
+  child's count from its authoritative session log, and the event path counts
+  streamed `assistant/message` events. When the log got a message first and
+  that message's own streamed event then arrived late, the old event path did
+  `current + 1` on the reconcile-derived value — and because the reconcile
+  only ever moves the count up, the +1 was permanent (per-child "rounds" and
+  the `maxRounds` wrap-up both drifted high). The event path now keeps its own
+  absolute streamed ledger and the displayed count is `max(streamed,
+  reconciled)`, aligned with the reconcile's only-upward semantics; reseed /
+  torn-down handling is unchanged.
+- **Redundant `assistant/chunk` guard removed**: the inner
+  `if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta')` in
+  the child chunk fold was always true (the outer guard already narrowed it);
+  the pending-estimate pricing now runs unconditionally inside that branch.
+  439 → 455 tests.
 
 ## [0.8.3] — 2026-08-20
 

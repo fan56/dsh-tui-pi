@@ -6,7 +6,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizePreview, previewOfEvents } from '../lib/sessions.js'
+import { normalizePreview, previewOfEvents, isResumableSessionHeader } from '../lib/sessions.js'
 import { stashSessionIdForReload, takeStashedSessionId } from '../lib/session.js'
 
 const userMsg = (text, sourceKind = 'user', extra = {}) => ({
@@ -83,4 +83,49 @@ test('normalizePreview clips over-long previews with an ellipsis', () => {
   stashSessionIdForReload(undefined)
   assert.equal(takeStashedSessionId(), undefined)
   assert.equal(takeStashedSessionId(), undefined)
+})
+
+
+// ---------------------------------------------------------------------------
+// /resume filter: `isResumableSessionHeader` excludes every delegated child
+// (spawn AND fork-driven — both carry `origin: 'subagent'` +
+// `delegationDepth >= 1`); resuming one as the TUI's main conversation would
+// misplace it in the recursion budget. Everything else stays resumable.
+// The budget test is a VALUE test on purpose — see the persisted-shapes test
+// below for why field presence would break /resume entirely.
+
+test('isResumableSessionHeader excludes spawn subagent children', () => {
+  assert.equal(isResumableSessionHeader({ origin: 'subagent' }), false)
+  assert.equal(isResumableSessionHeader({ origin: 'subagent', delegationDepth: 2 }), false)
+})
+
+test('isResumableSessionHeader excludes budget-marked children even without the origin', () => {
+  // Defensive shape (current dsh always writes the origin too): a header
+  // carrying only a positive budget is still a delegated child.
+  assert.equal(isResumableSessionHeader({ delegationDepth: 1, parentSession: 'p' }), false)
+})
+
+test('isResumableSessionHeader keeps user-facing forks and root sessions resumable', () => {
+  // In-memory `Session.fork` lineage is parentSession + seedLength only — a
+  // forked conversation is a real session the user may want to resume.
+  assert.equal(isResumableSessionHeader({ parentSession: 'p', seedLength: 2 }), true)
+  assert.equal(isResumableSessionHeader({}), true)
+})
+
+test('isResumableSessionHeader handles persisted shapes (jsonl round-trip materialises delegationDepth: 0)', () => {
+  // Regression guard: the jsonl persistence backend writes
+  // `delegationDepth: header.delegationDepth ?? 0` and reads the field back
+  // unconditionally, so EVERY header from persistence.list() carries it —
+  // non-child sessions as 0. These are the exact shapes observed on disk
+  // (590-session survey of ~/.dsh/sessions). A field-presence test
+  // (`delegationDepth === undefined`) returns false for all of them and
+  // leaves /resume with an empty list.
+  const persistedRoot = { delegationDepth: 0 } // top-level conversation
+  const persistedUserFork = { parentSession: 'p', seedLength: 112416, delegationDepth: 0 }
+  const persistedSpawn = { origin: 'subagent', parentSession: 'p', delegationDepth: 1 }
+  const persistedForkChild = { origin: 'subagent', parentSession: 'p', seedLength: 4, delegationDepth: 1 }
+  assert.equal(isResumableSessionHeader(persistedRoot), true)
+  assert.equal(isResumableSessionHeader(persistedUserFork), true)
+  assert.equal(isResumableSessionHeader(persistedSpawn), false)
+  assert.equal(isResumableSessionHeader(persistedForkChild), false)
 })

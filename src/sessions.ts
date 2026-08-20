@@ -255,6 +255,24 @@ export type PickSessionResult =
   | { kind: 'picked'; id: SessionId; header: SessionHeader }
 
 /**
+ * Whether a persisted session header may be resumed as this TUI's main
+ * conversation. Subagent children — spawn and fork-driven alike, both marked
+ * `origin: 'subagent'` + `delegationDepth >= 1` — are excluded: resuming one
+ * would misplace it in the recursion budget. Everything else is resumable.
+ *
+ * The budget test MUST be a value test, not a field-presence test: the jsonl
+ * persistence backend writes `delegationDepth: header.delegationDepth ?? 0`
+ * and reads it back unconditionally, so EVERY header from
+ * `persistence.list()` carries the field — top-level sessions and
+ * user-facing `Session.fork` conversations as `0`. A presence test
+ * (`=== undefined`) would filter out every persisted session and leave
+ * `/resume` with an empty list.
+ */
+export function isResumableSessionHeader(header: SessionHeader): boolean {
+  return header.origin !== 'subagent' && (header.delegationDepth ?? 0) === 0
+}
+
+/**
  * Open the persisted-session picker. Resolves with the picked session,
  * `cancelled` when dismissed, or `empty` when no other session exists.
  * Throws when the profile has no persistence backend. Focus returns to
@@ -279,9 +297,7 @@ export async function pickPersistedSession(
     throw new Error(`Failed to list persisted sessions: ${message}`)
   }
   const candidates = headers
-    // Subagent children carry a persisted delegation depth — resuming one as
-    // this TUI's main conversation would misplace it in the recursion budget.
-    .filter(header => header.origin !== 'subagent')
+    .filter(isResumableSessionHeader)
     .filter(header => String(header.id) !== excludeSessionId)
     .sort((a, b) => b.createdAt - a.createdAt)
   if (candidates.length === 0) return { kind: 'empty' }

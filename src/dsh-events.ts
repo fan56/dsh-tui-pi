@@ -84,13 +84,29 @@ export function isLlmRetry(event: SessionEvent): event is SessionEvent & { type:
 }
 
 /**
+ * Type guard for a dsh-dcp compaction notice. DCP appends ONE `user/message`
+ * row per committed compaction with
+ * `source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice', summary }`
+ * (the summary reads like `dcp: compacted N history items (~X tokens, …)`).
+ * Recognized on the child's own log so the viewer can render a compaction-
+ * specific marker row and the bridge can tally a per-child count.
+ */
+export function isDcpCompactionNotice(event: SessionEvent): boolean {
+  if (event.type !== 'user/message') return false
+  const source = (event.data as { source?: { kind?: string; plugin?: string; form?: string } }).source
+  return source?.kind === 'plugin' && source?.plugin === 'dsh-dcp' && source?.form === 'notice'
+}
+
+/**
  * One live subagent row the TUI renders: the bridge's per-child fold of
  * workflow events (parent log) and the child's own session events. Children
  * are keyed by their session id — discovered either from
  * `tool-workflow/agent-start` or, when the deployment never emits workflow
- * events, from the child session's header (`origin: 'subagent'` +
- * `parentSession`). All fields are O(1)-maintained — never a session-log
- * scan on the render path.
+ * events, from the child session's header (`parentSession` pointing at a
+ * tracked session + the delegation markers `origin: 'subagent'` or
+ * `delegationDepth > 0`; dsh's childSessionMeta writes both for spawn and
+ * in-process fork children alike). All fields are O(1)-maintained — never a
+ * session-log scan on the render path.
  */
 export interface AgentView {
   /** The child session id (raw string) — the stable identity key. */

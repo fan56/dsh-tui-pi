@@ -18,7 +18,7 @@ import { settingsNamespace, SettingsConflictError, type SettingsPathOp } from '@
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
 import type { AgentView } from './dsh-events.ts'
-import { isAgentEnd, isAgentStart, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
+import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
 import { installSpawnToolFence } from './subagent-policy.ts'
 import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
 
@@ -265,6 +265,15 @@ export class DshSessionBridge {
    */
   private readonly roundCounts = new Map<string, number>()
   /**
+   * The EVENT path's own absolute per-child assistant-message count — its
+   * ledger of streamed `assistant/message` events it has actually received.
+   * The reconcile derives its own count from the session log; the displayed
+   * "rounds" is `max(streamed, reconciled)` (see foldTracked). Keeping the
+   * two ledgers separate is what makes a message the reconcile already
+   * counted immune to a second count when its streamed event arrives late.
+   */
+  private readonly streamedRoundCounts = new Map<string, number>()
+  /**
    * Per-child usage snapshot of the latest assistant/message (see
    * `lastUsage` for the main session) — the exact billed context of the
    * child's last request, the `contextTokens` baseline.
@@ -276,6 +285,13 @@ export class DshSessionBridge {
    * `contextTokens` increment that makes the compact `X/Y` follow live.
    */
   private readonly childPending = new Map<string, number>()
+  /**
+   * Per-child dsh-dcp compaction count — one per `user/message` notice whose
+   * source is `{ kind: 'plugin', plugin: 'dsh-dcp', form: 'notice' }`. The
+   * viewer's picker rows read this via `getChildCompactionCount` so the user
+   * sees at a glance whether DCP actually compacted inside a child.
+   */
+  private readonly childCompactionCounts = new Map<string, number>()
   /**
    * Per-child session-log length already reconciled (see
    * reconcileChildRounds). Incremental high-water, so the reconcile scans
@@ -311,17 +327,35 @@ export class DshSessionBridge {
       const sessionKey = String(session.id)
       // Discover subagent children by session header — the deployment may
       // never emit tool-workflow events (the firehose is not scope-filtered,
-      // so child sessions arrive here too). Any session whose parent is a
-      // tracked session is a child; the descriptor event later refines the
-      // label/provider.
+      // so child sessions arrive here too). A session whose parent is a
+      // tracked session AND is marked as delegated is a child; the descriptor
+      // event later refines the label/provider.
+      //
+      // Guard: a child is `origin: 'subagent'` OR a delegation budget
+      // `delegationDepth > 0`. Both markers are written together by dsh's
+      // childSessionMeta (spawn AND in-process fork children alike), so in
+      // practice the origin alone carries the decision; the budget clause
+      // only future-proofs the gate against a child that carries the budget
+      // without the origin. The budget test MUST be a VALUE test, not a
+      // field-presence test: the jsonl persistence backend materialises
+      // `delegationDepth: 0` on every restored header (write `?? 0`, read
+      // unconditionally), so a presence test would pull user-facing
+      // `Session.fork` conversations and other non-child restored sessions
+      // onto the live board / Ctrl+G.
       const header = session.header
-      if (header?.origin === 'subagent' && header.parentSession !== undefined
+      if (header?.parentSession !== undefined
+        && (header.origin === 'subagent' || (header.delegationDepth ?? 0) > 0)
         && this.trackedSessions.has(String(header.parentSession))
         && !this.agentViews.has(sessionKey)) {
         this.agentViews.set(sessionKey, {
           childId: sessionKey,
           parentSession: String(header.parentSession),
-          label: `subagent ${sessionKey.slice(0, 8)}`,
+          // Current dsh children always carry the origin, so in practice the
+          // label is `subagent <id8>`; the `fork` label only fires for the
+          // defensive budget-without-origin shape above.
+          label: header.origin === undefined
+            ? `fork ${sessionKey.slice(0, 8)}`
+            : `subagent ${sessionKey.slice(0, 8)}`,
           startedAt: event.time,
           tokens: 0,
           rounds: 0,
@@ -444,6 +478,11 @@ export class DshSessionBridge {
     return this.roundCounts.get(childId) ?? 0
   }
 
+  /** dsh-dcp compaction count of one child (viewer picker rows). */
+  getChildCompactionCount(childId: string): number {
+    return this.childCompactionCounts.get(childId) ?? 0
+  }
+
   /** Whether one child settled (a continuable child may resume later). */
   isChildSettled(childId: string): boolean {
     return this.agentViews.get(childId)?.outcome !== undefined
@@ -519,8 +558,10 @@ export class DshSessionBridge {
     this.childLogs.clear()
     this.childStreams.clear()
     this.roundCounts.clear()
+    this.streamedRoundCounts.clear()
     this.childUsage.clear()
     this.childPending.clear()
+    this.childCompactionCounts.clear()
     this.reconciledLen.clear()
     this.reconciledCount.clear()
     this.trackedSessions.clear()
@@ -557,8 +598,10 @@ export class DshSessionBridge {
     this.childLogs.clear()
     this.childStreams.clear()
     this.roundCounts.clear()
+    this.streamedRoundCounts.clear()
     this.childUsage.clear()
     this.childPending.clear()
+    this.childCompactionCounts.clear()
     this.reconciledLen.clear()
     this.reconciledCount.clear()
     this.trackedSessions.clear()
@@ -806,9 +849,24 @@ export class DshSessionBridge {
           // view settled — continuable children resume. `turn/end` is NOT the
           // round unit: a one-shot child never leaves its single turn, so its
           // rounds would stay frozen at 0 while it works.
-          const count = (this.roundCounts.get(sessionId) ?? 0) + 1
-          this.roundCounts.set(sessionId, count)
-          this.callbacks.onRoundCount?.(sessionId, count)
+          // The event path keeps its OWN absolute streamed count and merges
+          // it with the reconcile's log-derived count by max() — the two
+          // ledgers never double count. A message the reconcile already
+          // counted (its `assistant/message` reached the session log first)
+          // must not be counted AGAIN when that same event arrives late here:
+          // the reconcile only moves the count up, so a naive `current + 1`
+          // would inflate it permanently. Caveat: "absolute" holds only while
+          // the firehose delivers each event at most once — there is no seq
+          // de-dup, so a redelivered `assistant/message` inflates the
+          // streamed ledger permanently (the previous `current + 1` counter
+          // had the same exposure).
+          const streamed = (this.streamedRoundCounts.get(sessionId) ?? 0) + 1
+          this.streamedRoundCounts.set(sessionId, streamed)
+          const count = Math.max(streamed, this.roundCounts.get(sessionId) ?? 0)
+          if (count !== (this.roundCounts.get(sessionId) ?? 0)) {
+            this.roundCounts.set(sessionId, count)
+            this.callbacks.onRoundCount?.(sessionId, count)
+          }
           const usage = event.data.usage
           const delta = usage === undefined
             ? 0
@@ -863,9 +921,9 @@ export class DshSessionBridge {
               // follows live.
               const wasPending = this.childPending.get(sessionId) ?? 0
               const lineChanged = lastLine !== undefined && lastLine !== view.lastLine
-              if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
-                this.childPending.set(sessionId, wasPending + estimateTextTokens(delta))
-              }
+              // The outer guard already narrowed to text/reasoning deltas, so
+              // this branch is unconditional.
+              this.childPending.set(sessionId, wasPending + estimateTextTokens(delta))
               const contextTokens = this.childContextTokens(sessionId)
               const contextChanged = contextTokens !== view.contextTokens
               if (lineChanged || contextChanged) {
@@ -880,7 +938,15 @@ export class DshSessionBridge {
           }
         } else if (event.type === 'user/message') {
           // The child's own prompts/injects enter its next request — the
-          // occupancy follows (the content tail is never touched here).
+          // occupancy follows (the content tail is never touched here). A
+          // dsh-dcp compaction notice (plugin `notice` form) also tallies the
+          // per-child compaction count the viewer's picker rows read.
+          if (isDcpCompactionNotice(event)) {
+            this.childCompactionCounts.set(
+              sessionId,
+              (this.childCompactionCounts.get(sessionId) ?? 0) + 1,
+            )
+          }
           this.childPending.set(
             sessionId,
             (this.childPending.get(sessionId) ?? 0)

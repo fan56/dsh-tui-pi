@@ -83,13 +83,13 @@ test('a running child counts one round per assistant/message — never per turn/
   })
   await bridge.ensureAgent()
   // Discover the child through its session header (the primary path).
-  emit(handlers, { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }, {
+  emit(handlers, { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }, {
     type: 'subagent/descriptor',
     seq: 0,
     time: 2,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
   })
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
 
   emit(handlers, childSession, assistantMessage(1, 10))
   assert.equal(bridge.getRoundCount('child-1'), 1, 'one assistant/message = round 1')
@@ -139,7 +139,7 @@ test('reconcileChildRounds never double-counts against the event-driven path', a
   })
   await bridge.ensureAgent()
   discoverViaParentWorkflow(handlers, 'child-1')
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
 
   // Two rounds arrive BOTH as bridged events and in the log (healthy path).
   for (const seq of [1, 3]) {
@@ -233,7 +233,7 @@ test('subagent occupancy = latest request, while view.tokens stays cumulative (v
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })
   await bridge.ensureAgent()
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
   // Discover the child through its header (the primary path).
   emit(handlers, childSession, {
     type: 'subagent/descriptor', seq: 0, time: 1,
@@ -338,7 +338,7 @@ test('a usage-less child assistant/message keeps the child occupancy baseline', 
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })
   await bridge.ensureAgent()
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
   emit(handlers, childSession, {
     type: 'subagent/descriptor', seq: 0, time: 1,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
@@ -386,7 +386,7 @@ test('a streamed child text-delta chunk estimate is superseded by the next bille
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })
   await bridge.ensureAgent()
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
   emit(handlers, childSession, {
     type: 'subagent/descriptor', seq: 0, time: 1,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
@@ -430,7 +430,7 @@ test('child assistant/chunk reasoning-delta prices into the child pending estima
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })
   await bridge.ensureAgent()
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
   emit(handlers, childSession, {
     type: 'subagent/descriptor', seq: 0, time: 1,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
@@ -441,5 +441,203 @@ test('child assistant/chunk reasoning-delta prices into the child pending estima
   })
   assert.equal(bridge.getAgentViews()[0].contextTokens, 1,
     'child reasoning-delta priced into pending (4 chars -> 1)')
+  await bridge.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Discovery gate shape coverage. Current dsh writes `origin: 'subagent'` +
+// `delegationDepth >= 1` TOGETHER (childSessionMeta, for spawn AND in-process
+// fork children alike), so the origin alone decides in practice. The gate
+// still admits a budget-without-origin header as a defensive fallback, and —
+// critically — must judge the budget BY VALUE (`> 0`), not by field presence:
+// the jsonl persistence backend materialises `delegationDepth: 0` on every
+// restored header, so a presence test would pull user-facing forks and other
+// restored non-children onto the live board / Ctrl+G.
+
+test('a budget-marked child without the origin (defensive shape) is still discovered and folds rounds', async () => {
+  const { ctx, handlers } = makeHarness()
+  const fired = []
+  const bridge = new DshSessionBridge(ctx, {
+    onRoundCount: (c, n) => fired.push([c, n]),
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  // Defensive shape — not produced by current dsh (which always writes the
+  // origin too): parentSession points at a tracked session, a positive
+  // delegation budget is set, origin is absent.
+  const forkChild = { id: 'fork-1', header: { parentSession: 'root-session', delegationDepth: 1, seedLength: 4 } }
+  emit(handlers, forkChild, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 1, 'budget-marked child discovered via header')
+  const view = bridge.getAgentViews()[0]
+  assert.equal(view.childId, 'fork-1')
+  assert.equal(view.parentSession, 'root-session')
+  assert.equal(view.label, 'fork fork-1', 'origin-less children get the fork label (no descriptor refines it)')
+  assert.equal(view.rounds, 1, 'rounds fold from the child own events')
+  assert.equal(bridge.getRoundCount('fork-1'), 1)
+  assert.equal(bridge.getChildLog('fork-1').length, 1, 'the child transcript buffers its own events')
+  assert.equal(bridge.getLiveChildren().length, 1, 'a running fork child enables Ctrl+G')
+  assert.deepEqual(fired, [['fork-1', 1]])
+  await bridge.dispose()
+})
+
+test('a session whose parentSession is NOT tracked is not discovered', async () => {
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const stranger = { id: 'x-1', header: { parentSession: 'some-other', delegationDepth: 1 } }
+  emit(handlers, stranger, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 0, 'not discovered — parent is not a tracked session')
+  assert.equal(bridge.getLiveChildren().length, 0)
+  await bridge.dispose()
+})
+
+test('a session with no parentSession and no origin is not discovered', async () => {
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const root = { id: 'root-2', header: {} }
+  emit(handlers, root, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 0, 'a root-like session is never a child')
+  await bridge.dispose()
+})
+
+test('a user-facing session fork (parentSession tracked, NO delegationDepth) is not discovered', async () => {
+  // The guard: dsh's in-memory `Session.fork` lineage is parentSession +
+  // seedLength only — a forked conversation is a real session, not a
+  // subagent, and must not appear on the live board / Ctrl+G.
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const userFork = { id: 'fork-user', header: { parentSession: 'root-session', seedLength: 2 } }
+  emit(handlers, userFork, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 0, 'user fork stays off the subagent board')
+  assert.equal(bridge.getLiveChildren().length, 0)
+  await bridge.dispose()
+})
+
+test('a restored session with materialised delegationDepth: 0 (parentSession tracked) is not discovered', async () => {
+  // Over-capture guard: jsonl persistence writes `delegationDepth ?? 0` and
+  // reads the field back unconditionally, so a user-facing fork (or any
+  // non-child) that was persisted and restored carries `delegationDepth: 0`.
+  // A field-presence gate (`!== undefined`) would discover it as a child;
+  // the value gate (`> 0`) must not.
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const restoredFork = { id: 'fork-restored', header: { parentSession: 'root-session', seedLength: 112416, delegationDepth: 0 } }
+  emit(handlers, restoredFork, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 0, 'restored depth:0 fork stays off the subagent board')
+  assert.equal(bridge.getLiveChildren().length, 0)
+  await bridge.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// dsh-dcp compaction notices: the bridge buffers the notice into the child
+// transcript AND tallies a per-child compaction count for the picker.
+
+test('a dsh-dcp compaction notice lands in the child log and tallies a compaction', async () => {
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+  emit(handlers, childSession, {
+    type: 'user/message', seq: 1, time: 10,
+    data: {
+      content: [{ type: 'text', text: 'dcp: compacted 40 history items (~12.3k tokens, round)' }],
+      source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice', summary: 'dcp: compacted 40 history items (~12.3k tokens, round)' },
+    },
+  })
+  assert.equal(bridge.getChildLog('child-1').length, 1, 'the notice is buffered into the child transcript')
+  assert.equal(bridge.getChildCompactionCount('child-1'), 1, 'the per-child compaction count tallies the notice')
+
+  // A second compaction notice tallies again.
+  emit(handlers, childSession, {
+    type: 'user/message', seq: 2, time: 20,
+    data: {
+      content: [{ type: 'text', text: 'dcp: compacted 12 history items (~3.1k tokens, round)' }],
+      source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice', summary: 'dcp: compacted 12 history items (~3.1k tokens, round)' },
+    },
+  })
+  assert.equal(bridge.getChildCompactionCount('child-1'), 2, 'a second notice tallies again')
+
+  // A plain plugin message is NOT a compaction notice.
+  emit(handlers, childSession, {
+    type: 'user/message', seq: 3, time: 30,
+    data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'plugin', plugin: 'dsh-tui-pi' } },
+  })
+  assert.equal(bridge.getChildCompactionCount('child-1'), 2, 'non-dcp plugin messages do not tally')
+  assert.equal(bridge.getChildLog('child-1').length, 3, 'the non-notice message is still a transcript row')
+  await bridge.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Round-count race (nit): the event path keeps its own absolute streamed
+// ledger and merges it with the reconcile's log-derived count by max() — a
+// message the reconcile already counted must not be counted AGAIN when its
+// streamed event arrives late (the reconcile only moves up, so a naive
+// `current + 1` would inflate permanently).
+
+test('a message the reconcile already counted is not counted again when its streamed event arrives late', async () => {
+  const { ctx, handlers, childEvents } = makeHarness()
+  const fired = []
+  const bridge = new DshSessionBridge(ctx, {
+    onRoundCount: (c, n) => fired.push([c, n]),
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  discoverViaParentWorkflow(handlers, 'child-1')
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+
+  // The log already holds the message; the reconcile derives round 1 first.
+  childEvents.push(assistantMessage(1, 3))
+  bridge.reconcileChildRounds()
+  assert.equal(bridge.getRoundCount('child-1'), 1, 'reconcile counted 1 from the log')
+
+  // The SAME message's streamed event arrives late — must NOT inflate to 2.
+  emit(handlers, childSession, assistantMessage(1, 3))
+  assert.equal(bridge.getRoundCount('child-1'), 1, 'late streamed event does not double-count')
+
+  // A genuinely new message still advances the count.
+  emit(handlers, childSession, assistantMessage(2, 5))
+  assert.equal(bridge.getRoundCount('child-1'), 2, 'a real new message advances the count')
+  assert.deepEqual(fired, [['child-1', 1], ['child-1', 2]],
+    'onRoundCount fired for the log-derived 1 and the genuinely-new 2 only')
+  await bridge.dispose()
+})
+
+test('the streamed-round ledger survives a reconcile that already saw more messages', async () => {
+  // Healthy dual-source path with the new max() merge: events AND the log
+  // both carry the same messages — the count stays exact, never inflated.
+  const { ctx, handlers, childEvents } = makeHarness()
+  const fired = []
+  const bridge = new DshSessionBridge(ctx, {
+    onRoundCount: (c, n) => fired.push([c, n]),
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  discoverViaParentWorkflow(handlers, 'child-1')
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+
+  // Reconcile sees the log first (events delayed), derives 2 rounds.
+  childEvents.push(assistantMessage(1, 3))
+  childEvents.push(assistantMessage(2, 4))
+  bridge.reconcileChildRounds()
+  assert.equal(bridge.getRoundCount('child-1'), 2)
+
+  // Both messages' events then stream in — no inflation, no regression.
+  emit(handlers, childSession, assistantMessage(1, 3))
+  emit(handlers, childSession, assistantMessage(2, 4))
+  assert.equal(bridge.getRoundCount('child-1'), 2, 'replayed-looking stream does not inflate')
+  assert.deepEqual(fired, [['child-1', 2]], 'onRoundCount fired once, for the reconciled 2')
   await bridge.dispose()
 })
