@@ -6,6 +6,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-08-20
+
 ### Fixed
 
 - **Slash commands crash with dsh 0.1.0-rc.8** (`Cannot read properties of
