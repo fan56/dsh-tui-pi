@@ -52,10 +52,17 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import {
+  columnWidths,
+  MARKER_W,
+  padCell,
   panelThemeFns,
   SettingsListPanel,
   type SettingsRow,
+  TABLE_SEP,
+  tableHeaderLine,
+  tableRuleLine,
   ViewerPanel,
+  type TableColumn,
 } from './panels.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
@@ -71,7 +78,6 @@ import {
 } from './provider-catalog.ts'
 import {
   applySkillFrontmatter,
-  BADGE_WIDTH,
   clampScrollOffset,
   clampSkillCursor,
   filterSkillRows,
@@ -82,8 +88,6 @@ import {
   skillEnabled,
   skillJumpCursor,
   skillPanelRowLine,
-  SKILL_INDEX_WIDTH,
-  SKILL_STATE_WIDTH,
   skillToggleEnabled,
   type SkillJump,
   type SkillPanelRow,
@@ -595,10 +599,10 @@ class SkillsPanel implements Component {
 
   /** The overlay renders at `maxHeight` of terminal rows; FramedOverlay adds
    *  4 chrome rows (top border + spacer + bottom spacer + border); the child
-   *  adds 5 tail rows after the skill list (title + spacer + description +
-   *  spacer + footer). */
+   *  adds 7 rows around the skill list (title + spacer + header + rule above,
+   *  description + spacer + footer below). */
   private static readonly FRAME_OVERHEAD = 4
-  private static readonly TAIL_ROWS = 5
+  private static readonly TAIL_ROWS = 7
 
   constructor(
     tui: TUI,
@@ -656,8 +660,7 @@ class SkillsPanel implements Component {
 
     // Calculate how many skill rows fit. The overlay is capped at 80% of
     // terminal rows (SettingsBrowser's maxHeight); FramedOverlay adds 4 chrome
-    // rows; the child appends TAIL_ROWS (title + spacer + description +
-    // spacer + footer) after the skill list.
+    // rows; the child adds TAIL_ROWS around the skill list (see the constant).
     const maxVisibleRows = this.maxVisibleRows()
 
     // Ensure the cursor is in the visible window.
@@ -665,25 +668,36 @@ class SkillsPanel implements Component {
 
     const visibleRows = filtered.slice(this.scrollOffset, this.scrollOffset + maxVisibleRows)
 
-    // Fixed-width prefix segments: marker(2) + index(4) + state(6) + badge(4) = 16.
-    const prefixCols = 2 + (SKILL_INDEX_WIDTH + 1) + (SKILL_STATE_WIDTH + 1) + (BADGE_WIDTH + 1)
+    // The FW table: ON icon column │ SKILL name (flex). No index column, no
+    // state text — ●/○ carries the toggle state, colored on unselected rows.
+    const columns: readonly TableColumn[] = [
+      { key: 'on', title: 'On', width: 2 },
+      { key: 'name', title: 'Skill', flex: true },
+    ]
+    const widths = columnWidths(wrap - MARKER_W, columns)
+    lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), wrap)))
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths), wrap)))
+    // Fixed-width prefix before the separator: marker(2) + icon(2) = 4.
+    const prefixCols = 2 + 2
     for (let vi = 0; vi < visibleRows.length; vi++) {
       const i = this.scrollOffset + vi
       const row = filtered[i]
       const selected = i === this.cursor
-      // One plain-text row (marker+space, index+space, state+space,
-      // badge+space+name), clipped once to width, then colored per
-      // fixed-width segment. The prefix segments are fixed ASCII width so
-      // slicing the clipped line by index is column-exact; the name tail
-      // takes the rest, and clipToWidth guarantees no row ever exceeds
-      // `width`.
-      const plain = clipToWidth(skillPanelRowLine(selected, row.enabled, row.name, i + 1), width)
-      lines.push(
-        fns[selected ? 'accent' : 'muted'](plain.slice(0, 2))
-        + fns.subtle(plain.slice(2, 2 + SKILL_INDEX_WIDTH + 1))
-        + fns[row.enabled ? 'success' : 'muted'](plain.slice(2 + SKILL_INDEX_WIDTH + 1, prefixCols))
-        + fns[selected ? 'accent' : 'muted'](plain.slice(prefixCols)),
+      // One plain-text row (marker + on-icon + separator + padded name),
+      // clipped once to width, then colored per fixed-width segment — the
+      // prefix is fixed width so slicing the clipped line is column-exact.
+      const plain = clipToWidth(
+        skillPanelRowLine(selected, row.enabled, padCell(row.name, widths[1])),
+        width,
       )
+      if (selected) {
+        lines.push(fns.accent(BOLD + plain + RESET))
+      } else {
+        lines.push(
+          fns[row.enabled ? 'success' : 'subtle'](plain.slice(0, prefixCols))
+          + fns.muted(plain.slice(prefixCols)),
+        )
+      }
     }
     const sel = filtered[this.cursor]
     if (sel !== undefined && sel.description !== '') {

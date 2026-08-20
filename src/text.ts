@@ -13,7 +13,7 @@ import { visibleWidth } from '@earendil-works/pi-tui'
 export { visibleWidth }
 
 /** Truncation marker; U+2026 is one terminal column wide. */
-const ELLIPSIS = '…'
+export const ELLIPSIS = '…'
 
 /**
  * Last non-blank line of `text`, ANSI-stripped, newline-normalized and

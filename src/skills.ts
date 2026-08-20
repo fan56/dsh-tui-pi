@@ -25,6 +25,7 @@ import type { AutocompleteItem } from '@earendil-works/pi-tui'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { rowMarker, TABLE_SEP } from './panels.ts'
 
 /**
  * Enabled state of a skill for a human user: visible and loadable on every
@@ -276,23 +277,18 @@ export function isPrintableInput(data: string): boolean {
   return data.length === 1 && data.charCodeAt(0) >= 0x20 && data.charCodeAt(0) !== 0x7f
 }
 
-/** Column width of the 1-based row index in the settings Skills panel. */
-export const SKILL_INDEX_WIDTH = 3
-
 /**
- * Plain-text layout contract for one Skills panel row: a cursor-marker column
- * (`▸` selected / space otherwise), then a 1-based row index, then the
- * fixed-width state + `[s] <name>` row. The state appears exactly once,
- * up front — the row never repeats it at the tail (the bug the custom render
- * fixes). The component applies color per segment on top of this layout;
- * tests assert the plain text.
+ * Plain-text layout contract for one Skills panel row: the cursor-marker
+ * column (`▸` selected / spaces otherwise), the fixed-width ON icon column
+ * (`●` enabled / `○` disabled), the `│` column separator, then the (already
+ * padded) skill name — the FW table language every picker shares, with no
+ * index column. The component applies color per segment on top of this
+ * layout; tests assert the plain text.
  *
- * Prefix column widths: marker(2) + index(4) + state(6) + badge(4) = 16.
+ * Prefix column widths: marker(2) + icon(2) = 4.
  */
-export function skillPanelRowLine(selected: boolean, enabled: boolean, name: string, index: number): string {
-  const marker = selected ? '▸' : ' '
-  const idx = String(index).padStart(SKILL_INDEX_WIDTH)
-  return `${marker} ${idx} ${skillSettingRowLabel(enabled, name)}`
+export function skillPanelRowLine(selected: boolean, enabled: boolean, name: string): string {
+  return `${rowMarker(selected)}${(enabled ? '●' : '○').padEnd(2)}${TABLE_SEP}${name}`
 }
 
 /** The `kind` recorded on a completion item (`command` for unmarked rows). */

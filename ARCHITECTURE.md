@@ -336,16 +336,23 @@ below the content (each with a blank spacer row), colored
 `palette.borderDefault` — 4 extra rows total. The frame wraps the overlay
 root, so a SettingsList **submenu inherits the border automatically**: the
 submenu swaps the list's own render while the frame keeps both border rows in
-place. All 6 `showOverlay` call sites are wrapped:
+place. Every selection overlay speaks the same FW table language
+(src/panels.ts): `●` title, UPPERCASE header row, the `─┼─` rule under it,
+`│`-separated padded columns, ▸ + accent BOLD selection — `TablePanel` for
+the pickers, `SettingsListPanel` for the settings browser. All `showOverlay`
+call sites are wrapped:
 
 | Site | Component | width / maxHeight |
 |---|---|---|
-| selectors.ts `openEffortPicker` | SelectList (effort) | 80% / 75% |
-| selectors.ts `pickTheme` | SelectList (theme) | 80% / 75% |
-| selectors.ts `pickModel` (stage 1) | SelectList (models) | 80% / 75% |
+| selectors.ts `openEffortPicker` | TablePanel (effort) | 80% / 75% |
+| selectors.ts `pickTheme` | TablePanel (theme) | 80% / 75% |
+| selectors.ts `pickPermission` | TablePanel (presets) | 80% / 75% |
+| selectors.ts `pickModel` (stage 1) | TablePanel (models) | 80% / 75% |
+| selectors.ts `pickSkill` | TablePanel (skills) | 80% / 75% |
 | sessions.ts `showSessionInfo` | SessionInfoPanel | 70% / 100% |
-| sessions.ts `pickPersistedSession` | SelectList (sessions) | 80% / 75% |
-| settings.ts `SettingsBrowser.open` | SettingsList (categories) | 80% / 80% |
+| sessions.ts `pickPersistedSession` | TablePanel (sessions) | 80% / 75% |
+| login.ts logout picker | TablePanel (providers) | 80% / 75% |
+| settings.ts `SettingsBrowser.open` | SettingsListPanel (categories) | 80% / 80% |
 
 maxHeights are tuned so the bottom border survives on a 24-row terminal
 (13 list rows + 4 frame rows ≤ 18 at 75%; ~15 + 4 ≤ 19 at 80%; 19 + 4 at 100%).

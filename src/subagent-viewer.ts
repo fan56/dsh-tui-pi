@@ -1,7 +1,7 @@
 /**
  * The subagent viewer — the Ctrl+G surface. Two levels, both on the shared
- * PanelHost overlay (80%): a SelectList picker over the bridge's child views,
- * then a live transcript panel for one child's buffered event log.
+ * PanelHost overlay: a FW table picker (TablePanel) over the bridge's child
+ * views, then a live transcript panel for one child's buffered event log.
  *
  * Picker rows (running first, then the five most recent settled) carry the
  * full picture of a delegation: status icon, label, delegation mode, rounds
@@ -26,7 +26,6 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   getKeybindings,
-  SelectList,
   type Component,
   type SelectItem,
   type TUI,
@@ -37,7 +36,7 @@ import { sunglassesIcon } from './icons.ts'
 import type { DshSessionBridge } from './session.ts'
 import { DOUBLE_PRESS_MS, MIN_DOUBLE_PRESS_GAP_MS } from './keymap.ts'
 import { readSubagentLimits } from './theme-settings.ts'
-import { PanelHost, panelThemeFns, type PanelThemeFns } from './panels.ts'
+import { fitColumnWidth, PanelHost, panelThemeFns, TablePanel, type PanelThemeFns } from './panels.ts'
 import { normalizePreview } from './sessions.ts'
 import { toolSubject } from './activity.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
@@ -47,7 +46,7 @@ import { clipToWidth } from './text.ts'
 const VIEWER_TICK_MS = 300
 /** How many recent settled children appear after the running ones. */
 const SETTLED_CAP = 5
-/** Rows of the picker SelectList visible without scrolling (single source). */
+/** Rows of the picker table visible without scrolling (single source). */
 const PICKER_MAX_VISIBLE = 12
 /** Running-agent spinner glyph (first frame of the live widget's cycle). */
 const RUNNING_GLYPH = '⠋'
@@ -242,42 +241,45 @@ export function nextSelectedIndex(items: readonly SelectItem[], previous: string
 }
 
 /**
- * A SelectList with a footer hint line — the SelectList component has no
- * footer slot, so the hint rides below its rows inside the framed overlay.
+ * The live sub-agent picker — a TablePanel on the shared FW table language
+ * (title, header + rule, │-separated SUB-AGENT/STATS columns, footer) whose
+ * rows re-build on a ~300ms tick.
  *
- * The picker rows are live: a ~300ms timer re-runs `buildItems` (re-reading
- * the bridge's turn counts, token spend and elapsed time) and swaps in a
- * fresh SelectList — pi-tui's SelectList takes items only at construction
- * and exposes no setItems, so it would otherwise hold a frozen snapshot for
- * the whole open duration. The selection follows the highlighted child
- * across the swap via its public `getSelectedItem`/`setSelectedIndex`; the
- * tick only starts once the overlay actually mounted (mirroring the
- * transcript panel).
+ * The picker rows are live: the timer re-runs `buildItems` (re-reading the
+ * bridge's turn counts, token spend and elapsed time) and swaps in a fresh
+ * TablePanel — rows are taken only at construction and there is no
+ * setRows, so the panel would otherwise hold a frozen snapshot for the whole
+ * open duration. The selection follows the highlighted child across the
+ * swap via `selectedRow` + `preselect`; the tick only starts once the
+ * overlay actually mounted (mirroring the transcript panel).
  */
-class SelectListWithFooter implements Component {
+class LiveSubagentTable implements Component {
   private readonly theme: TuiTheme
-  private list: SelectList
-  private readonly footer: string
+  private list: TablePanel<SelectItem>
   private readonly buildItems: () => SelectItem[]
   private readonly requestRender: () => void
   /** Close flow for the live-tick empty case (mirrors the open-time one). */
   private readonly onEmpty: () => void
+  private readonly onSelectItem: (item: SelectItem) => void
+  private readonly onCancelPicker: () => void
   private timer: ReturnType<typeof setInterval> | undefined
 
   constructor(
     theme: TuiTheme,
-    list: SelectList,
-    footer: string,
+    items: SelectItem[],
     buildItems: () => SelectItem[],
     requestRender: () => void,
     onEmpty: () => void,
+    onSelectItem: (item: SelectItem) => void,
+    onCancelPicker: () => void,
   ) {
     this.theme = theme
-    this.list = list
-    this.footer = footer
     this.buildItems = buildItems
     this.requestRender = requestRender
     this.onEmpty = onEmpty
+    this.onSelectItem = onSelectItem
+    this.onCancelPicker = onCancelPicker
+    this.list = this.buildList(items, 0)
   }
 
   invalidate(): void {
@@ -304,11 +306,29 @@ class SelectListWithFooter implements Component {
     }
   }
 
+  /** A fresh table over `items` — widths re-fit, selection at `preselect`. */
+  private buildList(items: readonly SelectItem[], preselect: number): TablePanel<SelectItem> {
+    return new TablePanel(this.theme, {
+      title: '● Sub-agents',
+      columns: [
+        { key: 'label', title: 'Sub-agent', flex: true },
+        { key: 'description', title: 'Stats', width: fitColumnWidth('Stats', items.map(item => item.description ?? ''), 24) },
+      ],
+      rows: items,
+      renderCell: (item, column) => (column.key === 'description' ? item.description ?? '' : item.label),
+      maxVisible: PICKER_MAX_VISIBLE,
+      preselect,
+      footer: '↑↓ navigate · Enter open · Esc close',
+      onSelect: item => this.onSelectItem(item),
+      onCancel: () => this.onCancelPicker(),
+    })
+  }
+
   /**
-   * Rebuild the rows from the bridge and swap in a fresh list, keeping focus.
-   * An empty rebuild (the tracker cleared, or the last settled fell out of
-   * the recent cap) closes exactly like the open-time empty path — it must
-   * not park a stale "No matching commands" SelectList over a dead tracker.
+   * Rebuild the rows from the bridge and swap in a fresh table, keeping
+   * focus. An empty rebuild (the tracker cleared, or the last settled fell
+   * out of the recent cap) closes exactly like the open-time empty path —
+   * it must not park a stale table over a dead tracker.
    */
   private refresh(): void {
     const items = this.buildItems()
@@ -317,22 +337,13 @@ class SelectListWithFooter implements Component {
       this.onEmpty()
       return
     }
-    const previous = this.list.getSelectedItem()?.value
-    const next = new SelectList(items, PICKER_MAX_VISIBLE, this.theme.selectList)
-    next.onSelect = this.list.onSelect
-    next.onCancel = this.list.onCancel
-    next.onSelectionChange = this.list.onSelectionChange
-    next.setSelectedIndex(nextSelectedIndex(items, previous))
-    this.list = next
+    const previous = this.list.selectedRow()?.value
+    this.list = this.buildList(items, nextSelectedIndex(items, previous))
     this.requestRender()
   }
 
   render(width: number): string[] {
-    return [
-      ...this.list.render(width),
-      '',
-      ansiFg(this.theme.palette.fgSubtle) + clipToWidth(this.footer, width) + RESET,
-    ]
+    return this.list.render(width)
   }
 
   handleInput(data: string): void {
@@ -502,7 +513,7 @@ function bodyRowsFor(truncated: boolean): number {
 // --------------------------------------------------------------- the flow --
 
 /**
- * Open the subagent picker / viewer. A SelectList of the bridge's child views
+ * Open the subagent picker / viewer. A table of the bridge's child views
  * (running first, then the five recent settled) opens; Enter opens a
  * live-refreshing transcript panel for that child. An empty list (no running,
  * no settled) closes immediately. Focus returns to `restoreFocus` on close;
@@ -545,27 +556,26 @@ export async function openSubagentViewer(
       finish()
       return
     }
-    const list = new SelectList(items, PICKER_MAX_VISIBLE, theme.selectList)
-    list.setSelectedIndex(0)
-    const panel = new SelectListWithFooter(
-      theme, list, '↑↓ navigate · Enter open · Esc close',
-      buildItems,
+    const panel = new LiveSubagentTable(
+      theme, items, buildItems,
       () => tui.requestRender(),
       () => finish(),
+      item => {
+        // Opening a viewer leaves the picker behind — stop its live refresh.
+        panel.dispose()
+        showViewer(item.value)
+      },
+      () => {
+        panel.dispose()
+        finish()
+      },
     )
-    list.onSelect = item => {
-      // Opening a viewer leaves the picker behind — stop its live refresh.
-      panel.dispose()
-      showViewer(item.value)
-    }
-    list.onCancel = () => {
-      panel.dispose()
-      finish()
-    }
     // Tick only when the overlay mounted: a failed showOverlay already fired
     // the host's onError (restoreFocus + settle) — an orphaned interval would
-    // re-render forever against nothing.
-    const handle = host.open(panel)
+    // re-render forever against nothing. The table's chrome (title + header
+    // + rule + footer) is 5 rows taller than the old bare SelectList, so the
+    // cap moves to 95% to keep the bottom border on a 24-row terminal.
+    const handle = host.open(panel, '80%', '95%')
     if (handle !== undefined) panel.startTicking()
   }
 

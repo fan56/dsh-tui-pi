@@ -1,21 +1,28 @@
 /**
  * Reusable select-panel framework — the shared building blocks behind every
- * picker/browser overlay in this TUI (agents table, field windows, viewers,
- * the /settings browser, and future migrations of the /model and /resume
- * surfaces).
+ * picker/browser overlay in this TUI (the /settings browser, the /model,
+ * /resume, /theme, /permission and skill pickers, the agents table, field
+ * windows and viewers).
+ *
+ * Every panel speaks ONE table language (the TodosPanel look, minus the
+ * index column): an accent BOLD title, an UPPERCASE subtle header row, a
+ * `─┼─` rule under it with junctions exactly under the `│` column
+ * separators, width-exact padded cells so rows and columns align, and the
+ * ▸ marker + accent BOLD selection.
  *
  * What lives here:
  *
- * - `padCell` / `columnWidths` — width-exact table cells (clip + pad by
- *   VISIBLE columns, CJK-safe) and fixed+flex column layout. Cells are
- *   padded so columns align even when row content has different widths —
- *   the classic "table rows are misaligned" bug is a missing pad, not a
- *   missing clip.
+ * - `padCell` / `columnWidths` / `fitColumnWidth` — width-exact table cells
+ *   (clip-with-ellipsis + pad by VISIBLE columns, CJK-safe), fixed+flex
+ *   column layout, and content-fitted fixed columns. Cells are padded so
+ *   columns align even when row content has different widths — the classic
+ *   "table rows are misaligned" bug is a missing pad, not a missing clip.
+ * - `tableHeaderLine` / `tableRuleLine` — the shared header + rule rows.
  * - `ListController` — pure navigation state (index/scroll/viewport) with
  *   up/down/pageUp/pageDown and viewport clamping; unit-testable, reused by
  *   every panel.
- * - `TablePanel` — a self-drawn table: header row + data rows + navigation
- *   + scroll info + selection highlight.
+ * - `TablePanel` — a self-drawn table: optional title, header row + rule,
+ *   data rows, navigation, scroll info, selection highlight.
  * - `FieldPanel` — a title + read-only content block + editable field rows
  *   (Enter edits the focused row, optional single-key shortcuts).
  * - `ViewerPanel` — a read-only line viewer with a line cap.
@@ -38,7 +45,7 @@ import {
 } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
-import { clipToWidth, visibleWidth } from './text.ts'
+import { clipToWidth, ELLIPSIS, visibleWidth } from './text.ts'
 
 /** Row marker slot width (▸ or two spaces). */
 export const MARKER_W = 2
@@ -50,12 +57,27 @@ export const TABLE_SEP = ' │ '
 const MIN_FLEX_WIDTH = 8
 
 /**
+ * Clip `text` to `width` visible columns, whole graphemes only — a cell that
+ * loses content always ends with `…` so the cut is visible (clipToWidth
+ * alone fills the full width and drops the ellipsis whenever every column
+ * was consumed).
+ */
+function clipCell(text: string, width: number): string {
+  if (visibleWidth(text) <= width) return text
+  const clipped = clipToWidth(text, width)
+  if (clipped.endsWith(ELLIPSIS)) return clipped
+  const shorter = clipToWidth(text, width - 1)
+  if (shorter.endsWith(ELLIPSIS)) return shorter
+  return shorter === '' ? clipped : shorter + ELLIPSIS
+}
+
+/**
  * Clip `text` to `width` visible columns and pad it with spaces to exactly
  * `width` columns — the width-exact cell primitive. `align` controls where
  * the padding goes.
  */
 export function padCell(text: string, width: number, align: 'left' | 'right' = 'left'): string {
-  const clipped = clipToWidth(text, width)
+  const clipped = clipCell(text, width)
   const pad = width - visibleWidth(clipped)
   if (pad <= 0) return clipped
   return align === 'right' ? ' '.repeat(pad) + clipped : clipped + ' '.repeat(pad)
@@ -82,6 +104,41 @@ export function columnWidths(total: number, columns: readonly TableColumn[]): nu
   const fixed = columns.reduce((sum, column) => sum + (column.flex === true ? 0 : (column.width ?? 0)), 0)
   const flexWidth = Math.max(MIN_FLEX_WIDTH, total - fixed - seps)
   return columns.map(column => (column.flex === true ? flexWidth : (column.width ?? 0)))
+}
+
+/**
+ * Width for a fixed (non-flex) column fitted to its content: the widest of
+ * the uppercased header title and every cell, capped at `cap` (cells clip
+ * beyond it). The FW table look for short enumerated columns (providers,
+ * dates, state icons) whose width is only known at call time.
+ */
+export function fitColumnWidth(title: string, cells: readonly string[], cap: number): number {
+  const widest = Math.max(
+    visibleWidth(title.toUpperCase()),
+    ...cells.map(cell => visibleWidth(cell)),
+  )
+  return Math.min(cap, Math.max(1, widest))
+}
+
+/**
+ * The table header line every panel shares: the row-marker slot, then the
+ * UPPERCASE column titles padded to their widths and joined by the column
+ * separator. Plain text — the caller paints it subtle.
+ */
+export function tableHeaderLine(columns: readonly TableColumn[], widths: readonly number[]): string {
+  return ' '.repeat(MARKER_W) + columns
+    .map((column, i) => padCell(column.title.toUpperCase(), widths[i], column.align))
+    .join(TABLE_SEP)
+}
+
+/**
+ * The rule line under the header: `─` runs per column with a `┼` junction
+ * exactly under each `│` of the header/rows — the visible table border the
+ * pickers were missing. Same layout as `tableHeaderLine` (marker slot,
+ * separator-spanning junctions), so it must be derived from the same widths.
+ */
+export function tableRuleLine(widths: readonly number[]): string {
+  return ' '.repeat(MARKER_W) + widths.map(width => '─'.repeat(width)).join('─┼─')
 }
 
 /** Pure navigation state shared by all panels (unit-testable). */
@@ -189,13 +246,18 @@ export interface TablePanelOptions<T> {
   renderCell(row: T, column: TableColumn): string
   onSelect(row: T): void
   onCancel(): void
+  /** Optional accent BOLD title line above the table (the FW panel look). */
+  title?: string
   footer?: string
   preselect?: number
+  /** Visible rows before scrolling (default 12). */
+  maxVisible?: number
 }
 
 /**
- * A self-drawn table panel: header row, aligned data rows, navigation with
- * viewport clamping, selection highlight, scroll info and a footer hint.
+ * A self-drawn table panel: optional title, an uppercase header row with the
+ * `─┼─` rule under it, aligned data rows with column separators, navigation
+ * with viewport clamping, selection highlight, scroll info and a footer hint.
  */
 export class TablePanel<T> implements Component {
   private readonly theme: TuiTheme
@@ -205,23 +267,32 @@ export class TablePanel<T> implements Component {
   constructor(theme: TuiTheme, options: TablePanelOptions<T>) {
     this.theme = theme
     this.options = options
-    this.controller = new ListController(() => options.rows.length)
+    this.controller = new ListController(() => options.rows.length, options.maxVisible ?? 12)
     if (options.preselect !== undefined) this.controller.setIndex(options.preselect)
   }
 
   invalidate(): void {}
 
+  /** The row under the cursor (undefined on an empty table). */
+  selectedRow(): T | undefined {
+    return this.options.rows[this.controller.index]
+  }
+
   render(width: number): string[] {
     const fns = panelThemeFns(this.theme)
-    const { columns, rows, renderCell, footer } = this.options
-    const widths = columnWidths(width, columns)
+    const { columns, rows, renderCell, footer, title } = this.options
+    // Reserve the row-marker slot so marker + cells never exceed `width`
+    // (the old pass-through lost the last 2 columns of right padding).
+    const widths = columnWidths(width - MARKER_W, columns)
     const seps = columns.length > 1 ? TABLE_SEP : ''
     const lines: string[] = []
+    if (title !== undefined) {
+      lines.push(fns.accent(BOLD + clipToWidth(title, width) + RESET))
+      lines.push('')
+    }
 
-    const header = `${' '.repeat(MARKER_W)}${columns
-      .map((column, i) => padCell(column.title, widths[i], column.align))
-      .join(seps)}`
-    lines.push(fns.subtle(header))
+    lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), width)))
+    if (columns.length > 1) lines.push(fns.subtle(clipToWidth(tableRuleLine(widths), width)))
 
     const controller = this.controller
     for (let i = controller.scroll; i < Math.min(rows.length, controller.scroll + controller.maxVisible); i++) {
@@ -230,7 +301,7 @@ export class TablePanel<T> implements Component {
       const cells = columns
         .map((column, j) => padCell(renderCell(row, column), widths[j], column.align))
         .join(seps)
-      const line = `${rowMarker(selected)}${cells}`
+      const line = clipToWidth(`${rowMarker(selected)}${cells}`, width)
       lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
     }
 
@@ -307,20 +378,25 @@ export class FieldPanel implements Component {
     }
     lines.push('')
 
+    // The FW table look: FIELD │ VALUE header + rule, the │ separator on
+    // every row; the ✎ affordance rides at the head of the value cell.
+    const columns: readonly TableColumn[] = [
+      { key: 'field', title: 'Field', width: this.keyWidth },
+      { key: 'value', title: 'Value', flex: true },
+    ]
+    const widths = columnWidths(wrap - MARKER_W, columns)
+    lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), wrap)))
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths), wrap)))
+
     const controller = this.controller
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i]
       const selected = i === controller.index
-      const marker = rowMarker(selected)
-      const key = padCell(field.key, this.keyWidth)
-      const value = clipToWidth(field.value, wrap - MARKER_W - this.keyWidth - 3)
-      const line = `${marker}${key}${field.editable === false ? '' : ' ✎ '}${value}`
-      if (selected) {
-        lines.push(fns.accent(BOLD + line + RESET))
-      } else {
-        const headW = MARKER_W + this.keyWidth + (field.editable === false ? 0 : 3)
-        lines.push(`${fns.muted(line.slice(0, headW))}${fns.subtle(line.slice(headW))}`)
-      }
+      const keyCell = padCell(field.key, widths[0])
+      const rawValue = field.editable === false ? field.value : `✎ ${field.value}`
+      const valueCell = padCell(clipToWidth(rawValue, widths[1]), widths[1])
+      const line = clipToWidth(`${rowMarker(selected)}${keyCell}${TABLE_SEP}${valueCell}`, wrap)
+      lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
     }
 
     const statusLine = status?.()
@@ -503,18 +579,31 @@ export class SettingsListPanel implements Component {
       return lines
     }
 
-    const controller = this.controller
-    // Align the value column across all rows (stable under filtering); the
-    // label column takes what the marker, value and separator leave over.
+    // The FW table look: an uppercase header row, the ─┼─ rule under it, and
+    // the │ column separator on every row (the old two-space gap made the
+    // value column read as floating text). Rows whose values are ALL empty
+    // (menu-only lists) collapse to a single label column — no empty value
+    // column, no separator, no rule.
+    const showValue = this.rows.some(row => row.value !== '')
     const valueWidth = Math.min(28, Math.max(...this.rows.map(row => visibleWidth(row.value)), 0))
-    const labelWidth = Math.max(4, wrap - MARKER_W - valueWidth - 2)
+    const columns: readonly TableColumn[] = showValue
+      ? [
+          { key: 'label', title: 'Setting', flex: true },
+          { key: 'value', title: 'Value', width: valueWidth },
+        ]
+      : [{ key: 'label', title: 'Setting', flex: true }]
+    const widths = columnWidths(wrap - MARKER_W, columns)
+    const seps = columns.length > 1 ? TABLE_SEP : ''
+    lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), wrap)))
+    if (columns.length > 1) lines.push(fns.subtle(clipToWidth(tableRuleLine(widths), wrap)))
+
+    const controller = this.controller
     for (let i = controller.scroll; i < Math.min(rows.length, controller.scroll + controller.maxVisible); i++) {
       const row = rows[i]
       const selected = i === controller.index
-      const line = clipToWidth(
-        `${rowMarker(selected)}${padCell(row.label, labelWidth)}  ${padCell(row.value, valueWidth)}`,
-        wrap,
-      )
+      const cells = columns.map((column, j) =>
+        padCell(column.key === 'label' ? row.label : row.value, widths[j]))
+      const line = clipToWidth(`${rowMarker(selected)}${cells.join(seps)}`, wrap)
       lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
     }
 

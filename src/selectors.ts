@@ -1,16 +1,18 @@
 /**
- * TUI overlays (pi SelectList style). Currently: the `/model` picker and the
- * reasoning effort picker — the terminal counterparts of the web UI's "model"
- * client contribution — plus the `/theme` preference picker and the
- * `/permission` preset picker.
+ * TUI overlays for the pickers — the `/model` picker (two-stage), the
+ * reasoning effort picker, the `/theme` preference picker, the `/permission`
+ * preset picker and the skill picker. Every picker is the same FW table:
+ * `●` title, uppercase header row, the ─┼─ rule under it, `│`-separated
+ * aligned columns — one visual language across every slash-command panel.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { SelectList, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui'
+import type { OverlayHandle, TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
 import { permissionItems } from './permission.ts'
+import { fitColumnWidth, TablePanel, type TableColumn } from './panels.ts'
 import type { ThemePreference, TuiTheme } from './theme/index.ts'
 
 interface ListedModel {
@@ -26,14 +28,42 @@ export type PickEffortResult =
   | { kind: 'effort'; effort: ReasoningEffortId | 'default' }
 
 /** First row of the effort picker: explicitly no effort override. */
-const DEFAULT_EFFORT_ITEM: SelectItem = {
+const DEFAULT_EFFORT_ROW: PickerItem = {
   value: 'default',
   label: '(provider default)',
   description: 'adapter default behavior — clears the effort override',
 }
 
+/** The standard framed-overlay mount every picker here uses. */
+function mountPicker<T>(tui: TUI, theme: TuiTheme, panel: TablePanel<T>): OverlayHandle {
+  // The framed overlay adds 4 rows (borders + spacers) on top of the table
+  // (title + header + rule + rows + footer); the 75% cap keeps the bottom
+  // border intact on small terminals.
+  return tui.showOverlay(wrapFramedOverlay(theme, panel), { width: '80%', maxHeight: '75%' })
+}
+
+/** A generic picker row — the SelectList-style shape every items builder already produces. */
+interface PickerItem {
+  value: string
+  label: string
+  description?: string
+}
+
+/** Columns of a label + description table: fitted label column, flex description. */
+function labelDescriptionColumns(title: string, labels: readonly string[], cap = 28): readonly TableColumn[] {
+  return [
+    { key: 'label', title, width: fitColumnWidth(title, labels, cap) },
+    { key: 'description', title: 'Description', flex: true },
+  ]
+}
+
+/** renderCell for a `{ value, label, description }` row keyed by column. */
+function itemCell(row: PickerItem, column: TableColumn): string {
+  return column.key === 'description' ? row.description ?? '' : row.label
+}
+
 /**
- * Run the reasoning effort SelectList overlay over the given efforts. Resolves
+ * Run the reasoning effort table overlay over the given efforts. Resolves
  * with the chosen effort (`'default'` meaning no override), or `undefined`
  * when cancelled. The row matching `selectedEffort` is preselected when
  * present. `afterShow` runs once the overlay is up (used by the two-stage
@@ -48,36 +78,36 @@ export function openEffortPicker(
   restoreFocus: () => void,
   afterShow?: () => void,
 ): Promise<{ effort: ReasoningEffortId | 'default' } | undefined> {
-  const items: SelectItem[] = [
-    DEFAULT_EFFORT_ITEM,
+  const rows: PickerItem[] = [
+    DEFAULT_EFFORT_ROW,
     ...efforts.map(effort => ({
       value: effort.id,
       label: effort.name,
-      ...(effort.description !== undefined ? { description: effort.description } : {}),
+      description: effort.description ?? '',
     })),
   ]
 
   return new Promise(resolve => {
-    const list = new SelectList(items, 12, theme.selectList)
-    if (selectedEffort !== undefined) {
-      const index = items.findIndex(item => item.value === selectedEffort)
-      if (index >= 0) list.setSelectedIndex(index)
-    }
-
-    // The framed overlay adds 4 rows (borders + spacers) on top of the list;
-    // the cap must leave them room or the bottom border is sliced off on
-    // small terminals (13 list rows + 4 frame rows = 17 ≤ 18 at 24 rows).
-    const overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
+    const preselect = selectedEffort === undefined
+      ? undefined
+      : rows.findIndex(row => row.value === selectedEffort)
+    const list = new TablePanel(theme, {
+      title: '● Reasoning effort',
+      columns: labelDescriptionColumns('Effort', rows.map(row => row.label), 24),
+      rows,
+      renderCell: itemCell,
+      preselect: preselect !== undefined && preselect >= 0 ? preselect : undefined,
+      onSelect: row => finish(row.value as ReasoningEffortId | 'default'),
+      onCancel: () => finish(undefined),
+    })
+    const overlay = mountPicker(tui, theme, list)
     afterShow?.()
 
-    const finish = (effort: ReasoningEffortId | 'default' | undefined): void => {
+    function finish(effort: ReasoningEffortId | 'default' | undefined): void {
       overlay.hide()
       restoreFocus()
       resolve(effort === undefined ? undefined : { effort })
     }
-
-    list.onSelect = item => finish(item.value as ReasoningEffortId | 'default')
-    list.onCancel = () => finish(undefined)
   })
 }
 
@@ -113,7 +143,7 @@ export async function pickEffort(
 }
 
 /** Theme preference rows of the picker, matching the settings schema vocabulary. */
-const THEME_ITEMS: SelectItem[] = [
+const THEME_ROWS: PickerItem[] = [
   { value: 'auto', label: 'auto (terminal detection)', description: 'follow the terminal light/dark signal' },
   { value: 'light', label: 'light', description: 'GitHub light palette' },
   { value: 'dark', label: 'dark', description: 'GitHub dark palette' },
@@ -131,21 +161,22 @@ export function pickTheme(
   restoreFocus: () => void,
 ): Promise<ThemePreference | undefined> {
   return new Promise(resolve => {
-    const list = new SelectList(THEME_ITEMS, 12, theme.selectList)
-    const index = THEME_ITEMS.findIndex(item => item.value === current)
-    if (index >= 0) list.setSelectedIndex(index)
+    const list = new TablePanel(theme, {
+      title: '● Theme',
+      columns: labelDescriptionColumns('Theme', THEME_ROWS.map(row => row.label)),
+      rows: THEME_ROWS,
+      renderCell: itemCell,
+      preselect: THEME_ROWS.findIndex(row => row.value === current),
+      onSelect: row => finish(row.value as ThemePreference),
+      onCancel: () => finish(undefined),
+    })
+    const overlay = mountPicker(tui, theme, list)
 
-    // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
-    const overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
-
-    const finish = (picked: ThemePreference | undefined): void => {
+    function finish(picked: ThemePreference | undefined): void {
       overlay.hide()
       restoreFocus()
       resolve(picked)
     }
-
-    list.onSelect = item => finish(item.value as ThemePreference)
-    list.onCancel = () => finish(undefined)
   })
 }
 
@@ -168,16 +199,20 @@ export function pickPermission(
 
   const items = permissionItems(presets, current)
   return new Promise((resolve, reject) => {
-    const list = new SelectList(items, 12, theme.selectList)
-    if (current !== undefined) {
-      const index = items.findIndex(item => item.value === current)
-      if (index >= 0) list.setSelectedIndex(index)
-    }
-
-    // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
+    const list = new TablePanel(theme, {
+      title: '● Permission preset',
+      columns: labelDescriptionColumns('Preset', items.map(item => item.label)),
+      rows: items,
+      renderCell: itemCell,
+      preselect: current === undefined
+        ? undefined
+        : Math.max(0, items.findIndex(item => item.value === current)),
+      onSelect: item => finish(item.value),
+      onCancel: () => finish(undefined),
+    })
     let overlay: OverlayHandle
     try {
-      overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
+      overlay = mountPicker(tui, theme, list)
     } catch (error) {
       // Never strand the keyboard on a half-mounted picker: the rejection
       // reaches the caller (submit's try/catch surfaces it), but focus must
@@ -187,14 +222,11 @@ export function pickPermission(
       return
     }
 
-    const finish = (picked: string | undefined): void => {
+    function finish(picked: string | undefined): void {
       overlay.hide()
       restoreFocus()
       resolve(picked)
     }
-
-    list.onSelect = item => finish(item.value)
-    list.onCancel = () => finish(undefined)
   })
 }
 
@@ -225,28 +257,29 @@ export async function pickModel(
   }))
   if (models.length === 0) return undefined
 
-  const key = (m: ListedModel): string => `${m.provider}/${m.id}`
-  const items: SelectItem[] = models.map(model => ({
-    value: key(model),
-    label: model.name === '' ? model.id : model.name,
-    description: model.provider,
-  }))
-
   return new Promise<ModelSelection | undefined>(resolve => {
-    const list = new SelectList(items, 12, theme.selectList)
-    const currentIndex = items.findIndex(item => item.value === `${current?.provider}/${current?.model}`)
-    if (currentIndex >= 0) list.setSelectedIndex(currentIndex)
+    const columns: readonly TableColumn[] = [
+      { key: 'model', title: 'Model', flex: true },
+      { key: 'provider', title: 'Provider', width: fitColumnWidth('Provider', models.map(model => model.provider), 18) },
+    ]
+    const list = new TablePanel<ListedModel>(theme, {
+      title: '● Model',
+      columns,
+      rows: models,
+      renderCell: (model, column) => (column.key === 'provider' ? model.provider : model.name === '' ? model.id : model.name),
+      preselect: Math.max(0, models.findIndex(model => model.provider === current?.provider && model.id === current?.model)),
+      onSelect: model => settle(model),
+      onCancel: () => settle(undefined),
+    })
+    const overlay = mountPicker(tui, theme, list)
 
-    // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
-    const overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
-
-    const finish = (picked: ListedModel | undefined): void => {
-      // Detach the stage-1 input handlers on first settle: while the model
-      // info resolves (stage 2 not up yet), a stray Esc would otherwise fire
-      // a ghost settle AFTER this promise already settled, and a second
-      // Enter would run two concurrent stage-2s.
-      list.onSelect = () => {}
-      list.onCancel = () => {}
+    // Enter settles stage 1 once; while the model info resolves (stage 2 not
+    // up yet), a stray Esc or a second Enter must not run two concurrent
+    // stage-2s — settle guards itself.
+    let settled = false
+    const settle = (picked: ListedModel | undefined): void => {
+      if (settled) return
+      settled = true
       if (picked === undefined) {
         overlay.hide()
         restoreFocus()
@@ -321,11 +354,6 @@ export async function pickModel(
       }
       resolve({ provider: picked.provider, model: picked.id, reasoningEffort: chosen.effort })
     }
-
-    list.onSelect = item => {
-      finish(models.find(model => key(model) === item.value))
-    }
-    list.onCancel = () => finish(undefined)
   })
 }
 
@@ -357,31 +385,33 @@ export async function pickSkill(
   }
   if (userSkills.length === 0) return undefined
 
-  const items: SelectItem[] = userSkills.map(skill => ({
+  const rows: PickerItem[] = userSkills.map(skill => ({
     value: skill.name,
     label: skill.name,
     description: skill.description === '' ? undefined : skill.description,
   }))
 
   return new Promise<string | undefined>(resolve => {
-    const list = new SelectList(items, 12, theme.selectList)
-
-    // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
+    const list = new TablePanel(theme, {
+      title: '● Skill',
+      columns: labelDescriptionColumns('Skill', rows.map(row => row.label)),
+      rows,
+      renderCell: itemCell,
+      onSelect: row => finish(row.value),
+      onCancel: () => finish(undefined),
+    })
     let overlay: OverlayHandle
     try {
-      overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
+      overlay = mountPicker(tui, theme, list)
     } catch (error) {
       restoreFocus()
       throw error
     }
 
-    const finish = (picked: string | undefined): void => {
+    function finish(picked: string | undefined): void {
       overlay.hide()
       restoreFocus()
       resolve(picked)
     }
-
-    list.onSelect = item => finish(item.value)
-    list.onCancel = () => finish(undefined)
   })
 }

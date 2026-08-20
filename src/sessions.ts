@@ -1,22 +1,17 @@
 /**
  * Session TUI overlays: the `/session` info panel and the `/resume`
  * persisted-session picker — terminal counterparts of the web surface's
- * session management. Both follow the pi SelectList overlay pattern
- * (`showOverlay` + `restoreFocus` on close); the info panel is a one-shot
+ * session management. The picker is the FW table (TablePanel in a framed
+ * overlay + `restoreFocus` on close); the info panel is a one-shot
  * read-only component in the style of settings' ReadOnlyViewer.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
-import {
-  getKeybindings,
-  SelectList,
-  type Component,
-  type SelectItem,
-  type TUI,
-} from '@earendil-works/pi-tui'
+import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
 import { basename } from 'node:path'
 import { wrapFramedOverlay } from './frame.ts'
+import { fitColumnWidth, TablePanel, type TableColumn } from './panels.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 
@@ -307,36 +302,44 @@ export async function pickPersistedSession(
   // label (cwd + short id).
   const previews = await loadSessionPreviews(persistence, candidates.slice(0, PREVIEW_SESSION_CAP).map(header => header.id))
 
-  const items: SelectItem[] = candidates.map(header => {
+  const rows = candidates.map(header => {
     const id = String(header.id)
     const preview = previews.get(id)
     return {
       value: id,
-      label: preview ?? `${basename(header.cwd ?? '?')} · ${clipToWidth(id, 8)}`,
-      description: `${new Date(header.createdAt).toLocaleString()} · ${clipToWidth(id, 8)} · ${header.cwd ?? 'no cwd'}`,
+      header,
+      session: preview ?? `${basename(header.cwd ?? '?')} · ${clipToWidth(id, 8)}`,
+      when: new Date(header.createdAt).toLocaleString(),
+      dir: header.cwd ?? 'no cwd',
     }
   })
 
   return new Promise<PickSessionResult>(resolve => {
-    // Wide primary column so previews (often CJK) get room before the time/cwd
-    // description column starts.
-    const list = new SelectList(items, 12, theme.selectList, { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 60 })
-    list.setSelectedIndex(0)
+    // The FW picker table: flex preview column, then fitted WHEN/DIR columns
+    // (previews are often CJK, so the flex column carries them).
+    const columns: readonly TableColumn[] = [
+      { key: 'session', title: 'Session', flex: true },
+      { key: 'when', title: 'When', width: fitColumnWidth('When', rows.map(row => row.when), 26) },
+      { key: 'dir', title: 'Dir', width: fitColumnWidth('Dir', rows.map(row => row.dir), 28) },
+    ]
+    const list = new TablePanel(theme, {
+      title: '● Resume session',
+      columns,
+      rows,
+      renderCell: (row, column) => row[column.key as 'session' | 'when' | 'dir'],
+      onSelect: row => finish(row.header),
+      onCancel: () => finish(undefined),
+    })
 
     // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
     const overlay = tui.showOverlay(wrapFramedOverlay(theme, list), { width: '80%', maxHeight: '75%' })
 
-    const finish = (picked: SessionHeader | undefined): void => {
+    function finish(picked: SessionHeader | undefined): void {
       overlay.hide()
       restoreFocus()
       resolve(picked === undefined
         ? { kind: 'cancelled' }
         : { kind: 'picked', id: picked.id, header: picked })
     }
-
-    list.onSelect = item => {
-      finish(candidates.find(header => String(header.id) === item.value))
-    }
-    list.onCancel = () => finish(undefined)
   })
 }

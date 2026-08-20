@@ -6,6 +6,34 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Every selection overlay now speaks one table language (the TodosPanel
+  look, minus the index column): `●` title, UPPERCASE subtle header row, a
+  `─┼─` rule under it with junctions exactly under the `│` column
+  separators, width-exact padded cells, and the ▸ + accent BOLD selection.
+  Migrated off pi-tui's SelectList: `/model` (both stages), the effort,
+  `/theme`, `/permission` and skill pickers (selectors.ts), `/resume`
+  (sessions.ts, now SESSION │ WHEN │ DIR columns), the `/login` logout
+  picker, the agent model picker inside `/agents`, and the Ctrl+G sub-agent
+  picker (now a live-refreshing SUB-AGENT │ STATS table).
+- `/settings` browser rows render as SETTING │ VALUE with the header + rule
+  (the old two-space gap read as floating text); lists whose values are all
+  empty (menu-only levels) collapse to a single column. The Skills submenu
+  drops its index and state-text columns for an ON (●/○) │ SKILL table.
+- FieldPanel windows (`/hotkeys`, the `/agents` fields/limits windows)
+  render as FIELD │ VALUE tables with the header + rule.
+- `padCell` now ends clipped cells with `…` (the old hard clip hid that
+  content was lost); clipped headers/rules/rows are width-clamped on narrow
+  terminals (the flex column's floor could push them past the overlay).
+- TablePanel gains an optional `title`, `maxVisible` and a `selectedRow()`
+  getter, and reserves the marker slot in its width budget (rows no longer
+  overflow the overlay by the marker's 2 columns).
+- 472 tests (was 467): new coverage for `fitColumnWidth` /
+  `tableHeaderLine` / `tableRuleLine`, the TablePanel/FieldPanel header +
+  rule + separator contract, the SettingsListPanel single-column collapse,
+  and the ellipsis clip.
+
 ## [0.9.4] — 2026-08-20
 
 ### Changed

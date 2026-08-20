@@ -20,8 +20,9 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { settingsNamespace, type SettingsProvider } from '@deepseek-ai/dsh-settings'
-import { SelectList, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui'
+import { type OverlayHandle, type TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
+import { fitColumnWidth, TablePanel } from './panels.ts'
 import {
   catalogEntry,
   deriveKeyRef,
@@ -288,16 +289,21 @@ export async function openLogoutFlow(options: LogoutFlowOptions): Promise<Logout
   const loggedIn = listLogoutCandidates(candidates, configuredRefs)
   if (loggedIn.length === 0) return { kind: 'none' }
 
-  const items: SelectItem[] = loggedIn.map(candidate => ({
-    value: candidate.id,
-    label: candidate.name,
-    description: candidate.ref,
-  }))
   return new Promise(resolve => {
-    const list = new SelectList(items, 12, options.theme.selectList)
+    const list = new TablePanel(options.theme, {
+      title: '● Log out',
+      columns: [
+        { key: 'label', title: 'Provider', flex: true },
+        { key: 'description', title: 'Key ref', width: fitColumnWidth('Key ref', loggedIn.map(candidate => candidate.ref), 28) },
+      ],
+      rows: loggedIn,
+      renderCell: (candidate, column) => (column.key === 'description' ? candidate.ref : candidate.name),
+      onSelect: candidate => finish(candidate),
+      onCancel: () => finish(undefined),
+    })
     // Framed overlay: 13 list rows + 4 frame rows fit inside 75% of 24 rows.
     const overlay = options.tui.showOverlay(wrapFramedOverlay(options.theme, list), { width: '80%', maxHeight: '75%' })
-    const finish = (candidate: LogoutCandidate | undefined): void => {
+    function finish(candidate: LogoutCandidate | undefined): void {
       overlay.hide()
       options.restoreFocus()
       if (candidate === undefined) {
@@ -313,7 +319,5 @@ export async function openLogoutFlow(options: LogoutFlowOptions): Promise<Logout
         },
       )
     }
-    list.onSelect = item => finish(loggedIn.find(candidate => candidate.id === item.value))
-    list.onCancel = () => finish(undefined)
   })
 }

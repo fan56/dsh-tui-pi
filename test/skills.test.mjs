@@ -286,37 +286,27 @@ test('skillSettingRowLabel states align across skills and with completionLabel',
   assert.equal(skillSettingRowLabel(false, 'data-analysis').replace(/^false\s/, ''), completionLabel('explicit-skill', 'data-analysis'))
 })
 
-test('skillPanelRowLine leads with cursor + index + state, state appears exactly once', () => {
-  // The self-drawn panel fixes the SettingsList double-state bug: the row
-  // shows the toggle state once, in front, never repeated at the tail.
-  const selected = skillPanelRowLine(true, true, 'agent-browser', 1)
-  assert.equal(selected, '▸   1 true  [s] agent-browser')
-  assert.equal(selected.indexOf('true'), selected.lastIndexOf('true'))
-  assert.ok(!selected.endsWith('true'))
-  const unselected = skillPanelRowLine(false, false, 'data-analysis', 10)
-  assert.equal(unselected, '   10 false [s] data-analysis')
-  assert.equal(unselected.indexOf('false'), unselected.lastIndexOf('false'))
-  assert.ok(!unselected.endsWith('false'))
+test('skillPanelRowLine leads with cursor + on-icon, no index, no state text', () => {
+  // The FW table row: marker(2) + on-icon(2) + `│` separator + name — the
+  // toggle state is the ●/○ icon, shown exactly once, never as tail text.
+  assert.equal(skillPanelRowLine(true, true, 'agent-browser'), '▸ ●  │ agent-browser')
+  assert.equal(skillPanelRowLine(false, false, 'data-analysis'), '  ○  │ data-analysis')
+  assert.ok(!skillPanelRowLine(false, false, 'data-analysis').includes('false'))
+  assert.ok(!skillPanelRowLine(true, true, 'agent-browser').includes('true'))
 })
 
-test('skillPanelRowLine index is right-aligned and does not shift the name column', () => {
-  // 1-based index pads to 3 columns (padStart), so the name column is stable.
+test('skillPanelRowLine names align across states and selection (fixed icon column)', () => {
   const rows = [
-    skillPanelRowLine(false, true, 'a', 1),
-    skillPanelRowLine(false, true, 'b', 12),
-    skillPanelRowLine(false, true, 'c', 123),
+    skillPanelRowLine(false, false, 'data-analysis'),
+    skillPanelRowLine(true, true, 'statistical-analysis'),
+    skillPanelRowLine(false, true, 'agent-browser'),
   ]
-  const nameCols = rows.map((row) => row.indexOf('[s]'))
+  const nameCols = rows.map((row) => row.indexOf('│'))
   assert.deepEqual(nameCols, [nameCols[0], nameCols[0], nameCols[0]])
-})
-
-test('skillPanelRowLine aligns names across states (single state column, with index)', () => {
-  const rows = [
-    skillPanelRowLine(false, false, 'data-analysis', 1),
-    skillPanelRowLine(true, true, 'statistical-analysis', 2),
-  ]
-  const nameCols = rows.map((row) => row.indexOf('[s]'))
-  assert.deepEqual(nameCols, [nameCols[0], nameCols[0]])
+  // Every name starts right after the shared separator.
+  for (const row of rows) {
+    assert.ok(/^.{5}│ /.test(row), 'name column starts after the separator')
+  }
 })
 
 test('clampSkillCursor bounds navigation to the row count', () => {

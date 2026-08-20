@@ -24,10 +24,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { LlmReasoningEffortInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import {
   getKeybindings,
-  SelectList,
   type Component,
   type OverlayHandle,
-  type SelectItem,
   type TUI,
 } from '@earendil-works/pi-tui'
 import {
@@ -44,6 +42,7 @@ import { EditField, type ParseOutcome } from './settings.ts'
 import { readSubagentLimits, writeSubagentLimit } from './theme-settings.ts'
 import {
   FieldPanel,
+  fitColumnWidth,
   PanelHost,
   TablePanel,
   ViewerPanel,
@@ -163,56 +162,54 @@ async function pickAgentModel(
   if (models.length === 0) return undefined
 
   return new Promise(resolve => {
-    const items: SelectItem[] = models.map(model => ({
-      value: model.value,
-      label: model.label,
-      ...(model.description !== undefined ? { description: model.description } : {}),
-    }))
-    const list = new SelectList(items, 12, theme.selectList)
-    const currentIndex = meta.model === undefined ? -1 : items.findIndex(item => item.value === meta.model)
-    if (currentIndex >= 0) list.setSelectedIndex(currentIndex)
-
-    list.onSelect = item => {
-      // Detach the stage-1 input handlers on first settle: while the model
-      // info resolves (stage 2 not up yet), a stray Esc would otherwise fire
-      // a ghost settle AFTER this promise already settled, and a second
-      // Enter would run two concurrent stage-2s.
-      list.onSelect = () => {}
-      list.onCancel = () => {}
-      void (async () => {
-        const slash = item.value.indexOf('/')
-        if (slash <= 0) {
-          resolve({ model: item.value, thinking: null })
-          return
-        }
-        const providerId = item.value.slice(0, slash)
-        const modelId = item.value.slice(slash + 1)
-        let efforts: readonly LlmReasoningEffortInfo[] | undefined
-        try {
-          efforts = (await llm.resolveModelInfo(providerId, modelId)).reasoning?.efforts
-        } catch { /* an unresolvable model just skips the effort stage */ }
-        if (efforts === undefined || efforts.length === 0) {
-          resolve({ model: item.value, thinking: null })
-          return
-        }
-        const current = meta.thinking as ReasoningEffortId | undefined
-        const chosen = await openEffortPicker(
-          tui, theme, efforts, current, () => {}, () => stage1?.hide(),
-        )
-        if (chosen === undefined) resolve(undefined)
-        else if (chosen.effort === 'default') resolve({ model: item.value, thinking: null })
-        else resolve({ model: item.value, thinking: chosen.effort })
-      })()
+    // Settle-once guard replaces the old handler detachment (a stray Esc or
+    // a second Enter while the effort stage resolves must not re-settle).
+    let settled = false
+    const settleOnce = (value: { model: string; thinking: string | null } | undefined): void => {
+      if (settled) return
+      settled = true
+      resolve(value)
     }
-    list.onCancel = () => {
-      // Same first-settle detachment as onSelect: a cancellation while no
-      // stage-2 is in flight must not let a late Enter start one.
-      list.onSelect = () => {}
-      list.onCancel = () => {}
-      resolve(undefined)
-    }
+    const providerWidth = fitColumnWidth('Provider', models.map(model => model.description ?? ''), 18)
+    const list = new TablePanel(theme, {
+      title: '● Model',
+      columns: [
+        { key: 'label', title: 'Model', flex: true },
+        { key: 'description', title: 'Provider', width: providerWidth },
+      ],
+      rows: models,
+      renderCell: (model, column) => (column.key === 'description' ? model.description ?? '' : model.label),
+      preselect: meta.model === undefined ? undefined : Math.max(0, models.findIndex(model => model.value === meta.model)),
+      onSelect: item => {
+        void (async () => {
+          const slash = item.value.indexOf('/')
+          if (slash <= 0) {
+            settleOnce({ model: item.value, thinking: null })
+            return
+          }
+          const providerId = item.value.slice(0, slash)
+          const modelId = item.value.slice(slash + 1)
+          let efforts: readonly LlmReasoningEffortInfo[] | undefined
+          try {
+            efforts = (await llm.resolveModelInfo(providerId, modelId)).reasoning?.efforts
+          } catch { /* an unresolvable model just skips the effort stage */ }
+          if (efforts === undefined || efforts.length === 0) {
+            settleOnce({ model: item.value, thinking: null })
+            return
+          }
+          const current = meta.thinking as ReasoningEffortId | undefined
+          const chosen = await openEffortPicker(
+            tui, theme, efforts, current, () => {}, () => stage1?.hide(),
+          )
+          if (chosen === undefined) settleOnce(undefined)
+          else if (chosen.effort === 'default') settleOnce({ model: item.value, thinking: null })
+          else settleOnce({ model: item.value, thinking: chosen.effort })
+        })()
+      },
+      onCancel: () => settleOnce(undefined),
+    })
     const stage1 = host.open(list)
-    if (stage1 === undefined) resolve(undefined)
+    if (stage1 === undefined) settleOnce(undefined)
   })
 }
 
@@ -267,6 +264,7 @@ export async function openAgentManager(
         }
       }
       const table = new AgentTablePanel(theme, {
+        title: '● Agents',
         columns: AGENT_COLUMNS,
         rows: agents,
         renderCell: agentCell,

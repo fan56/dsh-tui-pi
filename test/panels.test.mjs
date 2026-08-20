@@ -7,11 +7,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   columnWidths,
+  FieldPanel,
   filterSettingsRows,
+  fitColumnWidth,
   ListController,
   padCell,
   SettingsListPanel,
   TABLE_SEP,
+  tableHeaderLine,
+  TablePanel,
+  tableRuleLine,
 } from '../lib/panels.js'
 import { githubLight } from '../lib/theme/palette.js'
 import { visibleWidth } from '../lib/text.js'
@@ -34,8 +39,10 @@ test('padCell: right-align puts the padding on the left', () => {
 test('padCell: never exceeds the width, ellipsis included', () => {
   const clipped = padCell('a very long model name that overflows', 10)
   assert.ok(visibleWidth(clipped) <= 10, `clipped cell must fit: "${clipped}"`)
+  assert.ok(clipped.includes('…'), 'a cell that loses content ends with an ellipsis')
   const clippedCjk = padCell('这是一个非常长的中文模型名字', 10)
   assert.ok(visibleWidth(clippedCjk) <= 10)
+  assert.ok(clippedCjk.includes('…'), 'CJK clips are marked too')
 })
 
 test('columnWidths: fixed columns keep width, flex takes the remainder', () => {
@@ -53,12 +60,99 @@ test('columnWidths: fixed columns keep width, flex takes the remainder', () => {
 
 test('columnWidths: flex column floors out on narrow widths', () => {
   const columns = [
-    { key: 'a', title: 'a', width: 30 },
-    { key: 'b', title: 'b', flex: true },
+    { key: 'a', title: 'A', width: 10 },
+    { key: 'b', title: 'B', flex: true },
   ]
   const widths = columnWidths(20, columns)
-  assert.equal(widths[0], 30)
+  assert.equal(widths[0], 10)
   assert.ok(widths[1] >= 8, 'flex column must keep its floor')
+})
+
+// ---------------------------------------------------------- table language --
+
+test('fitColumnWidth: widest of title and cells, capped', () => {
+  assert.equal(fitColumnWidth('Provider', ['deepseek', 'zhipu'], 18), 8)
+  // The UPPERCASE title participates: a short-cell column still fits TITLE.
+  assert.equal(fitColumnWidth('on', ['●', '○'], 8), 2)
+  // Cells beyond the cap clip — the width stays at the cap.
+  assert.equal(fitColumnWidth('Key ref', ['a-very-long-ref-name'], 8), 8)
+})
+
+test('tableHeaderLine: marker slot + uppercase titles joined by the separator', () => {
+  const columns = [
+    { key: 'model', title: 'Model', flex: true },
+    { key: 'provider', title: 'Provider', width: 8 },
+  ]
+  const widths = [20, 8]
+  const header = tableHeaderLine(columns, widths)
+  assert.ok(header.startsWith('  MODEL'), 'marker slot + uppercased title')
+  assert.ok(header.includes('PROVIDER'), 'titles are uppercased')
+  assert.equal(header.indexOf('│'), 2 + 20 + 1, 'separator sits after the flex column + its pad')
+  assert.equal(visibleWidth(header), 2 + 20 + 3 + 8, 'header fills exactly its column budget')
+})
+
+test('tableRuleLine: junctions land exactly under the header separators', () => {
+  const widths = [6, 4]
+  const rule = tableRuleLine(widths)
+  assert.equal(rule, '  ───────┼─────')
+  // The ┼ position equals where TABLE_SEP puts the │ after the marker slot.
+  assert.equal(rule.indexOf('┼'), 2 + 6 + 1)
+  assert.equal(visibleWidth(rule), 2 + 6 + 3 + 4)
+})
+
+test('TablePanel render: title + header + rule + separator-aligned rows', () => {
+  const columns = [
+    { key: 'model', title: 'Model', flex: true },
+    { key: 'provider', title: 'Provider', width: 9 },
+  ]
+  const rows = [
+    { name: 'deepseek-chat', provider: 'deepseek' },
+    { name: 'glm-4.7', provider: 'zhipu' },
+  ]
+  const panel = new TablePanel(theme, {
+    title: '● Model',
+    columns,
+    rows,
+    renderCell: (row, column) => (column.key === 'provider' ? row.provider : row.name),
+    onSelect: () => {},
+    onCancel: () => {},
+  })
+  const lines = panel.render(48)
+  // Title, blank, header, rule, 2 rows, blank, footer.
+  assert.equal(lines.length, 8)
+  assert.equal(stripAnsi(lines[0]), '● Model')
+  assert.match(stripAnsi(lines[2]), /^  MODEL\s+│ PROVIDER\s*$/)
+  assert.match(stripAnsi(lines[3]), /^  ─+┼─+\s*$/)
+  const row0 = stripAnsi(lines[4])
+  const row1 = stripAnsi(lines[5])
+  assert.match(row0, /^▸ deepseek-chat\s+│ deepseek\s*$/)
+  assert.match(row1, /^  glm-4\.7\s+│ zhipu\s*$/)
+  assert.equal(row0.indexOf('│'), row1.indexOf('│'), 'provider column aligns across rows')
+  assert.equal(row0.indexOf('│'), stripAnsi(lines[2]).indexOf('│'), 'rows align with the header')
+})
+
+test('FieldPanel render: FIELD │ VALUE header + rule + ✎ affordance', () => {
+  const panel = new FieldPanel(theme, {
+    title: 'agent fields',
+    fields: [
+      { key: 'model', value: 'deepseek-chat' },
+      { key: 'deep', value: '3', editable: false },
+    ],
+    onEdit: () => {},
+    onCancel: () => {},
+  })
+  const lines = panel.render(48)
+  // Title, blank, header, rule, 2 fields, blank, footer.
+  assert.equal(lines.length, 8)
+  assert.match(stripAnsi(lines[2]), /^  FIELD\s+│ VALUE/)
+  assert.match(stripAnsi(lines[3]), /^  ─+┼─+\s*$/)
+  assert.match(stripAnsi(lines[4]), /^▸ model\s+│ ✎ deepseek-chat\s*$/)
+  assert.match(stripAnsi(lines[5]), /^  deep\s+│ 3\s*$/)
+  assert.equal(
+    stripAnsi(lines[4]).indexOf('│'),
+    stripAnsi(lines[5]).indexOf('│'),
+    'value column aligns across fields',
+  )
 })
 
 test('ListController: navigation clamps at both ends', () => {
@@ -171,25 +265,54 @@ test('SettingsListPanel render: accent BOLD title + whole-row selection + footer
     onCancel: () => {},
   })
   const lines = panel.render(40)
-  // Title row, blank, 3 rows, blank, footer.
-  assert.equal(lines.length, 7)
+  // Title row, blank, header, rule, 3 rows, blank, footer.
+  assert.equal(lines.length, 9)
   // Title: accent fg + BOLD, plain text is the title.
   assert.equal(stripAnsi(lines[0]), '⚙ settings')
   assert.ok(lines[0].includes('\x1b[1m'), 'title is bold')
   assert.ok(lines[0].includes(`\x1b[38;2;${hexRgb(githubLight.accent)}m`), 'title uses accent')
+  // Header row: uppercase titles, marker-slot indented, subtle.
+  assert.match(stripAnsi(lines[2]), /^  SETTING\s+│ VALUE\s*$/)
+  assert.ok(lines[2].includes(`\x1b[38;2;${hexRgb(githubLight.fgSubtle)}m`), 'header is subtle')
+  // Rule row: ─ runs with the ┼ junction exactly under the header's │.
+  assert.match(stripAnsi(lines[3]), /^  ─+┼─+\s*$/)
+  assert.equal(
+    stripAnsi(lines[2]).indexOf('│'),
+    stripAnsi(lines[3]).indexOf('┼'),
+    'rule junction sits under the header separator',
+  )
   // Selected row 0: accent + BOLD with the ▸ marker; label padded so the
-  // value column aligns.
-  assert.match(stripAnsi(lines[2]), /^▸ Models\s+3 namespaces$/)
-  assert.ok(lines[2].includes('\x1b[1m'), 'selected row is bold')
-  assert.ok(lines[2].includes(`\x1b[38;2;${hexRgb(githubLight.accent)}m`), 'selected row uses accent')
-  // Unselected rows: muted, no accent, no bold.
-  assert.match(stripAnsi(lines[3]), /^  General\s+2 namespaces$/)
-  assert.ok(!lines[3].includes('\x1b[1m'), 'unselected row not bold')
-  assert.ok(!lines[3].includes(`\x1b[38;2;${hexRgb(githubLight.accent)}m`), 'unselected row not accent')
-  assert.ok(lines[3].includes(`\x1b[38;2;${hexRgb(githubLight.fgMuted)}m`), 'unselected row is muted')
+  // value column aligns behind the │ separator.
+  assert.match(stripAnsi(lines[4]), /^▸ Models\s+│ 3 namespaces\s*$/)
+  assert.ok(lines[4].includes('\x1b[1m'), 'selected row is bold')
+  assert.ok(lines[4].includes(`\x1b[38;2;${hexRgb(githubLight.accent)}m`), 'selected row uses accent')
+  // Unselected rows: muted, no accent, no bold, same column alignment.
+  assert.match(stripAnsi(lines[5]), /^  General\s+│ 2 namespaces\s*$/)
+  assert.ok(!lines[5].includes('\x1b[1m'), 'unselected row not bold')
+  assert.ok(!lines[5].includes(`\x1b[38;2;${hexRgb(githubLight.accent)}m`), 'unselected row not accent')
+  assert.ok(lines[5].includes(`\x1b[38;2;${hexRgb(githubLight.fgMuted)}m`), 'unselected row is muted')
+  assert.equal(
+    stripAnsi(lines[4]).indexOf('│'),
+    stripAnsi(lines[5]).indexOf('│'),
+    'value column aligns across rows',
+  )
   // Footer.
-  assert.equal(stripAnsi(lines[6]), '↑↓ navigate · Enter select · Esc back')
-  assert.ok(lines[6].includes(`\x1b[38;2;${hexRgb(githubLight.fgSubtle)}m`), 'footer is subtle')
+  assert.equal(stripAnsi(lines[8]), '↑↓ navigate · Enter select · Esc back')
+  assert.ok(lines[8].includes(`\x1b[38;2;${hexRgb(githubLight.fgSubtle)}m`), 'footer is subtle')
+})
+
+test('SettingsListPanel render: all-empty values collapse to a single column', () => {
+  const rows = [
+    { id: 'a', label: 'General', value: '' },
+    { id: 'b', label: 'Models', value: '' },
+  ]
+  const panel = new SettingsListPanel(theme, { title: 'T', rows, onCancel: () => {} })
+  const lines = panel.render(40)
+  // No VALUE column, no separator on rows, no ┼ rule — the header is the
+  // only table chrome left (single column ⇒ no rule row either).
+  assert.match(stripAnsi(lines[2]), /^  SETTING\s*$/)
+  assert.match(stripAnsi(lines[3]), /^▸ General\s*$/)
+  assert.ok(!stripAnsi(lines[3]).includes('│'), 'no column separator without a second column')
 })
 
 test('SettingsListPanel render: rows never paint their own background', () => {
@@ -213,10 +336,10 @@ test('SettingsListPanel render: description line + scroll info in the footer', (
   }))
   const panel = new SettingsListPanel(theme, { title: 'T', rows, onCancel: () => {} })
   const lines = panel.render(60)
-  // Title, blank, 10 visible rows, description, blank, footer.
-  assert.equal(lines.length, 15)
-  assert.ok(stripAnsi(lines[12]).includes('the first row'), 'selected row description shown')
+  // Title, blank, header, rule, 10 visible rows, description, blank, footer.
+  assert.equal(lines.length, 17)
+  assert.ok(stripAnsi(lines[14]).includes('the first row'), 'selected row description shown')
   // The list overflows (15 > 10) so the footer carries the scroll info.
-  assert.ok(stripAnsi(lines[14]).includes('(1/15)'), 'footer carries scroll info')
-  assert.ok(stripAnsi(lines[14]).includes('Enter select'))
+  assert.ok(stripAnsi(lines[16]).includes('(1/15)'), 'footer carries scroll info')
+  assert.ok(stripAnsi(lines[16]).includes('Enter select'))
 })
