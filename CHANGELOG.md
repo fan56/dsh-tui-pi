@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Slash commands crash with dsh 0.1.0-rc.8** (`Cannot read properties of
+  undefined (reading 'aborted')`).  `@deepseek-ai/dsh-commands` rc.8 inserted
+  an `images` parameter into `CommandRuntime.execute()` before `signal`
+  (rc.7: `execute(agent, line, signal)`; rc.8: `execute(agent, line,
+  images, signal)`).  The TUI's direct 3-arg call passed `signal` into the
+  `images` slot, leaving the handler's `invocation.signal` undefined.  Added
+  `executeCommand()` compat helper with runtime arity detection
+  (`execute.length >= 4`) that inserts an empty images array when needed;
+  the rc.7 path is byte-identical to the old direct 3-arg call.  Known
+  limit of arity probing: a future `execute()` gaining a default parameter
+  or another inserted parameter would misroute — re-check this signature
+  first if slash commands break after a dsh upgrade.  458 -> 467 tests.
+
 ## [0.9.1] — 2026-08-20
 
 ### Fixed
