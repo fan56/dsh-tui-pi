@@ -101,11 +101,11 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **389 tests** across 28 files (skills 44 +
+- `pnpm test` must stay green: **392 tests** across 28 files (skills 44 +
   live 33 + keymap 27 + theme 21 + settings 19 + welcome 18 +
   provider-catalog 17 + messages 16 + hotkeys 16 + panels 15 +
   subagent-policy 14 + login 14 + history 13 + agent-manager 13 +
-  theme-switch 11 + theme-canvas 11 + frame 11 + subagent-viewer 9 +
+  theme-switch 11 + theme-canvas 14 + frame 11 + subagent-viewer 9 +
   permission 9 + footer-hints 9 + theme-settings 8 + text 8 + sessions 8 +
   quotes 7 + reload 6 + append-system 6 + schema-model 3 +
   session-reconcile 3). New pure
@@ -150,13 +150,18 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   unpainted rows would show the terminal's default background and a theme
   switch would leave it frozen (most visible inside cmux/gostty).
   `src/canvas-terminal.ts` wraps the `ProcessTerminal` handed to
-  `TuiAltScreen` and prefixes the canvas SGR before every `\x1b[2K`/`\x1b[2J`
-  (BCE — terminals fill erased regions with the current SGR background);
-  zero pi-tui patches. Diff-rendered rows the renderer skips keep their last
-  paint, which is why `applyTheme` must force a full redraw via
-  `requestRender(true)`. `DSH_TUI_TRANSPARENT=1` (checked in `src/tui.ts`)
-  opts back into the see-through canvas. The alt-screen exit dump passes
-  through unpainted (decorator shutoff on `EXIT_ALT_SCREEN`).
+  `TuiAltScreen` and injects the canvas SGR at two points: before every
+  `\x1b[2K`/`\x1b[2J` (BCE — terminals fill erased regions with the current
+  SGR background, covering row tails) and after every background-clearing
+  SGR reset (`\x1b[0m`, `\x1b[m`, `\x1b[0;…m`, `\x1b[49m` — content after a
+  reset would otherwise print cells with the terminal default background,
+  punching holes into the canvas; color-sets whose params merely contain a
+  0 channel are NOT resets). Zero pi-tui patches. Diff-rendered rows the
+  renderer skips keep their last paint, which is why `applyTheme` must
+  force a full redraw via `requestRender(true)`. `DSH_TUI_TRANSPARENT=1`
+  (checked in `src/tui.ts`) opts back into the see-through canvas. The
+  alt-screen exit dump passes through unpainted (decorator shutoff on
+  `EXIT_ALT_SCREEN`).
 - **SelectListTheme has no background hook for unselected rows**: the value
   part of unselected rows renders raw (`renderItem` → `prefix + truncatedValue`),
   so it cannot get the `canvasSubtle` backdrop. Only the selected row,

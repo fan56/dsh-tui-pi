@@ -36,6 +36,7 @@ import { githubDark, githubLight, rgbIsLight } from '../lib/theme/palette.js'
 
 const BG = ansiBg(githubDark.canvas)
 const LIGHT_BG = ansiBg(githubLight.canvas)
+const RESET = '\x1b[0m'
 const ENTER_ALT_SCREEN = '\x1b[?1049h'
 const EXIT_ALT_SCREEN = '\x1b[?1049l'
 
@@ -97,13 +98,67 @@ test('CanvasTerminal prefixes every erase sequence with the canvas SGR', () => {
   assert.ok(out.includes('hello\x1b[4;1H'), 'non-erase bytes pass through unchanged')
 })
 
-test('CanvasTerminal writes without erases pass through unchanged', () => {
+test('CanvasTerminal writes without erases or bg-clearing resets pass through unchanged', () => {
   const inner = stubTerminal()
   const term = new CanvasTerminal(inner)
   term.setCanvasBackground(BG)
-  const data = 'plain \x1b[1mbold\x1b[0m text'
+  const data = 'plain \x1b[1mbold\x1b[22m text\x1b[38;2;9;9;9m colored \x1b[39m tail'
   term.write(data)
   assert.equal(inner.writes[0], data)
+})
+
+test('CanvasTerminal re-injects the canvas after background-clearing resets', () => {
+  const inner = stubTerminal()
+  const term = new CanvasTerminal(inner)
+  term.setCanvasBackground(BG)
+  // A themed span closes with a full reset; the plain text that follows
+  // would print with the terminal default background (canvas holes).
+  term.write(`\x1b[2K\x1b[38;2;1;2;3mhi${RESET} there`)
+  assert.ok(inner.writes[0].includes(`${RESET}${BG} there`), 'canvas restored after the full reset')
+
+  term.write(`\x1b[2K\x1b[1mbold\x1b[m tail`)
+  assert.ok(inner.writes[1].includes(`\x1b[m${BG} tail`), 'implicit ESC[m reset re-injected')
+
+  term.write(`\x1b[2K\x1b[0;1mcombined${RESET} tail`)
+  assert.ok(inner.writes[2].includes(`${RESET}${BG} tail`), 'combined 0;1 reset re-injected')
+
+  // The explicit background-default reset (tmux shows these cells as ESC[49m)
+  term.write(`\x1b[2K\x1b[38;2;7;7;7mglyph\x1b[39m\x1b[49m    next`)
+  assert.ok(inner.writes[3].includes(`\x1b[49m${BG}    next`), 'ESC[49m reset re-injected')
+})
+
+test('CanvasTerminal does not treat color-sets containing a 0 channel as resets', () => {
+  const inner = stubTerminal()
+  const term = new CanvasTerminal(inner)
+  term.setCanvasBackground(BG)
+  // Regression (ported from the patched-build suite): cache-teal
+  // #00796B → 48;2;0;121;107 — the 0 red channel must not read as a reset
+  // param, or the canvas gets injected over intentional surface colors.
+  const teal = '\x1b[48;2;0;121;107m'
+  const white = '\x1b[38;2;255;255;255m'
+  term.write(`\x1b[2K${teal}bold\x1b[1m${white} CH`)
+  const out = inner.writes[0]
+  assert.ok(!out.includes(`${teal}${BG}`), 'no canvas injected inside the teal segment')
+  assert.ok(out.includes(`${teal}bold`), 'text follows the teal set directly')
+  assert.ok(!out.includes(`${white}${BG}`), 'no canvas injected after a truecolor fg set')
+  assert.ok(out.includes(`${white} CH`), 'text follows the white fg set directly')
+
+  // 256-color fg index 0 is a set, not a reset.
+  const blackFg = '\x1b[38;5;0m'
+  term.write(`\x1b[2K${blackFg}plain`)
+  assert.ok(inner.writes[1].includes(`${blackFg}plain`), '38;5;0 is a fg set, not a reset')
+  assert.ok(!inner.writes[1].includes(`${blackFg}${BG}`), 'no canvas injected after the fg color-set')
+})
+
+test('CanvasTerminal keeps intentional surface backgrounds, framed by the canvas', () => {
+  const inner = stubTerminal()
+  const term = new CanvasTerminal(inner)
+  term.setCanvasBackground(BG)
+  const bubble = `\x1b[48;2;22;27;34mbox${RESET}`
+  term.write(`\x1b[2Klead ${bubble} tail`)
+  const out = inner.writes[0]
+  assert.ok(out.includes(bubble), 'the explicit surface background survives verbatim')
+  assert.ok(out.includes(`${RESET}${BG} tail`), 'canvas resumes right after the bubble closes')
 })
 
 test('transparent default and setCanvasBackground(undefined) pass through', () => {

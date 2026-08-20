@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-08-20
+
+### Fixed
+
+- **Canvas holes after background-clearing resets**: 0.8.0/0.8.1 only
+  painted the erase sequences (BCE), so any cell written after a full SGR
+  reset (`\x1b[0m`, `\x1b[m`, combined `\x1b[0;…m`, `\x1b[49m`) inside a
+  row fell back to the terminal default background — invisible with the
+  dark theme on a dark terminal, glaring holes after switching to light
+  (whale-banner gaps, styled-text tails). The decorator now re-injects the
+  canvas after every background-clearing reset, mirroring the old patched
+  `paintCanvasRow` semantics; color-sets whose params merely contain a 0
+  channel (e.g. `\x1b[48;2;0;121;107m`) are not treated as resets
+  (regression suite ported from the patched-build tests). 389 → 392 tests.
+
 ## [0.8.1] — 2026-08-20
 
 ### Fixed
