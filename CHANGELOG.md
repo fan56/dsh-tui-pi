@@ -6,6 +6,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.4] — 2026-08-20
+
+### Changed
+
+- Dependency bump: `@aiwayds/dsh-dcp` 0.5.0 -> 0.5.1 (fixes `/compact` and
+  `/dcp compact` crashing with `Cannot read private member #triggerLabels
+  from an object whose class did not declare it` — cordis hands services to
+  consumers through derived receivers, and dcp 0.4.0+ private state
+  brand-checked against them; 0.5.1 switches to symbol keys).  No test
+  changes; 467 tests unchanged.
+
 ## [0.9.3] — 2026-08-20
 
 ### Changed
