@@ -62,13 +62,20 @@ export const NERD_FONT_FILE_RE = /Nerd|Powerline|Cascadia.*PL|MesloLGS|dsh-tui-p
  * Terminal emulators that ship a built-in Nerd / Symbols font fallback — they
  * can render U+E0B0 and other PUA glyphs even when no Nerd Font is installed
  * system-wide.  The probe short-circuits to `true` when `TERM_PROGRAM` matches
- * one of these, before touching the filesystem.
+ * one of these, before touching the filesystem.  The values are the terminals'
+ * own hardcoded, case-exact TERM_PROGRAM strings (locked by a test) — do not
+ * normalise case on a hunch.
  *
  *   - `ghostty`: bundles Symbols Nerd Font as a built-in fallback for missing
- *     glyphs (https://ghostty.org/docs/config/reference#font-fallback).
- *   - `WezTerm`: bundles its own Nerd Font fallback; the `wezterm` TERM_PROGRAM
- *     value is `WezTerm` (capital W, capital T).
- *     (https://wezfurlong.org/wezterm/config/fonts.html#nerd-fonts).
+ *     glyphs (https://ghostty.org/docs/install/release-notes/1-2-0).
+ *   - `WezTerm`: bundles Nerd Font Symbols and always appends its default
+ *     fallback, even with a user font chain
+ *     (https://wezterm.org/config/fonts.html).
+ *
+ * Residual gap, accepted: tmux 3.3+ rewrites TERM_PROGRAM to `tmux` inside
+ * panes, so the whitelist does not apply there — the probe falls through to
+ * the (conservative, tofu-free) directory scan.  Users under tmux should set
+ * `dsh-tui.iconSet` explicitly.
  */
 export const NERD_FONT_TERMINALS: readonly string[] = [
   'ghostty',

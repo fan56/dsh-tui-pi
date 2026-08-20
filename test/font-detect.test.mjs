@@ -86,6 +86,11 @@ test('terminal with built-in Nerd symbol fallback short-circuits to true', async
     execFile: async () => { throw new Error('no exec') },
   }
 
+  // The whitelist strings are external facts (each terminal's hardcoded
+  // TERM_PROGRAM value, case-exact) — pin them so a typo/silent rename in
+  // the constant cannot pass the loop below unnoticed.
+  assert.deepEqual(NERD_FONT_TERMINALS, ['ghostty', 'WezTerm'], 'whitelist strings are external facts')
+
   // Every whitelisted terminal returns true even with empty font dirs.
   for (const term of NERD_FONT_TERMINALS) {
     assert.equal(await probeNerdFont({ ...noFont, termProgram: term }), true, `termProgram=${term} → true`)
