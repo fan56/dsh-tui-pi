@@ -32,6 +32,7 @@
     "cordis.patch.yml",
     "scripts",
     "templates",
+    "assets",
     "README.md",
     "LICENSE"
   ],

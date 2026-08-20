@@ -29,12 +29,15 @@ import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeSta
 import {
   currentThemePreference,
   readFooterHintsPreference,
+  readIconSetPreference,
   readPanelHeightPreference,
   readSubagentLimits,
   readThemePreference,
   registerThemeSettings,
   writeThemePreference,
 } from './theme-settings.ts'
+import { applyIconSet, resolveIconSet, stopIcon, type IconSet } from './icons.ts'
+import { detectNerdFontAvailable } from './font-detect.ts'
 import { openAgentManager } from './agents.ts'
 import { openSettingsBrowser } from './settings.ts'
 import { openLoginFlow, openLogoutFlow } from './login.ts'
@@ -108,6 +111,14 @@ export function apply(ctx: Context): void {
    * the new segment selection. Armed inside runTui once the TUI exists.
    */
   let applyFooterHintsRef: ((hints: FooterHints) => void) | undefined
+  /**
+   * Live icon-set hot-reload sink, wired to the same watch hook: a committed
+   * `dsh-tui` iconSet change re-resolves the risky glyphs (an 'auto' change
+   * resolves against the startup font-detection snapshot) and repaints the
+   * footer/notices/panels that carry them. Armed inside runTui once the TUI
+   * exists.
+   */
+  let applyIconSetRef: ((set: IconSet) => void) | undefined
 
   ctx.effect(async () => {
     // The theme bundle is built once at TUI startup and held by every
@@ -124,17 +135,26 @@ export function apply(ctx: Context): void {
     // setTheme replay that follows already renders at that new height.
     // applyTheme carries the theme-bundle identity guard, so a height-only
     // commit never triggers a second rebuild.
-    registerThemeSettings(ctx, (pref, height, footerHints) => {
+    registerThemeSettings(ctx, (pref, height, footerHints, iconSet) => {
       applyPanelHeightRef?.(height)
       applyThemeRef?.(pref)
       applyFooterHintsRef?.(footerHints)
+      applyIconSetRef?.(iconSet)
     })
     const themePreference = await readThemePreference(ctx)
     const panelHeight = await readPanelHeightPreference(ctx)
     const footerHints = await readFooterHintsPreference(ctx)
+    // Icon-set self-adaptation: probe the platform once at startup (the
+    // memoised snapshot shared with every later 'auto' resolution), resolve
+    // the persisted mode against it and push the result into src/icons.ts
+    // BEFORE the TUI's first frame — so the footer renders the right
+    // separator from frame one, never a late plain→powerline flicker.
+    const iconSetPreference = await readIconSetPreference(ctx)
+    const nerdfontAvailable = await detectNerdFontAvailable()
+    applyIconSet(resolveIconSet(iconSetPreference, nerdfontAvailable))
     let disposer: (() => void) | undefined
     try {
-      disposer = runTui(themePreference, panelHeight, footerHints)
+      disposer = runTui(themePreference, panelHeight, footerHints, nerdfontAvailable)
     } catch (error) {
       // An async-effect failure after startTui would otherwise orphan the
       // terminal in raw mode — the disposer never registers, so nothing ever
@@ -155,7 +175,7 @@ export function apply(ctx: Context): void {
    * reaches cordis. Returns the effect disposer handed back to cordis on
    * teardown.
    */
-  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints): () => void {
+  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, nerdfontAvailable: boolean): () => void {
     // User keybindings (`~/.dsh/keybindings.json`): a partial map of the app
     // keys, read once per TUI start — `/reload` re-runs apply() and re-reads
     // it. Broken entries surface as notices instead of breaking startup.
@@ -204,7 +224,7 @@ export function apply(ctx: Context): void {
               void stopTask()
               break
             }
-            renderer.renderNotice('⏹ stopping — Esc was double-pressed', 'info')
+            renderer.renderNotice(`${stopIcon()} stopping — Esc was double-pressed`, 'info')
             stopConfirmTimer = setTimeout(() => {
               stopConfirmTimer = undefined
               void stopTask()
@@ -245,7 +265,7 @@ export function apply(ctx: Context): void {
               void disposeAndExit(0)
               break
             }
-            renderer.renderNotice('⏹ Ctrl+C ×2 — quitting…', 'info')
+            renderer.renderNotice(`${stopIcon()} Ctrl+C ×2 — quitting…`, 'info')
             quitConfirmTimer = setTimeout(() => {
               quitConfirmTimer = undefined
               void disposeAndExit(0)
@@ -310,7 +330,7 @@ export function apply(ctx: Context): void {
      * ESC/Ctrl+C double-press guards); the notice renders immediately.
      */
     const stopTask = async (): Promise<void> => {
-      renderer.renderNotice('⏹ canceling current turn…', 'info')
+      renderer.renderNotice(`${stopIcon()} canceling current turn…`, 'info')
       const cancelled = await bridge.cancelActiveTurn()
       // State raced idle between the decision and the cancel call — nothing
       // to cancel (e.g. the turn settled inside the confirm window).
@@ -1020,6 +1040,14 @@ export function apply(ctx: Context): void {
     // Arm the footer-hints watch sink now that the TUI exists (see apply()).
     applyFooterHintsRef = (hints: FooterHints): void => {
       footerHintsRef = hints
+      ui.requestRender()
+    }
+    // Arm the icon-set watch sink: a committed iconSet change hot-applies the
+    // risky glyphs (an 'auto' change resolves against the startup font-
+    // detection snapshot, matching the startup glyph choice) and repaints the
+    // footer/notices/panels that carry them on the next frame.
+    applyIconSetRef = (set: IconSet): void => {
+      applyIconSet(resolveIconSet(set, nerdfontAvailable))
       ui.requestRender()
     }
 

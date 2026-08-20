@@ -4,8 +4,9 @@
  * Segments (left → right): fixed brand "dsh" · provider · model+thinking ·
  * context usage · cache-hit rate · message count · tool count, then a
  * right-aligned 24h clock. Segment backgrounds are the pi-powerline-footer
- * palette; separators are U+E0B0 powerline arrows tinted by the neighbouring
- * segment colours.
+ * palette; separators are the powerline arrow from src/icons.ts (U+E0B0 in
+ * nerdfont/auto-with-font, ▸ in the plain icon set), tinted by the
+ * neighbouring segment colours.
  *
  * Render cost is O(segments): every statistic is read from the bridge's
  * incrementally maintained counters (never a session-log scan). The 1s clock
@@ -17,6 +18,7 @@ import type { BridgeStats } from './session.ts'
 import { ansiBg, ansiFg, BOLD, POWERLINE, RESET, type TuiTheme } from './theme/index.ts'
 import { hexIsLight } from './theme/palette.ts'
 import { clipToWidth } from './text.ts'
+import { arrowRight } from './icons.ts'
 
 /**
  * The footer keybinding hint, assembled from the user's `dsh-tui.footerHints`
@@ -100,7 +102,6 @@ export class FooterHint implements Component {
   }
 }
 
-const ARROW_RIGHT = '\uE0B0'
 const WHITE = ansiFg('#FFFFFF')
 /** Segment text on bright fills (e.g. amber #FFC107): white is unreadable there. */
 const DARK_TEXT = ansiFg('#1f2328')
@@ -139,9 +140,9 @@ function buildSegments(segs: readonly Segment[]): string {
     const s = segs[i]!
     out += `${ansiBg(s.bgHex)}${BOLD}${segmentText(s.bgHex)} ${s.label} `
     if (i + 1 < segs.length) {
-      out += `${ansiBg(segs[i + 1]!.bgHex)}${ansiFg(s.bgHex)}${ARROW_RIGHT}`
+      out += `${ansiBg(segs[i + 1]!.bgHex)}${ansiFg(s.bgHex)}${arrowRight()}`
     } else {
-      out += RESET + ansiFg(s.bgHex) + ARROW_RIGHT + RESET
+      out += RESET + ansiFg(s.bgHex) + arrowRight() + RESET
     }
   }
   return out

@@ -200,6 +200,39 @@ GitHub light / GitHub dark 配色方案，运行时热切换：
 
 ---
 
+## 字体
+
+TUI 中唯一的私有区（PUA）字形是 footer 的 Powerline 分隔箭头（U+E0B0）——
+默认终端字体都不含它，不装字体就会显示豆腐块。`dsh-tui.iconSet` 设置
+（`auto` | `nerdfont` | `plain`，默认 `auto`）让危险字形（U+E0B0、⏹、⭘）
+自适应终端：
+
+- `auto` —— 启动时探测到 Nerd/Powerline 字体就用 Powerline 字形，否则用
+  安全 Unicode 替代（`▸ ■ ●`）。
+- `nerdfont` —— 始终用 Powerline 字形（你已经自己设好字体）。
+- `plain` —— 始终用安全替代，无需任何字体。
+
+**一键安装内置字体**（拷贝字体 + 尽量把终端切过去，保留原字号）：
+
+```sh
+node scripts/install-font.mjs
+```
+
+脚本把 `assets/fonts/dsh-tui-pi-nerd.ttf`（约 170KB 子集：ASCII + U+E0B0 +
+本项目渲染的全部符号）拷进用户字体目录，并尽力改终端：macOS iTerm2
+（PlistBuddy，定点改默认 bookmark）、Linux GNOME Terminal（gsettings）与
+kitty/alacritty/wezterm（改配置文件，先备份）。Terminal.app 明确跳过（其
+字体是二进制 blob）——请手动设置。每一步都带防护：失败只打警告并继续，
+绝不动坏你的配置。
+
+**或手动设终端字体**——任意 Nerd Font 家族作为终端主字体即可（如
+JetBrainsMono Nerd Font、Hack Nerd Font，或安装后的内置 `DSH TUI Nerd`）：
+iTerm2 → Settings → Profiles → Text → Font；Terminal.app → 设置 →
+描述文件 → 文本；kitty → `font_family`；alacritty → `[font] family`；
+wezterm → `wezterm.font("…")`。下次启动时 `auto` 就会解析成 Powerline 字形。
+
+---
+
 ## 安装（本地）
 
 ```sh

@@ -35,6 +35,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 // Loads the SessionEventMap augmentation that adds command/run + command/done.
 import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
+import { stopIcon } from './icons.ts'
 import { clipToWidth } from './text.ts'
 import { buildWelcomeBanner } from './welcome.ts'
 import { formatDailyQuote, pickDailyQuote } from './quotes.ts'
@@ -399,7 +400,7 @@ export class TranscriptRenderer {
     if (reason.kind === 'error') {
       this.appendLine(ansiFg(this.theme.palette.danger) + `✘ ${reason.error?.message ?? 'turn failed'}` + RESET)
     } else if (reason.kind === 'aborted') {
-      this.appendLine(ansiFg(this.theme.palette.fgSubtle) + '⏹ interrupted' + RESET)
+      this.appendLine(ansiFg(this.theme.palette.fgSubtle) + `${stopIcon()} interrupted` + RESET)
     } else if (reason.kind === 'max-tokens') {
       this.appendLine(ansiFg(this.theme.palette.attention) + '⚠ output token limit reached' + RESET)
     }

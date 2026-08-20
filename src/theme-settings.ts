@@ -21,6 +21,7 @@ import {
 import z from '@deepseek-ai/schemastery'
 import { DEFAULT_FOOTER_HINTS, type FooterHints } from './footer.ts'
 import { DEFAULT_PANEL_HEIGHT, type PanelHeight } from './activity.ts'
+import type { IconSet } from './icons.ts'
 import type { ThemePreference } from './theme/index.ts'
 
 /** Settings namespace carrying the persisted dsh-tui preferences. */
@@ -104,6 +105,15 @@ const THEME_SETTINGS_SCHEMA = z.object({
     })
     .default({ ...DEFAULT_FOOTER_HINTS })
     .description('Footer shortcut hints to display (toggle each one on/off)'),
+  iconSet: z
+    .union(['auto', 'nerdfont', 'plain'])
+    .default('auto')
+    .description(
+      "Icon set for the risky glyphs ('auto' = pick nerdfont when a Nerd Font "
+      + "is detected at startup, plain otherwise; 'nerdfont' = powerline PUA "
+      + 'glyphs (U+E0B0 separator, stop, heavy circle); plain = safe Unicode '
+      + 'stand-ins (▸ ■ ●) — auto is the recommended default)',
+    ),
 })
 
 /** Composition entry below the user layer: fall back to the defaults. */
@@ -114,6 +124,7 @@ const THEME_SETTINGS_ENTRY: {
   maxRounds: number
   disableSubagent: boolean
   footerHints: FooterHints
+  iconSet: IconSet
 } = {
   theme: 'auto',
   panelHeight: DEFAULT_PANEL_HEIGHT,
@@ -121,6 +132,7 @@ const THEME_SETTINGS_ENTRY: {
   maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
   disableSubagent: DEFAULT_SUBAGENT_LIMITS.disableSubagent,
   footerHints: { ...DEFAULT_FOOTER_HINTS },
+  iconSet: 'auto',
 }
 
 /**
@@ -147,13 +159,13 @@ let registrationPromise: Promise<void> | undefined
  *
  * @param ctx - plugin context; does nothing while no settings service is mounted.
  * @param onPreferenceChange - hot-reload sink for committed `dsh-tui` theme,
- * panel-height and footer-hints changes; `undefined` when the namespace is
- * already registered (a reloaded plugin instance, a second mount of this
- * bundle) or registration fails.
+ * panel-height, footer-hints and icon-set changes; `undefined` when the
+ * namespace is already registered (a reloaded plugin instance, a second mount
+ * of this bundle) or registration fails.
  */
 export function registerThemeSettings(
   ctx: Context,
-  onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints) => void,
+  onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, iconSet: IconSet) => void,
 ): void {
   registrationPromise = new Promise<void>(resolve => {
     ctx.inject(['settings'], (sctx) => {
@@ -176,8 +188,9 @@ export function registerThemeSettings(
         if (onPreferenceChange !== undefined) {
           scope.watch((next) => {
             // The resolved section is `{ theme: ..., panelHeight: ...,
-            // footerHints: {...} }` — narrow the unknown to the observed fields.
-            const section = next as { theme?: unknown; panelHeight?: unknown; footerHints?: unknown }
+            // footerHints: {...}, iconSet: ... }` — narrow the unknown to the
+            // observed fields.
+            const section = next as { theme?: unknown; panelHeight?: unknown; footerHints?: unknown; iconSet?: unknown }
             const theme = section.theme
             const panelHeight = section.panelHeight
             onPreferenceChange(
@@ -186,6 +199,7 @@ export function registerThemeSettings(
                 ? panelHeight
                 : DEFAULT_PANEL_HEIGHT,
               narrowFooterHints(section.footerHints),
+              narrowIconSet(section.iconSet),
             )
           })
         }
@@ -213,6 +227,11 @@ function narrowFooterHints(value: unknown): FooterHints {
   return hints
 }
 
+/** Validate an unknown `iconSet` value (anything else narrows to 'auto'). */
+function narrowIconSet(value: unknown): IconSet {
+  return value === 'nerdfont' || value === 'plain' ? value : 'auto'
+}
+
 /**
  * The resolved `dsh-tui` section as read from the settings provider, after
  * waiting for the in-flight registration.
@@ -228,7 +247,7 @@ function narrowFooterHints(value: unknown): FooterHints {
  * @returns the resolved section, or `undefined` when no registration is in
  * flight, the settings service is absent, or the namespace has not landed.
  */
-async function readResolvedSection(ctx: Context): Promise<{ theme?: unknown; panelHeight?: unknown; footerHints?: unknown } | undefined> {
+async function readResolvedSection(ctx: Context): Promise<{ theme?: unknown; panelHeight?: unknown; footerHints?: unknown; iconSet?: unknown } | undefined> {
   if (registrationPromise === undefined) return undefined
   let fallback: ReturnType<typeof setTimeout> | undefined
   await Promise.race([
@@ -239,12 +258,12 @@ async function readResolvedSection(ctx: Context): Promise<{ theme?: unknown; pan
   const settings = ctx.get('settings') as SettingsProvider | undefined
   if (settings === undefined) return undefined
   // The descriptor's `value` is the whole resolved section
-  // (`{ theme: ..., panelHeight: ..., footerHints: {...} }`), not the field
-  // itself — narrow the unknown to the three observed fields.
+  // (`{ theme: ..., panelHeight: ..., footerHints: {...}, iconSet: ... }`), not
+  // the field itself — narrow the unknown to the observed fields.
   return settings
     .describe()
     .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { theme?: unknown; panelHeight?: unknown; footerHints?: unknown }
+    | { theme?: unknown; panelHeight?: unknown; footerHints?: unknown; iconSet?: unknown }
     | undefined
 }
 
@@ -283,6 +302,17 @@ export async function readPanelHeightPreference(ctx: Context): Promise<PanelHeig
  */
 export async function readFooterHintsPreference(ctx: Context): Promise<FooterHints> {
   return narrowFooterHints((await readResolvedSection(ctx))?.footerHints)
+}
+
+/**
+ * Read the persisted icon-set mode (the startup snapshot).
+ *
+ * @param ctx - plugin context.
+ * @returns the resolved `dsh-tui` iconSet value, or `'auto'` when the settings
+ * service is absent or the namespace/value cannot be read.
+ */
+export async function readIconSetPreference(ctx: Context): Promise<IconSet> {
+  return narrowIconSet((await readResolvedSection(ctx))?.iconSet)
 }
 
 /**

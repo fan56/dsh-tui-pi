@@ -32,6 +32,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import type { AgentView } from './dsh-events.ts'
+import { sunglassesIcon } from './icons.ts'
 import type { DshSessionBridge } from './session.ts'
 import { DOUBLE_PRESS_MS, MIN_DOUBLE_PRESS_GAP_MS } from './keymap.ts'
 import { readSubagentLimits } from './theme-settings.ts'
@@ -153,7 +154,7 @@ function eventLine(event: SessionEvent, callNames: Map<string, string>): string 
     }
     case 'subagent/descriptor': {
       const descriptor = event.data
-      const parts = ['⭘ subagent']
+      const parts = [`${sunglassesIcon()} subagent`]
       if (descriptor.provider !== undefined && descriptor.provider !== '') parts.push(descriptor.provider)
       if (descriptor.mode !== undefined) parts.push(`[${descriptor.mode}]`)
       return parts.join(' ')

@@ -206,6 +206,43 @@ theme color via BCE, no patched dependencies.
 
 ---
 
+## Fonts
+
+The TUI's only Private-Use-Area glyph is the powerline segment separator
+(U+E0B0) in the footer — no default terminal font ships it, so a terminal
+without a Nerd/Powerline font shows a tofu box. The `dsh-tui.iconSet`
+setting (`auto` | `nerdfont` | `plain`, default `auto`) adapts the risky
+glyphs (U+E0B0, ⏹, ⭘) to the terminal:
+
+- `auto` — powerline glyphs when a Nerd/Powerline font is detected at
+  startup, safe Unicode stand-ins (`▸ ■ ●`) otherwise.
+- `nerdfont` — always the powerline glyphs (you already set the font).
+- `plain` — always the safe stand-ins, no font required.
+
+**Install the bundled font in one shot** (install + point the terminal at
+it, preserving your font size):
+
+```sh
+node scripts/install-font.mjs
+```
+
+It copies `assets/fonts/dsh-tui-pi-nerd.ttf` (a ~170KB subset: ASCII +
+U+E0B0 + every symbol the TUI renders) into the user font directory and
+best-effort flips the terminal: macOS iTerm2 (PlistBuddy, default bookmark),
+Linux GNOME Terminal (`gsettings`) and kitty/alacritty/wezterm (config
+file, backed up first). Terminal.app is intentionally skipped (its font is
+a binary blob) — set it by hand. Every step is wrapped: a failure logs a
+warning and moves on, never touching your config destructively.
+
+**Or set the font by hand** — any Nerd Font family as the terminal's main
+font (e.g. JetBrainsMono Nerd Font, Hack Nerd Font, or the bundled `DSH TUI
+Nerd` after installing it): iTerm2 → Settings → Profiles → Text → Font;
+Terminal.app → Settings → Profiles → Text; kitty → `font_family`; alacritty
+→ `[font] family`; wezterm → `wezterm.font("…")`. Then `auto` resolves to
+the powerline glyphs on the next start.
+
+---
+
 ## Install (local)
 
 ```sh

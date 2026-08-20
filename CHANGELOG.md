@@ -8,6 +8,26 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Icon-set self-adaptation (方案 C)**: the TUI's only Private-Use-Area
+  glyph — the powerline separator U+E0B0 in the footer — renders as a tofu
+  box on terminals without a Nerd Font. A new `dsh-tui.iconSet` setting
+  (`auto` | `nerdfont` | `plain`, default `auto`) adapts the risky glyphs
+  (U+E0B0 → ▸, ⏹ → ■, ⭘ → ●): `auto` probes for a Nerd/Powerline font once
+  at startup (Linux `fc-list -q` per candidate, macOS font-directory scan,
+  Windows/other → plain; zero dependencies, memoised, never throws —
+  src/font-detect.ts) and renders the powerline glyphs when found, the safe
+  Unicode stand-ins otherwise; `nerdfont`/`plain` pin the set. The footer
+  separator, the ⏹ stop notices and the ⭘ subagent glyph route through
+  accessors (src/icons.ts, `applyIconSet` called at startup and on every
+  hot-applied `iconSet` change), so a `plain`/no-font resolution swaps them
+  everywhere without flicker. A ~170KB font subset (ASCII + U+E0B0 + the
+  whole project glyph set; OFL sources Hack Nerd Font + Noto Sans Symbols,
+  `assets/fonts-gen.mjs` regeneration script) ships in `assets/fonts/` and
+  is packed into the npm package; `node scripts/install-font.mjs` installs
+  it and best-effort flips the terminal (macOS iTerm2 via PlistBuddy on the
+  default bookmark, Linux GNOME Terminal via gsettings + kitty/alacritty/
+  wezterm config files backed up first; Terminal.app/SSH/Windows skipped) —
+  or set any Nerd Font by hand (README → Fonts). 419 → 433 tests.
 - **Subagent "rounds" now count assistant messages, not completed turns**:
   a round is one `assistant/message` (one LLM round-trip) on the child's own
   session events, so a one-shot child — which lives its whole life inside a
