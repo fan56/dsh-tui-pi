@@ -16,7 +16,10 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `images` slot, leaving the handler's `invocation.signal` undefined.  Added
   `executeCommand()` compat helper with runtime arity detection
   (`execute.length >= 4`) that inserts an empty images array when needed;
-  rc.7 path unchanged (3-arg call, extra param ignored).  458 -> 466 tests.
+  the rc.7 path is byte-identical to the old direct 3-arg call.  Known
+  limit of arity probing: a future `execute()` gaining a default parameter
+  or another inserted parameter would misroute — re-check this signature
+  first if slash commands break after a dsh upgrade.  458 -> 467 tests.
 
 ## [0.9.1] — 2026-08-20
 

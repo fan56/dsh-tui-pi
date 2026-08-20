@@ -23,7 +23,6 @@ import {
   type CommandExecution,
   type CommandResult,
 } from '@deepseek-ai/dsh-commands'
-import type { EncodedImageAttachment } from '@deepseek-ai/dsh-attachment/types'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from '@earendil-works/pi-tui'
 import {
@@ -48,6 +47,17 @@ function tokenAtCursor(line: string, cursorCol: number): { token: string; start:
   if (match === null) return undefined
   const start = match.index + (match[1] ?? '').length
   return { token: upto.slice(start), start }
+}
+
+/**
+ * Structural mirror of dsh-attachment's rc.8 `EncodedImageAttachment` —
+ * declared locally (not imported) because the rc.7 closure does not export
+ * that interface yet, and this file must typecheck against either closure.
+ */
+interface EncodedImageAttachment {
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  data: string
+  name?: string
 }
 
 /**
@@ -92,7 +102,11 @@ export function executeCommand(
   }
   // Caller passed only (agent, line, signal) — route by runtime arity.
   // rc.8 added an `images` parameter before `signal`; detect via .length
-  // and insert an empty images array when needed.
+  // and insert an empty images array when needed. Known limit of arity
+  // probing: a future execute() that gains a default parameter or ANOTHER
+  // inserted parameter would misroute — if slash commands break after a
+  // dsh upgrade again, re-check this signature first (both rc.7 and rc.8
+  // use plain named parameters, so .length is exact today).
   const signal = imagesOrSignal as AbortSignal
   if (commands.execute.length >= 4) {
     return (commands.execute as (...args: unknown[]) => unknown)(

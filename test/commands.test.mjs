@@ -27,22 +27,25 @@ const NO_IMAGES = []
 
 test('executeCommand passes signal as 3rd arg for rc.7-style execute (3-arg)', async () => {
   const ac = new AbortController()
-  let receivedArgs = []
+  const received = []
 
   const commands = {
-    /** @param  {...any} args */
-    execute(...args) {
-      receivedArgs = args
+    // Named 3 parameters exactly like rc.7's execute — .length === 3, so the
+    // arity probe takes the true rc.7 branch (a rest-param mock would have
+    // .length === 0 and only reach this branch by accident).
+    execute(agent, line, signal) {
+      received.push(agent, line, signal)
       return Promise.resolve(undefined)
     },
   }
 
   await executeCommand(commands, STUB_AGENT, STUB_LINE, ac.signal)
 
-  assert.equal(receivedArgs.length, 3, 'rc.7 execute should receive exactly 3 arguments')
-  assert.equal(receivedArgs[0], STUB_AGENT)
-  assert.equal(receivedArgs[1], STUB_LINE)
-  assert.equal(receivedArgs[2], ac.signal, '3rd arg must be the AbortSignal, not an images array')
+  assert.equal(received.length, 3, 'rc.7 execute should receive exactly 3 arguments')
+  assert.equal(received[0], STUB_AGENT)
+  assert.equal(received[1], STUB_LINE)
+  assert.equal(received[2], ac.signal, '3rd arg must be the AbortSignal, not an images array')
+  assert.equal(commands.execute.length, 3, 'mock must be a precise rc.7 shape')
 })
 
 test('executeCommand 3-arg path: signal is never undefined', async () => {
@@ -155,6 +158,28 @@ test('executeCommand forwards undefined (unknown command)', async () => {
   assert.equal(result, undefined)
 })
 
+test('executeCommand arity probe: 3-arg call against length-4 execute inserts [] and places signal 4th', async () => {
+  const ac = new AbortController()
+  const received = []
+
+  const commands = {
+    // Named 4 parameters exactly like rc.8's execute — .length === 4.
+    execute(agent, line, images, signal) {
+      received.push(agent, line, images, signal)
+      return Promise.resolve(undefined)
+    },
+  }
+
+  await executeCommand(commands, STUB_AGENT, STUB_LINE, ac.signal)
+
+  assert.equal(commands.execute.length, 4, 'mock must be a precise rc.8 shape')
+  assert.equal(received.length, 4)
+  assert.equal(received[0], STUB_AGENT)
+  assert.equal(received[1], STUB_LINE)
+  assert.deepEqual(received[2], [], '3rd arg must be an empty images array (plain invocation)')
+  assert.equal(received[3], ac.signal, '4th arg must be the AbortSignal')
+})
+
 // ---------------------------------------------------------------------------
 // Crash repro: the exact scenario that broke in rc.8
 // ---------------------------------------------------------------------------
@@ -167,7 +192,7 @@ test('rc.8 crash repro: calling 3-arg execute with signal must not leave signal 
     execute(_agent, _line, images, signal) {
       // This is what rc.8 command handlers do — if signal is undefined
       // this throws "Cannot read properties of undefined (reading 'aborted')"
-      const aborted = signal.aborted   // eslint-disable-line
+      const aborted = signal.aborted
       return Promise.resolve({ commandId: 'x', result: { kind: 'success' } })
     },
   }
