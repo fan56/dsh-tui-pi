@@ -8,24 +8,31 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Fork-driven subagent visibility**: fork-lineage children (dsh writes
-  `parentSession` + `delegationDepth` but NOT `origin: 'subagent'` — only the
-  spawn path writes the origin) were invisible to the subagent widget and
-  Ctrl+G, because the header discovery gate required the origin. The gate now
-  requires the durable **delegation budget** instead, which both the spawn and
-  fork paths write, so a fork child shows on the live board, opens in Ctrl+G,
-  folds rounds/tokens/context through the exact same machinery, and settles on
-  its own `turn/end`. A fork child labels as `fork <id8>` (no descriptor ever
-  refines it). User-facing session forks (`Session.fork`: `parentSession` +
-  `seedLength`, never the budget) stay off the board; `/resume` now excludes
-  fork children too (`isResumableSessionHeader`), matching the existing
-  spawn-subagent exclusion.
+- **Subagent discovery: budget-aware header gate + persisted-header safety**.
+  In-process children (spawn and fork-driven alike) are created through
+  dsh's `childSessionMeta`, which writes `origin: 'subagent'` AND a
+  `delegationDepth` budget (>= 1) together, so the origin marker alone
+  already identifies them; the gate additionally admits an origin-less
+  header that carries a positive budget as a defensive fallback (label
+  `fork <id8>` — current dsh does not produce this shape). Crucially, BOTH
+  this gate and `/resume`'s `isResumableSessionHeader` judge the budget BY
+  VALUE (`> 0` / `=== 0`), never by field presence: the jsonl persistence
+  backend materialises `delegationDepth: 0` on every restored header (write
+  `?? 0`, read back unconditionally), so a presence test would (a) pull
+  user-facing `Session.fork` conversations and other restored non-children
+  onto the live board / Ctrl+G, and (b) filter EVERY persisted session out
+  of `/resume` (empty picker). `/resume` excludes exactly the delegated
+  children (`origin: 'subagent'` or budget > 0) and keeps root sessions and
+  user-facing forks resumable. Two regression tests pin the persisted
+  shapes (jsonl round-trip materialises `delegationDepth: 0`; a restored
+  depth-0 fork with a tracked parent must stay off the board). 455 → 457
+  tests.
 - **DCP compaction visibility inside subagents**: dsh-dcp appends one
   `user/message` `notice`-form row per committed compaction on the child's own
   log (`source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice', summary }`).
   The Ctrl+G transcript now renders that row with a `🧹` marker — distinct
   from the generic `ⓘ` — and the picker rows carry the per-child compaction
-  count (`🧹 N×` in the description). Fork children (now tracked) show their
+  count (`🧹 N×` in the description). Every tracked child shows its
   compactions the same way.
 
 ### Changed

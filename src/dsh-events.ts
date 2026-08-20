@@ -103,10 +103,10 @@ export function isDcpCompactionNotice(event: SessionEvent): boolean {
  * are keyed by their session id — discovered either from
  * `tool-workflow/agent-start` or, when the deployment never emits workflow
  * events, from the child session's header (`parentSession` pointing at a
- * tracked session + the durable `delegationDepth` budget; `origin:
- * 'subagent'` is NOT required — fork-driven children carry the budget without
- * the origin). All fields are O(1)-maintained — never a session-log scan on
- * the render path.
+ * tracked session + the delegation markers `origin: 'subagent'` or
+ * `delegationDepth > 0`; dsh's childSessionMeta writes both for spawn and
+ * in-process fork children alike). All fields are O(1)-maintained — never a
+ * session-log scan on the render path.
  */
 export interface AgentView {
   /** The child session id (raw string) — the stable identity key. */

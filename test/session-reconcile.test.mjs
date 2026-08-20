@@ -445,14 +445,16 @@ test('child assistant/chunk reasoning-delta prices into the child pending estima
 })
 
 // ---------------------------------------------------------------------------
-// Fork-driven child visibility: a fork lineage writes `parentSession` +
-// `delegationDepth` but NOT `origin: 'subagent'` — the old discovery gate
-// required the origin, so fork children never showed on the widget / Ctrl+G.
-// The gate now requires the durable delegation budget instead (which BOTH the
-// spawn and fork paths write), and the user-facing `Session.fork` lineage
-// (parentSession + seedLength, no budget) stays off the board.
+// Discovery gate shape coverage. Current dsh writes `origin: 'subagent'` +
+// `delegationDepth >= 1` TOGETHER (childSessionMeta, for spawn AND in-process
+// fork children alike), so the origin alone decides in practice. The gate
+// still admits a budget-without-origin header as a defensive fallback, and —
+// critically — must judge the budget BY VALUE (`> 0`), not by field presence:
+// the jsonl persistence backend materialises `delegationDepth: 0` on every
+// restored header, so a presence test would pull user-facing forks and other
+// restored non-children onto the live board / Ctrl+G.
 
-test('a fork-driven child (no origin, delegationDepth) is discovered and folds rounds', async () => {
+test('a budget-marked child without the origin (defensive shape) is still discovered and folds rounds', async () => {
   const { ctx, handlers } = makeHarness()
   const fired = []
   const bridge = new DshSessionBridge(ctx, {
@@ -460,15 +462,16 @@ test('a fork-driven child (no origin, delegationDepth) is discovered and folds r
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })
   await bridge.ensureAgent()
-  // Fork lineage: parentSession points at a tracked session, delegationDepth
-  // is set, origin is absent — the fork child must still be discovered.
+  // Defensive shape — not produced by current dsh (which always writes the
+  // origin too): parentSession points at a tracked session, a positive
+  // delegation budget is set, origin is absent.
   const forkChild = { id: 'fork-1', header: { parentSession: 'root-session', delegationDepth: 1, seedLength: 4 } }
   emit(handlers, forkChild, assistantMessage(1, 10))
-  assert.equal(bridge.getAgentViews().length, 1, 'fork child discovered via header')
+  assert.equal(bridge.getAgentViews().length, 1, 'budget-marked child discovered via header')
   const view = bridge.getAgentViews()[0]
   assert.equal(view.childId, 'fork-1')
   assert.equal(view.parentSession, 'root-session')
-  assert.equal(view.label, 'fork fork-1', 'fork children get the fork label (no descriptor refines it)')
+  assert.equal(view.label, 'fork fork-1', 'origin-less children get the fork label (no descriptor refines it)')
   assert.equal(view.rounds, 1, 'rounds fold from the child own events')
   assert.equal(bridge.getRoundCount('fork-1'), 1)
   assert.equal(bridge.getChildLog('fork-1').length, 1, 'the child transcript buffers its own events')
@@ -503,9 +506,9 @@ test('a session with no parentSession and no origin is not discovered', async ()
 })
 
 test('a user-facing session fork (parentSession tracked, NO delegationDepth) is not discovered', async () => {
-  // The guard: dsh's `Session.fork` lineage is parentSession + seedLength
-  // only — a forked conversation is a real session, not a subagent, and must
-  // not appear on the live board / Ctrl+G.
+  // The guard: dsh's in-memory `Session.fork` lineage is parentSession +
+  // seedLength only — a forked conversation is a real session, not a
+  // subagent, and must not appear on the live board / Ctrl+G.
   const { ctx, handlers } = makeHarness()
   const bridge = new DshSessionBridge(ctx, {
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
@@ -514,6 +517,24 @@ test('a user-facing session fork (parentSession tracked, NO delegationDepth) is 
   const userFork = { id: 'fork-user', header: { parentSession: 'root-session', seedLength: 2 } }
   emit(handlers, userFork, assistantMessage(1, 10))
   assert.equal(bridge.getAgentViews().length, 0, 'user fork stays off the subagent board')
+  assert.equal(bridge.getLiveChildren().length, 0)
+  await bridge.dispose()
+})
+
+test('a restored session with materialised delegationDepth: 0 (parentSession tracked) is not discovered', async () => {
+  // Over-capture guard: jsonl persistence writes `delegationDepth ?? 0` and
+  // reads the field back unconditionally, so a user-facing fork (or any
+  // non-child) that was persisted and restored carries `delegationDepth: 0`.
+  // A field-presence gate (`!== undefined`) would discover it as a child;
+  // the value gate (`> 0`) must not.
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const restoredFork = { id: 'fork-restored', header: { parentSession: 'root-session', seedLength: 112416, delegationDepth: 0 } }
+  emit(handlers, restoredFork, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 0, 'restored depth:0 fork stays off the subagent board')
   assert.equal(bridge.getLiveChildren().length, 0)
   await bridge.dispose()
 })

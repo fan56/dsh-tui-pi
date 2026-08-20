@@ -327,27 +327,32 @@ export class DshSessionBridge {
       const sessionKey = String(session.id)
       // Discover subagent children by session header — the deployment may
       // never emit tool-workflow events (the firehose is not scope-filtered,
-      // so child sessions arrive here too). Any session whose parent is a
-      // tracked session AND carries the durable delegation-depth marker is a
-      // child; the descriptor event later refines the label/provider.
+      // so child sessions arrive here too). A session whose parent is a
+      // tracked session AND is marked as delegated is a child; the descriptor
+      // event later refines the label/provider.
       //
-      // Guard: the recursion budget (`delegationDepth`) is required, not the
-      // `origin`. The spawn path always writes `origin: 'subagent'` PLUS the
-      // budget; fork-driven children write the budget WITHOUT the origin
-      // (dsh's `Session.fork` lineage is `parentSession` + `seedLength` only
-      // and is a USER-facing fork of a conversation — a real session, not a
-      // subagent). Requiring the budget admits both delegation paths while
-      // keeping a user forked conversation off the live board / Ctrl+G.
+      // Guard: a child is `origin: 'subagent'` OR a delegation budget
+      // `delegationDepth > 0`. Both markers are written together by dsh's
+      // childSessionMeta (spawn AND in-process fork children alike), so in
+      // practice the origin alone carries the decision; the budget clause
+      // only future-proofs the gate against a child that carries the budget
+      // without the origin. The budget test MUST be a VALUE test, not a
+      // field-presence test: the jsonl persistence backend materialises
+      // `delegationDepth: 0` on every restored header (write `?? 0`, read
+      // unconditionally), so a presence test would pull user-facing
+      // `Session.fork` conversations and other non-child restored sessions
+      // onto the live board / Ctrl+G.
       const header = session.header
       if (header?.parentSession !== undefined
-        && header.delegationDepth !== undefined
+        && (header.origin === 'subagent' || (header.delegationDepth ?? 0) > 0)
         && this.trackedSessions.has(String(header.parentSession))
         && !this.agentViews.has(sessionKey)) {
         this.agentViews.set(sessionKey, {
           childId: sessionKey,
           parentSession: String(header.parentSession),
-          // A fork child (no `origin`) never emits a subagent/descriptor —
-          // label it `fork <id8>` so the surface says what it is.
+          // Current dsh children always carry the origin, so in practice the
+          // label is `subagent <id8>`; the `fork` label only fires for the
+          // defensive budget-without-origin shape above.
           label: header.origin === undefined
             ? `fork ${sessionKey.slice(0, 8)}`
             : `subagent ${sessionKey.slice(0, 8)}`,
@@ -850,7 +855,11 @@ export class DshSessionBridge {
           // counted (its `assistant/message` reached the session log first)
           // must not be counted AGAIN when that same event arrives late here:
           // the reconcile only moves the count up, so a naive `current + 1`
-          // would inflate it permanently.
+          // would inflate it permanently. Caveat: "absolute" holds only while
+          // the firehose delivers each event at most once — there is no seq
+          // de-dup, so a redelivered `assistant/message` inflates the
+          // streamed ledger permanently (the previous `current + 1` counter
+          // had the same exposure).
           const streamed = (this.streamedRoundCounts.get(sessionId) ?? 0) + 1
           this.streamedRoundCounts.set(sessionId, streamed)
           const count = Math.max(streamed, this.roundCounts.get(sessionId) ?? 0)

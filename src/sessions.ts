@@ -256,13 +256,20 @@ export type PickSessionResult =
 
 /**
  * Whether a persisted session header may be resumed as this TUI's main
- * conversation. Subagent children — spawn (`origin: 'subagent'`) and
- * fork-driven (`delegationDepth` set, no origin) — are excluded: resuming one
- * would misplace it in the recursion budget. User-facing session forks
- * (`Session.fork`) never set the recursion budget and remain resumable.
+ * conversation. Subagent children — spawn and fork-driven alike, both marked
+ * `origin: 'subagent'` + `delegationDepth >= 1` — are excluded: resuming one
+ * would misplace it in the recursion budget. Everything else is resumable.
+ *
+ * The budget test MUST be a value test, not a field-presence test: the jsonl
+ * persistence backend writes `delegationDepth: header.delegationDepth ?? 0`
+ * and reads it back unconditionally, so EVERY header from
+ * `persistence.list()` carries the field — top-level sessions and
+ * user-facing `Session.fork` conversations as `0`. A presence test
+ * (`=== undefined`) would filter out every persisted session and leave
+ * `/resume` with an empty list.
  */
 export function isResumableSessionHeader(header: SessionHeader): boolean {
-  return header.origin !== 'subagent' && header.delegationDepth === undefined
+  return header.origin !== 'subagent' && (header.delegationDepth ?? 0) === 0
 }
 
 /**
