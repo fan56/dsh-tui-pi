@@ -39,7 +39,6 @@ import {
   skillSettingRowLabel,
   skillToggleEnabled,
   sortCompletionItems,
-  styledBadge,
   styledCompletionLabel,
   styledDescription,
 } from '../lib/skills.js'
@@ -152,15 +151,6 @@ test('completionLabel prefixes an aligned badge to the candidate value', () => {
   assert.equal(completionLabel('command', '/model'), '[c] /model')
 })
 
-test('styledBadge renders skill badges italic and command badges plain', () => {
-  // The slash dropdown emits the ANSI SGR itself (pi-tui SelectList has no
-  // per-badge theme hook): skill tags are wrapped in italic on/off, command
-  // tags stay plain.
-  assert.equal(styledBadge('explicit-skill'), '\x1b[3m[s]\x1b[23m')
-  assert.equal(styledBadge('native-skill'), '\x1b[3m[s]\x1b[23m')
-  assert.equal(styledBadge('command'), '[c]')
-})
-
 test('styledCompletionLabel wraps the WHOLE skill label italic, commands plain', () => {
   const styled = styledCompletionLabel('explicit-skill', '/skill:data-analysis')
   // The whole label (badge + value) is one italic span — not just the badge.
@@ -178,6 +168,9 @@ test('styledDescription wraps skill descriptions italic, empty stays empty', () 
   // An empty description must stay falsy — SelectList's no-description branch
   // keys off a falsy description.
   assert.equal(styledDescription(''), '')
+  // A whitespace-only description is also falsy: it must not render a stray
+  // run of italic spaces (C1 guard).
+  assert.equal(styledDescription('   '), '')
 })
 
 test('styled skill rows survive SelectList truncation without leaking italic', () => {
@@ -223,6 +216,53 @@ function sgrEndItalic(line) {
     }
   }
   return italic
+}
+
+test('selected skill row keeps its backdrop through the inline italic description', () => {
+  // Oldfox boundary: ITALIC_OFF must stay \x1b[23m (italic-off only), NOT a
+  // full \x1b[0m reset — the selected row's backdrop (selectedText's
+  // background + bold) has to survive the inline italic description to the
+  // end of the row. A full reset mid-row would drop the backdrop for the
+  // spacing + description; this test goes red if someone "simplifies"
+  // ITALIC_OFF to \x1b[0m. Uses a SHORT label that fits (no truncation) so
+  // the whole selected row renders in one themed span.
+  const items = [
+    {
+      value: '/skill:lark-base',
+      label: styledCompletionLabel('explicit-skill', '/skill:lark-base'),
+      description: styledDescription('lark base'),
+    },
+    { value: '/model', label: completionLabel('command', '/model'), description: 'select model' },
+  ]
+  const list = new SelectList(items, 5, darkTheme.selectList, {})
+  list.setSelectedIndex(0) // skill row selected
+  // Widths wide enough to fit the short label AND show the inline description
+  // (renderItem only adds the description column when width > 40).
+  for (let width = 48; width <= 60; width++) {
+    const lines = list.render(width)
+    assert.equal(
+      sgrEndBackground(lines[0]),
+      true,
+      `selected skill row drops its backdrop at width ${width}: ${JSON.stringify(lines[0])}`,
+    )
+  }
+})
+
+/** Background state when the last visible character of a line is drawn. */
+function sgrEndBackground(line) {
+  let bgOn = false
+  let bgAtEndOfText = false
+  for (const seg of line.split(/(\x1b\[[0-9;]*m)/)) {
+    if (/^\x1b\[/.test(seg)) {
+      const params = seg.slice(2, -1).split(';').filter(Boolean)
+      if (params.length === 0 || params.includes('0')) bgOn = false
+      else if (params.includes('48')) bgOn = true
+      else if (params.includes('49')) bgOn = false
+    } else if (seg !== '') {
+      bgAtEndOfText = bgOn
+    }
+  }
+  return bgAtEndOfText
 }
 
 test('skillSettingRowLabel leads with a fixed-width state then the [s] row', () => {

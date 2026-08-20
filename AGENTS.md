@@ -166,6 +166,14 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   part of unselected rows renders raw (`renderItem` → `prefix + truncatedValue`),
   so it cannot get the `canvasSubtle` backdrop. Only the selected row,
   descriptions, scroll info and no-match line are themed.
+- **A truncated label drops the selected-row backdrop after the cut**:
+  pi-tui 0.84.2's `truncateToWidth` terminates any truncated result with a
+  full `\x1b[0m` reset (`finalizeTruncatedResult`), so when a SELECTED skill
+  row's label is cut, everything after the cut — the spacing and the
+  description — loses the selected background/bold (the `\x1b[0m` ends
+  `selectedText`'s span early). Pre-existing upstream behaviour, unrelated
+  to the whole-line italic tweak (the italic off-code is `\x1b[23m`; the
+  non-truncated backdrop path is regression-tested in test/skills.test.mjs).
 - **Input has no masking**: secret fields are rendered by our own
   `EditField` dot-row renderer (maskLine) over a real Input; the value never
   reaches the render output.

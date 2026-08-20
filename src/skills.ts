@@ -149,18 +149,6 @@ const ITALIC_ON = '\x1b[3m'
 const ITALIC_OFF = '\x1b[23m' // italic-off only — a full \x1b[0m reset would drop the selected-row backdrop
 
 /**
- * The rendered badge for one completion row: skill badges render italic,
- * command badges stay plain. The `\x1b[3m` italic code is the same one
- * pi-tui's MarkdownTheme.italic emits, so it is terminal-rendered wherever
- * markdown emphasis already renders. Kept as the badge-span primitive; the
- * dropdown itself styles whole rows via `styledCompletionLabel`.
- */
-export function styledBadge(kind: CompletionItemKind): string {
-  const text = badgeText(kind)
-  return kind === 'command' ? text : `${ITALIC_ON}${text}${ITALIC_OFF}`
-}
-
-/**
  * The display label for one completion row in the slash dropdown: skill rows
  * render the WHOLE label (aligned badge + candidate value) as one italic span;
  * command rows stay completely plain (no ANSI at all). Consumers that need the
@@ -174,11 +162,13 @@ export function styledCompletionLabel(kind: CompletionItemKind, value: string): 
 
 /**
  * The dropdown description for a skill row: rendered italic to match the
- * whole-line treatment. An empty description stays empty — a falsy
- * description is what sends the row to SelectList's no-description branch.
+ * whole-line treatment. An empty — or whitespace-only — description stays
+ * empty (a falsy description is what sends the row to SelectList's
+ * no-description branch; a whitespace-only one would otherwise render a
+ * stray run of italic spaces).
  */
 export function styledDescription(text: string): string {
-  return text === '' ? '' : `${ITALIC_ON}${text}${ITALIC_OFF}`
+  return text.trim() === '' ? '' : `${ITALIC_ON}${text}${ITALIC_OFF}`
 }
 
 /** Fixed width of the toggle state prefix in the settings Skills row. */
