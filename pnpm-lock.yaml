@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@aiwayds/dsh-dcp':
-        specifier: 0.4.0
-        version: 0.4.0
+        specifier: 0.5.0
+        version: 0.5.0
       '@aiwayds/dsh-subagent-registry':
         specifier: 0.1.3
         version: 0.1.3
@@ -27,8 +27,8 @@ importers:
 
 packages:
 
-  '@aiwayds/dsh-dcp@0.4.0':
-    resolution: {integrity: sha512-rkBj5aKnqvbvaA5AIS2SOMKTwRJsJgItJkhnnLm8qCwG72GmgYIJ/4rD45gW6QkJZGrt7INNfnosoLrco9Az6Q==}
+  '@aiwayds/dsh-dcp@0.5.0':
+    resolution: {integrity: sha512-t7pY8lSl9SV4mejGcxOeANtdyTOOtJUPHV60ZgYVoI+MHSvIhmCwIxMYVJ7ux3yeHyTZcP8gnxllIdtPzATRqQ==}
     hasBin: true
     peerDependencies:
       '@deepseek-ai/cordis': ^4.0.1
@@ -110,7 +110,7 @@ packages:
 
 snapshots:
 
-  '@aiwayds/dsh-dcp@0.4.0': {}
+  '@aiwayds/dsh-dcp@0.5.0': {}
 
   '@aiwayds/dsh-subagent-registry@0.1.3': {}
 

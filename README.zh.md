@@ -2,6 +2,8 @@
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) 的 pi 风格终端 UI 插件 —— 把 dsh 变成 pi 风格的编码代理体验。
 
+**兼容性**：支持 dsh `0.1.0-rc.7` 与 `0.1.0-rc.8`。斜杠命令执行在运行时自适应两个版本的 `dsh-commands` `execute()` 签名（rc.8 在 `signal` 前插入了 `images` 参数；TUI 探测参数个数后按对应形式调用）。rc.8 下经单元测试 + tmux 真机冒烟验证；rc.7 调用路径与升级前的直接调用完全一致。
+
 > English version: [README.md](README.md)
 
 ## 截图

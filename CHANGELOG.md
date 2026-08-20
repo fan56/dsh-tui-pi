@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-08-20
+
+### Changed
+
+- Dependency bump: `@aiwayds/dsh-dcp` 0.4.0 -> 0.5.0 (message-count
+  semantics + per-session stats; verified under dsh 0.1.0-rc.8 via live
+  `/dcp --help` smoke).  `@aiwayds/dsh-subagent-registry` 0.1.3 and
+  `@earendil-works/pi-tui` 0.84.2 were already the latest published.
+- README (en/zh) now states supported dsh versions explicitly: 0.1.0-rc.7
+  and 0.1.0-rc.8.  rc.8 coverage: unit tests with both `execute()` mock
+  signatures plus a tmux e2e smoke (startup, `/model`, `/settings`,
+  `/dcp --help`); rc.7 coverage: the 0.9.0/0.9.1 development baseline —
+  the arity shim keeps the rc.7 call path identical to 0.9.1's direct
+  invocation.  No test changes; 467 tests unchanged.
+
 ## [0.9.2] — 2026-08-20
 
 ### Fixed

@@ -2,6 +2,12 @@
 
 pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a plugin suite that turns dsh into a pi-like coding agent experience.
 
+**Compatibility:** dsh `0.1.0-rc.7` and `0.1.0-rc.8`. Slash-command execution
+adapts to both `dsh-commands` `execute()` signatures at runtime (rc.8 added an
+`images` parameter before `signal`; the TUI detects the arity and calls either
+form). Verified under rc.8 by unit tests plus a live tmux e2e smoke; the rc.7
+call path is identical to the pre-rc.8 direct invocation.
+
 > 中文说明: [README.zh.md](README.zh.md)
 
 ## Screenshot
