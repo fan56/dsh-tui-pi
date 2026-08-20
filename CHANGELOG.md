@@ -6,6 +6,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-08-20
+
 ### Fixed
 
 - **`auto` icon-set false negative on terminals with built-in Nerd symbol
