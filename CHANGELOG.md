@@ -6,6 +6,18 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **macOS `auto` icon-set false negative on terminals with built-in Nerd
+  symbol fallback** (e.g. Ghostty, WezTerm).  The font-directory scan
+  (`probeDarwin`) only checks installed font files — it correctly reports
+  "no Nerd Font" when none is installed system-wide.  But terminals like
+  Ghostty and WezTerm ship a built-in Symbols Nerd Font fallback and can
+  render U+E0B0 without any system-installed Nerd Font.  The probe now
+  short-circuits to `true` when `TERM_PROGRAM` matches a known whitelisted
+  terminal, before touching the filesystem; the font-directory scan remains
+  as the fallback path for all other terminals.  457 → 458 tests.
+
 ## [0.9.0] — 2026-08-20
 
 ### Added
