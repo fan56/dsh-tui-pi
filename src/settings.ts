@@ -599,10 +599,10 @@ class SkillsPanel implements Component {
 
   /** The overlay renders at `maxHeight` of terminal rows; FramedOverlay adds
    *  4 chrome rows (top border + spacer + bottom spacer + border); the child
-   *  adds 7 rows around the skill list (title + spacer + header + rule above,
-   *  description + spacer + footer below). */
+   *  adds 8 rows around the skill list (title + top rule + header + mid rule
+   *  above, bottom rule + description + spacer + footer below). */
   private static readonly FRAME_OVERHEAD = 4
-  private static readonly TAIL_ROWS = 7
+  private static readonly TAIL_ROWS = 8
 
   constructor(
     tui: TUI,
@@ -643,7 +643,6 @@ class SkillsPanel implements Component {
     const wrap = Math.max(2, width - 2)
     const lines: string[] = [
       fns.accent(BOLD + clipToWidth('⚙ Skills', wrap) + RESET),
-      '',
     ]
     if (this.rows.length === 0) {
       lines.push(fns.muted(clipToWidth(this.status ?? '', wrap)))
@@ -675,8 +674,10 @@ class SkillsPanel implements Component {
       { key: 'name', title: 'Skill', flex: true },
     ]
     const widths = columnWidths(wrap - MARKER_W, columns)
+    // The booktabs trio seals the table right under the title.
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
     lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), wrap)))
-    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths), wrap)))
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┼'), wrap)))
     // Fixed-width prefix before the separator: marker(2) + icon(2) = 4.
     const prefixCols = 2 + 2
     for (let vi = 0; vi < visibleRows.length; vi++) {
@@ -699,6 +700,7 @@ class SkillsPanel implements Component {
         )
       }
     }
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), wrap)))
     const sel = filtered[this.cursor]
     if (sel !== undefined && sel.description !== '') {
       lines.push(fns.subtle(clipToWidth(`  ${sel.description}`, wrap)))

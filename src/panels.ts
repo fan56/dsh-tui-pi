@@ -132,13 +132,15 @@ export function tableHeaderLine(columns: readonly TableColumn[], widths: readonl
 }
 
 /**
- * The rule line under the header: `─` runs per column with a `┼` junction
- * exactly under each `│` of the header/rows — the visible table border the
- * pickers were missing. Same layout as `tableHeaderLine` (marker slot,
+ * A horizontal table rule: `─` runs per column joined at the separators.
+ * The junction character depends on position — `┬` for the TOP rule (the
+ * column separators continue down from it), `┼` for the MID rule under the
+ * header (separators cross it), `┴` for the BOTTOM rule (separators end
+ * into it). Same layout as `tableHeaderLine` (marker slot,
  * separator-spanning junctions), so it must be derived from the same widths.
  */
-export function tableRuleLine(widths: readonly number[]): string {
-  return ' '.repeat(MARKER_W) + widths.map(width => '─'.repeat(width)).join('─┼─')
+export function tableRuleLine(widths: readonly number[], junction: '┬' | '┼' | '┴' = '┼'): string {
+  return ' '.repeat(MARKER_W) + widths.map(width => '─'.repeat(width)).join(`─${junction}─`)
 }
 
 /** Pure navigation state shared by all panels (unit-testable). */
@@ -286,13 +288,14 @@ export class TablePanel<T> implements Component {
     const widths = columnWidths(width - MARKER_W, columns)
     const seps = columns.length > 1 ? TABLE_SEP : ''
     const lines: string[] = []
-    if (title !== undefined) {
-      lines.push(fns.accent(BOLD + clipToWidth(title, width) + RESET))
-      lines.push('')
-    }
+    if (title !== undefined) lines.push(fns.accent(BOLD + clipToWidth(title, width) + RESET))
 
+    // The booktabs trio seals the table: TOP rule (┬) directly under the
+    // title, header, MID rule (┼), rows, BOTTOM rule (┴). A single-column
+    // table gets the same rules minus the junctions.
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), width)))
     lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), width)))
-    if (columns.length > 1) lines.push(fns.subtle(clipToWidth(tableRuleLine(widths), width)))
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┼'), width)))
 
     const controller = this.controller
     for (let i = controller.scroll; i < Math.min(rows.length, controller.scroll + controller.maxVisible); i++) {
@@ -304,6 +307,7 @@ export class TablePanel<T> implements Component {
       const line = clipToWidth(`${rowMarker(selected)}${cells}`, width)
       lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
     }
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), width)))
 
     lines.push('')
     lines.push(fns.subtle(clipToWidth(`${footer ?? '↑↓ navigate · Enter select · Esc back'}${scrollInfo(controller, rows.length)}`, width)))
@@ -375,18 +379,20 @@ export class FieldPanel implements Component {
       for (const line of content) {
         lines.push(fns.muted(clipToWidth(line === '' ? ' ' : line, wrap)))
       }
+      lines.push('')
     }
-    lines.push('')
 
-    // The FW table look: FIELD │ VALUE header + rule, the │ separator on
-    // every row; the ✎ affordance rides at the head of the value cell.
+    // The FW table look: the booktabs trio (TOP ┬ / header / MID ┼ /
+    // fields / BOTTOM ┴) with the │ separator on every row; the ✎
+    // affordance rides at the head of the value cell.
     const columns: readonly TableColumn[] = [
       { key: 'field', title: 'Field', width: this.keyWidth },
       { key: 'value', title: 'Value', flex: true },
     ]
     const widths = columnWidths(wrap - MARKER_W, columns)
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
     lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), wrap)))
-    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths), wrap)))
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┼'), wrap)))
 
     const controller = this.controller
     for (let i = 0; i < fields.length; i++) {
@@ -398,6 +404,7 @@ export class FieldPanel implements Component {
       const line = clipToWidth(`${rowMarker(selected)}${keyCell}${TABLE_SEP}${valueCell}`, wrap)
       lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
     }
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), wrap)))
 
     const statusLine = status?.()
     if (statusLine !== undefined) {
@@ -569,7 +576,6 @@ export class SettingsListPanel implements Component {
     const wrap = Math.max(2, width - 2)
     const lines: string[] = [
       fns.accent(BOLD + clipToWidth(title, wrap) + RESET),
-      '',
     ]
     const rows = this.filtered()
     if (rows.length === 0) {
@@ -578,14 +584,12 @@ export class SettingsListPanel implements Component {
       lines.push(fns.subtle(clipToWidth(this.hint(footer, enableSearch === true), wrap)))
       return lines
     }
-
-    // The FW table look: an uppercase header row, the ─┼─ rule under it, and
-    // the │ column separator on every row (the old two-space gap made the
-    // value column read as floating text). The value column starts at 50%
-    // of the panel width — a fixed half split (a flex label column pushed
-    // values to the far right edge). Rows whose values are ALL empty
-    // (menu-only lists) collapse to a single label column — no empty value
-    // column, no separator, no rule.
+    // The FW table look: the │ column separator on every row (the old
+    // two-space gap made the value column read as floating text). The value
+    // column starts at 50% of the panel width — a fixed half split (a flex
+    // label column pushed values to the far right edge). Rows whose values
+    // are ALL empty (menu-only lists) collapse to a single label column —
+    // no empty value column, no separator, no junctions.
     const showValue = this.rows.some(row => row.value !== '')
     const usable = wrap - MARKER_W
     const labelWidth = Math.max(4, Math.floor((usable - visibleWidth(TABLE_SEP)) / 2))
@@ -597,8 +601,11 @@ export class SettingsListPanel implements Component {
       : [{ key: 'label', title: 'Setting', flex: true }]
     const widths = columnWidths(wrap - MARKER_W, columns)
     const seps = columns.length > 1 ? TABLE_SEP : ''
+    // The booktabs trio seals the table right under the title (no gap row):
+    // TOP rule (┬), header, MID rule (┼), rows, BOTTOM rule (┴).
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
     lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), wrap)))
-    if (columns.length > 1) lines.push(fns.subtle(clipToWidth(tableRuleLine(widths), wrap)))
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┼'), wrap)))
 
     const controller = this.controller
     for (let i = controller.scroll; i < Math.min(rows.length, controller.scroll + controller.maxVisible); i++) {
@@ -609,6 +616,7 @@ export class SettingsListPanel implements Component {
       const line = clipToWidth(`${rowMarker(selected)}${cells.join(seps)}`, wrap)
       lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
     }
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), wrap)))
 
     const selectedRow = rows[controller.index]
     if (selectedRow?.description !== undefined && selectedRow.description !== '') {

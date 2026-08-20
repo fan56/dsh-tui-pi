@@ -6,6 +6,18 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.2] — 2026-08-20
+
+### Changed
+
+- Tables are now sealed with the booktabs trio: a TOP rule (`─┬─`) directly
+  under the panel title (the gap row that showed only the frame's side
+  borders is gone), the header, the MID rule (`─┼─`), the rows, and a
+  BOTTOM rule (`─┴─`) closing the table — junctions on one vertical line
+  with the `│` column separators. Applies to every panel (settings browser,
+  Skills submenu, TablePanel pickers, FieldPanel windows); single-column
+  lists keep the rules without junctions.
+
 ## [0.10.1] — 2026-08-20
 
 ### Changed

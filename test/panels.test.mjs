@@ -99,6 +99,9 @@ test('tableRuleLine: junctions land exactly under the header separators', () => 
   // The ┼ position equals where TABLE_SEP puts the │ after the marker slot.
   assert.equal(rule.indexOf('┼'), 2 + 6 + 1)
   assert.equal(visibleWidth(rule), 2 + 6 + 3 + 4)
+  // The booktabs trio: TOP ┬, MID ┼ (default), BOTTOM ┴ — same geometry.
+  assert.equal(tableRuleLine(widths, '┬'), '  ───────┬─────')
+  assert.equal(tableRuleLine(widths, '┴'), '  ───────┴─────')
 })
 
 test('TablePanel render: title + header + rule + separator-aligned rows', () => {
@@ -119,9 +122,10 @@ test('TablePanel render: title + header + rule + separator-aligned rows', () => 
     onCancel: () => {},
   })
   const lines = panel.render(48)
-  // Title, blank, header, rule, 2 rows, blank, footer.
-  assert.equal(lines.length, 8)
+  // Title, top rule, header, mid rule, 2 rows, bottom rule, blank, footer.
+  assert.equal(lines.length, 9)
   assert.equal(stripAnsi(lines[0]), '● Model')
+  assert.match(stripAnsi(lines[1]), /^  ─+┬─+\s*$/, 'top rule seals under the title')
   assert.match(stripAnsi(lines[2]), /^  MODEL\s+│ PROVIDER\s*$/)
   assert.match(stripAnsi(lines[3]), /^  ─+┼─+\s*$/)
   const row0 = stripAnsi(lines[4])
@@ -130,6 +134,12 @@ test('TablePanel render: title + header + rule + separator-aligned rows', () => 
   assert.match(row1, /^  glm-4\.7\s+│ zhipu\s*$/)
   assert.equal(row0.indexOf('│'), row1.indexOf('│'), 'provider column aligns across rows')
   assert.equal(row0.indexOf('│'), stripAnsi(lines[2]).indexOf('│'), 'rows align with the header')
+  assert.match(stripAnsi(lines[6]), /^  ─+┴─+\s*$/, 'bottom rule closes the table')
+  assert.equal(
+    stripAnsi(lines[1]).indexOf('┬'),
+    stripAnsi(lines[6]).indexOf('┴'),
+    'top and bottom junctions share the column',
+  )
 })
 
 test('FieldPanel render: FIELD │ VALUE header + rule + ✎ affordance', () => {
@@ -143,12 +153,14 @@ test('FieldPanel render: FIELD │ VALUE header + rule + ✎ affordance', () => 
     onCancel: () => {},
   })
   const lines = panel.render(48)
-  // Title, blank, header, rule, 2 fields, blank, footer.
-  assert.equal(lines.length, 8)
+  // Title, top rule, header, mid rule, 2 fields, bottom rule, blank, footer.
+  assert.equal(lines.length, 9)
+  assert.match(stripAnsi(lines[1]), /^  ─+┬─+\s*$/, 'top rule seals under the title')
   assert.match(stripAnsi(lines[2]), /^  FIELD\s+│ VALUE/)
   assert.match(stripAnsi(lines[3]), /^  ─+┼─+\s*$/)
   assert.match(stripAnsi(lines[4]), /^▸ model\s+│ ✎ deepseek-chat\s*$/)
   assert.match(stripAnsi(lines[5]), /^  deep\s+│ 3\s*$/)
+  assert.match(stripAnsi(lines[6]), /^  ─+┴─+\s*$/, 'bottom rule closes the table')
   assert.equal(
     stripAnsi(lines[4]).indexOf('│'),
     stripAnsi(lines[5]).indexOf('│'),
@@ -266,22 +278,26 @@ test('SettingsListPanel render: accent BOLD title + whole-row selection + footer
     onCancel: () => {},
   })
   const lines = panel.render(40)
-  // Title row, blank, header, rule, 3 rows, blank, footer.
-  assert.equal(lines.length, 9)
+  // Title, TOP rule, header, MID rule, 3 rows, BOTTOM rule, blank, footer.
+  assert.equal(lines.length, 10)
   // Title: accent fg + BOLD, plain text is the title.
   assert.equal(stripAnsi(lines[0]), '⚙ settings')
   assert.ok(lines[0].includes('\x1b[1m'), 'title is bold')
   assert.ok(lines[0].includes(`\x1b[38;2;${hexRgb(githubLight.accent)}m`), 'title uses accent')
+  // TOP rule seals the table directly under the title (┬ junctions).
+  assert.match(stripAnsi(lines[1]), /^  ─+┬─+\s*$/)
   // Header row: uppercase titles, marker-slot indented, subtle.
   assert.match(stripAnsi(lines[2]), /^  SETTING\s+│ VALUE\s*$/)
   assert.ok(lines[2].includes(`\x1b[38;2;${hexRgb(githubLight.fgSubtle)}m`), 'header is subtle')
-  // Rule row: ─ runs with the ┼ junction exactly under the header's │.
+  // MID rule row: ─ runs with the ┼ junction exactly under the header's │.
   assert.match(stripAnsi(lines[3]), /^  ─+┼─+\s*$/)
   assert.equal(
     stripAnsi(lines[2]).indexOf('│'),
     stripAnsi(lines[3]).indexOf('┼'),
     'rule junction sits under the header separator',
   )
+  // The three junctions share one column: ┬ (top), ┼ (mid), │ (rows).
+  assert.equal(stripAnsi(lines[1]).indexOf('┬'), stripAnsi(lines[3]).indexOf('┼'), 'top junction aligns with the mid junction')
   // Selected row 0: accent + BOLD with the ▸ marker; label padded so the
   // value column aligns behind the │ separator.
   assert.match(stripAnsi(lines[4]), /^▸ Models\s+│ 3 namespaces\s*$/)
@@ -297,9 +313,12 @@ test('SettingsListPanel render: accent BOLD title + whole-row selection + footer
     stripAnsi(lines[5]).indexOf('│'),
     'value column aligns across rows',
   )
+  // BOTTOM rule closes the table (┴ junction up).
+  assert.match(stripAnsi(lines[7]), /^  ─+┴─+\s*$/)
+  assert.equal(stripAnsi(lines[7]).indexOf('┴'), stripAnsi(lines[3]).indexOf('┼'), 'bottom junction aligns with the mid junction')
   // Footer.
-  assert.equal(stripAnsi(lines[8]), '↑↓ navigate · Enter select · Esc back')
-  assert.ok(lines[8].includes(`\x1b[38;2;${hexRgb(githubLight.fgSubtle)}m`), 'footer is subtle')
+  assert.equal(stripAnsi(lines[9]), '↑↓ navigate · Enter select · Esc back')
+  assert.ok(lines[9].includes(`\x1b[38;2;${hexRgb(githubLight.fgSubtle)}m`), 'footer is subtle')
 })
 
 test('SettingsListPanel render: value column starts at 50% of the panel width', () => {
@@ -313,8 +332,9 @@ test('SettingsListPanel render: value column starts at 50% of the panel width', 
   // wrap(70) - marker(2) = 68 usable; label = floor((68 - sep 3) / 2) = 32;
   // the │ lands at marker(2) + 32 + 1 = 35 = the 50% mark.
   const mid = MARKER_W + 32 + 1
+  assert.equal(stripAnsi(lines[1]).indexOf('┬'), mid, 'top rule junction at 50%')
   assert.equal(stripAnsi(lines[2]).indexOf('│'), mid, 'header separator at 50%')
-  assert.equal(stripAnsi(lines[3]).indexOf('┼'), mid, 'rule junction at 50%')
+  assert.equal(stripAnsi(lines[3]).indexOf('┼'), mid, 'mid rule junction at 50%')
   assert.equal(stripAnsi(lines[4]).indexOf('│'), mid, 'row separator at 50%')
 })
 
@@ -325,11 +345,14 @@ test('SettingsListPanel render: all-empty values collapse to a single column', (
   ]
   const panel = new SettingsListPanel(theme, { title: 'T', rows, onCancel: () => {} })
   const lines = panel.render(40)
-  // No VALUE column, no separator on rows, no ┼ rule — the header is the
-  // only table chrome left (single column ⇒ no rule row either).
+  // Single column: the full trio stays (TOP rule, header, MID rule, rows,
+  // BOTTOM rule) — no VALUE column, no separators, no junctions (plain ─).
+  assert.match(stripAnsi(lines[1]), /^  ─+\s*$/, 'top rule without junctions')
   assert.match(stripAnsi(lines[2]), /^  SETTING\s*$/)
-  assert.match(stripAnsi(lines[3]), /^▸ General\s*$/)
-  assert.ok(!stripAnsi(lines[3]).includes('│'), 'no column separator without a second column')
+  assert.match(stripAnsi(lines[3]), /^  ─+\s*$/, 'mid rule without junctions')
+  assert.match(stripAnsi(lines[4]), /^▸ General\s*$/)
+  assert.ok(!stripAnsi(lines[4]).includes('│'), 'no column separator without a second column')
+  assert.match(stripAnsi(lines[6]), /^  ─+\s*$/, 'bottom rule without junctions')
 })
 
 test('SettingsListPanel render: rows never paint their own background', () => {
@@ -353,10 +376,11 @@ test('SettingsListPanel render: description line + scroll info in the footer', (
   }))
   const panel = new SettingsListPanel(theme, { title: 'T', rows, onCancel: () => {} })
   const lines = panel.render(60)
-  // Title, blank, header, rule, 10 visible rows, description, blank, footer.
-  assert.equal(lines.length, 17)
-  assert.ok(stripAnsi(lines[14]).includes('the first row'), 'selected row description shown')
+  // Title, top rule, header, mid rule, 10 visible rows, bottom rule,
+  // description, blank, footer.
+  assert.equal(lines.length, 18)
+  assert.ok(stripAnsi(lines[15]).includes('the first row'), 'selected row description shown')
   // The list overflows (15 > 10) so the footer carries the scroll info.
-  assert.ok(stripAnsi(lines[16]).includes('(1/15)'), 'footer carries scroll info')
-  assert.ok(stripAnsi(lines[16]).includes('Enter select'))
+  assert.ok(stripAnsi(lines[17]).includes('(1/15)'), 'footer carries scroll info')
+  assert.ok(stripAnsi(lines[17]).includes('Enter select'))
 })
