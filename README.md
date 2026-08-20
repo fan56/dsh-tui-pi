@@ -111,6 +111,8 @@ Running subagent activity is shown in the **last-request area below the editor**
 
 Each line shows: spinner + agent **name**, retries (`↻N≤M`), compact **current-context usage** (`X/Y` — the child's latest request's billed input+output plus a CJK estimate of messages after it, over its context window; NOT the cumulative token spend, which only grows), rounds (`round N/M` — the assistant-message count against the cap, `M` only when `maxRounds > 0`), elapsed. No provider shown, no box, no header — just one line per running child.
 
+Both **spawn-driven** and **fork-driven** children are tracked. A fork child — dsh's fork lineage writes `parentSession` + `delegationDepth` without `origin: 'subagent'` — shows up with a `fork <id8>` label, folds rounds/tokens/context exactly like a spawn child, and settles on its own `turn/end`. User-facing session forks (a forked *conversation*: `Session.fork` sets `parentSession` + `seedLength`, never the recursion budget) are deliberately kept off the subagent board and stay resumable via `/resume`.
+
 #### Todos
 
 The `● Todos (done/total)` tree is a bordered panel pinned **above the chat input** (never scrolls with the transcript):
@@ -147,6 +149,8 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 ```
 
 Once mounted, DCP runs transparently in the background. The footer's **context** segment prices the current occupancy — the latest request's billed context plus a CJK estimate of messages after it — so after a compaction the next request lands smaller and the display follows it down (the percent is capped at 100, the window being a hard ceiling). The **cache-hit** segment reflects the session's cumulative cache reuse.
+
+Inside a subagent, a committed compaction is visible too: DCP appends one `user/message` **notice** row per compaction on the child's own log, and the Ctrl+G transcript renders it with a `🧹` marker (distinct from the generic `ⓘ`), with the picker rows carrying the per-child compaction count (`🧹 N×` in the description). Both DCP's `roundInterval` and the TUI's `maxRounds` count the **same** thing — `assistant/message` events, one per LLM round-trip — but act differently: the TUI queues one wrap-up request once a child's count reaches `maxRounds`, while DCP compacts (prunes context) at the next idle boundary once a session's count reaches `roundInterval`. One triggers work, the other frees context.
 
 ---
 

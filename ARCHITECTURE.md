@@ -264,7 +264,10 @@ ignores the convention.
   `tool-workflow/agent-start` on a tracked session's log (registers the child
   with its workflow label) or — the primary path, since some deployments
   never emit workflow events — the child session's **header**
-  (`origin: 'subagent'` + `parentSession` matching a tracked session);
+  (`parentSession` matching a tracked session + the durable `delegationDepth`
+  budget; `origin: 'subagent'` is NOT required — fork-driven children carry
+  the budget without the origin, while user-facing `Session.fork`
+  conversations never set it and stay off the board);
   delegation nests. Each child's own events fold into an O(1) `AgentView`:
   `subagent/descriptor` (provider + label), `assistant/message` usage — the
   cumulative `tokens` spend AND the `contextTokens` current-occupancy estimate
