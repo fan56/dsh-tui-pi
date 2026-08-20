@@ -36,7 +36,7 @@ import { sunglassesIcon } from './icons.ts'
 import type { DshSessionBridge } from './session.ts'
 import { DOUBLE_PRESS_MS, MIN_DOUBLE_PRESS_GAP_MS } from './keymap.ts'
 import { readSubagentLimits } from './theme-settings.ts'
-import { fitColumnWidth, PanelHost, panelThemeFns, TablePanel, type PanelThemeFns } from './panels.ts'
+import { autoColumns, PanelHost, panelThemeFns, TablePanel, type PanelThemeFns } from './panels.ts'
 import { normalizePreview } from './sessions.ts'
 import { toolSubject } from './activity.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
@@ -310,10 +310,12 @@ class LiveSubagentTable implements Component {
   private buildList(items: readonly SelectItem[], preselect: number): TablePanel<SelectItem> {
     return new TablePanel(this.theme, {
       title: '● Sub-agents',
-      columns: [
-        { key: 'label', title: 'Sub-agent', flex: true },
-        { key: 'description', title: 'Stats', width: fitColumnWidth('Stats', items.map(item => item.description ?? ''), 24) },
-      ],
+      // Auto layout: SUB-AGENT fits its content, STATS runs to the edge.
+      columns: autoColumns(
+        [{ key: 'label', title: 'Sub-agent', cap: 40 }, { key: 'description', title: 'Stats' }],
+        items,
+        (item, key) => (key === 'description' ? item.description ?? '' : item.label),
+      ),
       rows: items,
       renderCell: (item, column) => (column.key === 'description' ? item.description ?? '' : item.label),
       maxVisible: PICKER_MAX_VISIBLE,

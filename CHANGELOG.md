@@ -6,6 +6,20 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.3] — 2026-08-20
+
+### Changed
+
+- Tables now use the auto layout everywhere: every column EXCEPT the last
+  fits the widest of its uppercase title and its cells (capped); the last
+  column runs to the right edge and clips (never wraps). The `/settings`
+  SETTING column replaces the 0.10.1 50% split (a long label is capped so
+  VALUE keeps a floor); `/model` flips to MODEL auto │ PROVIDER-to-edge;
+  `/resume` is SESSION/WHEN auto │ DIR-to-edge; the login picker, the
+  Ctrl+G sub-agent picker and the `/agents` table (name/model/deep now
+  content-fitted instead of hand-tuned) follow the same policy. New
+  `autoColumns` helper; 475 tests (auto layout + settings cap covered).
+
 ## [0.10.2] — 2026-08-20
 
 ### Changed

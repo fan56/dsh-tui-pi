@@ -41,10 +41,11 @@ import {
 import { EditField, type ParseOutcome } from './settings.ts'
 import { readSubagentLimits, writeSubagentLimit } from './theme-settings.ts'
 import {
+  autoColumns,
   FieldPanel,
-  fitColumnWidth,
   PanelHost,
   TablePanel,
+  type TableColumn,
   ViewerPanel,
 } from './panels.ts'
 import { openEffortPicker } from './selectors.ts'
@@ -103,13 +104,20 @@ function parseLimitInput(text: string): ParseOutcome {
   return { kind: 'value', value: Number(trimmed) }
 }
 
-/** The four table columns of the agent list. */
-const AGENT_COLUMNS = [
-  { key: 'name', title: 'name', width: 12 },
-  { key: 'model', title: 'model', width: 24 },
-  { key: 'deep', title: 'deep', width: 4, align: 'right' as const },
-  { key: 'description', title: 'description', flex: true },
-]
+/** The four agent-table columns under the auto layout: NAME/MODEL/DEEP fit
+ *  the loaded agents (capped), DESCRIPTION runs to the right edge. */
+function agentColumns(agents: readonly AgentFile[]): readonly TableColumn[] {
+  return autoColumns(
+    [
+      { key: 'name', title: 'name', cap: 16 },
+      { key: 'model', title: 'model', cap: 30 },
+      { key: 'deep', title: 'deep', align: 'right' as const },
+      { key: 'description', title: 'description' },
+    ],
+    agents,
+    (agent, key) => agentCell(agent, { key }),
+  )
+}
 
 /** Cell text for one agent table row. */
 function agentCell(agent: AgentFile, column: { key: string }): string {
@@ -170,13 +178,14 @@ async function pickAgentModel(
       settled = true
       resolve(value)
     }
-    const providerWidth = fitColumnWidth('Provider', models.map(model => model.description ?? ''), 18)
     const list = new TablePanel(theme, {
       title: '● Model',
-      columns: [
-        { key: 'label', title: 'Model', flex: true },
-        { key: 'description', title: 'Provider', width: providerWidth },
-      ],
+      // Auto layout: MODEL fits its content, PROVIDER runs to the edge.
+      columns: autoColumns(
+        [{ key: 'label', title: 'Model', cap: 40 }, { key: 'description', title: 'Provider' }],
+        models,
+        (model, key) => (key === 'description' ? model.description ?? '' : model.label),
+      ),
       rows: models,
       renderCell: (model, column) => (column.key === 'description' ? model.description ?? '' : model.label),
       preselect: meta.model === undefined ? undefined : Math.max(0, models.findIndex(model => model.value === meta.model)),
@@ -265,7 +274,7 @@ export async function openAgentManager(
       }
       const table = new AgentTablePanel(theme, {
         title: '● Agents',
-        columns: AGENT_COLUMNS,
+        columns: agentColumns(agents),
         rows: agents,
         renderCell: agentCell,
         preselect: preselectIndex !== undefined && preselectIndex >= 0 ? preselectIndex : undefined,

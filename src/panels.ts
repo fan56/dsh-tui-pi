@@ -120,6 +120,38 @@ export function fitColumnWidth(title: string, cells: readonly string[], cap: num
   return Math.min(cap, Math.max(1, widest))
 }
 
+/** One column spec of the auto table layout (see `autoColumns`). */
+export interface AutoColumnSpec {
+  key: string
+  title: string
+  /** Width cap for this fitted column (the flex last column ignores it). */
+  cap?: number
+  align?: 'left' | 'right'
+}
+
+/**
+ * The FW auto table layout: every column EXCEPT the last is fitted to the
+ * widest of its uppercase title and all row cells (capped); the last column
+ * is flex — it runs to the right edge and clips (never wraps). One policy
+ * for every picker table: separators hug the content, the tail column takes
+ * the remainder.
+ */
+export function autoColumns<T>(
+  specs: readonly AutoColumnSpec[],
+  rows: readonly T[],
+  cell: (row: T, key: string) => string,
+): TableColumn[] {
+  return specs.map((spec, index) => {
+    if (index === specs.length - 1) return { key: spec.key, title: spec.title, flex: true }
+    const width = fitColumnWidth(
+      spec.title,
+      rows.map(row => cell(row, spec.key)),
+      spec.cap ?? Number.POSITIVE_INFINITY,
+    )
+    return { key: spec.key, title: spec.title, width, ...(spec.align !== undefined ? { align: spec.align } : {}) }
+  })
+}
+
 /**
  * The table header line every panel shares: the row-marker slot, then the
  * UPPERCASE column titles padded to their widths and joined by the column
@@ -585,19 +617,23 @@ export class SettingsListPanel implements Component {
       return lines
     }
     // The FW table look: the │ column separator on every row (the old
-    // two-space gap made the value column read as floating text). The value
-    // column starts at 50% of the panel width — a fixed half split (a flex
-    // label column pushed values to the far right edge). Rows whose values
-    // are ALL empty (menu-only lists) collapse to a single label column —
-    // no empty value column, no separator, no junctions.
+    // two-space gap made the value column read as floating text) under the
+    // AUTO table layout — the SETTING column fits its content, the VALUE
+    // column runs to the right edge and clips (never wraps). Rows whose
+    // values are ALL empty (menu-only lists) collapse to a single label
+    // column — no empty value column, no separator, no junctions.
     const showValue = this.rows.some(row => row.value !== '')
     const usable = wrap - MARKER_W
-    const labelWidth = Math.max(4, Math.floor((usable - visibleWidth(TABLE_SEP)) / 2))
     const columns: readonly TableColumn[] = showValue
-      ? [
-          { key: 'label', title: 'Setting', width: labelWidth },
-          { key: 'value', title: 'Value', flex: true },
-        ]
+      ? autoColumns(
+          [
+            // The label may not starve the value column below its flex floor.
+            { key: 'label', title: 'Setting', cap: Math.max(4, usable - visibleWidth(TABLE_SEP) - MIN_FLEX_WIDTH) },
+            { key: 'value', title: 'Value' },
+          ],
+          this.rows,
+          (row, key) => (key === 'value' ? row.value : row.label),
+        )
       : [{ key: 'label', title: 'Setting', flex: true }]
     const widths = columnWidths(wrap - MARKER_W, columns)
     const seps = columns.length > 1 ? TABLE_SEP : ''

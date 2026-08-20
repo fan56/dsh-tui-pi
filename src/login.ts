@@ -22,7 +22,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { settingsNamespace, type SettingsProvider } from '@deepseek-ai/dsh-settings'
 import { type OverlayHandle, type TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
-import { fitColumnWidth, TablePanel } from './panels.ts'
+import { autoColumns, TablePanel } from './panels.ts'
 import {
   catalogEntry,
   deriveKeyRef,
@@ -292,10 +292,12 @@ export async function openLogoutFlow(options: LogoutFlowOptions): Promise<Logout
   return new Promise(resolve => {
     const list = new TablePanel(options.theme, {
       title: '● Log out',
-      columns: [
-        { key: 'label', title: 'Provider', flex: true },
-        { key: 'description', title: 'Key ref', width: fitColumnWidth('Key ref', loggedIn.map(candidate => candidate.ref), 28) },
-      ],
+      // Auto layout: PROVIDER fits its content, KEY REF runs to the edge.
+      columns: autoColumns(
+        [{ key: 'label', title: 'Provider', cap: 28 }, { key: 'description', title: 'Key ref' }],
+        loggedIn,
+        (candidate, key) => (key === 'description' ? candidate.ref : candidate.name),
+      ),
       rows: loggedIn,
       renderCell: (candidate, column) => (column.key === 'description' ? candidate.ref : candidate.name),
       onSelect: candidate => finish(candidate),

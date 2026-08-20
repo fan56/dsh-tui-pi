@@ -11,7 +11,7 @@ import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-se
 import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
 import { basename } from 'node:path'
 import { wrapFramedOverlay } from './frame.ts'
-import { fitColumnWidth, TablePanel, type TableColumn } from './panels.ts'
+import { autoColumns, TablePanel, type TableColumn } from './panels.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 
@@ -315,13 +315,17 @@ export async function pickPersistedSession(
   })
 
   return new Promise<PickSessionResult>(resolve => {
-    // The FW picker table: flex preview column, then fitted WHEN/DIR columns
-    // (previews are often CJK, so the flex column carries them).
-    const columns: readonly TableColumn[] = [
-      { key: 'session', title: 'Session', flex: true },
-      { key: 'when', title: 'When', width: fitColumnWidth('When', rows.map(row => row.when), 26) },
-      { key: 'dir', title: 'Dir', width: fitColumnWidth('Dir', rows.map(row => row.dir), 28) },
-    ]
+    // Auto layout: SESSION and WHEN fit their content, DIR runs to the edge
+    // (previews are often CJK, so SESSION gets a wider cap).
+    const columns: readonly TableColumn[] = autoColumns(
+      [
+        { key: 'session', title: 'Session', cap: 36 },
+        { key: 'when', title: 'When', cap: 26 },
+        { key: 'dir', title: 'Dir' },
+      ],
+      rows,
+      (row, key) => row[key as 'session' | 'when' | 'dir'],
+    )
     const list = new TablePanel(theme, {
       title: '● Resume session',
       columns,

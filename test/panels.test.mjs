@@ -6,6 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  autoColumns,
   columnWidths,
   FieldPanel,
   filterSettingsRows,
@@ -77,6 +78,38 @@ test('fitColumnWidth: widest of title and cells, capped', () => {
   assert.equal(fitColumnWidth('on', ['●', '○'], 8), 2)
   // Cells beyond the cap clip — the width stays at the cap.
   assert.equal(fitColumnWidth('Key ref', ['a-very-long-ref-name'], 8), 8)
+})
+
+test('autoColumns: every column but the last fits content, the last is flex', () => {
+  const rows = [
+    { model: 'glm-4.7', provider: 'zhipu' },
+    { model: 'deepseek-reasoner', provider: 'deepseek' },
+  ]
+  const columns = autoColumns(
+    [{ key: 'model', title: 'Model', cap: 40 }, { key: 'provider', title: 'Provider' }],
+    rows,
+    (row, key) => row[key],
+  )
+  // MODEL fits the widest cell ('deepseek-reasoner' 17 > header 5).
+  assert.equal(columns[0].flex, undefined)
+  assert.equal(columns[0].width, 17)
+  // PROVIDER (last) runs to the edge — flex, no width.
+  assert.equal(columns[1].flex, true)
+  assert.equal(columns[1].width, undefined)
+  // The cap bounds a fitted column.
+  const capped = autoColumns(
+    [{ key: 'model', title: 'Model', cap: 10 }, { key: 'provider', title: 'Provider' }],
+    rows,
+    (row, key) => row[key],
+  )
+  assert.equal(capped[0].width, 10)
+  // An empty row set still fits the header.
+  const empty = autoColumns(
+    [{ key: 'model', title: 'Model' }, { key: 'provider', title: 'Provider' }],
+    [],
+    () => '',
+  )
+  assert.equal(empty[0].width, 5)
 })
 
 test('tableHeaderLine: marker slot + uppercase titles joined by the separator', () => {
@@ -321,21 +354,35 @@ test('SettingsListPanel render: accent BOLD title + whole-row selection + footer
   assert.ok(lines[9].includes(`\x1b[38;2;${hexRgb(githubLight.fgSubtle)}m`), 'footer is subtle')
 })
 
-test('SettingsListPanel render: value column starts at 50% of the panel width', () => {
+test('SettingsListPanel render: SETTING auto-fits its content, VALUE runs to the edge', () => {
   const rows = [
     { id: 'a', label: 'General', value: '7 namespaces' },
     { id: 'b', label: 'Skills', value: '12 skills' },
   ]
   const panel = new SettingsListPanel(theme, { title: 'T', rows, onCancel: () => {} })
-  const width = 72
-  const lines = panel.render(width)
-  // wrap(70) - marker(2) = 68 usable; label = floor((68 - sep 3) / 2) = 32;
-  // the │ lands at marker(2) + 32 + 1 = 35 = the 50% mark.
-  const mid = MARKER_W + 32 + 1
-  assert.equal(stripAnsi(lines[1]).indexOf('┬'), mid, 'top rule junction at 50%')
-  assert.equal(stripAnsi(lines[2]).indexOf('│'), mid, 'header separator at 50%')
-  assert.equal(stripAnsi(lines[3]).indexOf('┼'), mid, 'mid rule junction at 50%')
-  assert.equal(stripAnsi(lines[4]).indexOf('│'), mid, 'row separator at 50%')
+  const lines = panel.render(72)
+  // Auto layout: label width = max(SETTING header 7, 'General' 7, 'Skills' 6)
+  // = 7; the separator hugs the content at marker(2) + 7 + 1 = 10 — NOT the
+  // old 50% split.
+  const sep = MARKER_W + 7 + 1
+  assert.equal(stripAnsi(lines[1]).indexOf('┬'), sep, 'top rule junction right after the widest label')
+  assert.equal(stripAnsi(lines[2]).indexOf('│'), sep, 'header separator hugs the content')
+  assert.equal(stripAnsi(lines[3]).indexOf('┼'), sep, 'mid rule junction hugs the content')
+  assert.equal(stripAnsi(lines[4]).indexOf('│'), sep, 'row separator hugs the content')
+})
+
+test('SettingsListPanel render: an over-long label is capped (value keeps its floor)', () => {
+  const rows = [
+    { id: 'a', label: 'a-very-long-settings-label-that-would-eat-the-panel', value: 'v' },
+    { id: 'b', label: 'x', value: 'v' },
+  ]
+  const panel = new SettingsListPanel(theme, { title: 'T', rows, onCancel: () => {} })
+  const lines = panel.render(40)
+  // wrap(38) - marker(2) = 36 usable; cap = 36 - sep(3) - flex floor(8) = 25;
+  // the label clips (with …) at 25 and the value column keeps ≥ 8 columns.
+  const sep = MARKER_W + 25 + 1
+  assert.equal(stripAnsi(lines[2]).indexOf('│'), sep, 'label capped at usable - sep - flex floor')
+  assert.ok(stripAnsi(lines[4]).includes('…'), 'the capped label clips with an ellipsis')
 })
 
 test('SettingsListPanel render: all-empty values collapse to a single column', () => {

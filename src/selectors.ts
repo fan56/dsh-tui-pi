@@ -12,7 +12,7 @@ import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } 
 import type { OverlayHandle, TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
 import { permissionItems } from './permission.ts'
-import { fitColumnWidth, TablePanel, type TableColumn } from './panels.ts'
+import { autoColumns, TablePanel, type TableColumn } from './panels.ts'
 import type { ThemePreference, TuiTheme } from './theme/index.ts'
 
 interface ListedModel {
@@ -49,17 +49,23 @@ interface PickerItem {
   description?: string
 }
 
-/** Columns of a label + description table: fitted label column, flex description. */
-function labelDescriptionColumns(title: string, labels: readonly string[], cap = 28): readonly TableColumn[] {
-  return [
-    { key: 'label', title, width: fitColumnWidth(title, labels, cap) },
-    { key: 'description', title: 'Description', flex: true },
-  ]
+/** Columns of a label + description table under the auto layout. */
+function labelDescriptionColumns(title: string, rows: readonly PickerItem[], cap = 28): readonly TableColumn[] {
+  return autoColumns(
+    [{ key: 'label', title, cap }, { key: 'description', title: 'Description' }],
+    rows,
+    itemText,
+  )
+}
+
+/** Cell text of a `{ value, label, description }` row by column key. */
+function itemText(row: PickerItem, key: string): string {
+  return key === 'description' ? row.description ?? '' : row.label
 }
 
 /** renderCell for a `{ value, label, description }` row keyed by column. */
 function itemCell(row: PickerItem, column: TableColumn): string {
-  return column.key === 'description' ? row.description ?? '' : row.label
+  return itemText(row, column.key)
 }
 
 /**
@@ -93,7 +99,7 @@ export function openEffortPicker(
       : rows.findIndex(row => row.value === selectedEffort)
     const list = new TablePanel(theme, {
       title: '● Reasoning effort',
-      columns: labelDescriptionColumns('Effort', rows.map(row => row.label), 24),
+      columns: labelDescriptionColumns('Effort', rows, 24),
       rows,
       renderCell: itemCell,
       preselect: preselect !== undefined && preselect >= 0 ? preselect : undefined,
@@ -163,7 +169,7 @@ export function pickTheme(
   return new Promise(resolve => {
     const list = new TablePanel(theme, {
       title: '● Theme',
-      columns: labelDescriptionColumns('Theme', THEME_ROWS.map(row => row.label)),
+      columns: labelDescriptionColumns('Theme', THEME_ROWS),
       rows: THEME_ROWS,
       renderCell: itemCell,
       preselect: THEME_ROWS.findIndex(row => row.value === current),
@@ -201,7 +207,7 @@ export function pickPermission(
   return new Promise((resolve, reject) => {
     const list = new TablePanel(theme, {
       title: '● Permission preset',
-      columns: labelDescriptionColumns('Preset', items.map(item => item.label)),
+      columns: labelDescriptionColumns('Preset', items),
       rows: items,
       renderCell: itemCell,
       preselect: current === undefined
@@ -258,10 +264,15 @@ export async function pickModel(
   if (models.length === 0) return undefined
 
   return new Promise<ModelSelection | undefined>(resolve => {
-    const columns: readonly TableColumn[] = [
-      { key: 'model', title: 'Model', flex: true },
-      { key: 'provider', title: 'Provider', width: fitColumnWidth('Provider', models.map(model => model.provider), 18) },
-    ]
+    // Auto layout: MODEL fits its content, PROVIDER runs to the right edge.
+    const columns: readonly TableColumn[] = autoColumns(
+      [
+        { key: 'model', title: 'Model', cap: 40 },
+        { key: 'provider', title: 'Provider' },
+      ],
+      models,
+      (model, key) => (key === 'provider' ? model.provider : model.name === '' ? model.id : model.name),
+    )
     const list = new TablePanel<ListedModel>(theme, {
       title: '● Model',
       columns,
@@ -394,7 +405,7 @@ export async function pickSkill(
   return new Promise<string | undefined>(resolve => {
     const list = new TablePanel(theme, {
       title: '● Skill',
-      columns: labelDescriptionColumns('Skill', rows.map(row => row.label)),
+      columns: labelDescriptionColumns('Skill', rows),
       rows,
       renderCell: itemCell,
       onSelect: row => finish(row.value),
