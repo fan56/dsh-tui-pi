@@ -6,6 +6,23 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-08-20
+
+### Fixed
+
+- **Dark canvas + light-themed host terminal rendered dark (unreadable)
+  unstyled text**: editor input, unselected picker rows and autocomplete
+  rows print with the TERMINAL default foreground (the 0.8.0 give-up),
+  which is dark text when the host terminal is light-themed (e.g. Ghostty
+  "TokyoNight Day") and invisible on the dark canvas. The canvas decorator
+  now owns the default FOREGROUND too: the theme's `fgDefault` is
+  re-injected after every color-clearing reset (full resets restore bg+fg,
+  `\x1b[39m` fg only, `\x1b[49m` bg only), so unstyled content always
+  matches the painted canvas no matter what the host terminal looks like.
+  pi itself never paints a canvas, so its unstyled text always matched the
+  visible background — painting one means owning both channels.
+  `DSH_TUI_TRANSPARENT=1` keeps both channels off. 392 → 394 tests.
+
 ## [0.8.2] — 2026-08-20
 
 ### Fixed

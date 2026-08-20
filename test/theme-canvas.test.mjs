@@ -37,6 +37,7 @@ import { githubDark, githubLight, rgbIsLight } from '../lib/theme/palette.js'
 const BG = ansiBg(githubDark.canvas)
 const LIGHT_BG = ansiBg(githubLight.canvas)
 const RESET = '\x1b[0m'
+const FG = '\x1b[38;2;230;237;243m'   // githubDark fgDefault
 const ENTER_ALT_SCREEN = '\x1b[?1049h'
 const EXIT_ALT_SCREEN = '\x1b[?1049l'
 
@@ -159,6 +160,54 @@ test('CanvasTerminal keeps intentional surface backgrounds, framed by the canvas
   const out = inner.writes[0]
   assert.ok(out.includes(bubble), 'the explicit surface background survives verbatim')
   assert.ok(out.includes(`${RESET}${BG} tail`), 'canvas resumes right after the bubble closes')
+})
+
+test('canvas foreground reclaims unstyled text after fg-clearing resets', () => {
+  const inner = stubTerminal()
+  const term = new CanvasTerminal(inner)
+  term.setCanvasBackground(BG)
+  term.setCanvasForeground(FG)
+  // Editor input / unselected picker rows print after a full reset with no
+  // SGR of their own — on a light-themed host terminal that default fg is
+  // dark, invisible on the dark canvas. The canvas fg must take over.
+  term.write(`\x1b[2K${RESET}typed text`)
+  assert.ok(inner.writes[0].includes(`${RESET}${BG}${FG}typed text`), 'full reset restores bg then fg')
+
+  // fg-default alone clears only the foreground channel.
+  term.write(`\x1b[2K\x1b[39m plain row`)
+  assert.ok(inner.writes[1].includes(`\x1b[39m${FG} plain row`), 'ESC[39m re-injects the fg only')
+
+  // bg-default alone clears only the background channel.
+  term.write(`\x1b[2K\x1b[49mrow`)
+  assert.ok(inner.writes[2].includes(`\x1b[49m${BG}row`), 'ESC[49m re-injects the bg only')
+  assert.ok(!inner.writes[2].includes(`\x1b[49m${BG}${FG}row`), 'the fg is untouched by a bg-only reset')
+
+  // Combined 39;49 in one sequence restores both.
+  term.write(`\x1b[2K\x1b[39;49mrow`)
+  assert.ok(inner.writes[3].includes(`\x1b[39;49m${BG}${FG}row`), '39;49 restores both channels')
+
+  // An fg-only canvas (background transparent) still reclaims text.
+  const inner2 = stubTerminal()
+  const term2 = new CanvasTerminal(inner2)
+  term2.setCanvasForeground(FG)
+  term2.write(`${RESET}text`)
+  assert.equal(inner2.writes[0], `${RESET}${FG}text`)
+})
+
+test('foreground injection leaves explicit fg sets alone (0-channel params are not resets)', () => {
+  const inner = stubTerminal()
+  const term = new CanvasTerminal(inner)
+  term.setCanvasBackground(BG)
+  term.setCanvasForeground(FG)
+  const accent = '\x1b[38;2;79;140;243m'
+  term.write(`\x1b[2K${accent}label${RESET} tail`)
+  const out = inner.writes[0]
+  assert.ok(out.includes(`${accent}label`), 'the explicit fg set is not overridden')
+  assert.ok(!out.includes(`${accent}${FG}`), 'no canvas fg injected over the explicit set')
+  assert.ok(out.includes(`${RESET}${BG}${FG} tail`), 'canvas fg resumes after the reset')
+  // 256-color fg with color index 0 is a set, not a reset.
+  term.write(`\x1b[2K\x1b[38;5;0mdark`)
+  assert.ok(inner.writes[1].includes('\x1b[38;5;0mdark'), '38;5;0 untouched')
 })
 
 test('transparent default and setCanvasBackground(undefined) pass through', () => {

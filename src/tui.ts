@@ -110,16 +110,24 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // getter, baked closures below) observes the new bundle on the next call.
   let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
   // App-owned canvas: the write-stream decorator injects the palette's
-  // canvas background before every erase sequence (BCE — see
-  // canvas-terminal.ts), so a theme switch recolors the WHOLE screen, not
-  // only the surfaces that paint their own bg. Without it the terminal
-  // default background shows through the unpainted rows and "freezes" on
+  // canvas colors around every erase sequence and after every color reset
+  // (BCE + re-injection — see canvas-terminal.ts), so a theme switch
+  // recolors the WHOLE screen, not only the surfaces that paint their own
+  // colors. The foreground matters as much as the background: unstyled
+  // content (editor input, unselected picker rows) would otherwise fall
+  // back to the terminal's default foreground — dark text when the host
+  // terminal is light-themed (pi never paints a canvas so its unstyled
+  // text always matches; we paint, so we own both channels). Without the
+  // canvas the terminal default background shows through and "freezes" on
   // switch — most visible inside cmux/gostty, where the pane background
   // belongs to the multiplexer. DSH_TUI_TRANSPARENT=1 opts back into the
   // old see-through canvas for users who want their terminal theme to stay
   // visible.
   const paintCanvas = process.env.DSH_TUI_TRANSPARENT !== '1'
-  if (paintCanvas) terminal.setCanvasBackground(ansiBg(themeRef.palette.canvas))
+  if (paintCanvas) {
+    terminal.setCanvasBackground(ansiBg(themeRef.palette.canvas))
+    terminal.setCanvasForeground(ansiFg(themeRef.palette.fgDefault))
+  }
 
   // ------------------------------------------------------------- component tree --
   // Live Todos widget, pinned ABOVE the chat input: a plain Container with
@@ -253,7 +261,10 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     applyTheme(theme: TuiTheme): void {
       if (theme === themeRef) return
       themeRef = theme
-      if (paintCanvas) terminal.setCanvasBackground(ansiBg(theme.palette.canvas))
+      if (paintCanvas) {
+        terminal.setCanvasBackground(ansiBg(theme.palette.canvas))
+        terminal.setCanvasForeground(ansiFg(theme.palette.fgDefault))
+      }
       rebuildEditor()
       // Forced full redraw: the diff renderer skips content-unchanged rows
       // (blank fillers render as '' under both themes), which would leave
