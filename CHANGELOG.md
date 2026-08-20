@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`auto` icon-set false negative on terminals with built-in Nerd symbol
+  fallback** (Ghostty, WezTerm — on every platform, not just macOS).  The
+  font-directory / fc-list scans only see installed font files, so they
+  correctly report "no Nerd Font" when none is installed system-wide — but
+  these terminals ship a built-in Symbols Nerd Font fallback and render
+  U+E0B0 without any system-installed Nerd Font.  The probe now
+  short-circuits to `true` when `TERM_PROGRAM` matches the whitelist,
+  before touching the filesystem; the directory scans remain the fallback
+  path for all other terminals.  Residual gap, accepted: tmux 3.3+
+  rewrites TERM_PROGRAM to `tmux` inside panes, so the whitelist does not
+  apply there — the probe falls through to the conservative (tofu-free)
+  scan; under tmux set `dsh-tui.iconSet` explicitly.  457 → 458 tests.
+
 ## [0.9.0] — 2026-08-20
 
 ### Added

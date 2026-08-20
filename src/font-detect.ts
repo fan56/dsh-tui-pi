@@ -4,20 +4,28 @@
  * render the powerline PUA glyph U+E0B0 (and the other weak-terminal glyphs)
  * before the `auto` icon-set mode picks between 'nerdfont' and 'plain'.
  *
- * Detection is per-platform and deliberately approximate:
+ * Detection has two layers:
  *
- *   - Linux: `fc-list -q <name>` for each candidate family. fc-list exits 0
- *     when the family is installed (quiet mode prints nothing either way).
- *     When `fc-list` itself is missing (ENOENT — a fontconfig-less system),
- *     every probe fails and the probe reports "no Nerd Font".
- *   - macOS: scan `~/Library/Fonts` and `/Library/Fonts` and match file names
- *     against a Nerd/Powerline heuristic (the real Core Text registry is not
- *     reachable without Objective-C bindings — a file-name scan is the
- *     reasonable zero-dependency approximation; it also recognises the TUI's
- *     own bundled font `dsh-tui-pi-nerd.ttf`, so `node scripts/install-font.mjs`
- *     flipping the terminal to it is enough to flip `auto` → nerdfont).
- *   - Windows / anything else: false (no free probe; the conservative answer
- *     is the plain glyphs).
+ *   1. Terminal whitelist: some terminal emulators ship a built-in Nerd /
+ *      Symbols font fallback — they can render powerline glyphs regardless of
+ *      which font the user has installed system-wide.  When `TERM_PROGRAM`
+ *      matches a known whitelisted terminal, the probe short-circuits to
+ *      `true` without touching the filesystem.  See `NERD_FONT_TERMINALS`.
+ *
+ *   2. Font-directory / fc-list scan (the original heuristic):
+ *      - Linux: `fc-list -q <name>` for each candidate family.  fc-list exits
+ *        0 when the family is installed (quiet mode prints nothing either way).
+ *        When `fc-list` itself is missing (ENOENT — a fontconfig-less system),
+ *        every probe fails and the probe reports "no Nerd Font".
+ *      - macOS: scan `~/Library/Fonts` and `/Library/Fonts` and match file
+ *        names against a Nerd/Powerline heuristic (the real Core Text registry
+ *        is not reachable without Objective-C bindings — a file-name scan is
+ *        the reasonable zero-dependency approximation; it also recognises the
+ *        TUI's own bundled font `dsh-tui-pi-nerd.ttf`, so
+ *        `node scripts/install-font.mjs` flipping the terminal to it is enough
+ *        to flip `auto` → nerdfont).
+ *      - Windows / anything else: false (no free probe; the conservative
+ *        answer is the plain glyphs).
  *
  * The result is memoised at module level — the TUI probes once at startup and
  * hot-applied 'auto' settings changes resolve against that same snapshot. All
@@ -51,6 +59,30 @@ export const NERD_FONT_CANDIDATES: readonly string[] = [
 export const NERD_FONT_FILE_RE = /Nerd|Powerline|Cascadia.*PL|MesloLGS|dsh-tui-pi-nerd/i
 
 /**
+ * Terminal emulators that ship a built-in Nerd / Symbols font fallback — they
+ * can render U+E0B0 and other PUA glyphs even when no Nerd Font is installed
+ * system-wide.  The probe short-circuits to `true` when `TERM_PROGRAM` matches
+ * one of these, before touching the filesystem.  The values are the terminals'
+ * own hardcoded, case-exact TERM_PROGRAM strings (locked by a test) — do not
+ * normalise case on a hunch.
+ *
+ *   - `ghostty`: bundles Symbols Nerd Font as a built-in fallback for missing
+ *     glyphs (https://ghostty.org/docs/install/release-notes/1-2-0).
+ *   - `WezTerm`: bundles Nerd Font Symbols and always appends its default
+ *     fallback, even with a user font chain
+ *     (https://wezterm.org/config/fonts.html).
+ *
+ * Residual gap, accepted: tmux 3.3+ rewrites TERM_PROGRAM to `tmux` inside
+ * panes, so the whitelist does not apply there — the probe falls through to
+ * the (conservative, tofu-free) directory scan.  Users under tmux should set
+ * `dsh-tui.iconSet` explicitly.
+ */
+export const NERD_FONT_TERMINALS: readonly string[] = [
+  'ghostty',
+  'WezTerm',
+]
+
+/**
  * The environment the probe reads — injected for tests (see
  * test/font-detect.test.mjs), defaulting to the real platform/fs.
  */
@@ -65,6 +97,8 @@ export interface FontDetectEnv {
    * on timeout — a stale fontconfig / hung fc-list must not block startup.
    */
   execFile: (file: string, args: readonly string[], options?: { timeout?: number }) => Promise<unknown>
+  /** `process.env.TERM_PROGRAM` — used for the terminal-whitelist check. */
+  termProgram?: string
 }
 
 /** The real environment: this process's platform, home and filesystem. */
@@ -73,6 +107,7 @@ const realEnv: FontDetectEnv = {
   home: homedir(),
   readdir: (dir) => readdir(dir),
   execFile: (file, args, options) => execFile(file, args, options),
+  termProgram: process.env.TERM_PROGRAM,
 }
 
 /** Probe one platform with `fc-list -q`; `false` when fc-list is absent. */
@@ -108,11 +143,16 @@ async function probeDarwin(env: FontDetectEnv): Promise<boolean> {
 }
 
 /**
- * The full probe against an injected environment: Linux uses fc-list, macOS
- * uses the font-directory scan, every other platform reports `false`. Never
- * throws — every platform path is wrapped or falls through to `false`.
+ * The full probe against an injected environment: first checks the terminal
+ * whitelist (built-in Nerd symbol fallback), then falls back to the
+ * platform-specific font-directory / fc-list scan.  Never throws — every
+ * platform path is wrapped or falls through to `false`.
  */
 export async function probeNerdFont(env: FontDetectEnv): Promise<boolean> {
+  // Short-circuit: terminals with built-in Nerd symbol fallback can render
+  // U+E0B0 regardless of system-installed fonts.
+  if (env.termProgram && NERD_FONT_TERMINALS.includes(env.termProgram)) return true
+
   switch (env.platform) {
     case 'linux':
       return probeLinux(env)

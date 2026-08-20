@@ -15,6 +15,7 @@ import assert from 'node:assert/strict'
 import {
   detectNerdFontAvailable,
   NERD_FONT_CANDIDATES,
+  NERD_FONT_TERMINALS,
   probeNerdFont,
   resetNerdFontCache,
 } from '../lib/font-detect.js'
@@ -75,6 +76,30 @@ test('macOS scans the font directories for a Nerd/Powerline file name', async ()
   // Plain system fonts (Menlo / SFNSMono) do not match → false.
   const none = { ...base, readdir: async () => ['Menlo.ttc', 'SFNSMono.ttf'] }
   assert.equal(await probeNerdFont(none), false, 'plain system fonts do not match')
+})
+
+test('terminal with built-in Nerd symbol fallback short-circuits to true', async () => {
+  const noFont = {
+    platform: 'darwin',
+    home: '/Users/tester',
+    readdir: async () => [],  // no Nerd fonts in system dirs
+    execFile: async () => { throw new Error('no exec') },
+  }
+
+  // The whitelist strings are external facts (each terminal's hardcoded
+  // TERM_PROGRAM value, case-exact) — pin them so a typo/silent rename in
+  // the constant cannot pass the loop below unnoticed.
+  assert.deepEqual(NERD_FONT_TERMINALS, ['ghostty', 'WezTerm'], 'whitelist strings are external facts')
+
+  // Every whitelisted terminal returns true even with empty font dirs.
+  for (const term of NERD_FONT_TERMINALS) {
+    assert.equal(await probeNerdFont({ ...noFont, termProgram: term }), true, `termProgram=${term} → true`)
+  }
+
+  // A non-whitelisted terminal falls through to the font-directory scan.
+  assert.equal(await probeNerdFont({ ...noFont, termProgram: 'Apple_Terminal' }), false, 'Apple_Terminal → font scan → false')
+  assert.equal(await probeNerdFont({ ...noFont, termProgram: 'iTerm2' }), false, 'iTerm2 → font scan → false')
+  assert.equal(await probeNerdFont({ ...noFont, termProgram: undefined }), false, 'undefined termProgram → font scan → false')
 })
 
 test('other platforms report false (the conservative Windows answer)', async () => {
