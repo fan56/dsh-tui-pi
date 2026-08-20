@@ -67,12 +67,14 @@ export function resolveLoginTarget(
 
 /** One configured llm-pi-ai provider considered by the /logout picker. */
 export interface LogoutProvider {
-  /** llm-pi-ai providers dict key (also the credential ref stem). */
+  /** llm-pi-ai providers dict key. */
   id: string
-  /** Derived credential reference (e.g. `ANTHROPIC_API_KEY`). */
+  /** Credential reference: the profile's `apiKeyEnv`, else the derived ref. */
   ref: string
   /** Profile displayName, when set. */
   displayName?: string
+  /** Hand-declared route (no installed catalog entry) — see handDeclaredLogouts. */
+  declared?: boolean
 }
 
 /** A logout candidate: a logged-in provider with its picker label. */
@@ -81,6 +83,8 @@ export interface LogoutCandidate {
   ref: string
   /** Picker label: displayName, else catalog name, else the route key. */
   name: string
+  /** Hand-declared route: logout drops only the key, never the profile. */
+  declared: boolean
 }
 
 /**
@@ -101,7 +105,54 @@ export function listLogoutCandidates(
       name: provider.displayName !== undefined && provider.displayName !== ''
         ? provider.displayName
         : catalogEntry(provider.id)?.name ?? provider.id,
+      declared: provider.declared === true,
     }))
+}
+
+/**
+ * Logout candidates from one resolved llm-pi-ai settings section value: one
+ * per `providers` dict entry, with the credential ref taken from the
+ * profile's own `apiKeyEnv` when it names one (a hand-edited profile may
+ * point anywhere — deriving from the route id would unset an unrelated key
+ * and strand the real one), falling back to the conventional derived ref.
+ */
+export function logoutCandidatesFromSection(section: unknown): LogoutProvider[] {
+  const providers = (typeof section === 'object' && section !== null
+    ? (section as { providers?: unknown }).providers
+    : undefined)
+  if (typeof providers !== 'object' || providers === null) return []
+  return Object.entries(providers as Record<string, unknown>).map(([id, profile]) => {
+    const p = typeof profile === 'object' && profile !== null
+      ? profile as { displayName?: unknown; apiKeyEnv?: unknown }
+      : undefined
+    const displayName = p?.displayName
+    const apiKeyEnv = p?.apiKeyEnv
+    return {
+      id,
+      ref: typeof apiKeyEnv === 'string' && apiKeyEnv !== '' ? apiKeyEnv : deriveKeyRef(id),
+      displayName: typeof displayName === 'string' && displayName !== '' ? displayName : undefined,
+    }
+  })
+}
+
+/**
+ * Which logout candidates are hand-declared routes — profiles with no
+ * installed catalog entry. The live configurable-provider directory's
+ * `declared` flag decides when available; otherwise the static catalog
+ * mirror stands in (an unknown route key is a hand declaration). A
+ * hand-declared profile carries `api`/`baseURL`/`models` that /login
+ * cannot re-create (its directory excludes declared routes), so deleting
+ * it on logout would be unrecoverable data loss.
+ */
+export function handDeclaredLogouts(
+  ids: readonly string[],
+  directory: ReadonlyArray<{ provider: string; declared?: boolean }> | undefined,
+): ReadonlySet<string> {
+  if (directory !== undefined) {
+    const declared = new Map(directory.map(entry => [entry.provider, entry.declared === true]))
+    return new Set(ids.filter(id => declared.get(id) === true))
+  }
+  return new Set(ids.filter(id => catalogEntry(id) === undefined))
 }
 
 /** Outcome of the /login flow. */
@@ -128,6 +179,7 @@ export type LogoutFlowResult =
   | { kind: 'cancelled' }
   | { kind: 'removed'; name: string }
   | { kind: 'removed-incomplete'; name: string; error: string }
+  | { kind: 'removed-key-only'; name: string }
   | { kind: 'failed'; name: string; cause?: string }
 
 export interface LogoutFlowOptions {
@@ -154,18 +206,22 @@ interface LogoutCredentialSeam {
 export interface LogoutCommitSeams {
   /** Remove the stored credential (`credentials.unset`). */
   unset(ref: string): Promise<void>
-  /** Remove the provider profile; resolves the write error, else `undefined`. */
-  removeProfile(id: string): Promise<string | undefined>
+  /**
+   * Remove the provider profile; resolves the write error, else `undefined`.
+   * Omitted for hand-declared routes — their profile is unrecoverable by
+   * /login, so logout drops only the key (`removed-key-only`).
+   */
+  removeProfile?(id: string): Promise<string | undefined>
 }
 
 /**
  * Commit one logout: unset the credential first (the security-critical
- * half), and only after it lands remove the provider profile — the half
- * that takes the provider's models out of /model, because the llm-pi-ai
- * adapter registers a route for every `llm-pi-ai.providers` key. The
- * sequencing is the contract: a failed unset must not touch the profile,
- * and a failed profile removal must not undo the unset — the outcome
- * reports what actually happened instead.
+ * half), then — unless the caller omitted the profile seam (a hand-declared
+ * route) — remove the provider profile, the half that takes the provider's
+ * models out of /model, because the llm-pi-ai adapter registers a route for
+ * every `llm-pi-ai.providers` key. The sequencing is the contract: a failed
+ * unset must not touch the profile, and a failed profile removal must not
+ * undo the unset — the outcome reports what actually happened instead.
  */
 export async function commitLogout(
   candidate: LogoutCandidate,
@@ -179,6 +235,9 @@ export async function commitLogout(
       name: candidate.name,
       cause: cause instanceof Error ? cause.message : String(cause),
     }
+  }
+  if (seams.removeProfile === undefined) {
+    return { kind: 'removed-key-only', name: candidate.name }
   }
   const profileError = await seams.removeProfile(candidate.id)
   return profileError === undefined
@@ -238,10 +297,18 @@ async function writeProviderProfile(settings: SettingsProvider, entry: ProviderC
 /**
  * Serialized llm-pi-ai profile removal for /logout (revision read at
  * execution time). Resolves the mutate error, or `undefined` on success —
- * an unset through an absent path is already satisfied, so a concurrent
- * removal cannot turn this into a failure.
+ * an unset through an absent path is already satisfied, and a revision
+ * conflict from a concurrent removal counts too: the desired state already
+ * holds, so the profile is re-read and a vanished entry reports success.
  */
 async function removeProviderProfile(settings: SettingsProvider, id: string): Promise<string | undefined> {
+  const profileSection = (): unknown => {
+    const desc = settings.describe().find(d => d.ns === LLM_PI_AI_NS)
+    const providers = (desc?.value as { providers?: unknown } | undefined)?.providers
+    return typeof providers === 'object' && providers !== null
+      ? (providers as Record<string, unknown>)[id]
+      : undefined
+  }
   try {
     await settings.mutate(
       LLM_PI_AI_NS,
@@ -249,7 +316,9 @@ async function removeProviderProfile(settings: SettingsProvider, id: string): Pr
       settings.describe().find(desc => desc.ns === LLM_PI_AI_NS)?.revision,
     )
   } catch (error) {
-    return error instanceof Error ? error.message : String(error)
+    return profileSection() === undefined
+      ? undefined
+      : error instanceof Error ? error.message : String(error)
   }
   return undefined
 }
@@ -314,11 +383,12 @@ export async function openLoginFlow(options: LoginFlowOptions): Promise<LoginFlo
  * and on selection remove both the key and the settings.yaml provider entry
  * (see `commitLogout` for the ordering) — with the profile gone, the llm
  * service deregisters the route and the provider's models leave /model
- * immediately. Resolves `removed` after both writes land,
- * `removed-incomplete` when the key went but the profile write failed,
- * `failed` when the unset rejected, `none` when nothing is logged in, and
- * `cancelled` when the user escapes. Focus returns to `restoreFocus` on
- * close.
+ * immediately. A hand-declared route keeps its profile (`removed-key-only`):
+ * /login cannot re-create its api/baseURL/models. Resolves `removed` after
+ * both writes land, `removed-incomplete` when the key went but the profile
+ * write failed, `failed` when the unset rejected, `none` when nothing is
+ * logged in, and `cancelled` when the user escapes. Focus returns to
+ * `restoreFocus` on close.
  */
 export async function openLogoutFlow(options: LogoutFlowOptions): Promise<LogoutFlowResult> {
   const settings = options.ctx.get('settings')
@@ -326,17 +396,8 @@ export async function openLogoutFlow(options: LogoutFlowOptions): Promise<Logout
   const credentials = options.ctx.get('credentials') as LogoutCredentialSeam | undefined
 
   const piDesc = settings.describe().find(desc => desc.ns === LLM_PI_AI_NS)
-  const providers = (piDesc?.value ?? {}) as { providers?: Record<string, unknown> }
-  const candidates = Object.entries(providers.providers ?? {}).map(([id, profile]) => {
-    const displayName = typeof profile === 'object' && profile !== null
-      ? (profile as { displayName?: unknown }).displayName
-      : undefined
-    return {
-      id,
-      ref: deriveKeyRef(id),
-      displayName: typeof displayName === 'string' && displayName !== '' ? displayName : undefined,
-    }
-  })
+  const candidates = logoutCandidatesFromSection(piDesc?.value ?? {})
+  const declared = handDeclaredLogouts(candidates.map(candidate => candidate.id), llmPiAiDirectory(options.ctx))
 
   // No credential store in this process → there is nothing to unset.
   if (credentials?.describe === undefined) return { kind: 'none' }
@@ -351,15 +412,20 @@ export async function openLogoutFlow(options: LogoutFlowOptions): Promise<Logout
     }
   }))
   const configuredRefs = new Set(candidates.filter((_, index) => probes[index]).map(provider => provider.ref))
-  const loggedIn = listLogoutCandidates(candidates, configuredRefs)
+  const loggedIn = listLogoutCandidates(
+    candidates.map(provider => ({ ...provider, declared: declared.has(provider.id) })),
+    configuredRefs,
+  )
   if (loggedIn.length === 0) return { kind: 'none' }
 
   // Bound here (not inside finish) so the guards' narrowing of `settings`
-  // and `credentials` carries into the commit's closures.
+  // and `credentials` carries into the commit's closures. A hand-declared
+  // route omits the profile seam: /login cannot re-create its
+  // api/baseURL/models, so logout must not delete them.
   const commit = (candidate: LogoutCandidate): Promise<LogoutFlowResult> =>
     commitLogout(candidate, {
       unset: ref => credentials.unset(ref),
-      removeProfile: id => removeProviderProfile(settings, id),
+      ...(candidate.declared ? {} : { removeProfile: (id: string) => removeProviderProfile(settings, id) }),
     })
 
   return new Promise(resolve => {

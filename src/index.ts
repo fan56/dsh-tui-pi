@@ -970,12 +970,21 @@ export function apply(ctx: Context): void {
       }
       if (result.kind === 'cancelled') return { kind: 'success' as const, text: 'Logout cancelled.' }
       if (result.kind === 'failed') {
-        return { kind: 'error' as const, text: `Failed to remove stored API key for ${result.name}.` }
+        const cause = result.cause === undefined ? '' : `: ${result.cause}`
+        return { kind: 'error' as const, text: `Failed to remove stored API key for ${result.name}${cause}.` }
       }
       if (result.kind === 'removed-incomplete') {
         return {
           kind: 'error' as const,
-          text: `Removed the API key for ${result.name}, but its provider configuration stays: ${result.error}`,
+          text: `Removed the API key for ${result.name}, but its provider configuration stays: ${result.error}`
+            + ' — remove the provider in /settings to finish the logout.',
+        }
+      }
+      if (result.kind === 'removed-key-only') {
+        return {
+          kind: 'success' as const,
+          text: `Removed the API key for ${result.name}. Hand-declared route — its configuration stays;`
+            + ' remove the provider in /settings to also drop its models.',
         }
       }
       return {

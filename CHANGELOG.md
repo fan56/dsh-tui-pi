@@ -16,10 +16,22 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   have failed at request time with MISSING_CREDENTIAL). With the profile
   gone, the route deregisters and the models leave `/model` immediately; a
   re-`/login` re-subscribes and serves the installed pi-ai catalog's
-  current model list. Ordering contract (new `commitLogout`, unit-tested):
-  a failed key removal never touches the profile, and a failed profile
-  removal never undoes the key removal (`removed-incomplete` reports it).
-  478 tests (+3: the commitLogout ordering outcomes).
+  current model list.
+- The logout candidate's key ref now comes from the profile's own
+  `apiKeyEnv` when it names one (falling back to the derived ref) — a
+  hand-edited profile pointing at a custom ref no longer unsets an
+  unrelated key while leaving the real one stranded. Hand-declared routes
+  (no installed catalog entry) keep their profile on logout
+  (`removed-key-only`): `/login` cannot re-create their
+  api/baseURL/models, and the result text points at `/settings` to drop
+  the provider instead. Ordering contract (new `commitLogout`,
+  unit-tested): a failed key removal never touches the profile, and a
+  failed profile removal never undoes the key removal
+  (`removed-incomplete` reports it and names the `/settings` recovery
+  path). A revision-conflicted profile removal re-reads the section and
+  reports success when the profile is already gone (concurrent removals
+  converge). 486 tests (+11: the commitLogout ordering outcomes, the
+  apiKeyEnv/declared candidate plumbing, and `handDeclaredLogouts`).
 
 ## [0.10.3] — 2026-08-20
 
