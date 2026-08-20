@@ -581,15 +581,18 @@ export class SettingsListPanel implements Component {
 
     // The FW table look: an uppercase header row, the ─┼─ rule under it, and
     // the │ column separator on every row (the old two-space gap made the
-    // value column read as floating text). Rows whose values are ALL empty
+    // value column read as floating text). The value column starts at 50%
+    // of the panel width — a fixed half split (a flex label column pushed
+    // values to the far right edge). Rows whose values are ALL empty
     // (menu-only lists) collapse to a single label column — no empty value
     // column, no separator, no rule.
     const showValue = this.rows.some(row => row.value !== '')
-    const valueWidth = Math.min(28, Math.max(...this.rows.map(row => visibleWidth(row.value)), 0))
+    const usable = wrap - MARKER_W
+    const labelWidth = Math.max(4, Math.floor((usable - visibleWidth(TABLE_SEP)) / 2))
     const columns: readonly TableColumn[] = showValue
       ? [
-          { key: 'label', title: 'Setting', flex: true },
-          { key: 'value', title: 'Value', width: valueWidth },
+          { key: 'label', title: 'Setting', width: labelWidth },
+          { key: 'value', title: 'Value', flex: true },
         ]
       : [{ key: 'label', title: 'Setting', flex: true }]
     const widths = columnWidths(wrap - MARKER_W, columns)

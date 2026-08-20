@@ -4,6 +4,16 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.10.1] — 2026-08-20
+
+### Changed
+
+- `/settings` rows: the value column now starts at 50% of the panel width
+  (a fixed half split — the flex label column pushed values to the far
+  right edge). 473 tests (one new: the 50% separator-position contract).
+
 ## [0.10.0] — 2026-08-20
 
 ### Changed

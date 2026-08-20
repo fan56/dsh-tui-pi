@@ -11,6 +11,7 @@ import {
   filterSettingsRows,
   fitColumnWidth,
   ListController,
+  MARKER_W,
   padCell,
   SettingsListPanel,
   TABLE_SEP,
@@ -299,6 +300,22 @@ test('SettingsListPanel render: accent BOLD title + whole-row selection + footer
   // Footer.
   assert.equal(stripAnsi(lines[8]), '↑↓ navigate · Enter select · Esc back')
   assert.ok(lines[8].includes(`\x1b[38;2;${hexRgb(githubLight.fgSubtle)}m`), 'footer is subtle')
+})
+
+test('SettingsListPanel render: value column starts at 50% of the panel width', () => {
+  const rows = [
+    { id: 'a', label: 'General', value: '7 namespaces' },
+    { id: 'b', label: 'Skills', value: '12 skills' },
+  ]
+  const panel = new SettingsListPanel(theme, { title: 'T', rows, onCancel: () => {} })
+  const width = 72
+  const lines = panel.render(width)
+  // wrap(70) - marker(2) = 68 usable; label = floor((68 - sep 3) / 2) = 32;
+  // the │ lands at marker(2) + 32 + 1 = 35 = the 50% mark.
+  const mid = MARKER_W + 32 + 1
+  assert.equal(stripAnsi(lines[2]).indexOf('│'), mid, 'header separator at 50%')
+  assert.equal(stripAnsi(lines[3]).indexOf('┼'), mid, 'rule junction at 50%')
+  assert.equal(stripAnsi(lines[4]).indexOf('│'), mid, 'row separator at 50%')
 })
 
 test('SettingsListPanel render: all-empty values collapse to a single column', () => {
