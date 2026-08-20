@@ -198,11 +198,18 @@ export class PowerlineFooter implements Component {
       })
     }
 
-    // Context usage: latest request's input tokens vs. the model's window.
+    // Context usage: the current occupancy estimate (latest request's billed
+    // input + output + a CJK estimate of messages after it) vs. the model's
+    // window — NOT the cumulative inputTokens, which only grows. Percent is
+    // capped at 100 (the window is a hard ceiling; the estimate can overshoot
+    // while it prices pending messages that a compaction will drop).
     const window = this.source.getContextWindow()
-    const used = stats.inputTokens
+    // Defensive `?? 0`: a stats source without the field (any object missing
+    // contextTokens) degrades to an empty context instead of rendering
+    // `undefined`/`NaN` in the segment.
+    const used = stats.contextTokens ?? 0
     if (window !== undefined && window > 0) {
-      const percent = (used / window) * 100
+      const percent = Math.min(100, (used / window) * 100)
       segs.push({
         label: `🧠 ${fmtNum(used)}/${fmtNum(window)}(${percent.toFixed(1)}%)`,
         bgHex: contextBg(percent),

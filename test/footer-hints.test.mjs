@@ -76,6 +76,9 @@ function footerSource(overrides = {}) {
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
+      // Current-occupancy estimate (the Context segment numerator) — NOT the
+      // cumulative inputTokens. 600 of a 1000-token window = 60% → contextWarn.
+      contextTokens: 600,
       msgCount: 1,
       toolCallCount: 0,
       ...overrides.stats,
@@ -105,4 +108,14 @@ test('PowerlineFooter uses near-black text on bright segment fills (amber warn),
   const amber = row.indexOf(ansiBg(POWERLINE.contextWarn))
   assert.ok(amber >= 0, 'context-warn segment present at 60% usage')
   assert.ok(row.indexOf(ansiFg('#1f2328')) > amber, 'dark text sits on the amber segment')
+})
+
+test('the footer context percent is capped at 100 (occupancy can overshoot while pricing pending messages)', () => {
+  // 5000 / 1000 = 500% uncapped; Math.min(100, …) clamps the display like the
+  // web client's StatsLine (the window is a hard ceiling).
+  const footer = new PowerlineFooter(footerSource({ stats: { contextTokens: 5000 } }), () => darkTheme)
+  const row = footer.render(200)[0]
+  assert.ok(row.includes('(100.0%)'), 'percent caps at 100 even when the estimate overshoots the window')
+  assert.ok(!row.includes('500%'), 'no uncapped 500% anywhere in the row')
+  assert.ok(row.includes(ansiBg(POWERLINE.contextDanger)), 'a capped 100% routes to the danger fill')
 })

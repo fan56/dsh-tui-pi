@@ -113,9 +113,9 @@ export type CompletionItemKind = 'explicit-skill' | 'native-skill' | 'command'
 
 /** The completion badge tag for each kind (fixed-width aligned, see badgeText). */
 export const COMPLETION_BADGES: Readonly<Record<CompletionItemKind, string>> = {
-  'explicit-skill': '[skill]',
-  'native-skill': '[skill]',
-  command: '[cmd]',
+  'explicit-skill': '[s]',
+  'native-skill': '[s]',
+  command: '[c]',
 }
 
 /** The widest badge tag — the alignment target every row's badge pads to. */
@@ -134,12 +134,59 @@ export function completionLabel(kind: CompletionItemKind, value: string): string
   return `${badgeText(kind)} ${value}`
 }
 
+// ---------------------------------------------------- styled (italic) rows --
+
+// The editor-inline slash-autocomplete dropdown renders item rows raw
+// (pi-tui SelectList has no per-row theme hook for unselected rows — only the
+// whole selected row is wrapped in selectedText), so styling skill rows means
+// emitting the ANSI SGR ourselves in the label + description. pi-tui's text
+// pipeline fully supports that: visibleWidth strips SGR as zero-width, and a
+// truncated result is terminated with a full \x1b[0m reset
+// (finalizeTruncatedResult), so a truncated italic label closes itself — the
+// dropped \x1b[23m never leaks past the row. Verified against pi-tui 0.84.2's
+// real SelectList (see test/skills.test.mjs truncation regression).
+const ITALIC_ON = '\x1b[3m'
+const ITALIC_OFF = '\x1b[23m' // italic-off only — a full \x1b[0m reset would drop the selected-row backdrop
+
+/**
+ * The rendered badge for one completion row: skill badges render italic,
+ * command badges stay plain. The `\x1b[3m` italic code is the same one
+ * pi-tui's MarkdownTheme.italic emits, so it is terminal-rendered wherever
+ * markdown emphasis already renders. Kept as the badge-span primitive; the
+ * dropdown itself styles whole rows via `styledCompletionLabel`.
+ */
+export function styledBadge(kind: CompletionItemKind): string {
+  const text = badgeText(kind)
+  return kind === 'command' ? text : `${ITALIC_ON}${text}${ITALIC_OFF}`
+}
+
+/**
+ * The display label for one completion row in the slash dropdown: skill rows
+ * render the WHOLE label (aligned badge + candidate value) as one italic span;
+ * command rows stay completely plain (no ANSI at all). Consumers that need the
+ * plain-text layout contract (the settings Skills row, width math) keep
+ * `completionLabel`.
+ */
+export function styledCompletionLabel(kind: CompletionItemKind, value: string): string {
+  const text = completionLabel(kind, value)
+  return kind === 'command' ? text : `${ITALIC_ON}${text}${ITALIC_OFF}`
+}
+
+/**
+ * The dropdown description for a skill row: rendered italic to match the
+ * whole-line treatment. An empty description stays empty — a falsy
+ * description is what sends the row to SelectList's no-description branch.
+ */
+export function styledDescription(text: string): string {
+  return text === '' ? '' : `${ITALIC_ON}${text}${ITALIC_OFF}`
+}
+
 /** Fixed width of the toggle state prefix in the settings Skills row. */
 export const SKILL_STATE_WIDTH = 5
 
 /**
  * The settings Skills-row label: a fixed-width toggle state in front, then the
- * `[skill] <name>` completion row. Leading the row with the state (padded to a
+ * `[s] <name>` completion row. Leading the row with the state (padded to a
  * common width) keeps every skill name on the same column regardless of how
  * long the state strings are — `'false'` is one column wider than `'true'`.
  */
@@ -245,12 +292,12 @@ export const SKILL_INDEX_WIDTH = 3
 /**
  * Plain-text layout contract for one Skills panel row: a cursor-marker column
  * (`▸` selected / space otherwise), then a 1-based row index, then the
- * fixed-width state + `[skill] <name>` row. The state appears exactly once,
+ * fixed-width state + `[s] <name>` row. The state appears exactly once,
  * up front — the row never repeats it at the tail (the bug the custom render
  * fixes). The component applies color per segment on top of this layout;
  * tests assert the plain text.
  *
- * Prefix column widths: marker(2) + index(4) + state(6) + badge(8) = 20.
+ * Prefix column widths: marker(2) + index(4) + state(6) + badge(4) = 16.
  */
 export function skillPanelRowLine(selected: boolean, enabled: boolean, name: string, index: number): string {
   const marker = selected ? '▸' : ' '
@@ -331,8 +378,8 @@ export function buildSkillCompletionCandidates(
       const value = `/skill:${skill.name}`
       return {
         value,
-        label: completionLabel('explicit-skill', value),
-        description: skill.description,
+        label: styledCompletionLabel('explicit-skill', value),
+        description: styledDescription(skill.description),
         kind: 'explicit-skill' as const,
       }
     })
@@ -355,8 +402,8 @@ export function buildNativeSkillCandidates(
       const value = `/${skill.name}`
       return {
         value,
-        label: completionLabel('native-skill', value),
-        description: skill.description,
+        label: styledCompletionLabel('native-skill', value),
+        description: styledDescription(skill.description),
         kind: 'native-skill' as const,
       }
     })

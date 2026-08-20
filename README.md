@@ -109,7 +109,7 @@ Running subagent activity is shown in the **last-request area below the editor**
   ↳ ⠼ Subagent B 10s 任务 · 562 token · 6.0s
 ```
 
-Each line shows: spinner + agent **name**, retries (`↻N≤M`), token count (+ context %), elapsed. No provider shown, no box, no header — just one line per running child.
+Each line shows: spinner + agent **name**, retries (`↻N≤M`), compact **current-context usage** (`X/Y` — the child's latest request's billed input+output plus a CJK estimate of messages after it, over its context window; NOT the cumulative token spend, which only grows), rounds (`round N/M` — the assistant-message count against the cap, `M` only when `maxRounds > 0`), elapsed. No provider shown, no box, no header — just one line per running child.
 
 #### Todos
 
@@ -132,7 +132,7 @@ Icons: `☑` completed, `◐` in-progress, `☐` pending. A settled child drops 
 Two caps (`/agents` → `l` to configure):
 
 - **`maxAgents`** (default 4, `0` = unlimited) — spawns are denied when the cap is hit.
-- **`maxRounds`** (default 50, `0` = unlimited) — after a child's completed turns reach the cap, the TUI queues one wrap-up request and never force-stops.
+- **`maxRounds`** (default 75, `0` = unlimited) — after a child's assistant messages (one per LLM round-trip — the "rounds") reach the cap, the TUI queues one wrap-up request and never force-stops.
 
 ---
 
@@ -146,7 +146,7 @@ Two caps (`/agents` → `l` to configure):
 dsh plugin --profile tui add @aiwayds/dsh-dcp
 ```
 
-Once mounted, DCP runs transparently in the background. The footer's **context** and **cache-hit** segments reflect the pruning effect in real time.
+Once mounted, DCP runs transparently in the background. The footer's **context** segment prices the current occupancy — the latest request's billed context plus a CJK estimate of messages after it — so after a compaction the next request lands smaller and the display follows it down (the percent is capped at 100, the window being a hard ceiling). The **cache-hit** segment reflects the session's cumulative cache reuse.
 
 ---
 

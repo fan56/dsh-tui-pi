@@ -3,7 +3,7 @@
  * maxAgents guard's allow/deny decision, the once-only maxRounds injection,
  * and the graceful degradation when a child is unresolvable. The policy is
  * exercised through a minimal fake ctx (tools/agents/settings slots + an
- * events bus stub) and a controllable fake state (live children, turn
+ * events bus stub) and a controllable fake state (live children, round
  * counts), so no cordis runtime or dsh services are involved.
  * Runs against the built lib/ (pnpm build && pnpm test).
  */
@@ -65,11 +65,11 @@ function makeCtx(overrides = {}) {
   return { ctx, captured }
 }
 
-/** Fake state: a live array and a turn-count map the test controls. */
-function makeState({ live = [], turnCounts = {}, settled = [] } = {}) {
+/** Fake state: a live array and a round-count map the test controls. */
+function makeState({ live = [], roundCounts = {}, settled = [] } = {}) {
   return {
     getLive: () => live,
-    getTurnCount: (childId) => turnCounts[childId] ?? 0,
+    getRoundCount: (childId) => roundCounts[childId] ?? 0,
     isSettled: (childId) => settled.includes(childId),
   }
 }
@@ -157,19 +157,19 @@ test('the fence wins over the cap reason, and turns off with the setting', () =>
   offPolicy.dispose()
 })
 
-test('onTurnCount injects nothing when maxRounds is 0', () => {
+test('onRoundCount injects nothing when maxRounds is 0', () => {
   const followups = []
   const { ctx } = makeCtx({
     settings: makeSettings({ maxAgents: 4, maxRounds: 0 }),
     agent: { followup: (msg) => followups.push(msg) },
   })
   const policy = applySubagentPolicy(ctx, makeState())
-  policy.onTurnCount('child-1', 1_000)
+  policy.onRoundCount('child-1', 1_000)
   assert.deepEqual(followups, [], 'maxRounds 0: no summary request ever')
   policy.dispose()
 })
 
-test('onTurnCount injects the summary request exactly once at the round cap', () => {
+test('onRoundCount injects the summary request exactly once at the round cap', () => {
   const followups = []
   const { ctx } = makeCtx({
     settings: makeSettings({ maxAgents: 4, maxRounds: 3 }),
@@ -177,10 +177,10 @@ test('onTurnCount injects the summary request exactly once at the round cap', ()
   })
   const policy = applySubagentPolicy(ctx, makeState())
 
-  policy.onTurnCount('child-1', 2)
+  policy.onRoundCount('child-1', 2)
   assert.deepEqual(followups, [], 'below the cap: nothing injected')
 
-  policy.onTurnCount('child-1', 3)
+  policy.onRoundCount('child-1', 3)
   assert.equal(followups.length, 1, 'at the cap: one summary request')
   const message = followups[0]
   assert.equal(message.content[0].type, 'text')
@@ -188,17 +188,40 @@ test('onTurnCount injects the summary request exactly once at the round cap', ()
   assert.equal(message.source.kind, 'plugin', 'message is plugin-sourced')
   assert.equal(message.source.plugin, 'dsh-tui-pi', 'message carries the plugin name')
 
-  policy.onTurnCount('child-1', 4)
-  policy.onTurnCount('child-1', 5)
-  assert.equal(followups.length, 1, 'later turns: no repeat injection')
+  // Later round counts — including the wrap-up's OWN assistant message, which
+  // pushes the count past maxRounds (max+1, max+2, …) — never re-inject.
+  policy.onRoundCount('child-1', 4)
+  policy.onRoundCount('child-1', 5)
+  assert.equal(followups.length, 1, 'later rounds: no repeat injection')
 
   // A different child still receives its own single request.
-  policy.onTurnCount('child-2', 3)
+  policy.onRoundCount('child-2', 3)
   assert.equal(followups.length, 2, 'each child is injected independently, once')
   policy.dispose()
 })
 
-test('onTurnCount silently skips a child that cannot be resolved', () => {
+test('onRoundCount never re-injects when the wrap-up\'s own message crosses the cap', () => {
+  // The full runaway scenario: at maxRounds the child is injected; the wrap-up
+  // prompt makes it produce MORE assistant messages (round max+1, max+2, …),
+  // each firing onRoundCount past the cap. The injected set must hold: no
+  // second summary request, even though the count keeps climbing.
+  const followups = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 5 }),
+    agent: { followup: (msg) => followups.push(msg) },
+  })
+  const policy = applySubagentPolicy(ctx, makeState())
+  for (let count = 1; count <= 5; count++) {
+    policy.onRoundCount('child-1', count)
+  }
+  assert.equal(followups.length, 1, 'injected once at maxRounds = 5')
+  policy.onRoundCount('child-1', 6)
+  policy.onRoundCount('child-1', 7)
+  assert.equal(followups.length, 1, 'the wrap-up replies (round 6, 7) never re-inject')
+  policy.dispose()
+})
+
+test('onRoundCount silently skips a child that cannot be resolved', () => {
   const followups = []
   // agents.get returns undefined — a settled/cold child must not throw and
   // must not inject into nothing.
@@ -207,21 +230,22 @@ test('onTurnCount silently skips a child that cannot be resolved', () => {
     agent: undefined,
   })
   const policy = applySubagentPolicy(ctx, makeState())
-  assert.doesNotThrow(() => policy.onTurnCount('ghost', 3), 'unresolvable child: silent skip')
+  assert.doesNotThrow(() => policy.onRoundCount('ghost', 3), 'unresolvable child: silent skip')
   assert.deepEqual(followups, [], 'no followup for an unresolvable child')
   policy.dispose()
 })
 
-test('onTurnCount never re-awakens a settled child at the round cap', () => {
+test('onRoundCount never re-awakens a settled child at the round cap', () => {
   const followups = []
   const { ctx } = makeCtx({
     settings: makeSettings({ maxAgents: 4, maxRounds: 3 }),
     agent: { followup: (msg) => followups.push(msg) },
   })
-  // The settle event and the maxRounds-crossing turn/end fire together: the
-  // child finished, so the wrap-up request would only wake it wastefully.
+  // The settle event and the maxRounds-crossing assistant message fire
+  // together: the child finished, so the wrap-up request would only wake it
+  // wastefully.
   const policy = applySubagentPolicy(ctx, makeState({ settled: ['done-child'] }))
-  policy.onTurnCount('done-child', 3)
+  policy.onRoundCount('done-child', 3)
   assert.deepEqual(followups, [], 'settled child: no injection')
   policy.dispose()
 })

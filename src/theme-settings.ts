@@ -30,7 +30,10 @@ export const THEME_SETTINGS_NAMESPACE: SettingsNamespace = settingsNamespace('ds
 export interface SubagentLimits {
   /** Concurrent live children allowed; 0 lifts the cap (the guard stays off). */
   maxAgents: number
-  /** Completed turns per child before a summary request is injected; 0 disables. */
+  /**
+   * Assistant messages per child (one per LLM round-trip — the "rounds" unit)
+   * before a summary request is injected; 0 disables.
+   */
   maxRounds: number
   /**
    * Disable the native `subagent` tool for every agent in the process, so
@@ -44,14 +47,16 @@ export interface SubagentLimits {
 
 /**
  * Default subagent limits, applied whenever the settings service, namespace,
- * or a field cannot be read. 4 concurrent children and 50 rounds per child are
- * the documented out-of-the-box behavior; the native `subagent` tool is
- * disabled by default — the TUI's user delegates through registered agents
- * (toggle it in /agents → l limits when the plain tool is needed again).
+ * or a field cannot be read. 4 concurrent children and 75 rounds per child
+ * are the documented out-of-the-box behavior (75 rounds = 75 LLM
+ * round-trips, headroom for heavy delegated tasks while still capping a
+ * runaway child); the native `subagent` tool is disabled by default — the
+ * TUI's user delegates through registered agents (toggle it in /agents → l
+ * limits when the plain tool is needed again).
  */
 export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({
   maxAgents: 4,
-  maxRounds: 50,
+  maxRounds: 75,
   disableSubagent: true,
 })
 
@@ -79,7 +84,7 @@ const THEME_SETTINGS_SCHEMA = z.object({
   maxRounds: z
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxRounds)
-    .description('Max rounds per subagent before the TUI sends a summary request (0 = unlimited)'),
+    .description('Max assistant messages per subagent before the TUI sends a summary request (0 = unlimited)'),
   disableSubagent: z
     .boolean()
     .default(DEFAULT_SUBAGENT_LIMITS.disableSubagent)
@@ -368,7 +373,8 @@ export async function writeThemePreference(ctx: Context, pref: ThemePreference):
  * Read the currently resolved subagent limits, synchronously. Unlike the
  * startup-snapshot readers, this does not wait for the namespace registration
  * — it describes whatever the settings service exposes right now, so every
- * policy decision (the guard at each spawn, `onTurnCount` at each child turn)
+ * policy decision (the guard at each spawn, `onRoundCount` at each child
+ * assistant message)
  * reflects the latest committed value without a watcher. Missing settings
  * service or namespace, or a non-integer/negative field, degrades to the
  * defaults — a settings-less deployment keeps the documented caps.

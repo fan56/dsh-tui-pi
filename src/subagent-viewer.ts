@@ -6,8 +6,11 @@
  * Picker rows (running first, then the five most recent settled) carry the
  * full picture of a delegation: status icon, label, delegation mode, rounds
  * against the policy cap (`maxRounds` from `readSubagentLimits`, only shown
- * when > 0), token spend (k) and elapsed time. Settled rows read as faded
- * because their status icon and the muted description column mark the outcome.
+ * when > 0), token spend (k) and elapsed time. Rounds are the child's
+ * assistant-message count (one per LLM round-trip) — the bridge maintains it
+ * on `assistant/message`, so it advances while a one-shot child works.
+ * Settled rows read as faded because their status icon and the muted
+ * description column mark the outcome.
  *
  * Transcript panel: one human-readable line per buffered SessionEvent
  * (user/assistant messages, tool calls + truncated results, turns, descriptor,
@@ -187,7 +190,7 @@ function eventLines(events: readonly SessionEvent[]): string[] {
  */
 export function pickerItems(
   views: readonly AgentView[],
-  getTurnCount: (childId: string) => number,
+  getRoundCount: (childId: string) => number,
   maxRounds: number,
 ): SelectItem[] {
   const running = views.filter(view => view.outcome === undefined)
@@ -197,7 +200,7 @@ export function pickerItems(
     .sort((a, b) => b.endedAt - a.endedAt)
     .slice(0, SETTLED_CAP)
   return [...running, ...settled].map(view => {
-    const rounds = getTurnCount(view.childId)
+    const rounds = getRoundCount(view.childId)
     const roundsText = maxRounds > 0 ? `rounds ${rounds}/${maxRounds}` : `rounds ${rounds}`
     const mode = view.mode === undefined ? '' : ` [${view.mode}]`
     const elapsedMs = (view.outcome === undefined ? Date.now() : view.endedAt ?? Date.now()) - view.startedAt
@@ -464,7 +467,7 @@ class SubagentViewerPanel implements Component {
     if (view.provider !== undefined) tail.push(view.provider)
     if (view.mode !== undefined) tail.push(view.mode)
     const maxRounds = this.readMaxRounds()
-    tail.push(`rounds ${this.bridge.getTurnCount(this.childId)}${maxRounds > 0 ? `/${maxRounds}` : ''}`)
+    tail.push(`rounds ${this.bridge.getRoundCount(this.childId)}${maxRounds > 0 ? `/${maxRounds}` : ''}`)
     if (view.tokens > 0) tail.push(formatTokens(view.tokens))
     // Budget the plain text so the status suffix (its own color) still fits.
     const budget = Math.max(20, 140 - status.length - 3)
@@ -515,13 +518,13 @@ export async function openSubagentViewer(
   }
 
   const showPicker = (): void => {
-    // `bridge.getTurnCount` reads instance state — wrap instead of passing the
-    // unbound method through to the pure item builder. `buildItems` re-reads
-    // the limits live on every tick, so a maxRounds change hot-applies while
-    // the picker stays open (no more open-time snapshot).
+    // `bridge.getRoundCount` reads instance state — wrap instead of passing
+    // the unbound method through to the pure item builder. `buildItems`
+    // re-reads the limits live on every tick, so a maxRounds change
+    // hot-applies while the picker stays open (no more open-time snapshot).
     const buildItems = (): SelectItem[] => pickerItems(
       bridge.getAgentViews(),
-      childId => bridge.getTurnCount(childId),
+      childId => bridge.getRoundCount(childId),
       readSubagentLimits(ctx).maxRounds,
     )
     const items = buildItems()

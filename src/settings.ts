@@ -573,7 +573,7 @@ class ModelsCategoryView implements Component {
  * panelThemeFns). Drawn directly (no pi-tui SettingsList) so a row shows its
  * toggle state exactly once, in front — SettingsList forces the currentValue
  * into a right-hand value column too, which duplicated the state
- * (`true  [skill] x     true`). Navigation is up/down plus PgUp/PgDn paging
+ * (`true  [s] x     true`). Navigation is up/down plus PgUp/PgDn paging
  * and Home/End jump; Enter/Space toggles (the same keys SettingsList accepts),
  * Esc exits; the selected row's description is shown under the list. Every
  * rendered row is clipped to the panel width so narrow terminals truncate
@@ -665,7 +665,7 @@ class SkillsPanel implements Component {
 
     const visibleRows = filtered.slice(this.scrollOffset, this.scrollOffset + maxVisibleRows)
 
-    // Fixed-width prefix segments: marker(2) + index(4) + state(6) + badge(8) = 20.
+    // Fixed-width prefix segments: marker(2) + index(4) + state(6) + badge(4) = 16.
     const prefixCols = 2 + (SKILL_INDEX_WIDTH + 1) + (SKILL_STATE_WIDTH + 1) + (BADGE_WIDTH + 1)
     for (let vi = 0; vi < visibleRows.length; vi++) {
       const i = this.scrollOffset + vi

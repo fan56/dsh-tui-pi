@@ -30,6 +30,7 @@ import {
   currentThemePreference,
   readFooterHintsPreference,
   readPanelHeightPreference,
+  readSubagentLimits,
   readThemePreference,
   registerThemeSettings,
   writeThemePreference,
@@ -336,7 +337,12 @@ export function apply(ctx: Context): void {
     // into the last-request area BELOW the editor. Owned here — fed by
     // session events and the bridge's subagent fold, ticked by the live
     // timer, recolored by applyTheme.
-    const liveWidgets = new LiveWidgets(ui.widgets, ui.lastRequest, ui.theme, () => ui.requestRender(), panelHeight)
+    const liveWidgets = new LiveWidgets(
+      ui.widgets, ui.lastRequest, ui.theme, () => ui.requestRender(), panelHeight,
+      // Live maxRounds for the compact running-agent lines' `round N/M` — read
+      // at every rebuild (the /agents limits panel hot-applies).
+      () => readSubagentLimits(ctx).maxRounds,
+    )
     // Arm the panel-height watch sink now that the widgets exist: a committed
     // panelHeight change re-budgets the think/tool panels — they are
     // self-drawing, so the next frame already renders at the new height.
@@ -416,15 +422,16 @@ export function apply(ctx: Context): void {
     // Subagent fine-grained control, all in-process (see subagent-policy.ts):
     // a tools.guard denies spawn-tool calls once `maxAgents` children run
     // (workflow fan-out, which bypasses the tool pipeline, is pruned on
-    // `subagent/start`), and when a child's completed turns reach `maxRounds`
-    // the policy queues one wrap-up message into its next turn. Limits are
-    // read live from the `dsh-tui` settings namespace (/agents → l limits).
+    // `subagent/start`), and when a child's assistant-message count reaches
+    // `maxRounds` the policy queues one wrap-up message into its next turn.
+    // Limits are read live from the `dsh-tui` settings namespace
+    // (/agents → l limits).
     const subagentPolicy = applySubagentPolicy(ctx, {
       getLive: () => bridge.getLiveChildren(),
-      getTurnCount: childId => bridge.getTurnCount(childId),
+      getRoundCount: childId => bridge.getRoundCount(childId),
       isSettled: childId => bridge.isChildSettled(childId),
     })
-    bridgeCallbacks.onTurnCount = (childId, count) => subagentPolicy.onTurnCount(childId, count)
+    bridgeCallbacks.onRoundCount = (childId, count) => subagentPolicy.onRoundCount(childId, count)
 
     /**
      * One O(events) fold of the session log into the effective preset, stored

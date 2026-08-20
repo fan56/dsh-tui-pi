@@ -8,10 +8,12 @@
  *    refreshes it in place, and a panel with no content renders zero rows.
  *  - `activityDoc` (the lastRequest container BELOW the editor): the
  *    ` ● <last request>` line (persisting across agent churn) followed by one
- *    compact line PER RUNNING agent — `├─ ⠋ <name> · ↻N≤M · 21k/1m · 13.6s ·
- *    <content tail>`. The tail is the child's latest CONTENT line (assistant
- *    text/reasoning, live-refreshed — never a tool name) and takes whatever
- *    the row has left, truncated at the right edge: one row, no wrap.
+ *    compact line PER RUNNING agent — `├─ ⠋ <name> · ↻N≤M · 21k/1m ·
+ *    round N/M · 13.6s · <content tail>`. The tail is the child's latest
+ *    CONTENT line (assistant text/reasoning, live-refreshed — never a tool
+ *    name) and takes whatever the row has left, truncated at the right edge:
+ *    one row, no wrap. `round N/M` shows the child's assistant-message count
+ *    against the policy cap (M only when `maxRounds > 0`).
  *
  * Event flow: index.ts routes every parent-session event through
  * `applyEvent` (think/tool phase machine) and todo/write snapshots through
@@ -179,6 +181,12 @@ export class LiveWidgets {
   private requestDisplay: string | undefined
   /** Spinner frame counter, advanced by tickLive while any agent runs. */
   private spinnerFrame = 0
+  /**
+   * Live reader of the round cap (`readSubagentLimits(ctx).maxRounds`) for
+   * the compact lines' `round N/M` — read per rebuild so a limits-panel
+   * change hot-applies (the getter pattern the panels use for the theme).
+   */
+  private readonly readMaxRounds: () => number
 
   /**
    * @param todosDoc The dock slot ABOVE the chat input - the Todos table and
@@ -187,6 +195,8 @@ export class LiveWidgets {
    *   last-request line plus the compact running-agent lines live here.
    * @param panelHeight Configured think/tool panel height ('1' one row, or a
    *   boxed budget - see activity.ts).
+   * @param readMaxRounds Live round cap for the `round N/M` meta segment
+   *   (0 = unlimited, the `/M` part is then omitted).
    */
   constructor(
     todosDoc: Container,
@@ -194,11 +204,13 @@ export class LiveWidgets {
     theme: TuiTheme,
     requestRender: () => void,
     panelHeight: PanelHeight = DEFAULT_PANEL_HEIGHT,
+    readMaxRounds: () => number = () => 0,
   ) {
     this.todosDoc = todosDoc
     this.activityDoc = activityDoc
     this.theme = theme
     this.requestRender = requestRender
+    this.readMaxRounds = readMaxRounds
     // Mounted once, in display order: Todos (persistent plan) above the
     // transient think/tool activity. The panels re-render at the live width
     // every frame and read the theme through their getters, so theme swaps
@@ -417,6 +429,7 @@ export class LiveWidgets {
    * `├─ `/`└─ ` connector (same column as the todo rows and the request
    * ` ● `) + spinner + the agent NAME (`view.label`) + the exact meta the
    * boxed board showed (`↻retries≤max`, compact `tokens[/contextWindow]`,
+   * `round N/M` — the assistant-message count against the live maxRounds cap,
    * elapsed) + the child's latest CONTENT line — live-refreshed assistant
    * text/reasoning, NEVER a tool name — as the ` · <tail>` suffix. NO box
    * chrome, NO provider. Layout against the terminal width: the name caps at
@@ -435,13 +448,22 @@ export class LiveWidgets {
     if (view.retries >= 1) {
       metaParts.push(view.maxRetries === undefined ? `↻${view.retries}` : `↻${view.retries}≤${view.maxRetries}`)
     }
-    if (view.tokens > 0) {
-      // Compact tokens[/contextWindow]: `21k/1m` — no percent, no "token".
+    if (view.contextTokens > 0) {
+      // Compact context[/contextWindow]: `21k/1m` — no percent, no "token".
+      // X is the CURRENT occupancy estimate (latest request billed input +
+      // output + pending estimate, see AgentView.contextTokens), NOT the
+      // cumulative spend `view.tokens` — that total only grows and stays the
+      // viewer's/session panel's display.
       const ctx = typeof view.contextWindow === 'number' && view.contextWindow > 0
         ? `/${fmtCompact(view.contextWindow)}`
         : ''
-      metaParts.push(`${fmtCompact(view.tokens)}${ctx}`)
+      metaParts.push(`${fmtCompact(view.contextTokens)}${ctx}`)
     }
+    // Assistant-message count against the cap: `round N/M` (the `/M` part is
+    // dropped when maxRounds is 0/unlimited). Always shown — a freshly spawned
+    // child at `round 0` proves the counter is live, not silently frozen.
+    const maxRounds = this.readMaxRounds()
+    metaParts.push(`round ${view.rounds ?? 0}${maxRounds > 0 ? `/${maxRounds}` : ''}`)
     const elapsed = (Date.now() - view.startedAt) / 1000
     metaParts.push(`${elapsed.toFixed(1)}s`)
     const metaPlain = ' · ' + metaParts.join(' · ')

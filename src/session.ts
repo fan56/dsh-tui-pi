@@ -20,6 +20,7 @@ import { readAppendSystem } from './append-system.ts'
 import type { AgentView } from './dsh-events.ts'
 import { isAgentEnd, isAgentStart, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
 import { installSpawnToolFence } from './subagent-policy.ts'
+import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
 
 /**
  * Register the APPEND_SYSTEM.md section on ONE agent's scoped context, so the
@@ -51,8 +52,12 @@ export interface BridgeCallbacks {
   onStatus(status: 'idle' | 'running'): void
   /** Live snapshot of tracked subagent (child session) rows, on any change. */
   onLive(agents: readonly AgentView[]): void
-  /** A tracked child completed one more turn (the "rounds" the policy caps). */
-  onTurnCount?(childId: string, count: number): void
+  /**
+   * A tracked child produced one more assistant message — the "rounds" the
+   * policy caps (round = one assistant message / LLM round-trip, counted on
+   * the child's own `assistant/message` events, not on `turn/end`).
+   */
+  onRoundCount?(childId: string, count: number): void
 }
 
 /**
@@ -63,19 +68,43 @@ export interface BridgeCallbacks {
 const CHILD_LOG_CAP = 2000
 
 /**
- * Cadence of the per-child turn-count reconcile. The TUI's discovery and fold
- * assume child `session/event` streams bubble here, but in some deployments
- * a subagent's own events never reach this plugin — the child shows up only
- * through the parent's `tool-workflow/agent-start`, so "rounds" stays 0 and
- * the `maxRounds` policy never fires. The reconcile re-derives each child's
- * turn count from its authoritative session log (`ctx.sessions`) as a
- * fallback; it only ever moves the count UP past what streamed events already
- * recorded, so the two sources never double count.
+ * Cadence of the per-child round-count reconcile. The TUI's discovery and
+ * fold assume child `session/event` streams bubble here, but in some
+ * deployments a subagent's own events never reach this plugin — the child
+ * shows up only through the parent's `tool-workflow/agent-start`, so
+ * "rounds" stays 0 and the `maxRounds` policy never fires. The reconcile
+ * re-derives each child's round count from its authoritative session log
+ * (`ctx.sessions`) as a fallback; it only ever moves the count UP past what
+ * streamed events already recorded, so the two sources never double count.
+ * Rounds are counted on `assistant/message` events (one per LLM round-trip) —
+ * a one-shot child never advances `turn/end` while it works.
  */
-const TURN_RECONCILE_MS = 600
+const ROUND_RECONCILE_MS = 600
 
 /** Tail marker for `llm/retry` events (no text content — the row shows it is re-working). */
 const RETRY_MARKER = '↻ retry'
+
+/**
+ * Estimated tokens of a `tool/result` event's text payload (the tool output
+ * that enters the next request). Defensive: reads through an `unknown` shape
+ * and never throws. The result body lives in `data.message.content[*].content`
+ * as `{ type: 'text', text }` blocks (plus any inline `isError` marker).
+ */
+function estimateToolResultTokens(data: unknown): number {
+  const content = (data as { message?: { content?: unknown } }).message?.content
+  if (!Array.isArray(content)) return 0
+  const parts: string[] = []
+  for (const block of content) {
+    if (block === null || typeof block !== 'object') continue
+    const inner = (block as { content?: unknown }).content
+    if (!Array.isArray(inner)) continue
+    for (const item of inner) {
+      const b = item as { type?: unknown; text?: unknown }
+      if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text)
+    }
+  }
+  return estimateTextTokens(parts.join('\n'))
+}
 
 /**
  * Bound of a child's live streaming buffer (text + reasoning deltas): enough
@@ -161,6 +190,15 @@ export interface BridgeStats {
   toolCallCount: number
   /** Whole-log cache-hit rate: cumulative cacheReadTokens ÷ billed input (input + cacheRead + cacheWrite), matching DSH web. */
   cacheHitRate?: number
+  /**
+   * Current context occupancy estimate — the value the footer's Context
+   * segment divides by the model window: the latest assistant/message's
+   * billed input + output plus a CJK estimate of every message appended
+   * after it (they enter the next request). NOT the cumulative `inputTokens`
+   * — that total only grows, while this tracks the current context so the
+   * display follows the latest request and drops after a compaction.
+   */
+  contextTokens: number
 }
 
 export class DshSessionBridge {
@@ -183,7 +221,23 @@ export class DshSessionBridge {
     cacheWriteTokens: 0,
     msgCount: 0,
     toolCallCount: 0,
+    contextTokens: 0,
   }
+  /**
+   * Usage snapshot of the LATEST assistant/message — the exact billed context
+   * of the last request (input = uncached, cache read/write billed on top;
+   * output = that request's own output). The footer's context segment prices
+   * this plus `pendingTokens` (see BridgeStats.contextTokens). `undefined`
+   * until the first assistant/message arrives.
+   */
+  private lastUsage: TokenUsage | undefined
+  /**
+   * CJK-estimated tokens of every message appended AFTER the latest
+   * assistant/message (user prompts, tool results, streamed text deltas) —
+   * they enter the next request. Reset to 0 by the next assistant/message,
+   * whose usage snapshot then covers them exactly.
+   */
+  private pendingTokens = 0
   /** Live subagent rows keyed by child session id. */
   private readonly agentViews = new Map<string, AgentView>()
   /** Child session ids whose own events we fold into the agent views. */
@@ -202,14 +256,33 @@ export class DshSessionBridge {
    * line and deletes the entry.
    */
   private readonly childStreams = new Map<string, string>()
-  /** Per-child completed turn count — the "rounds" the policy caps. */
-  private readonly turnCounts = new Map<string, number>()
   /**
-   * Per-child session-log length already reconciled (see reconcileChildTurns).
-   * Incremental high-water, so the reconcile scans only newly-appended events.
+   * Per-child assistant-message count — the "rounds" the policy caps. One
+   * increment per `assistant/message` (an LLM round-trip), counted on the
+   * child's OWN events. Settled children keep counting (a continuable child
+   * resumes later), so the count stays authoritative for the viewer and the
+   * wrap-up policy.
+   */
+  private readonly roundCounts = new Map<string, number>()
+  /**
+   * Per-child usage snapshot of the latest assistant/message (see
+   * `lastUsage` for the main session) — the exact billed context of the
+   * child's last request, the `contextTokens` baseline.
+   */
+  private readonly childUsage = new Map<string, TokenUsage>()
+  /**
+   * Per-child CJK-estimated tokens of messages appended after the latest
+   * assistant/message (see `pendingTokens` for the main session) — the
+   * `contextTokens` increment that makes the compact `X/Y` follow live.
+   */
+  private readonly childPending = new Map<string, number>()
+  /**
+   * Per-child session-log length already reconciled (see
+   * reconcileChildRounds). Incremental high-water, so the reconcile scans
+   * only newly-appended events.
    */
   private readonly reconciledLen = new Map<string, number>()
-  /** Per-child turn count derived from the session log by the reconcile. */
+  /** Per-child round count derived from the session log by the reconcile. */
   private readonly reconciledCount = new Map<string, number>()
   /**
    * Session ids that can own tracked children (this session first, then every
@@ -251,7 +324,9 @@ export class DshSessionBridge {
           label: `subagent ${sessionKey.slice(0, 8)}`,
           startedAt: event.time,
           tokens: 0,
+          rounds: 0,
           retries: 0,
+          contextTokens: 0,
         })
         this.childSessions.add(sessionKey)
         this.trackedSessions.add(sessionKey)
@@ -277,33 +352,36 @@ export class DshSessionBridge {
       this.running = status === 'running'
       this.callbacks.onStatus(status)
     }))
-    // Turn-count reconcile fallback: keep "rounds" and the maxRounds policy live
-    // even when a child's own events never bubble to this plugin (see
-    // TURN_RECONCILE_MS). Runs regardless of whether the viewer is open — the
+    // Round-count reconcile fallback: keep "rounds" and the maxRounds policy
+    // live even when a child's own events never bubble to this plugin (see
+    // ROUND_RECONCILE_MS). Runs regardless of whether the viewer is open — the
     // cap must still fire while the child works in the background.
     const reconcile = setInterval(() => {
       try {
-        this.reconcileChildTurns()
+        this.reconcileChildRounds()
       } catch {
         // A throwing reconcile must never take the process down.
       }
-    }, TURN_RECONCILE_MS)
+    }, ROUND_RECONCILE_MS)
     reconcile.unref?.()
     this.disposers.push(() => clearInterval(reconcile))
   }
 
   /**
-   * Re-derive each tracked child's turn count from its own session log
+   * Re-derive each tracked child's round count from its own session log
    * (`ctx.sessions`), the authoritative append-only facts. The firehose
    * assumption behind discovery/fold is unreliable in some deployments — a
    * child is listed from the parent's `tool-workflow/agent-start` but its own
-   * `turn/end` never arrives, which leaves both the rounds display and the
-   * `maxRounds` policy dead at 0. This corrects the count UP past whatever the
-   * streamed events already recorded (never down, never re-adding what events
-   * counted), and fires `onTurnCount` so the cap still guards a child whose
-   * events were never delivered. Scans only newly-appended events per child.
+   * `assistant/message` events never arrive, which leaves both the rounds
+   * display and the `maxRounds` policy dead at 0. This corrects the count UP
+   * past whatever the streamed events already recorded (never down, never
+   * re-adding what events counted), and fires `onRoundCount` so the cap still
+   * guards a child whose events were never delivered. Rounds are counted on
+   * `assistant/message` (one per LLM round-trip — `turn/end` is structurally
+   * inert for a one-shot child that never leaves its single turn). Scans only
+   * newly-appended events per child.
    */
-  private reconcileChildTurns(): void {
+  private reconcileChildRounds(): void {
     const sessions = (this.ctx as Context & { sessions?: { get(id: SessionId): Session | undefined } }).sessions
     if (sessions === undefined) return
     for (const childId of this.childSessions) {
@@ -321,15 +399,15 @@ export class DshSessionBridge {
       if (from >= len) continue
       let added = 0
       for (let i = from; i < len; i++) {
-        if (events[i]!.type === 'turn/end') added += 1
+        if (events[i]!.type === 'assistant/message') added += 1
       }
       const absolute = (this.reconciledCount.get(childId) ?? 0) + added
       this.reconciledLen.set(childId, len)
       this.reconciledCount.set(childId, absolute)
-      const current = this.turnCounts.get(childId) ?? 0
+      const current = this.roundCounts.get(childId) ?? 0
       if (absolute > current) {
-        this.turnCounts.set(childId, absolute)
-        this.callbacks.onTurnCount?.(childId, absolute)
+        this.roundCounts.set(childId, absolute)
+        this.callbacks.onRoundCount?.(childId, absolute)
       }
     }
   }
@@ -361,9 +439,9 @@ export class DshSessionBridge {
     return this.childLogs.get(childId) ?? []
   }
 
-  /** Completed turn count of one child ("rounds"). */
-  getTurnCount(childId: string): number {
-    return this.turnCounts.get(childId) ?? 0
+  /** Assistant-message count of one child ("rounds" — the policy cap unit). */
+  getRoundCount(childId: string): number {
+    return this.roundCounts.get(childId) ?? 0
   }
 
   /** Whether one child settled (a continuable child may resume later). */
@@ -440,7 +518,9 @@ export class DshSessionBridge {
     this.childSessions.clear()
     this.childLogs.clear()
     this.childStreams.clear()
-    this.turnCounts.clear()
+    this.roundCounts.clear()
+    this.childUsage.clear()
+    this.childPending.clear()
     this.reconciledLen.clear()
     this.reconciledCount.clear()
     this.trackedSessions.clear()
@@ -469,11 +549,16 @@ export class DshSessionBridge {
     this.stats.msgCount = 0
     this.stats.toolCallCount = 0
     this.stats.cacheHitRate = undefined
+    this.stats.contextTokens = 0
+    this.lastUsage = undefined
+    this.pendingTokens = 0
     this.agentViews.clear()
     this.childSessions.clear()
     this.childLogs.clear()
     this.childStreams.clear()
-    this.turnCounts.clear()
+    this.roundCounts.clear()
+    this.childUsage.clear()
+    this.childPending.clear()
     this.reconciledLen.clear()
     this.reconciledCount.clear()
     this.trackedSessions.clear()
@@ -553,6 +638,9 @@ export class DshSessionBridge {
     this.stats.msgCount = 0
     this.stats.toolCallCount = 0
     this.stats.cacheHitRate = undefined
+    this.stats.contextTokens = 0
+    this.lastUsage = undefined
+    this.pendingTokens = 0
     const sessionId = this.sessionId
     for (const event of events) {
       if (event.type === 'assistant/chunk') continue
@@ -572,6 +660,9 @@ export class DshSessionBridge {
     switch (event.type) {
       case 'user/message':
         this.stats.msgCount += 1
+        // The prompt enters the NEXT request — priced into the occupancy now.
+        this.pendingTokens += estimateContentTokens((event.data as { content?: unknown }).content)
+        this.stats.contextTokens = this.contextTokens()
         break
       case 'assistant/message': {
         this.stats.msgCount += 1
@@ -579,20 +670,82 @@ export class DshSessionBridge {
           if (block.type === 'tool-call') this.stats.toolCallCount += 1
         }
         const usage: TokenUsage | undefined = event.data.usage
-        if (usage === undefined) break
-        this.stats.inputTokens += usage.inputTokens
-        this.stats.outputTokens += usage.outputTokens
-        this.stats.cacheReadTokens += usage.cacheReadTokens ?? 0
-        this.stats.cacheWriteTokens += usage.cacheWriteTokens ?? 0
-        const billedInput = this.stats.inputTokens + this.stats.cacheReadTokens + this.stats.cacheWriteTokens
-        this.stats.cacheHitRate = billedInput > 0
-          ? (this.stats.cacheReadTokens / billedInput) * 100
-          : undefined
+        if (usage !== undefined) {
+          // The assembled message finalizes the request: its usage snapshot is
+          // now the exact billed context (input + cache + output) and the
+          // pending estimate restarts from what follows it. A usage-less
+          // message (adapter reported none) leaves the baseline untouched —
+          // pending already holds the streamed chunk estimate accumulated for
+          // this message, a reasonable stand-in until the next billed message.
+          this.lastUsage = usage
+          this.pendingTokens = 0
+          this.stats.inputTokens += usage.inputTokens
+          this.stats.outputTokens += usage.outputTokens
+          this.stats.cacheReadTokens += usage.cacheReadTokens ?? 0
+          this.stats.cacheWriteTokens += usage.cacheWriteTokens ?? 0
+          const billedInput = this.stats.inputTokens + this.stats.cacheReadTokens + this.stats.cacheWriteTokens
+          this.stats.cacheHitRate = billedInput > 0
+            ? (this.stats.cacheReadTokens / billedInput) * 100
+            : undefined
+        }
+        this.stats.contextTokens = this.contextTokens()
         break
       }
+      case 'assistant/chunk': {
+        // Streamed output of the in-flight request — the next request's
+        // context grows with it, so the occupancy follows the stream live.
+        // Both text and reasoning deltas are priced: usage.outputTokens
+        // includes reasoning tokens at snapshot time, so the live estimate
+        // must count reasoning too to match that accounting (the next billed
+        // assistant/message corrects the final value anyway).
+        const chunk = (event.data as { chunk?: { type?: string; text?: string } }).chunk
+        if ((chunk?.type === 'text-delta' || chunk?.type === 'reasoning-delta') && chunk.text !== '') {
+          this.pendingTokens += estimateTextTokens(chunk.text ?? '')
+          this.stats.contextTokens = this.contextTokens()
+        }
+        break
+      }
+      case 'tool/result':
+        // Tool results enter the next request — priced into the occupancy.
+        this.pendingTokens += estimateToolResultTokens(event.data)
+        this.stats.contextTokens = this.contextTokens()
+        break
       default:
         break
     }
+  }
+
+  /**
+   * The current context-occupancy estimate: the latest assistant/message's
+   * billed input (uncached + cache read + cache write) and output, plus the
+   * CJK estimate of every message appended after it. Before the first
+   * assistant/message the pending estimate alone stands in for the whole
+   * current context.
+   */
+  private contextTokens(): number {
+    if (this.lastUsage === undefined) return this.pendingTokens
+    return this.lastUsage.inputTokens
+      + (this.lastUsage.cacheReadTokens ?? 0)
+      + (this.lastUsage.cacheWriteTokens ?? 0)
+      + this.lastUsage.outputTokens
+      + this.pendingTokens
+  }
+
+  /**
+   * The current context-occupancy estimate of one child (the `X` in the
+   * compact line's `X/Y`): the child's latest assistant/message billed input
+   * + output plus the CJK estimate of messages appended after it. Before the
+   * child's first assistant/message the pending estimate alone stands in.
+   */
+  private childContextTokens(childId: string): number {
+    const usage = this.childUsage.get(childId)
+    const pending = this.childPending.get(childId) ?? 0
+    if (usage === undefined) return pending
+    return usage.inputTokens
+      + (usage.cacheReadTokens ?? 0)
+      + (usage.cacheWriteTokens ?? 0)
+      + usage.outputTokens
+      + pending
   }
 
   /**
@@ -611,7 +764,9 @@ export class DshSessionBridge {
           label: event.data.label,
           startedAt: event.time,
           tokens: 0,
+          rounds: 0,
           retries: 0,
+          contextTokens: 0,
         })
         this.runSeqToChild.set(`${event.data.runId}:${event.data.seq}`, event.data.childId)
         this.childSessions.add(event.data.childId)
@@ -631,13 +786,6 @@ export class DshSessionBridge {
       }
     }
     if (this.childSessions.has(sessionId)) {
-      // Round counting is view-independent: every completed turn of the child
-      // is one round, even once the view settled (continuable children resume).
-      if (event.type === 'turn/end') {
-        const count = (this.turnCounts.get(sessionId) ?? 0) + 1
-        this.turnCounts.set(sessionId, count)
-        this.callbacks.onTurnCount?.(sessionId, count)
-      }
       const view = this.agentViews.get(sessionId)
       if (view !== undefined) {
         if (isSubagentDescriptor(event)) {
@@ -653,22 +801,45 @@ export class DshSessionBridge {
             changed = true
           }
         } else if (event.type === 'assistant/message') {
+          // Round counting is view-independent: every assistant message of the
+          // child is one round (one LLM round-trip), counted even once the
+          // view settled — continuable children resume. `turn/end` is NOT the
+          // round unit: a one-shot child never leaves its single turn, so its
+          // rounds would stay frozen at 0 while it works.
+          const count = (this.roundCounts.get(sessionId) ?? 0) + 1
+          this.roundCounts.set(sessionId, count)
+          this.callbacks.onRoundCount?.(sessionId, count)
           const usage = event.data.usage
           const delta = usage === undefined
             ? 0
             : usage.inputTokens + usage.outputTokens
               + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+          // The assembled message finalizes the child's request: its usage is
+          // now the exact billed context baseline and the pending estimate
+          // restarts from what follows it. A usage-less message leaves both
+          // untouched — pending still holds the streamed chunk estimate
+          // accumulated for this message, a reasonable approximation until the
+          // next billed message replaces it.
+          if (usage !== undefined) {
+            this.childUsage.set(sessionId, usage)
+            this.childPending.set(sessionId, 0)
+          }
           const lastLine = lastTextLine(event.data)
           const tokensChanged = delta > 0
           const lineChanged = lastLine !== undefined && lastLine !== view.lastLine
-          if (tokensChanged || lineChanged) {
-            // One set: neither delta nor lastLine may clobber the other. The
-            // assembled message is authoritative for the content tail — its
-            // streaming buffer is spent.
+          const roundsChanged = count !== view.rounds
+          const contextTokens = this.childContextTokens(sessionId)
+          const contextChanged = contextTokens !== view.contextTokens
+          if (tokensChanged || lineChanged || roundsChanged || contextChanged) {
+            // One set: neither delta nor lastLine nor rounds nor contextTokens
+            // may clobber the others. The assembled message is authoritative
+            // for the content tail — its streaming buffer is spent.
             this.agentViews.set(sessionId, {
               ...view,
               ...(tokensChanged ? { tokens: view.tokens + delta } : {}),
               ...(lineChanged ? { lastLine } : {}),
+              ...(roundsChanged ? { rounds: count } : {}),
+              ...(contextChanged ? { contextTokens } : {}),
             })
             changed = true
           }
@@ -686,11 +857,51 @@ export class DshSessionBridge {
               const buffer = bumpChildStream(this.childStreams.get(sessionId) ?? '', delta)
               this.childStreams.set(sessionId, buffer)
               const lastLine = lastBufferLine(buffer)
-              if (lastLine !== undefined && lastLine !== view.lastLine) {
-                this.agentViews.set(sessionId, { ...view, lastLine })
+              // Streamed output (text AND reasoning) grows the child's current
+              // context too — usage.outputTokens includes reasoning tokens at
+              // snapshot, so the live estimate prices both; the compact X/Y
+              // follows live.
+              const wasPending = this.childPending.get(sessionId) ?? 0
+              const lineChanged = lastLine !== undefined && lastLine !== view.lastLine
+              if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
+                this.childPending.set(sessionId, wasPending + estimateTextTokens(delta))
+              }
+              const contextTokens = this.childContextTokens(sessionId)
+              const contextChanged = contextTokens !== view.contextTokens
+              if (lineChanged || contextChanged) {
+                this.agentViews.set(sessionId, {
+                  ...view,
+                  ...(lineChanged ? { lastLine } : {}),
+                  ...(contextChanged ? { contextTokens } : {}),
+                })
                 changed = true
               }
             }
+          }
+        } else if (event.type === 'user/message') {
+          // The child's own prompts/injects enter its next request — the
+          // occupancy follows (the content tail is never touched here).
+          this.childPending.set(
+            sessionId,
+            (this.childPending.get(sessionId) ?? 0)
+              + estimateContentTokens((event.data as { content?: unknown }).content),
+          )
+          const contextTokens = this.childContextTokens(sessionId)
+          if (contextTokens !== view.contextTokens) {
+            this.agentViews.set(sessionId, { ...view, contextTokens })
+            changed = true
+          }
+        } else if (event.type === 'tool/result') {
+          // Tool results enter the child's next request — the occupancy
+          // follows (the content tail shows the child's own output only).
+          this.childPending.set(
+            sessionId,
+            (this.childPending.get(sessionId) ?? 0) + estimateToolResultTokens(event.data),
+          )
+          const contextTokens = this.childContextTokens(sessionId)
+          if (contextTokens !== view.contextTokens) {
+            this.agentViews.set(sessionId, { ...view, contextTokens })
+            changed = true
           }
         } else if (isLlmRetry(event)) {
           // No text content — surface a fixed marker so the row shows the

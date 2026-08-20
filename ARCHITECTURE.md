@@ -182,7 +182,11 @@ render width, so no row ever wraps.
   editor** (`ui.lastRequest`, tui.ts): the ` ● <last request>` line followed
   by one **compact line per running agent** — `├─ `/`└─ `-prefixed (tree
   connectors aligned with the todo rows), spinner + agent NAME, `↻retries≤max`,
-  compact `tokens/contextWindow`, elapsed, and the child's latest **content**
+  compact `X/Y` (the CURRENT context-occupancy estimate — the child's latest
+  request's billed input+output plus a CJK estimate of messages after it, over
+  its context window; NOT the cumulative `tokens` spend, which only grows and
+  stays the viewer's/session-panel's number), `round N/M`, elapsed, and the
+  child's latest **content**
   line (` · <tail>`): the live-refreshed last line of its streamed assistant
   text/reasoning — never a tool name. The tail takes everything the row has
   left and is truncated at the right edge; each line is clipped (prefix
@@ -262,10 +266,17 @@ ignores the convention.
   never emit workflow events — the child session's **header**
   (`origin: 'subagent'` + `parentSession` matching a tracked session);
   delegation nests. Each child's own events fold into an O(1) `AgentView`:
-  `subagent/descriptor` (provider + label), `assistant/message` usage
-  (tokens), `llm/retry` (retries/max), `tool/call` (last activity),
-  `request/context` (context window), and `turn/end` (best-effort settle —
-  the board's clear-when-done; `turn/start` re-marks a resumed child running).
+  `subagent/descriptor` (provider + label), `assistant/message` usage — the
+  cumulative `tokens` spend AND the `contextTokens` current-occupancy estimate
+  (the latest request's billed input + output + a CJK estimate of messages
+  after it, priced by the ported `src/tokens.ts`) — and round counting (the
+  "rounds" = one per `assistant/message`,
+  i.e. per LLM round-trip — the unit the `maxRounds` policy caps and the
+  compact line shows), `llm/retry` (retries/max), `tool/call` (last
+  activity), `request/context` (context window), and `turn/end` (best-effort
+  settle — the board's clear-when-done; `turn/start` re-marks a resumed
+  child running). `turn/end` is NOT the round unit: a one-shot child never
+  leaves its single turn, so turns would never progress while it works.
   `tool-workflow/agent-end` pairs through `runId:seq` for the real outcome.
   `onLive` pushes the sorted snapshot (by `startedAt`) to the widget.
   `replay()` folds the same parent-log workflow events so a resumed session

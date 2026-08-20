@@ -51,12 +51,12 @@ function panelBody(doc, width = 200) {
 }
 
 /** Two-doc widget: a boxed panels doc above the input + the activity doc below. */
-function makeWidget(theme = darkTheme, panelHeight) {
+function makeWidget(theme = darkTheme, panelHeight, readMaxRounds = () => 0) {
   const todosDoc = new Container()
   const activityDoc = new Container()
   const widget = panelHeight === undefined
-    ? new LiveWidgets(todosDoc, activityDoc, theme, () => {})
-    : new LiveWidgets(todosDoc, activityDoc, theme, () => {}, panelHeight)
+    ? new LiveWidgets(todosDoc, activityDoc, theme, () => {}, undefined, readMaxRounds)
+    : new LiveWidgets(todosDoc, activityDoc, theme, () => {}, panelHeight, readMaxRounds)
   return { todosDoc, activityDoc, widget }
 }
 
@@ -66,7 +66,11 @@ function runningView(over = {}) {
     provider: 'workhorse',
     label: 'Agent ① sleep 20s',
     startedAt: Date.now() - 13600,
+    // `tokens` (cumulative spend, the viewer/session-panel number) AND
+    // `contextTokens` (the current-occupancy estimate the compact `X/Y`
+    // shows). Both are bridge-maintained O(1) fields on the AgentView.
     tokens: 562,
+    contextTokens: 562,
     retries: 1,
     maxRetries: 60,
     lastTool: 'command',
@@ -167,26 +171,32 @@ test('the panel re-lays out at the current width - content is clipped per render
 // --------------------------------------------------------- running agents ----
 
 test('running agent line: └─ prefix (single, last), spinner + name first, compact meta, no provider', () => {
-  const { todosDoc, activityDoc, widget } = makeWidget()
-  widget.setLastRequest('帮我把排序算法改成快排')
-  widget.renderAgents([runningView()])
-  // Compact line in the activity doc, no box chrome at all.
-  const rows = widgetRows(activityDoc)
-  assert.equal(rows.length, 2, '● line + one compact agent line')
-  assert.ok(rows[0].startsWith(' ● '), 'last-request echo renders above the agents')
-  assert.equal(rows[0], ' ● 帮我把排序算法改成快排')
-  assert.match(rows[1], new RegExp(`^└─ ${AGENT_SPINNER_FRAMES[0]} Agent ① sleep 20s · ↻1≤60 · 562/14k · 13\\.[0-9]s$`),
-    'compact line: └─ prefix (the only agent is last) + spinner + name + compact meta, no provider')
-  // The line starts with the todo-style connector and prominently shows the NAME.
-  assert.ok(rows[1].startsWith('└─ ⠋ '), 'compact line starts with \'└─ \' + spinner + space')
-  assert.ok(rows[1].includes('Agent ① sleep 20s'), 'the agent name appears in the line')
-  assert.ok(!rows[1].includes('workhorse'), 'the provider is dropped from the line')
-  // No box chrome anywhere.
-  assert.ok(!rows.join('\n').includes('┌'), 'no top border')
-  assert.ok(!rows.join('\n').includes('● Agents'), 'no Agents header')
-  assert.ok(!rows.join('\n').includes('⎿'), 'no activity sub-line')
-  // Only the activity doc is up; the todos doc stays empty.
-  assert.deepEqual(widgetRows(todosDoc), [], 'todos doc empty while only agents run')
+  const prev = process.stdout.columns
+  process.stdout.columns = 200 // keep the full label visible with the longer meta
+  try {
+    const { todosDoc, activityDoc, widget } = makeWidget()
+    widget.setLastRequest('帮我把排序算法改成快排')
+    widget.renderAgents([runningView()])
+    // Compact line in the activity doc, no box chrome at all.
+    const rows = widgetRows(activityDoc)
+    assert.equal(rows.length, 2, '● line + one compact agent line')
+    assert.ok(rows[0].startsWith(' ● '), 'last-request echo renders above the agents')
+    assert.equal(rows[0], ' ● 帮我把排序算法改成快排')
+    assert.match(rows[1], new RegExp(`^└─ ${AGENT_SPINNER_FRAMES[0]} Agent ① sleep 20s · ↻1≤60 · 562/14k · round 0 · 13\\.[0-9]s$`),
+      'compact line: └─ prefix (the only agent is last) + spinner + name + compact meta (incl. round), no provider')
+    // The line starts with the todo-style connector and prominently shows the NAME.
+    assert.ok(rows[1].startsWith('└─ ⠋ '), 'compact line starts with \'└─ \' + spinner + space')
+    assert.ok(rows[1].includes('Agent ① sleep 20s'), 'the agent name appears in the line')
+    assert.ok(!rows[1].includes('workhorse'), 'the provider is dropped from the line')
+    // No box chrome anywhere.
+    assert.ok(!rows.join('\n').includes('┌'), 'no top border')
+    assert.ok(!rows.join('\n').includes('● Agents'), 'no Agents header')
+    assert.ok(!rows.join('\n').includes('⎿'), 'no activity sub-line')
+    // Only the activity doc is up; the todos doc stays empty.
+    assert.deepEqual(widgetRows(todosDoc), [], 'todos doc empty while only agents run')
+  } finally {
+    process.stdout.columns = prev
+  }
 })
 
 test('multiple running agents: one compact line each, last one closes with └─', () => {
@@ -205,41 +215,77 @@ test('multiple running agents: one compact line each, last one closes with └�
 })
 
 test('an empty label falls back to `subagent`; provider is dropped', () => {
-  const { activityDoc, widget } = makeWidget()
-  // No provider on the view — the line still renders, name first.
-  widget.renderAgents([runningView({ provider: undefined })])
-  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ Agent ① sleep 20s ·/)
-  // A blank label must never render an empty name — fall back to `subagent`
-  // (no child id suffix).
-  widget.renderAgents([runningView({ label: '   ', childId: 'deadbeef1234' })])
-  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ subagent ·/)
-  // Whitespace-only labels are treated as empty too.
-  widget.renderAgents([runningView({ label: '', childId: 'abc' })])
-  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ subagent ·/)
+  const prev = process.stdout.columns
+  process.stdout.columns = 200
+  try {
+    const { activityDoc, widget } = makeWidget()
+    // No provider on the view — the line still renders, name first.
+    widget.renderAgents([runningView({ provider: undefined })])
+    assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ Agent ① sleep 20s ·/)
+    // A blank label must never render an empty name — fall back to `subagent`
+    // (no child id suffix).
+    widget.renderAgents([runningView({ label: '   ', childId: 'deadbeef1234' })])
+    assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ subagent ·/)
+    // Whitespace-only labels are treated as empty too.
+    widget.renderAgents([runningView({ label: '', childId: 'abc' })])
+    assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ subagent ·/)
+  } finally {
+    process.stdout.columns = prev
+  }
 })
 
-test('compact token meta: tokens[/contextWindow] with fmtCompact, no percent/unit', () => {
+test('compact token meta: contextTokens[/contextWindow] with fmtCompact, no percent/unit', () => {
   const { activityDoc, widget } = makeWidget()
-  const base = { childId: 't', label: 'T', tokens: 0, retries: 0 }
-  // 20_965 tokens, 1_000_000 window → `20k/1m` (floor for k).
-  widget.renderAgents([runningView({ ...base, tokens: 20_965, contextWindow: 1_000_000 })])
-  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · 20k\/1m · \d+\.\ds$/)
+  const base = { childId: 't', label: 'T', tokens: 0, contextTokens: 0, retries: 0, rounds: 0 }
+  // 20_965 contextTokens, 1_000_000 window → `20k/1m` (floor for k).
+  widget.renderAgents([runningView({ ...base, contextTokens: 20_965, contextWindow: 1_000_000 })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · 20k\/1m · round 0 · \d+\.\ds$/)
   // 1_500_000 window → `1.5m` (1 decimal, no trailing .0).
-  widget.renderAgents([runningView({ ...base, tokens: 20_965, contextWindow: 1_500_000 })])
-  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · 20k\/1\.5m · \d+\.\ds$/)
+  widget.renderAgents([runningView({ ...base, contextTokens: 20_965, contextWindow: 1_500_000 })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · 20k\/1\.5m · round 0 · \d+\.\ds$/)
   // No contextWindow → only the compact token count.
-  widget.renderAgents([runningView({ ...base, tokens: 20_965, contextWindow: undefined })])
-  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · 20k · \d+\.\ds$/)
-  // tokens === 0 → the token segment is dropped (unchanged guard).
-  widget.renderAgents([runningView({ ...base, tokens: 0, contextWindow: 1_000_000 })])
-  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · \d+\.\ds$/)
+  widget.renderAgents([runningView({ ...base, contextTokens: 20_965, contextWindow: undefined })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · 20k · round 0 · \d+\.\ds$/)
+  // contextTokens === 0 (a fresh child with no request yet) → the token
+  // segment is dropped (the occupancy has nothing to show; the round N/M
+  // segment still proves the child is live).
+  widget.renderAgents([runningView({ ...base, contextTokens: 0, contextWindow: 1_000_000 })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · round 0 · \d+\.\ds$/)
+})
+
+test('compact line shows round N/M against the live maxRounds cap (M>0 only)', () => {
+  const { activityDoc, widget } = makeWidget(darkTheme, undefined, () => 50)
+  const base = { childId: 't', label: 'T', tokens: 0, contextTokens: 0, retries: 0 }
+  // The rounds N comes from the view (bridge-maintained on assistant/message).
+  widget.renderAgents([runningView({ ...base, rounds: 3 })])
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · round 3\/50 · \d+\.\ds$/, 'round N/M with a positive cap')
+
+  // maxRounds 0 / unset (the default getter): the /M part degrades away.
+  const noCap = makeWidget(darkTheme, undefined, () => 0)
+  noCap.widget.renderAgents([runningView({ ...base, rounds: 3 })])
+  assert.match(widgetRows(noCap.activityDoc)[0], /^└─ ⠋ T · round 3 · \d+\.\ds$/, 'round N with no cap (M=0)')
+  assert.doesNotMatch(widgetRows(noCap.activityDoc)[0], /\//, 'no /M when maxRounds is 0')
+
+  // A view without the rounds field degrades to round 0 (defensive).
+  const missing = makeWidget(darkTheme, undefined, () => 50)
+  missing.widget.renderAgents([runningView({ ...base })])
+  assert.match(widgetRows(missing.activityDoc)[0], /^└─ ⠋ T · round 0\/50 · \d+\.\ds$/, 'round 0 when the view carries no count')
+
+  // The cap getter is re-read per rebuild — a limits-panel change hot-applies.
+  let maxRounds = 50
+  const hot = makeWidget(darkTheme, undefined, () => maxRounds)
+  hot.widget.renderAgents([runningView({ ...base, rounds: 3 })])
+  assert.match(widgetRows(hot.activityDoc)[0], /round 3\/50/)
+  maxRounds = 100
+  hot.widget.renderAgents([runningView({ ...base, rounds: 3 })])
+  assert.match(widgetRows(hot.activityDoc)[0], /round 3\/100/, 'a new maxRounds shows on the next rebuild')
 })
 
 test('the child\'s latest CONTENT line renders as a ` · <tail>` suffix, right-truncated', () => {
   const { activityDoc, widget } = makeWidget()
-  const base = { childId: 't', label: 'T', tokens: 0, retries: 0 }
+  const base = { childId: 't', label: 'T', tokens: 0, contextTokens: 0, retries: 0, rounds: 0 }
   widget.renderAgents([runningView({ ...base, lastLine: 'compiling src/main.ts' })])
-  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · \d+\.\ds · compiling src\/main\.ts$/)
+  assert.match(widgetRows(activityDoc)[0], /^└─ ⠋ T · round 0 · \d+\.\ds · compiling src\/main\.ts$/)
   // Over-wide tail: takes everything the row has left and is truncated at the
   // RIGHT edge (clipToWidth's ellipsis), one row, never wrapped, no tool name.
   const width = 80
@@ -295,16 +341,22 @@ test('renderAgents([]) empties the agent lines but keeps the last-request line',
 // ------------------------------------------------------------ combined ----
 
 test('todos boxed panel + compact activity lines coexist on their own docs', () => {
-  const { todosDoc, activityDoc, widget } = makeWidget()
-  widget.setLastRequest('defrag the index')
-  widget.renderTodos([{ content: 't', status: 'in_progress' }])
-  widget.renderAgents([runningView()])
-  const todoRows = widgetRows(todosDoc)
-  assert.ok(todoRows[0].startsWith('┌'), 'todos stay boxed')
-  assert.equal(panelBody(todosDoc)[0], '● Todos (0/1)')
-  const activityRows = widgetRows(activityDoc)
-  assert.equal(activityRows[0], ' ● defrag the index')
-  assert.match(activityRows[1], /^└─ ⠋ Agent ① sleep 20s · ↻1≤60 · 562\/14k · 13\.[0-9]s$/)
+  const prev = process.stdout.columns
+  process.stdout.columns = 200
+  try {
+    const { todosDoc, activityDoc, widget } = makeWidget()
+    widget.setLastRequest('defrag the index')
+    widget.renderTodos([{ content: 't', status: 'in_progress' }])
+    widget.renderAgents([runningView()])
+    const todoRows = widgetRows(todosDoc)
+    assert.ok(todoRows[0].startsWith('┌'), 'todos stay boxed')
+    assert.equal(panelBody(todosDoc)[0], '● Todos (0/1)')
+    const activityRows = widgetRows(activityDoc)
+    assert.equal(activityRows[0], ' ● defrag the index')
+    assert.match(activityRows[1], /^└─ ⠋ Agent ① sleep 20s · ↻1≤60 · 562\/14k · round 0 · 13\.[0-9]s$/)
+  } finally {
+    process.stdout.columns = prev
+  }
 })
 
 // ------------------------------------------------------ width + lifecycle ----
@@ -374,24 +426,30 @@ test('boxed todos never wrap; each compact agent line stays one row', () => {
 })
 
 test('setTheme recolors the widget and keeps its content', () => {
-  const { todosDoc, activityDoc, widget } = makeWidget()
-  widget.setLastRequest('theme me')
-  widget.renderTodos([{ content: 't', status: 'in_progress' }])
-  widget.renderAgents([runningView()])
-  const beforeDark = activityDoc.render(200).join('')
-  // A genuinely different bundle (light palette) — setTheme is a no-op on the
-  // identical bundle, but changing bundles must re-render with new colors.
-  widget.setTheme(lightTheme)
-  // Todos boxed panel intact.
-  assert.equal(panelBody(todosDoc)[0], '● Todos (0/1)')
-  // Compact agent line + ● line intact after recolor.
-  const rows = widgetRows(activityDoc)
-  assert.equal(rows[0], ' ● theme me')
-  assert.match(rows[1], /^└─ ⠋ Agent ① sleep 20s · ↻1≤60 · 562\/14k · 13\.[0-9]s$/)
-  // The ● line's fgMuted changed with the new (light) theme palette.
-  const after = activityDoc.render(200).join('')
-  assert.notEqual(after, beforeDark, 'recolored away from the original dark palette')
-  assert.ok(after.includes(ansiFg(lightTheme.palette.fgMuted)), '● line recolored with the new theme')
+  const prev = process.stdout.columns
+  process.stdout.columns = 200
+  try {
+    const { todosDoc, activityDoc, widget } = makeWidget()
+    widget.setLastRequest('theme me')
+    widget.renderTodos([{ content: 't', status: 'in_progress' }])
+    widget.renderAgents([runningView()])
+    const beforeDark = activityDoc.render(200).join('')
+    // A genuinely different bundle (light palette) — setTheme is a no-op on the
+    // identical bundle, but changing bundles must re-render with new colors.
+    widget.setTheme(lightTheme)
+    // Todos boxed panel intact.
+    assert.equal(panelBody(todosDoc)[0], '● Todos (0/1)')
+    // Compact agent line + ● line intact after recolor.
+    const rows = widgetRows(activityDoc)
+    assert.equal(rows[0], ' ● theme me')
+    assert.match(rows[1], /^└─ ⠋ Agent ① sleep 20s · ↻1≤60 · 562\/14k · round 0 · 13\.[0-9]s$/)
+    // The ● line's fgMuted changed with the new (light) theme palette.
+    const after = activityDoc.render(200).join('')
+    assert.notEqual(after, beforeDark, 'recolored away from the original dark palette')
+    assert.ok(after.includes(ansiFg(lightTheme.palette.fgMuted)), '● line recolored with the new theme')
+  } finally {
+    process.stdout.columns = prev
+  }
 })
 
 test('clear() drops todos and agent lines but keeps the last-request echo', () => {

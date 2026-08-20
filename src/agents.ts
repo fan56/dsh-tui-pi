@@ -443,7 +443,7 @@ export async function openAgentManager(
       const limits = readSubagentLimits(ctx)
       const fields = [
         { key: 'maxAgents', value: `${limits.maxAgents} · concurrent live children (0 = unlimited)`, editable: true },
-        { key: 'maxRounds', value: `${limits.maxRounds} · completed turns before wrap-up (0 = unlimited)`, editable: true },
+        { key: 'maxRounds', value: `${limits.maxRounds} · assistant messages before wrap-up (0 = unlimited)`, editable: true },
         { key: 'disableSubagent', value: `${limits.disableSubagent ? 'on' : 'off'} · native subagent tool`, editable: true },
       ]
       const content: string[] = [

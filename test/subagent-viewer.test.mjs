@@ -1,9 +1,10 @@
 /**
  * Subagent-viewer tests: the pure display logic of the Ctrl+G picker —
  * the rounds string on each row, the live-refresh contract (re-invoking the
- * item builder with a higher turn count changes the rendered rounds, which
+ * item builder with a higher round count changes the rendered rounds, which
  * is what the picker's 300ms tick now does), and the selection-preserving
- * index helper that keeps focus across a list swap.
+ * index helper that keeps focus across a list swap. Rounds are the child's
+ * assistant-message count (one per LLM round-trip).
  * Runs against the built lib/ (pnpm build && pnpm test).
  */
 
@@ -47,9 +48,9 @@ test('pickerItems shows rounds N without a cap when maxRounds is 0', () => {
   assert.doesNotMatch(items[0].label, /\//)
 })
 
-test('re-invoking the builder with a higher turn count refreshes the displayed rounds', () => {
+test('re-invoking the builder with a higher round count refreshes the displayed rounds', () => {
   // The regression this locks in: the picker used to snapshot the rows once
-  // at open and never re-read turn counts, so a running child's rounds stayed
+  // at open and never re-read round counts, so a running child's rounds stayed
   // frozen at the open-time value. The live tick re-invokes this builder.
   const views = [running('a')]
   const counts = { a: 0 }

@@ -16,10 +16,10 @@
  *   catalog), so delegation goes through registered agent definitions
  *   (`~/.dsh/agents/*.md` via the registry's `use_agent`). `subagent_fork`,
  *   `workflow` and `ralph` stay available.
- * - `maxRounds` caps a child's completed turns: on the bridge's `onTurnCount`
- *   the policy injects one plugin-sourced user message telling the child to
- *   wrap up. Queued as the child's next turn, it never interrupts work
- *   already underway.
+ * - `maxRounds` caps a child's assistant messages (each LLM round-trip is
+ *   one "round"): on the bridge's `onRoundCount` the policy injects one
+ *   plugin-sourced user message telling the child to wrap up. Queued as the
+ *   child's next turn, it never interrupts work already underway.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -97,16 +97,16 @@ interface ToolsService {
 export interface SubagentPolicyState {
   /** Current live (not settled) children — the count the `maxAgents` guard caps. */
   getLive(): readonly { childId: string; label: string }[]
-  /** Completed turn count of one child (the "rounds" `maxRounds` caps). */
-  getTurnCount(childId: string): number
+  /** Assistant-message count of one child (the "rounds" `maxRounds` caps). */
+  getRoundCount(childId: string): number
   /** Whether one child already settled — a settled child is never re-awakened. */
   isSettled(childId: string): boolean
 }
 
-/** The running policy: the bridge's `onTurnCount` sink plus the teardown. */
+/** The running policy: the bridge's `onRoundCount` sink plus the teardown. */
 export interface SubagentPolicy {
-  /** Called by the bridge whenever one child completed a turn. */
-  onTurnCount(childId: string, count: number): void
+  /** Called by the bridge whenever one child produced another assistant message. */
+  onRoundCount(childId: string, count: number): void
   /** Unwind the guard and event listeners. */
   dispose(): void
 }
@@ -118,9 +118,9 @@ export interface SubagentPolicy {
  * is defensive: a settings-less deployment resolves the defaults, so the
  * policy still enforces its documented caps.
  * @param state - the host's live view (bridge.getLiveChildren /
- * bridge.getTurnCount). The guard and the round injection read it at every
+ * bridge.getRoundCount). The guard and the round injection read it at every
  * decision — no snapshot, no watch.
- * @returns the policy handle wired to the bridge's `onTurnCount`.
+ * @returns the policy handle wired to the bridge's `onRoundCount`.
  */
 export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): SubagentPolicy {
   const disposers: Array<() => void> = []
@@ -179,15 +179,17 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
   disposers.push(eventDisposer)
 
   /**
-   * Bridge turn-count sink: inject the summary message exactly once per
-   * child, at the first turn that reaches a positive `maxRounds`. A missing
-   * agent (cold, or transiently unregistered) is skipped silently; a settled
-   * child is skipped too — injecting into a finished one would wake it for a
-   * pointless wrap-up round (continuable children that resume later get their
-   * chance on the next counted turn). Repeated injections are impossible by
-   * construction (the set is only written on success).
+   * Bridge round-count sink: inject the summary message exactly once per
+   * child, at the first message count that reaches a positive `maxRounds`. A
+   * missing agent (cold, or transiently unregistered) is skipped silently; a
+   * settled child is skipped too — injecting into a finished one would wake
+   * it for a pointless wrap-up round (continuable children that resume later
+   * get their chance on the next counted round). Repeated injections are
+   * impossible by construction (the `injected` set is only written once per
+   * child) — including the wrap-up's OWN assistant message, which pushes the
+   * count past `maxRounds` and must not re-trigger.
    */
-  function onTurnCount(childId: string, count: number): void {
+  function onRoundCount(childId: string, count: number): void {
     if (injected.has(childId)) return
     const maxRounds = readSubagentLimits(ctx).maxRounds
     if (maxRounds <= 0) return
@@ -203,7 +205,7 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
   }
 
   return {
-    onTurnCount,
+    onRoundCount,
     dispose() {
       for (const dispose of disposers.splice(0)) {
         try { dispose() } catch { /* contained */ }

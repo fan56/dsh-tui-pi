@@ -107,7 +107,7 @@ dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%) ▸ �
   ↳ ⠼ Subagent B 10s 任务 · 562 token · 6.0s
 ```
 
-每行显示：spinner + 代理**名称**，重试次数（`↻N≤M`），token 数（+ 上下文占比），耗时。不显示 provider，无边框，无标题。
+每行显示：spinner + 代理**名称**，重试次数（`↻N≤M`），当前上下文占用（`X/Y` —— 子代理最近一次请求的 billed input+output 加上其后消息的 CJK 估算，除以它的上下文窗口；**不是**只增不减的累计 token 消耗），rounds（`round N/M` —— assistant 消息数对上限，`maxRounds > 0` 时才显示 `/M`），耗时。不显示 provider，无边框，无标题。
 
 #### Todos 待办面板
 
@@ -130,7 +130,7 @@ dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%) ▸ �
 两个限制项（通过 `/agents` → `l` 配置）：
 
 - **`maxAgents`**（默认 4，`0` = 无限制）—— 超过上限时拒绝新的子代理创建。
-- **`maxRounds`**（默认 50，`0` = 无限制）—— 子代理完成轮次达到上限后，TUI 排队发送一个收尾请求，从不强制终止。
+- **`maxRounds`**（默认 75，`0` = 无限制）—— 子代理的 assistant 消息数（每次 LLM 往返计 1 round）达到上限后，TUI 排队发送一个收尾请求，从不强制终止。
 
 ---
 
@@ -144,7 +144,7 @@ dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%) ▸ �
 dsh plugin --profile tui add @aiwayds/dsh-dcp
 ```
 
-挂载后 DCP 在后台透明运行。Footer 中的 **Context** 和 **Cache-hit** 分段实时反映裁剪效果。
+挂载后 DCP 在后台透明运行。Footer 的 **Context** 分段计算的是当前上下文占用 —— 最近一次请求的 billed context 加上其后消息的 CJK 估算 —— 所以裁剪后下一次请求会变小，显示随之回落（百分比封顶 100，窗口是硬上限）。**Cache-hit** 分段反映会话累计的缓存复用。
 
 ---
 

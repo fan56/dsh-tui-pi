@@ -8,6 +8,9 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { SelectList } from '@earendil-works/pi-tui'
+import { darkTheme } from '../lib/theme/index.js'
+import { visibleWidth } from '../lib/text.js'
 import {
   applySkillFrontmatter,
   badgeText,
@@ -36,6 +39,9 @@ import {
   skillSettingRowLabel,
   skillToggleEnabled,
   sortCompletionItems,
+  styledBadge,
+  styledCompletionLabel,
+  styledDescription,
 } from '../lib/skills.js'
 
 const enabled = { invocation: { modelInvocable: true, userInvocable: true } }
@@ -129,28 +135,101 @@ test('isUserSkill reflects only the user face', () => {
 
 // ------------------------------------------------------------- completion items --
 
-test('badgeText pads every row to the widest tag for aligned names', () => {
-  // `[skill]` is the widest tag; `[cmd]` is padded to the same width.
+test('badgeText keeps every row at the shared badge width for aligned names', () => {
+  // `[s]` and `[c]` are both 3 wide, so no tag needs padding to align.
   const widths = new Set([badgeText('explicit-skill').length, badgeText('native-skill').length, badgeText('command').length])
   assert.equal(widths.size, 1)
-  assert.equal(badgeText('explicit-skill'), '[skill]')
-  assert.equal(badgeText('native-skill'), '[skill]')
-  assert.equal(badgeText('command'), '[cmd]  ')
+  assert.equal(badgeText('explicit-skill'), '[s]')
+  assert.equal(badgeText('native-skill'), '[s]')
+  assert.equal(badgeText('command'), '[c]')
 })
 
 test('completionLabel prefixes an aligned badge to the candidate value', () => {
   // The badge tag is always the fixed width (see badgeText), so every row
   // starts its value at the same column; the raw value itself is preserved
   // verbatim (so the explicit form keeps the full `/skill:<name>`).
-  assert.equal(completionLabel('explicit-skill', '/skill:data-analysis'), '[skill] /skill:data-analysis')
-  assert.equal(completionLabel('command', '/model'), '[cmd]   /model')
+  assert.equal(completionLabel('explicit-skill', '/skill:data-analysis'), '[s] /skill:data-analysis')
+  assert.equal(completionLabel('command', '/model'), '[c] /model')
 })
 
-test('skillSettingRowLabel leads with a fixed-width state then the [skill] row', () => {
+test('styledBadge renders skill badges italic and command badges plain', () => {
+  // The slash dropdown emits the ANSI SGR itself (pi-tui SelectList has no
+  // per-badge theme hook): skill tags are wrapped in italic on/off, command
+  // tags stay plain.
+  assert.equal(styledBadge('explicit-skill'), '\x1b[3m[s]\x1b[23m')
+  assert.equal(styledBadge('native-skill'), '\x1b[3m[s]\x1b[23m')
+  assert.equal(styledBadge('command'), '[c]')
+})
+
+test('styledCompletionLabel wraps the WHOLE skill label italic, commands plain', () => {
+  const styled = styledCompletionLabel('explicit-skill', '/skill:data-analysis')
+  // The whole label (badge + value) is one italic span — not just the badge.
+  assert.equal(styled, '\x1b[3m[s] /skill:data-analysis\x1b[23m')
+  // Commands keep the plain completionLabel exactly (no ANSI injected).
+  assert.equal(styledCompletionLabel('command', '/model'), completionLabel('command', '/model'))
+  assert.equal(styledCompletionLabel('command', '/model'), '[c] /model')
+  // The italic escapes are zero-width, so the styled label aligns and
+  // truncates exactly like the plain one (visibleWidth strips SGR).
+  assert.equal(visibleWidth(styled), visibleWidth(completionLabel('explicit-skill', '/skill:data-analysis')))
+})
+
+test('styledDescription wraps skill descriptions italic, empty stays empty', () => {
+  assert.equal(styledDescription('analyze data'), '\x1b[3manalyze data\x1b[23m')
+  // An empty description must stay falsy — SelectList's no-description branch
+  // keys off a falsy description.
+  assert.equal(styledDescription(''), '')
+})
+
+test('styled skill rows survive SelectList truncation without leaking italic', () => {
+  // Oldfox boundary: the \x1b[23m close sits at the very end of the label, so
+  // a mid-label truncation drops it. pi-tui 0.84.2's truncateToWidth
+  // terminates ANY truncated result with a full \x1b[0m
+  // (finalizeTruncatedResult), which closes the italic right at the cut —
+  // nothing leaks into the spacing, description, or the next row. This locks
+  // that behavior against the real SelectList render (selected + unselected,
+  // over a width range that both fits and truncates the long skill row).
+  const items = [
+    {
+      value: '/skill:connectedsafety-dify-knowledge',
+      label: styledCompletionLabel('explicit-skill', '/skill:connectedsafety-dify-knowledge'),
+      description: styledDescription('a description long enough to be truncated'),
+    },
+    { value: '/model', label: completionLabel('command', '/model'), description: 'select model' },
+  ]
+  const list = new SelectList(items, 5, darkTheme.selectList, {})
+  for (let width = 30; width <= 60; width++) {
+    list.setSelectedIndex(0) // long skill row
+    for (const line of list.render(width)) {
+      assert.equal(sgrEndItalic(line), false, `selected row leaks italic at width ${width}: ${JSON.stringify(line)}`)
+    }
+    list.setSelectedIndex(1) // command row
+    for (const line of list.render(width)) {
+      assert.equal(sgrEndItalic(line), false, `command row leaks italic at width ${width}: ${JSON.stringify(line)}`)
+    }
+  }
+})
+
+/** End-of-line italic state after applying a line's SGR codes, like a terminal. */
+function sgrEndItalic(line) {
+  let italic = false
+  for (const m of line.matchAll(/\x1b\[([0-9;]*)m/g)) {
+    const params = m[1].split(';').filter(Boolean)
+    if (params.length === 0 || params.includes('0')) {
+      italic = false
+    } else if (params.includes('3')) {
+      italic = true
+    } else if (params.includes('23')) {
+      italic = false
+    }
+  }
+  return italic
+}
+
+test('skillSettingRowLabel leads with a fixed-width state then the [s] row', () => {
   // `false` (width 5) and `true` (width 4) both pad to SKILL_STATE_WIDTH, so
   // every skill name starts on the same column regardless of the state.
-  assert.equal(skillSettingRowLabel(false, 'data-analysis'), 'false [skill] data-analysis')
-  assert.equal(skillSettingRowLabel(true, 'data-analysis'), 'true  [skill] data-analysis')
+  assert.equal(skillSettingRowLabel(false, 'data-analysis'), 'false [s] data-analysis')
+  assert.equal(skillSettingRowLabel(true, 'data-analysis'), 'true  [s] data-analysis')
 })
 
 test('skillSettingRowLabel states align across skills and with completionLabel', () => {
@@ -159,9 +238,9 @@ test('skillSettingRowLabel states align across skills and with completionLabel',
     skillSettingRowLabel(true, 'statistical-analysis'),
   ]
   // Strip the state prefix: the name column starts at the same index.
-  const nameCols = rows.map((row) => row.indexOf('[skill]'))
+  const nameCols = rows.map((row) => row.indexOf('[s]'))
   assert.deepEqual(nameCols, [nameCols[0], nameCols[0]])
-  // The `[skill] <name>` tail is exactly completionLabel's output — the badge
+  // The `[s] <name>` tail is exactly completionLabel's output — the badge
   // and name text are preserved verbatim, just preceded by the state.
   assert.equal(skillSettingRowLabel(true, 'data-analysis').replace(/^true\s{2}/, ''), completionLabel('explicit-skill', 'data-analysis'))
   assert.equal(skillSettingRowLabel(false, 'data-analysis').replace(/^false\s/, ''), completionLabel('explicit-skill', 'data-analysis'))
@@ -171,11 +250,11 @@ test('skillPanelRowLine leads with cursor + index + state, state appears exactly
   // The self-drawn panel fixes the SettingsList double-state bug: the row
   // shows the toggle state once, in front, never repeated at the tail.
   const selected = skillPanelRowLine(true, true, 'agent-browser', 1)
-  assert.equal(selected, '▸   1 true  [skill] agent-browser')
+  assert.equal(selected, '▸   1 true  [s] agent-browser')
   assert.equal(selected.indexOf('true'), selected.lastIndexOf('true'))
   assert.ok(!selected.endsWith('true'))
   const unselected = skillPanelRowLine(false, false, 'data-analysis', 10)
-  assert.equal(unselected, '   10 false [skill] data-analysis')
+  assert.equal(unselected, '   10 false [s] data-analysis')
   assert.equal(unselected.indexOf('false'), unselected.lastIndexOf('false'))
   assert.ok(!unselected.endsWith('false'))
 })
@@ -187,7 +266,7 @@ test('skillPanelRowLine index is right-aligned and does not shift the name colum
     skillPanelRowLine(false, true, 'b', 12),
     skillPanelRowLine(false, true, 'c', 123),
   ]
-  const nameCols = rows.map((row) => row.indexOf('[skill]'))
+  const nameCols = rows.map((row) => row.indexOf('[s]'))
   assert.deepEqual(nameCols, [nameCols[0], nameCols[0], nameCols[0]])
 })
 
@@ -196,7 +275,7 @@ test('skillPanelRowLine aligns names across states (single state column, with in
     skillPanelRowLine(false, false, 'data-analysis', 1),
     skillPanelRowLine(true, true, 'statistical-analysis', 2),
   ]
-  const nameCols = rows.map((row) => row.indexOf('[skill]'))
+  const nameCols = rows.map((row) => row.indexOf('[s]'))
   assert.deepEqual(nameCols, [nameCols[0], nameCols[0]])
 })
 
@@ -266,12 +345,14 @@ test('buildSkillCompletionCandidates filters by user-invocable and prefix', () =
   )
 })
 
-test('buildSkillCompletionCandidates emits carry the explicit-skill kind + badge', () => {
+test('buildSkillCompletionCandidates emits carry the explicit-skill kind + styled row', () => {
   const items = buildSkillCompletionCandidates([{ name: 'lark-base', description: 'lark base', ...enabled }], '')
   assert.equal(items.length, 1)
   assert.equal(items[0].value, '/skill:lark-base')
-  assert.equal(items[0].label, '[skill] /skill:lark-base')
-  assert.equal(items[0].description, 'lark base')
+  // The dropdown styles the whole skill row italic: label AND description
+  // (see styledCompletionLabel / styledDescription).
+  assert.equal(items[0].label, '\x1b[3m[s] /skill:lark-base\x1b[23m')
+  assert.equal(items[0].description, '\x1b[3mlark base\x1b[23m')
   assert.equal(itemKind(items[0]), 'explicit-skill')
   assert.equal(isSkillCompletionItem(items[0]), true)
   assert.equal(isExplicitSkillItem(items[0]), true)
@@ -285,8 +366,8 @@ test('buildNativeSkillCandidates lists user skills under their own /name', () =>
   const items = buildNativeSkillCandidates(skills)
   assert.equal(items.length, 1)
   assert.equal(items[0].value, '/data-analysis')
-  assert.equal(items[0].label, '[skill] /data-analysis')
-  assert.equal(items[0].description, 'analyze data')
+  assert.equal(items[0].label, '\x1b[3m[s] /data-analysis\x1b[23m')
+  assert.equal(items[0].description, '\x1b[3manalyze data\x1b[23m')
   assert.equal(itemKind(items[0]), 'native-skill')
   // Native skills complete like commands (trailing space), so they are NOT
   // the explicit form — distinguishability drives applyCompletion.
@@ -314,11 +395,11 @@ test('completionName strips the slash and the /skill: prefix for sorting', () =>
 test('sortCompletionItems orders the mixed list by native name', () => {
   const mixed = [
     { value: '/model', label: '/model', kind: 'command' },
-    { value: '/data-analysis', label: '[skill] /data-analysis', kind: 'native-skill' },
+    { value: '/data-analysis', label: '[s] /data-analysis', kind: 'native-skill' },
     { value: '/agents', label: '/agents', kind: 'command' },
     // The explicit /skill: form sorts under its real name (data-viz), not in
     // the `s` bucket — that is what keeps the mixed list from grouping skills.
-    { value: '/skill:data-viz', label: '[skill] /skill:data-viz', kind: 'explicit-skill' },
+    { value: '/skill:data-viz', label: '[s] /skill:data-viz', kind: 'explicit-skill' },
   ]
   const sorted = sortCompletionItems(mixed)
   // Ordering by completionName: agents < data-analysis < data-viz < model.
@@ -344,8 +425,8 @@ test('mergeMixedSkillItems filters by prefix and interleaves commands + skills',
     { value: '/data', label: '/data', kind: 'command' },
   ]
   const native = [
-    { value: '/data-analysis', label: '[skill] /data-analysis', kind: 'native-skill' },
-    { value: '/lark-base', label: '[skill] /lark-base', kind: 'native-skill' },
+    { value: '/data-analysis', label: '[s] /data-analysis', kind: 'native-skill' },
+    { value: '/lark-base', label: '[s] /lark-base', kind: 'native-skill' },
   ]
   // Empty query: everything, interleaved by native name.
   assert.deepEqual(
@@ -363,7 +444,7 @@ test('mergeMixedSkillItems filters by prefix and interleaves commands + skills',
 
 test('mergeMixedSkillItems never mutates the input lists', () => {
   const commands = [{ value: '/b', label: '/b', kind: 'command' }]
-  const native = [{ value: '/a', label: '[skill] /a', kind: 'native-skill' }]
+  const native = [{ value: '/a', label: '[s] /a', kind: 'native-skill' }]
   mergeMixedSkillItems(commands, native, '')
   assert.equal(commands.length, 1)
   assert.equal(native.length, 1)
@@ -434,8 +515,8 @@ test('skillToggleEnabled maps a disk toggle read onto enabled', () => {
 })
 
 test('trailing-space decision: only the explicit /skill:<name> omits the space', () => {
-  const explicit = { value: '/skill:data-analysis', label: '[skill] /skill:data-analysis', kind: 'explicit-skill' }
-  const native = { value: '/data-analysis', label: '[skill] /data-analysis', kind: 'native-skill' }
+  const explicit = { value: '/skill:data-analysis', label: '[s] /skill:data-analysis', kind: 'explicit-skill' }
+  const native = { value: '/data-analysis', label: '[s] /data-analysis', kind: 'native-skill' }
   const command = { value: '/model', label: '/model', kind: 'command' }
   const unmarked = { value: '/model', label: '/model' }
   // applyCompletion appends a trailing space unless the row is explicit.

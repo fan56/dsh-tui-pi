@@ -222,6 +222,35 @@ test('subagent limits resolve to defaults and round-trip through a committed wri
   assert.deepEqual(readSubagentLimits(ctx), { maxAgents: 2, maxRounds: 10, disableSubagent: false }, 'committed limits read back')
 })
 
+test('maxRounds defaults to 75 and is configurable through the settings chain', async () => {
+  // Lock the documented default (the user picked 75 — headroom for heavy
+  // delegated tasks under the assistant-message round count, still a runaway
+  // guard). Any future bump must update this assertion deliberately.
+  assert.equal(DEFAULT_SUBAGENT_LIMITS.maxRounds, 75, 'documented maxRounds default is 75')
+
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  registerThemeSettings(ctx)
+  await settle()
+
+  // The schema default seeds the resolved section (no user value configured).
+  assert.equal(readSubagentLimits(ctx).maxRounds, 75, 'settings-less resolved default is 75')
+
+  // A configured value round-trips through the live reader — both the
+  // `/agents → l` limits panel and the `/settings` browser write through
+  // `writeSubagentLimit` → settings.mutate, and the policy re-reads it at
+  // every decision point.
+  assert.equal(await writeSubagentLimit(ctx, 'maxRounds', 120), undefined)
+  assert.equal(readSubagentLimits(ctx).maxRounds, 120, 'configured maxRounds read back')
+  assert.equal(await writeSubagentLimit(ctx, 'maxRounds', 75), undefined)
+  assert.equal(readSubagentLimits(ctx).maxRounds, 75, 'back to the default')
+
+  // A malformed (non-natural) value narrows back to the default per-key.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['maxRounds'], value: -1 }])
+  assert.equal(readSubagentLimits(ctx).maxRounds, 75, 'negative maxRounds falls back to the default')
+})
+
 test('subagent limits fall back to defaults when the service or a field is missing', async () => {
   const defaults = {
     maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,

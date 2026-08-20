@@ -6,6 +6,60 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Subagent "rounds" now count assistant messages, not completed turns**:
+  a round is one `assistant/message` (one LLM round-trip) on the child's own
+  session events, so a one-shot child — which lives its whole life inside a
+  single turn and therefore never advances `turn/end` — shows live round
+  progress instead of a frozen 0. The bridge's counter, the `maxRounds`
+  wrap-up injection, the viewer/picker `rounds N/M` displays and the
+  `reconcileChildRounds` session-log fallback all count `assistant/message`
+  now; `turn/end` keeps only its settle/clear-when-done duty. The compact
+  running-agent line gains a `round N/M` meta segment (the `/M` part only
+  when `maxRounds > 0`, read live). `maxRounds` default raised 50 → 75
+  (headroom for heavy delegated tasks under the new, always-advancing
+  message count; the user picked 75 over the initial 100). The once-only
+  wrap-up injection holds even when the wrap-up's own reply pushes the count
+  past the cap. 398 → 401 tests.
+- **Context usage now prices the current occupancy, not the cumulative
+  spend**: the footer's Context segment and the subagent compact rows'
+  `X/Y` numerator was the session-wide `inputTokens` total ÷ window — a
+  value that only grows, so a long session could show 175% while the actual
+  last request was 33%. The numerator is now the LATEST request's billed
+  context (input + cache read + cache write + output, from the most recent
+  `assistant/message` usage snapshot) plus a CJK-aware token estimate
+  (`estimateTextTokens`, ported from `@aiwayds/dsh-dcp`'s `lib/summarizer.js`
+  — CJK scripts at ~2 chars/token, ASCII at 4) of every message appended
+  after it, since those enter the next request. The footer percent caps at
+  100 (the window is a hard ceiling, like the web client's StatsLine); a
+  compaction shows its effect on the next request, which the display then
+  follows down. The cumulative four buckets stay the `/session` panel's and
+  the viewer's number (unchanged semantics). Streamed `reasoning-delta`
+  chunks are priced into the pending estimate alongside `text-delta` —
+  `usage.outputTokens` includes reasoning tokens at snapshot time, so the
+  live estimate stays consistent with that accounting — and a usage-less
+  `assistant/message` (adapter reported no usage) no longer zeroes the
+  display: the last billed baseline and the accumulated pending estimate
+  are kept until the next billed message replaces them. 401 → 419 tests.
+- **Slash-completion badges shortened to `[c]` / `[s]`**: the dropdown tags on
+  every completion row (`/model`, `/agents`, …) and the `/settings` Skills
+  rows now read `[c]` for registry commands and `[s]` for skill rows (was
+  `[cmd]` / `[skill]`). The badge alignment contract is unchanged (both tags
+  are 3 columns wide, so `BADGE_WIDTH` needs no padding).
+- **Skill rows render entirely italic in the slash dropdown**: the
+  editor-inline autocomplete styles each skill row as one `\x1b[3m…\x1b[23m`
+  italic span covering the whole label (badge + `/name`) and the description
+  (the same SGR pi-tui's `MarkdownTheme.italic` emits; off-coded so the
+  selected row's backdrop survives); command `[c]` rows stay completely plain
+  (zero ANSI). The escapes are width-zero to pi-tui's text utilities, so rows
+  still align and truncate exactly like the plain ones — and a truncated
+  italic label self-closes: pi-tui 0.84.2's `truncateToWidth` terminates any
+  truncated result with a full `\x1b[0m` reset (finalizeTruncatedResult), so
+  the dropped `\x1b[23m` never leaks past the row (regression-tested against
+  the real SelectList). The `/settings` Skills panel keeps the plain `[s]` tag
+  (its row-line is a fixed-column plain-text contract). 394 → 398 tests.
+
 ## [0.8.3] — 2026-08-20
 
 ### Fixed

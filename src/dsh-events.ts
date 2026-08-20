@@ -115,6 +115,24 @@ export interface AgentView {
   readonly endedAt?: number
   /** Cumulative tokens: input + output + cacheRead + cacheWrite. */
   readonly tokens: number
+  /**
+   * Current context occupancy estimate — the `X` in the compact line's
+   * `X/Y`: the child's latest assistant/message billed input + output plus a
+   * CJK estimate of messages appended after it. NOT the cumulative `tokens`
+   * (that total only grows and stays the viewer/session-panel spend): this
+   * tracks the child's current context so the display follows the latest
+   * request and drops after a compaction. Before the first assistant/message
+   * it is the pending estimate alone.
+   */
+  readonly contextTokens: number
+  /**
+   * Assistant-message count — one per LLM round-trip, i.e. the child's
+   * "rounds" the compact line shows against the policy cap. Maintained O(1)
+   * on the child's own `assistant/message` events (NOT `turn/end`): a
+   * one-shot child spends its whole life in a single turn, so turns never
+   * progress while the child works — messages do.
+   */
+  readonly rounds: number
   /** Latest `llm/retry` attempt number (0 = none retried). */
   readonly retries: number
   /** Latest `llm/retry` maxRetries, when the policy reported one. */
