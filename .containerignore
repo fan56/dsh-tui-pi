@@ -1,0 +1,12 @@
+# Build-context excludes for the e2e image (podman build uses this file
+# when the context is the repo root). Everything the image build needs is
+# source + manifests; runtime artifacts, VCS data and the e2e suite itself
+# (mounted at runtime instead) stay out to keep the context small.
+.git
+node_modules
+lib
+*.tgz
+e2e
+test
+docs
+.pnpm-store
