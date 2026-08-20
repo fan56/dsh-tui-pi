@@ -32,6 +32,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import type { AgentView } from './dsh-events.ts'
+import { isDcpCompactionNotice } from './dsh-events.ts'
 import { sunglassesIcon } from './icons.ts'
 import type { DshSessionBridge } from './session.ts'
 import { DOUBLE_PRESS_MS, MIN_DOUBLE_PRESS_GAP_MS } from './keymap.ts'
@@ -103,7 +104,7 @@ function statusGlyph(view: AgentView): string {
  * `assistant/chunk` deltas fold into the assembled message, command nodes
  * render in the parent's transcript only).
  */
-function eventLine(event: SessionEvent, callNames: Map<string, string>): string | undefined {
+export function eventLine(event: SessionEvent, callNames: Map<string, string>): string | undefined {
   switch (event.type) {
     case 'turn/start':
       return `– turn ${event.data.turn} start`
@@ -118,6 +119,12 @@ function eventLine(event: SessionEvent, callNames: Map<string, string>): string 
       const message = event.data as { source?: { kind?: string }; content?: unknown }
       const text = normalizePreview(textOfContent(message.content))
       if (text === '') return undefined
+      // dsh-dcp compaction notice: flag the row with the compaction glyph
+      // instead of the generic `ⓘ`, so the viewer shows whether DCP ran
+      // inside this child (the shared guard also drives the bridge's tally).
+      if (isDcpCompactionNotice(event)) {
+        return `🧹 ${text}`
+      }
       return message.source?.kind === 'user' ? `▎ ${text}` : `ⓘ ${text}`
     }
     case 'assistant/message': {
@@ -173,7 +180,7 @@ function eventLine(event: SessionEvent, callNames: Map<string, string>): string 
 }
 
 /** All readable lines of one child's buffered log, in log order. */
-function eventLines(events: readonly SessionEvent[]): string[] {
+export function eventLines(events: readonly SessionEvent[]): string[] {
   const lines: string[] = []
   const callNames = new Map<string, string>()
   for (const event of events) {
@@ -186,13 +193,15 @@ function eventLines(events: readonly SessionEvent[]): string[] {
 /**
  * The picker rows: running children first (the live items the key is for),
  * then the five most recent settled ones (newest settle first). Each row
- * reads `⠋ label [mode] · rounds N[/max]` with the token spend and elapsed
- * seconds in the muted description column.
+ * reads `⠋ label [mode] · rounds N[/max]` with the token spend, the dsh-dcp
+ * compaction count (when > 0) and elapsed seconds in the muted description
+ * column.
  */
 export function pickerItems(
   views: readonly AgentView[],
   getRoundCount: (childId: string) => number,
   maxRounds: number,
+  getCompactionCount: (childId: string) => number = () => 0,
 ): SelectItem[] {
   const running = views.filter(view => view.outcome === undefined)
   const settled = views
@@ -205,8 +214,10 @@ export function pickerItems(
     const roundsText = maxRounds > 0 ? `rounds ${rounds}/${maxRounds}` : `rounds ${rounds}`
     const mode = view.mode === undefined ? '' : ` [${view.mode}]`
     const elapsedMs = (view.outcome === undefined ? Date.now() : view.endedAt ?? Date.now()) - view.startedAt
+    const compactions = getCompactionCount(view.childId)
     const description = [
       ...(view.tokens > 0 ? [formatTokens(view.tokens)] : []),
+      ...(compactions > 0 ? [`🧹 ${compactions}×`] : []),
       `${(elapsedMs / 1000).toFixed(1)}s`,
     ].join(' · ')
     return {
@@ -527,6 +538,7 @@ export async function openSubagentViewer(
       bridge.getAgentViews(),
       childId => bridge.getRoundCount(childId),
       readSubagentLimits(ctx).maxRounds,
+      childId => bridge.getChildCompactionCount(childId),
     )
     const items = buildItems()
     if (items.length === 0) {

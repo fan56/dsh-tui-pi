@@ -10,7 +10,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { pickerItems, nextSelectedIndex } from '../lib/subagent-viewer.js'
+import { pickerItems, nextSelectedIndex, eventLine, eventLines } from '../lib/subagent-viewer.js'
 
 /** Minimal running child view. */
 function running(childId, label = `agent-${childId}`) {
@@ -121,4 +121,68 @@ test('nextSelectedIndex clamps to the last row when the child dropped off', () =
 test('nextSelectedIndex is safe on an empty list', () => {
   assert.equal(nextSelectedIndex([], 'gone'), 0)
   assert.equal(nextSelectedIndex([], undefined), 0)
+})
+
+
+// ---------------------------------------------------------------------------
+// dsh-dcp compaction notices: the viewer renders the compaction notice with a
+// compaction-specific marker line (not the generic `ⓘ`), and the picker
+// rows carry the per-child compaction count.
+
+/** A dsh-dcp compaction notice event (the shape dsh-dcp appends per commit). */
+function dcpNotice(text, seq = 1) {
+  return {
+    type: 'user/message', seq, time: 0,
+    data: {
+      content: [{ type: 'text', text }],
+      source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice', summary: text },
+    },
+  }
+}
+
+test('eventLine renders a dsh-dcp compaction notice with the compaction marker', () => {
+  const line = eventLine(dcpNotice('dcp: compacted 40 history items (~12.3k tokens, round)'), new Map())
+  assert.equal(line, '🧹 dcp: compacted 40 history items (~12.3k tokens, round)')
+})
+
+test('eventLine keeps the info marker for a generic plugin message (not a compaction)', () => {
+  const line = eventLine({
+    type: 'user/message', seq: 1, time: 0,
+    data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'plugin', plugin: 'dsh-tui-pi' } },
+  }, new Map())
+  assert.equal(line, 'ⓘ hello')
+})
+
+test('eventLine keeps the user marker for a human prompt', () => {
+  const line = eventLine({
+    type: 'user/message', seq: 1, time: 0,
+    data: { content: [{ type: 'text', text: '继续执行' }], source: { kind: 'user' } },
+  }, new Map())
+  assert.equal(line, '▎ 继续执行')
+})
+
+test('eventLines maps a whole log with compaction notices in order', () => {
+  const lines = eventLines([
+    dcpNotice('dcp: compacted 40 history items (~12.3k tokens, round)', 1),
+    { type: 'assistant/message', seq: 2, time: 1, data: { message: { content: [{ type: 'text', text: 'done' }] } } },
+    dcpNotice('dcp: compacted 12 history items (~3.1k tokens, round)', 3),
+  ])
+  assert.deepEqual(lines, [
+    '🧹 dcp: compacted 40 history items (~12.3k tokens, round)',
+    '🐳 done',
+    '🧹 dcp: compacted 12 history items (~3.1k tokens, round)',
+  ])
+})
+
+test('pickerItems shows the compaction count in the description when > 0', () => {
+  const items = pickerItems([settled('a', 2000)], () => 3, 50, id => (id === 'a' ? 2 : 0))
+  assert.equal(items[0].label, '✓ agent-a: rounds 3/50')
+  assert.equal(items[0].description, '🧹 2× · 1.0s')
+})
+
+test('pickerItems omits the compaction count when it is 0 or unread', () => {
+  const items = pickerItems([settled('a', 2000)], () => 3, 50)
+  assert.equal(items[0].description, '1.0s')
+  const explicit = pickerItems([settled('a', 2000)], () => 3, 50, () => 0)
+  assert.equal(explicit[0].description, '1.0s')
 })

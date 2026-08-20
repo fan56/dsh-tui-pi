@@ -517,3 +517,44 @@ test('a user-facing session fork (parentSession tracked, NO delegationDepth) is 
   assert.equal(bridge.getLiveChildren().length, 0)
   await bridge.dispose()
 })
+
+// ---------------------------------------------------------------------------
+// dsh-dcp compaction notices: the bridge buffers the notice into the child
+// transcript AND tallies a per-child compaction count for the picker.
+
+test('a dsh-dcp compaction notice lands in the child log and tallies a compaction', async () => {
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+  emit(handlers, childSession, {
+    type: 'user/message', seq: 1, time: 10,
+    data: {
+      content: [{ type: 'text', text: 'dcp: compacted 40 history items (~12.3k tokens, round)' }],
+      source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice', summary: 'dcp: compacted 40 history items (~12.3k tokens, round)' },
+    },
+  })
+  assert.equal(bridge.getChildLog('child-1').length, 1, 'the notice is buffered into the child transcript')
+  assert.equal(bridge.getChildCompactionCount('child-1'), 1, 'the per-child compaction count tallies the notice')
+
+  // A second compaction notice tallies again.
+  emit(handlers, childSession, {
+    type: 'user/message', seq: 2, time: 20,
+    data: {
+      content: [{ type: 'text', text: 'dcp: compacted 12 history items (~3.1k tokens, round)' }],
+      source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice', summary: 'dcp: compacted 12 history items (~3.1k tokens, round)' },
+    },
+  })
+  assert.equal(bridge.getChildCompactionCount('child-1'), 2, 'a second notice tallies again')
+
+  // A plain plugin message is NOT a compaction notice.
+  emit(handlers, childSession, {
+    type: 'user/message', seq: 3, time: 30,
+    data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'plugin', plugin: 'dsh-tui-pi' } },
+  })
+  assert.equal(bridge.getChildCompactionCount('child-1'), 2, 'non-dcp plugin messages do not tally')
+  assert.equal(bridge.getChildLog('child-1').length, 3, 'the non-notice message is still a transcript row')
+  await bridge.dispose()
+})

@@ -18,7 +18,7 @@ import { settingsNamespace, SettingsConflictError, type SettingsPathOp } from '@
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
 import type { AgentView } from './dsh-events.ts'
-import { isAgentEnd, isAgentStart, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
+import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
 import { installSpawnToolFence } from './subagent-policy.ts'
 import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
 
@@ -277,6 +277,13 @@ export class DshSessionBridge {
    */
   private readonly childPending = new Map<string, number>()
   /**
+   * Per-child dsh-dcp compaction count — one per `user/message` notice whose
+   * source is `{ kind: 'plugin', plugin: 'dsh-dcp', form: 'notice' }`. The
+   * viewer's picker rows read this via `getChildCompactionCount` so the user
+   * sees at a glance whether DCP actually compacted inside a child.
+   */
+  private readonly childCompactionCounts = new Map<string, number>()
+  /**
    * Per-child session-log length already reconciled (see
    * reconcileChildRounds). Incremental high-water, so the reconcile scans
    * only newly-appended events.
@@ -457,6 +464,11 @@ export class DshSessionBridge {
     return this.roundCounts.get(childId) ?? 0
   }
 
+  /** dsh-dcp compaction count of one child (viewer picker rows). */
+  getChildCompactionCount(childId: string): number {
+    return this.childCompactionCounts.get(childId) ?? 0
+  }
+
   /** Whether one child settled (a continuable child may resume later). */
   isChildSettled(childId: string): boolean {
     return this.agentViews.get(childId)?.outcome !== undefined
@@ -534,6 +546,7 @@ export class DshSessionBridge {
     this.roundCounts.clear()
     this.childUsage.clear()
     this.childPending.clear()
+    this.childCompactionCounts.clear()
     this.reconciledLen.clear()
     this.reconciledCount.clear()
     this.trackedSessions.clear()
@@ -572,6 +585,7 @@ export class DshSessionBridge {
     this.roundCounts.clear()
     this.childUsage.clear()
     this.childPending.clear()
+    this.childCompactionCounts.clear()
     this.reconciledLen.clear()
     this.reconciledCount.clear()
     this.trackedSessions.clear()
@@ -893,7 +907,15 @@ export class DshSessionBridge {
           }
         } else if (event.type === 'user/message') {
           // The child's own prompts/injects enter its next request — the
-          // occupancy follows (the content tail is never touched here).
+          // occupancy follows (the content tail is never touched here). A
+          // dsh-dcp compaction notice (plugin `notice` form) also tallies the
+          // per-child compaction count the viewer's picker rows read.
+          if (isDcpCompactionNotice(event)) {
+            this.childCompactionCounts.set(
+              sessionId,
+              (this.childCompactionCounts.get(sessionId) ?? 0) + 1,
+            )
+          }
           this.childPending.set(
             sessionId,
             (this.childPending.get(sessionId) ?? 0)
