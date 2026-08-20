@@ -948,10 +948,12 @@ export function apply(ctx: Context): void {
       handler: invocation => loginHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /login')
 
-    // /logout: remove a stored provider API key — pi-agent's /logout on the
-    // dsh side. Lists the providers with a stored credential and removes only
-    // the key on selection; the settings.yaml provider entry stays, exactly
-    // like pi's /logout keeps the model configuration while dropping auth.
+    // /logout: unsubscribe a provider — pi-agent's /logout on the dsh side.
+    // Lists the providers with a stored credential; on selection removes the
+    // key AND the settings.yaml provider entry, so the provider's models
+    // leave /model right away (the llm-pi-ai adapter keeps a route
+    // registered for every profile key). /login re-subscribes and serves
+    // the installed catalog's current model list.
     const logoutHandler: LocalCommandHandler = async () => {
       if (ctx.get('settings') === undefined) {
         return { kind: 'error' as const, text: 'Settings service is not available.' }
@@ -970,12 +972,21 @@ export function apply(ctx: Context): void {
       if (result.kind === 'failed') {
         return { kind: 'error' as const, text: `Failed to remove stored API key for ${result.name}.` }
       }
-      return { kind: 'success' as const, text: `Removed stored API key for ${result.name}.` }
+      if (result.kind === 'removed-incomplete') {
+        return {
+          kind: 'error' as const,
+          text: `Removed the API key for ${result.name}, but its provider configuration stays: ${result.error}`,
+        }
+      }
+      return {
+        kind: 'success' as const,
+        text: `Logged out ${result.name} — API key and provider configuration removed.`,
+      }
     }
     commands.registerLocal('logout', logoutHandler)
     ctx.effect(() => ctx.commands.register({
       name: 'logout',
-      description: 'Remove a stored provider API key (keeps the provider configuration)',
+      description: 'Log out a provider (removes its API key and provider configuration)',
       handler: invocation => logoutHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /logout')
 

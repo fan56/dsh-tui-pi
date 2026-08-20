@@ -7,6 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PROVIDER_CATALOG, catalogEntry } from '../lib/provider-catalog.js'
 import {
+  commitLogout,
   listLogoutCandidates,
   resolveLoginTarget,
 } from '../lib/login.js'
@@ -119,4 +120,46 @@ test('listLogoutCandidates preserves the provider list order', () => {
   const reversed = [...PROVIDERS].reverse()
   const loggedIn = listLogoutCandidates(reversed, new Set(['OPENAI_API_KEY', 'ANTHROPIC_API_KEY']))
   assert.deepEqual(loggedIn.map(c => c.id), ['openai', 'anthropic'])
+})
+
+// ------------------------------------------------------------ commitLogout --
+
+/** Recording seams: call order + configurable outcomes, no real services. */
+function recordingSeams({ unsetError, profileError } = {}) {
+  const calls = []
+  return {
+    calls,
+    unset: async ref => {
+      calls.push(`unset:${ref}`)
+      if (unsetError !== undefined) throw new Error(unsetError)
+    },
+    removeProfile: async id => {
+      calls.push(`removeProfile:${id}`)
+      return profileError
+    },
+  }
+}
+
+const CANDIDATE = { id: 'openai', ref: 'OPENAI_API_KEY', name: 'OpenAI' }
+
+test('commitLogout unsets the key first, then removes the profile', async () => {
+  const seams = recordingSeams()
+  const result = await commitLogout(CANDIDATE, seams)
+  assert.deepEqual(result, { kind: 'removed', name: 'OpenAI' })
+  assert.deepEqual(seams.calls, ['unset:OPENAI_API_KEY', 'removeProfile:openai'])
+})
+
+test('commitLogout never touches the profile when the unset fails', async () => {
+  const seams = recordingSeams({ unsetError: 'store is read-only' })
+  const result = await commitLogout(CANDIDATE, seams)
+  assert.deepEqual(result, { kind: 'failed', name: 'OpenAI', cause: 'store is read-only' })
+  assert.deepEqual(seams.calls, ['unset:OPENAI_API_KEY'])
+})
+
+test('commitLogout reports removed-incomplete when the profile write fails after the unset', async () => {
+  const seams = recordingSeams({ profileError: 'revision mismatch' })
+  const result = await commitLogout(CANDIDATE, seams)
+  assert.deepEqual(result, { kind: 'removed-incomplete', name: 'OpenAI', error: 'revision mismatch' })
+  // The unset ran and stays — the key is gone even though the profile did not.
+  assert.deepEqual(seams.calls, ['unset:OPENAI_API_KEY', 'removeProfile:openai'])
 })

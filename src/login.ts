@@ -11,11 +11,16 @@
  *
  * /logout lists the providers with a stored credential (an async
  * credentials.describe probe per ref), lets the user pick one, and removes
- * only the credential — the settings.yaml provider entry stays, exactly like
- * pi's /logout removes auth but keeps the model configuration.
+ * both the credential and the llm-pi-ai provider profile — a full
+ * unsubscribe. The profile half is what takes the provider's models out of
+ * /model: the llm-pi-ai adapter registers a route for every
+ * `llm-pi-ai.providers` key, so a logout that dropped only the key would
+ * leave the models listed (and a picked one would fail at request time).
+ * A re-login re-subscribes the provider and serves the installed pi-ai
+ * catalog's current model list.
  *
- * The pure decision logic (`resolveLoginTarget`, `listLogoutCandidates`) is
- * unit-tested in test/login.test.mjs.
+ * The pure decision logic (`resolveLoginTarget`, `listLogoutCandidates`,
+ * `commitLogout`) is unit-tested in test/login.test.mjs.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -122,7 +127,8 @@ export type LogoutFlowResult =
   | { kind: 'none' }
   | { kind: 'cancelled' }
   | { kind: 'removed'; name: string }
-  | { kind: 'failed'; name: string }
+  | { kind: 'removed-incomplete'; name: string; error: string }
+  | { kind: 'failed'; name: string; cause?: string }
 
 export interface LogoutFlowOptions {
   ctx: Context
@@ -142,6 +148,42 @@ export interface LogoutFlowOptions {
 interface LogoutCredentialSeam {
   describe?(ref: string): Promise<{ configured: boolean }>
   unset(ref: string): Promise<void>
+}
+
+/** Async seams the logout commit drives (see `commitLogout`). */
+export interface LogoutCommitSeams {
+  /** Remove the stored credential (`credentials.unset`). */
+  unset(ref: string): Promise<void>
+  /** Remove the provider profile; resolves the write error, else `undefined`. */
+  removeProfile(id: string): Promise<string | undefined>
+}
+
+/**
+ * Commit one logout: unset the credential first (the security-critical
+ * half), and only after it lands remove the provider profile — the half
+ * that takes the provider's models out of /model, because the llm-pi-ai
+ * adapter registers a route for every `llm-pi-ai.providers` key. The
+ * sequencing is the contract: a failed unset must not touch the profile,
+ * and a failed profile removal must not undo the unset — the outcome
+ * reports what actually happened instead.
+ */
+export async function commitLogout(
+  candidate: LogoutCandidate,
+  seams: LogoutCommitSeams,
+): Promise<LogoutFlowResult> {
+  try {
+    await seams.unset(candidate.ref)
+  } catch (cause) {
+    return {
+      kind: 'failed',
+      name: candidate.name,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    }
+  }
+  const profileError = await seams.removeProfile(candidate.id)
+  return profileError === undefined
+    ? { kind: 'removed', name: candidate.name }
+    : { kind: 'removed-incomplete', name: candidate.name, error: profileError }
 }
 
 /** Structural face of the llm service's configurable-provider directory. */
@@ -185,6 +227,25 @@ async function writeProviderProfile(settings: SettingsProvider, entry: ProviderC
     await settings.mutate(
       LLM_PI_AI_NS,
       [{ op: 'set', path: ['providers', entry.id], value: providerProfileFor(entry) }],
+      settings.describe().find(desc => desc.ns === LLM_PI_AI_NS)?.revision,
+    )
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+  return undefined
+}
+
+/**
+ * Serialized llm-pi-ai profile removal for /logout (revision read at
+ * execution time). Resolves the mutate error, or `undefined` on success —
+ * an unset through an absent path is already satisfied, so a concurrent
+ * removal cannot turn this into a failure.
+ */
+async function removeProviderProfile(settings: SettingsProvider, id: string): Promise<string | undefined> {
+  try {
+    await settings.mutate(
+      LLM_PI_AI_NS,
+      [{ op: 'unset', path: ['providers', id] }],
       settings.describe().find(desc => desc.ns === LLM_PI_AI_NS)?.revision,
     )
   } catch (error) {
@@ -250,10 +311,14 @@ export async function openLoginFlow(options: LoginFlowOptions): Promise<LoginFlo
 
 /**
  * Open the provider logout flow: list the providers with a stored credential,
- * remove only the key on selection (the settings.yaml provider entry stays).
- * Resolves `removed` with the provider label after the unset lands, `failed`
- * when the unset rejects, `none` when nothing is logged in, and `cancelled`
- * when the user escapes. Focus returns to `restoreFocus` on close.
+ * and on selection remove both the key and the settings.yaml provider entry
+ * (see `commitLogout` for the ordering) — with the profile gone, the llm
+ * service deregisters the route and the provider's models leave /model
+ * immediately. Resolves `removed` after both writes land,
+ * `removed-incomplete` when the key went but the profile write failed,
+ * `failed` when the unset rejected, `none` when nothing is logged in, and
+ * `cancelled` when the user escapes. Focus returns to `restoreFocus` on
+ * close.
  */
 export async function openLogoutFlow(options: LogoutFlowOptions): Promise<LogoutFlowResult> {
   const settings = options.ctx.get('settings')
@@ -289,6 +354,14 @@ export async function openLogoutFlow(options: LogoutFlowOptions): Promise<Logout
   const loggedIn = listLogoutCandidates(candidates, configuredRefs)
   if (loggedIn.length === 0) return { kind: 'none' }
 
+  // Bound here (not inside finish) so the guards' narrowing of `settings`
+  // and `credentials` carries into the commit's closures.
+  const commit = (candidate: LogoutCandidate): Promise<LogoutFlowResult> =>
+    commitLogout(candidate, {
+      unset: ref => credentials.unset(ref),
+      removeProfile: id => removeProviderProfile(settings, id),
+    })
+
   return new Promise(resolve => {
     const list = new TablePanel(options.theme, {
       title: '● Log out',
@@ -312,14 +385,17 @@ export async function openLogoutFlow(options: LogoutFlowOptions): Promise<Logout
         resolve({ kind: 'cancelled' })
         return
       }
-      void credentials!.unset(candidate.ref).then(
-        () => resolve({ kind: 'removed', name: candidate.name }),
-        (cause: unknown) => {
-          const message = cause instanceof Error ? cause.message : String(cause)
-          options.onError(`Failed to remove stored key for ${candidate.name}: ${message}`)
-          resolve({ kind: 'failed', name: candidate.name })
-        },
-      )
+      void commit(candidate).then(result => {
+        if (result.kind === 'failed') {
+          const cause = result.cause === undefined ? '' : `: ${result.cause}`
+          options.onError(`Failed to remove stored key for ${result.name}${cause}`)
+        } else if (result.kind === 'removed-incomplete') {
+          options.onError(
+            `Removed the stored key for ${result.name}, but its provider configuration was not removed: ${result.error}`,
+          )
+        }
+        resolve(result)
+      })
     }
   })
 }

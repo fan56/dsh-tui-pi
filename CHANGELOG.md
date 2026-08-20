@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `/logout` now unsubscribes the provider completely: it removes the stored
+  API key **and** the `llm-pi-ai` provider profile from settings.yaml
+  (`{op:'unset', providers.<id>}`). Until now only the key went and the
+  profile stayed, so the provider's models kept listing in `/model` (the
+  llm-pi-ai adapter registers a route per profile key; a picked model would
+  have failed at request time with MISSING_CREDENTIAL). With the profile
+  gone, the route deregisters and the models leave `/model` immediately; a
+  re-`/login` re-subscribes and serves the installed pi-ai catalog's
+  current model list. Ordering contract (new `commitLogout`, unit-tested):
+  a failed key removal never touches the profile, and a failed profile
+  removal never undoes the key removal (`removed-incomplete` reports it).
+  478 tests (+3: the commitLogout ordering outcomes).
+
 ## [0.10.3] — 2026-08-20
 
 ### Changed
