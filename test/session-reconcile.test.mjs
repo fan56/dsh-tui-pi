@@ -83,13 +83,13 @@ test('a running child counts one round per assistant/message — never per turn/
   })
   await bridge.ensureAgent()
   // Discover the child through its session header (the primary path).
-  emit(handlers, { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }, {
+  emit(handlers, { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }, {
     type: 'subagent/descriptor',
     seq: 0,
     time: 2,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
   })
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
 
   emit(handlers, childSession, assistantMessage(1, 10))
   assert.equal(bridge.getRoundCount('child-1'), 1, 'one assistant/message = round 1')
@@ -139,7 +139,7 @@ test('reconcileChildRounds never double-counts against the event-driven path', a
   })
   await bridge.ensureAgent()
   discoverViaParentWorkflow(handlers, 'child-1')
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
 
   // Two rounds arrive BOTH as bridged events and in the log (healthy path).
   for (const seq of [1, 3]) {
@@ -233,7 +233,7 @@ test('subagent occupancy = latest request, while view.tokens stays cumulative (v
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })
   await bridge.ensureAgent()
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
   // Discover the child through its header (the primary path).
   emit(handlers, childSession, {
     type: 'subagent/descriptor', seq: 0, time: 1,
@@ -338,7 +338,7 @@ test('a usage-less child assistant/message keeps the child occupancy baseline', 
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })
   await bridge.ensureAgent()
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
   emit(handlers, childSession, {
     type: 'subagent/descriptor', seq: 0, time: 1,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
@@ -386,7 +386,7 @@ test('a streamed child text-delta chunk estimate is superseded by the next bille
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })
   await bridge.ensureAgent()
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
   emit(handlers, childSession, {
     type: 'subagent/descriptor', seq: 0, time: 1,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
@@ -430,7 +430,7 @@ test('child assistant/chunk reasoning-delta prices into the child pending estima
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })
   await bridge.ensureAgent()
-  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session' } }
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
   emit(handlers, childSession, {
     type: 'subagent/descriptor', seq: 0, time: 1,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
@@ -441,5 +441,79 @@ test('child assistant/chunk reasoning-delta prices into the child pending estima
   })
   assert.equal(bridge.getAgentViews()[0].contextTokens, 1,
     'child reasoning-delta priced into pending (4 chars -> 1)')
+  await bridge.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Fork-driven child visibility: a fork lineage writes `parentSession` +
+// `delegationDepth` but NOT `origin: 'subagent'` — the old discovery gate
+// required the origin, so fork children never showed on the widget / Ctrl+G.
+// The gate now requires the durable delegation budget instead (which BOTH the
+// spawn and fork paths write), and the user-facing `Session.fork` lineage
+// (parentSession + seedLength, no budget) stays off the board.
+
+test('a fork-driven child (no origin, delegationDepth) is discovered and folds rounds', async () => {
+  const { ctx, handlers } = makeHarness()
+  const fired = []
+  const bridge = new DshSessionBridge(ctx, {
+    onRoundCount: (c, n) => fired.push([c, n]),
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  // Fork lineage: parentSession points at a tracked session, delegationDepth
+  // is set, origin is absent — the fork child must still be discovered.
+  const forkChild = { id: 'fork-1', header: { parentSession: 'root-session', delegationDepth: 1, seedLength: 4 } }
+  emit(handlers, forkChild, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 1, 'fork child discovered via header')
+  const view = bridge.getAgentViews()[0]
+  assert.equal(view.childId, 'fork-1')
+  assert.equal(view.parentSession, 'root-session')
+  assert.equal(view.label, 'fork fork-1', 'fork children get the fork label (no descriptor refines it)')
+  assert.equal(view.rounds, 1, 'rounds fold from the child own events')
+  assert.equal(bridge.getRoundCount('fork-1'), 1)
+  assert.equal(bridge.getChildLog('fork-1').length, 1, 'the child transcript buffers its own events')
+  assert.equal(bridge.getLiveChildren().length, 1, 'a running fork child enables Ctrl+G')
+  assert.deepEqual(fired, [['fork-1', 1]])
+  await bridge.dispose()
+})
+
+test('a session whose parentSession is NOT tracked is not discovered', async () => {
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const stranger = { id: 'x-1', header: { parentSession: 'some-other', delegationDepth: 1 } }
+  emit(handlers, stranger, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 0, 'not discovered — parent is not a tracked session')
+  assert.equal(bridge.getLiveChildren().length, 0)
+  await bridge.dispose()
+})
+
+test('a session with no parentSession and no origin is not discovered', async () => {
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const root = { id: 'root-2', header: {} }
+  emit(handlers, root, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 0, 'a root-like session is never a child')
+  await bridge.dispose()
+})
+
+test('a user-facing session fork (parentSession tracked, NO delegationDepth) is not discovered', async () => {
+  // The guard: dsh's `Session.fork` lineage is parentSession + seedLength
+  // only — a forked conversation is a real session, not a subagent, and must
+  // not appear on the live board / Ctrl+G.
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const userFork = { id: 'fork-user', header: { parentSession: 'root-session', seedLength: 2 } }
+  emit(handlers, userFork, assistantMessage(1, 10))
+  assert.equal(bridge.getAgentViews().length, 0, 'user fork stays off the subagent board')
+  assert.equal(bridge.getLiveChildren().length, 0)
   await bridge.dispose()
 })

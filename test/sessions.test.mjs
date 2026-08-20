@@ -6,7 +6,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizePreview, previewOfEvents } from '../lib/sessions.js'
+import { normalizePreview, previewOfEvents, isResumableSessionHeader } from '../lib/sessions.js'
 import { stashSessionIdForReload, takeStashedSessionId } from '../lib/session.js'
 
 const userMsg = (text, sourceKind = 'user', extra = {}) => ({
@@ -83,4 +83,28 @@ test('normalizePreview clips over-long previews with an ellipsis', () => {
   stashSessionIdForReload(undefined)
   assert.equal(takeStashedSessionId(), undefined)
   assert.equal(takeStashedSessionId(), undefined)
+})
+
+
+// ---------------------------------------------------------------------------
+// /resume filter: `isResumableSessionHeader` keeps the spawn-subagent
+// exclusion AND now also excludes fork-driven subagent children
+// (delegationDepth set, no origin) — resuming either as the TUI's main
+// conversation would misplace it in the recursion budget. User-facing session
+// forks never set the budget and stay resumable.
+
+test('isResumableSessionHeader excludes spawn subagent children', () => {
+  assert.equal(isResumableSessionHeader({ origin: 'subagent' }), false)
+  assert.equal(isResumableSessionHeader({ origin: 'subagent', delegationDepth: 2 }), false)
+})
+
+test('isResumableSessionHeader excludes fork-driven subagent children (delegationDepth, no origin)', () => {
+  assert.equal(isResumableSessionHeader({ delegationDepth: 1, parentSession: 'p' }), false)
+})
+
+test('isResumableSessionHeader keeps user-facing forks and root sessions resumable', () => {
+  // `Session.fork` lineage is parentSession + seedLength only — a forked
+  // conversation is a real session the user may want to resume.
+  assert.equal(isResumableSessionHeader({ parentSession: 'p', seedLength: 2 }), true)
+  assert.equal(isResumableSessionHeader({}), true)
 })

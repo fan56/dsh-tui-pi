@@ -255,6 +255,17 @@ export type PickSessionResult =
   | { kind: 'picked'; id: SessionId; header: SessionHeader }
 
 /**
+ * Whether a persisted session header may be resumed as this TUI's main
+ * conversation. Subagent children — spawn (`origin: 'subagent'`) and
+ * fork-driven (`delegationDepth` set, no origin) — are excluded: resuming one
+ * would misplace it in the recursion budget. User-facing session forks
+ * (`Session.fork`) never set the recursion budget and remain resumable.
+ */
+export function isResumableSessionHeader(header: SessionHeader): boolean {
+  return header.origin !== 'subagent' && header.delegationDepth === undefined
+}
+
+/**
  * Open the persisted-session picker. Resolves with the picked session,
  * `cancelled` when dismissed, or `empty` when no other session exists.
  * Throws when the profile has no persistence backend. Focus returns to
@@ -279,9 +290,7 @@ export async function pickPersistedSession(
     throw new Error(`Failed to list persisted sessions: ${message}`)
   }
   const candidates = headers
-    // Subagent children carry a persisted delegation depth — resuming one as
-    // this TUI's main conversation would misplace it in the recursion budget.
-    .filter(header => header.origin !== 'subagent')
+    .filter(isResumableSessionHeader)
     .filter(header => String(header.id) !== excludeSessionId)
     .sort((a, b) => b.createdAt - a.createdAt)
   if (candidates.length === 0) return { kind: 'empty' }

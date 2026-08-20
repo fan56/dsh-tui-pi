@@ -312,16 +312,29 @@ export class DshSessionBridge {
       // Discover subagent children by session header — the deployment may
       // never emit tool-workflow events (the firehose is not scope-filtered,
       // so child sessions arrive here too). Any session whose parent is a
-      // tracked session is a child; the descriptor event later refines the
-      // label/provider.
+      // tracked session AND carries the durable delegation-depth marker is a
+      // child; the descriptor event later refines the label/provider.
+      //
+      // Guard: the recursion budget (`delegationDepth`) is required, not the
+      // `origin`. The spawn path always writes `origin: 'subagent'` PLUS the
+      // budget; fork-driven children write the budget WITHOUT the origin
+      // (dsh's `Session.fork` lineage is `parentSession` + `seedLength` only
+      // and is a USER-facing fork of a conversation — a real session, not a
+      // subagent). Requiring the budget admits both delegation paths while
+      // keeping a user forked conversation off the live board / Ctrl+G.
       const header = session.header
-      if (header?.origin === 'subagent' && header.parentSession !== undefined
+      if (header?.parentSession !== undefined
+        && header.delegationDepth !== undefined
         && this.trackedSessions.has(String(header.parentSession))
         && !this.agentViews.has(sessionKey)) {
         this.agentViews.set(sessionKey, {
           childId: sessionKey,
           parentSession: String(header.parentSession),
-          label: `subagent ${sessionKey.slice(0, 8)}`,
+          // A fork child (no `origin`) never emits a subagent/descriptor —
+          // label it `fork <id8>` so the surface says what it is.
+          label: header.origin === undefined
+            ? `fork ${sessionKey.slice(0, 8)}`
+            : `subagent ${sessionKey.slice(0, 8)}`,
           startedAt: event.time,
           tokens: 0,
           rounds: 0,
