@@ -265,6 +265,15 @@ export class DshSessionBridge {
    */
   private readonly roundCounts = new Map<string, number>()
   /**
+   * The EVENT path's own absolute per-child assistant-message count — its
+   * ledger of streamed `assistant/message` events it has actually received.
+   * The reconcile derives its own count from the session log; the displayed
+   * "rounds" is `max(streamed, reconciled)` (see foldTracked). Keeping the
+   * two ledgers separate is what makes a message the reconcile already
+   * counted immune to a second count when its streamed event arrives late.
+   */
+  private readonly streamedRoundCounts = new Map<string, number>()
+  /**
    * Per-child usage snapshot of the latest assistant/message (see
    * `lastUsage` for the main session) — the exact billed context of the
    * child's last request, the `contextTokens` baseline.
@@ -544,6 +553,7 @@ export class DshSessionBridge {
     this.childLogs.clear()
     this.childStreams.clear()
     this.roundCounts.clear()
+    this.streamedRoundCounts.clear()
     this.childUsage.clear()
     this.childPending.clear()
     this.childCompactionCounts.clear()
@@ -583,6 +593,7 @@ export class DshSessionBridge {
     this.childLogs.clear()
     this.childStreams.clear()
     this.roundCounts.clear()
+    this.streamedRoundCounts.clear()
     this.childUsage.clear()
     this.childPending.clear()
     this.childCompactionCounts.clear()
@@ -833,9 +844,20 @@ export class DshSessionBridge {
           // view settled — continuable children resume. `turn/end` is NOT the
           // round unit: a one-shot child never leaves its single turn, so its
           // rounds would stay frozen at 0 while it works.
-          const count = (this.roundCounts.get(sessionId) ?? 0) + 1
-          this.roundCounts.set(sessionId, count)
-          this.callbacks.onRoundCount?.(sessionId, count)
+          // The event path keeps its OWN absolute streamed count and merges
+          // it with the reconcile's log-derived count by max() — the two
+          // ledgers never double count. A message the reconcile already
+          // counted (its `assistant/message` reached the session log first)
+          // must not be counted AGAIN when that same event arrives late here:
+          // the reconcile only moves the count up, so a naive `current + 1`
+          // would inflate it permanently.
+          const streamed = (this.streamedRoundCounts.get(sessionId) ?? 0) + 1
+          this.streamedRoundCounts.set(sessionId, streamed)
+          const count = Math.max(streamed, this.roundCounts.get(sessionId) ?? 0)
+          if (count !== (this.roundCounts.get(sessionId) ?? 0)) {
+            this.roundCounts.set(sessionId, count)
+            this.callbacks.onRoundCount?.(sessionId, count)
+          }
           const usage = event.data.usage
           const delta = usage === undefined
             ? 0
@@ -890,9 +912,9 @@ export class DshSessionBridge {
               // follows live.
               const wasPending = this.childPending.get(sessionId) ?? 0
               const lineChanged = lastLine !== undefined && lastLine !== view.lastLine
-              if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
-                this.childPending.set(sessionId, wasPending + estimateTextTokens(delta))
-              }
+              // The outer guard already narrowed to text/reasoning deltas, so
+              // this branch is unconditional.
+              this.childPending.set(sessionId, wasPending + estimateTextTokens(delta))
               const contextTokens = this.childContextTokens(sessionId)
               const contextChanged = contextTokens !== view.contextTokens
               if (lineChanged || contextChanged) {

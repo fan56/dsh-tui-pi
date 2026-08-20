@@ -558,3 +558,65 @@ test('a dsh-dcp compaction notice lands in the child log and tallies a compactio
   assert.equal(bridge.getChildLog('child-1').length, 3, 'the non-notice message is still a transcript row')
   await bridge.dispose()
 })
+
+// ---------------------------------------------------------------------------
+// Round-count race (nit): the event path keeps its own absolute streamed
+// ledger and merges it with the reconcile's log-derived count by max() — a
+// message the reconcile already counted must not be counted AGAIN when its
+// streamed event arrives late (the reconcile only moves up, so a naive
+// `current + 1` would inflate permanently).
+
+test('a message the reconcile already counted is not counted again when its streamed event arrives late', async () => {
+  const { ctx, handlers, childEvents } = makeHarness()
+  const fired = []
+  const bridge = new DshSessionBridge(ctx, {
+    onRoundCount: (c, n) => fired.push([c, n]),
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  discoverViaParentWorkflow(handlers, 'child-1')
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+
+  // The log already holds the message; the reconcile derives round 1 first.
+  childEvents.push(assistantMessage(1, 3))
+  bridge.reconcileChildRounds()
+  assert.equal(bridge.getRoundCount('child-1'), 1, 'reconcile counted 1 from the log')
+
+  // The SAME message's streamed event arrives late — must NOT inflate to 2.
+  emit(handlers, childSession, assistantMessage(1, 3))
+  assert.equal(bridge.getRoundCount('child-1'), 1, 'late streamed event does not double-count')
+
+  // A genuinely new message still advances the count.
+  emit(handlers, childSession, assistantMessage(2, 5))
+  assert.equal(bridge.getRoundCount('child-1'), 2, 'a real new message advances the count')
+  assert.deepEqual(fired, [['child-1', 1], ['child-1', 2]],
+    'onRoundCount fired for the log-derived 1 and the genuinely-new 2 only')
+  await bridge.dispose()
+})
+
+test('the streamed-round ledger survives a reconcile that already saw more messages', async () => {
+  // Healthy dual-source path with the new max() merge: events AND the log
+  // both carry the same messages — the count stays exact, never inflated.
+  const { ctx, handlers, childEvents } = makeHarness()
+  const fired = []
+  const bridge = new DshSessionBridge(ctx, {
+    onRoundCount: (c, n) => fired.push([c, n]),
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  discoverViaParentWorkflow(handlers, 'child-1')
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+
+  // Reconcile sees the log first (events delayed), derives 2 rounds.
+  childEvents.push(assistantMessage(1, 3))
+  childEvents.push(assistantMessage(2, 4))
+  bridge.reconcileChildRounds()
+  assert.equal(bridge.getRoundCount('child-1'), 2)
+
+  // Both messages' events then stream in — no inflation, no regression.
+  emit(handlers, childSession, assistantMessage(1, 3))
+  emit(handlers, childSession, assistantMessage(2, 4))
+  assert.equal(bridge.getRoundCount('child-1'), 2, 'replayed-looking stream does not inflate')
+  assert.deepEqual(fired, [['child-1', 2]], 'onRoundCount fired once, for the reconciled 2')
+  await bridge.dispose()
+})
