@@ -4,6 +4,26 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] — 2026-08-21
+
+### Added
+
+- Usage-frequency sorting for slash completions (commands and skills share
+  one list): most-used entries float to the top, and a keyword-filtered
+  result keeps the frequency order of what remains. Ties break
+  alphabetically; with an empty usage table the list degrades to the
+  previous name-only order. Counts persist in
+  `$DSH_HOME/tui-command-usage.json` (default `~/.dsh/`): atomic
+  tmp+rename write on each use event, tolerant load (missing/corrupt file
+  yields an empty table, never an error), and a 500-entry cap pruned by
+  count. Concurrent dsh instances merge safely — each write re-reads the
+  file and applies only its own baseline+delta, so one process no longer
+  erases another's increments. Commands count on successful execution;
+  skills count when a submitted `/name` gesture resolves against the live
+  user-invocable registry (unknown names never count). New
+  `src/usage.ts` + `test/usage.test.mjs` (26 cases); the suite stands at
+  520 tests across 35 files.
+
 ## [0.11.0] — 2026-08-21
 
 ### Added
