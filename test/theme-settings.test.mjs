@@ -194,10 +194,32 @@ test('watch narrows unknown or missing panelHeight values to 1', async () => {
   await settle()
   assert.deepEqual(heights, ['1', '7'], 'valid height passes through')
 
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['panelHeight'], value: '5' }])
+  await settle()
+  assert.deepEqual(heights, ['1', '7', '5'], "'5' passes through the watch too")
+
   // Unsetting the key removes it from the section: narrows back to 1.
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['panelHeight'] }])
   await settle()
-  assert.deepEqual(heights, ['1', '7', '1'], 'missing panelHeight key narrows to 1')
+  assert.deepEqual(heights, ['1', '7', '5', '1'], 'missing panelHeight key narrows to 1')
+})
+
+test('persisted panelHeight survives the startup reader for every schema literal', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  registerThemeSettings(ctx)
+  await settle()
+
+  // Every schema literal must round-trip through readPanelHeightPreference.
+  // A persisted '5' used to come back as '1' after a restart: the startup
+  // reader only accepted '7'/'10'/'all' while the schema and the watch
+  // narrowing already accepted all five (regression for commit fa7d206,
+  // which changed the default to '1' but missed this narrowing).
+  for (const height of ['1', '5', '7', '10', 'all']) {
+    await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['panelHeight'], value: height }])
+    assert.equal(await readPanelHeightPreference(ctx), height, `persisted '${height}' survives the startup read`)
+  }
 })
 
 test('subagent limits resolve to defaults and round-trip through a committed write', async () => {

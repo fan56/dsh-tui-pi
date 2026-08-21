@@ -101,13 +101,13 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **493 tests** across 34 files (skills 36 +
+- `pnpm test` must stay green: **494 tests** across 34 files (skills 36 +
   live 34 + keymap 27 + login 25 + panels 24 + session-reconcile 22 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
   messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 15 +
   subagent-viewer 15 + history 13 + agent-manager 13 +
   sessions 12 + theme-switch 11 + frame 11 + footer-hints 10 + permission 9 +
-  theme-settings 9 + commands 9 + text 8 + font-detect 8 + quotes 7 +
+  theme-settings 10 + commands 9 + text 8 + font-detect 8 + quotes 7 +
   icons 7 + reload 6 + append-system 6 + install-font 6 + tokens 6 +
   schema-model 3). New
   pure logic → new test file under `test/` against built `lib/` (`node --test`,

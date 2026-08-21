@@ -20,7 +20,7 @@ import {
 } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { DEFAULT_FOOTER_HINTS, type FooterHints } from './footer.ts'
-import { DEFAULT_PANEL_HEIGHT, type PanelHeight } from './activity.ts'
+import { DEFAULT_PANEL_HEIGHT, isPanelHeight, type PanelHeight } from './activity.ts'
 import type { IconSet } from './icons.ts'
 import type { ThemePreference } from './theme/index.ts'
 
@@ -195,9 +195,7 @@ export function registerThemeSettings(
             const panelHeight = section.panelHeight
             onPreferenceChange(
               theme === 'light' || theme === 'dark' ? theme : 'auto',
-              panelHeight === '1' || panelHeight === '5' || panelHeight === '7' || panelHeight === '10' || panelHeight === 'all'
-                ? panelHeight
-                : DEFAULT_PANEL_HEIGHT,
+              isPanelHeight(panelHeight) ? panelHeight : DEFAULT_PANEL_HEIGHT,
               narrowFooterHints(section.footerHints),
               narrowIconSet(section.iconSet),
             )
@@ -289,7 +287,7 @@ export async function readThemePreference(ctx: Context): Promise<ThemePreference
  */
 export async function readPanelHeightPreference(ctx: Context): Promise<PanelHeight> {
   const height = (await readResolvedSection(ctx))?.panelHeight
-  if (height === '7' || height === '10' || height === 'all') return height
+  if (isPanelHeight(height)) return height
   return DEFAULT_PANEL_HEIGHT
 }
 

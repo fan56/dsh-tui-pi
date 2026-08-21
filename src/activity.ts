@@ -42,6 +42,16 @@ export type PanelHeight = '1' | '5' | '7' | '10' | 'all'
  * other heights are set through the `panelHeight` setting.
  */
 export const DEFAULT_PANEL_HEIGHT: PanelHeight = '1'
+
+/**
+ * Type guard narrowing an unknown value to a `PanelHeight`: the single
+ * narrowing shared by every settings-path consumer (the watch hook and the
+ * startup reader in theme-settings.ts) so the accepted literal set cannot
+ * drift between them again.
+ */
+export function isPanelHeight(value: unknown): value is PanelHeight {
+  return value === '1' || value === '5' || value === '7' || value === '10' || value === 'all'
+}
 /** Content rows inside the default boxed panel (a '5' box minus the header row). */
 const PANEL_BODY_LINES = 4
 
