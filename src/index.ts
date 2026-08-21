@@ -24,6 +24,7 @@ import type { PanelHeight } from './activity.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts'
+import { runModelSync } from './model-sync.ts'
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
 import {
   currentThemePreference,
@@ -611,6 +612,27 @@ export function apply(ctx: Context): void {
       description: 'Sync the model catalog from configured providers (custom providers excluded)',
       handler: invocation => modelSyncHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /models-sync')
+
+    // /model-sync (singular): discover models for CUSTOM provider routes — the
+    // hand-declared llm-pi-ai profiles carrying a baseURL — straight from each
+    // endpoint's model listing, merged additively back into settings.yaml.
+    // Agentless like /models-sync above: only the settings document is
+    // touched, never a conversation. The two commands are complements:
+    // /models-sync (plural) runs a dsh-model-sync catalog round and excludes
+    // custom providers; this one covers exactly those excluded routes.
+    const modelSyncCustomHandler: LocalCommandHandler = async (rawInput, signal) => {
+      const settings = ctx.get('settings')
+      if (settings === undefined) {
+        return { kind: 'error' as const, text: 'Settings service is unavailable.' }
+      }
+      return runModelSync({ settings, llm: ctx.llm }, { rawInput, signal })
+    }
+    commands.registerLocal('model-sync', modelSyncCustomHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'model-sync',
+      description: 'Discover models for hand-declared (baseURL) providers and merge them into settings',
+      handler: invocation => modelSyncCustomHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /model-sync')
 
     const sessionHandler: LocalCommandHandler = async () => {
       const agent = bridge.getAgent()
