@@ -16,6 +16,12 @@ not perform concrete operations myself.
    - Suggesting the user do things manually.
 3. Tasks must pass through verify/review agents. Without review, a task must
    not be marked "completed".
+   **Small-task exception** (user rule, 2026-08-21): when the facts are
+   already confirmed and the remaining work is pure implementation (edit a
+   file, find/locate things, run a bash command to fetch results), dispatch
+   a sub-agent to execute it and SKIP the review pass. Such a task should
+   complete within ~6 minutes. Review remains mandatory for design/code
+   changes, risky operations, and anything with unverified assumptions.
 4. Never assume "the problem is known".
 5. Never guess — every claim must be backed by evidence.
 

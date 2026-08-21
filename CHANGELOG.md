@@ -6,6 +6,16 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.6] — 2026-08-21
+
+### Changed
+
+- `templates/APPEND_SYSTEM.md`: rule 3 (review gate) now carries a small-task
+  exception — when facts are already confirmed and the remaining work is pure
+  implementation, dispatch a sub-agent and skip the review pass (target
+  ~6 min); review stays mandatory for design/code changes, risky operations,
+  and unverified assumptions.
+
 ## [0.10.4] — 2026-08-21
 
 ### Changed
