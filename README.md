@@ -187,7 +187,7 @@ Anything that is not a resolvable command falls through to the model as an ordin
 | Key | Action |
 |---|---|
 | `Enter` | Send the prompt |
-| `Esc` | **Double-press to stop** — single press arms (500ms window); popup open → closes popup instead; empty editor → second press opens `/session` |
+| `Esc` | **Double-press to stop** — single press arms (500ms window); popup open → closes popup instead; idle (no task running) → no-op |
 | `Ctrl+C` | Mid-turn: first press cancels turn, second quits. Idle: clears editor / quits. **Held-key auto-repeat never quits.** |
 | `Ctrl+D` | Quit (only when editor is empty) |
 | `Ctrl+L` | Open model/think picker |

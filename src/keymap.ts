@@ -18,17 +18,12 @@
  *                                     press within `DOUBLE_PRESS_MS` cancels
  *                                     the whole task (parent + subagents) —
  *                                     stopping is a deliberate double-press
- *   4. editor non-empty (idle)      → NO-OP — pi's anti-misfire core
- *   5. editor empty (idle)          → 1st press arms, 2nd press within
- *                                     `DOUBLE_PRESS_MS` triggers the mapped
- *                                     action (pi defaults to /tree; dsh has
- *                                     no /tree, so we map to /session — the
- *                                     closest non-invasive analogue). The
- *                                     running-stop and idle windows own
- *                                     SEPARATE clocks (`lastRunningEscPress`
- *                                     vs `lastEscPress`) so an Esc that armed
- *                                     a stop never pops /session after the
- *                                     turn settles, and vice versa.
+ *   4. editor non-empty or empty (idle) → NO-OP — pi's anti-misfire core.
+ *                                     (pi's empty-editor double-Esc opens
+ *                                     /tree; dsh deliberately does NOT map
+ *                                     it — /session is slash-command only.)
+ *
+ *   The running-stop window owns its own clock (`lastRunningEscPress`).
  *
  * Ctrl+C chain (dsh convention, windowed): first press cancels a running
  * turn - or clears the editor while idle - and a second press within
@@ -61,14 +56,14 @@
 
 import { isKeyRelease, isKeyRepeat, matchesKey, type KeyId } from '@earendil-works/pi-tui'
 
-/** Double-press window (ms) for ctrl+c quit and empty-editor double-Esc. */
+/** Double-press window (ms) for ctrl+c quit and running-task Esc stop. */
 export const DOUBLE_PRESS_MS = 500
 
 /**
  * Window (ms) after an Esc was handed to a popup during which another Esc is
  * still considered aimed at the (just-closed) popup - swallowed before the
  * Esc chain runs. Users routinely double-press Esc to dismiss a panel; the
- * second press must not arm the running-stop or the /session double.
+ * second press must not arm the running-stop window.
  */
 export const OVERLAY_ESC_GUARD_MS = 300
 
@@ -129,11 +124,8 @@ export interface KeyPressState {
   autocompleteOpen: boolean
   /** Live (not settled) subagent count; 0 = nothing for ctrl+g to open. */
   runningAgents: number
-  /** Timestamp (ms) of the last handled escape press; 0 = none. */
-  lastEscPress: number
   /** Timestamp (ms) of the last handled escape press that armed the
-   *  running-stop window (branch 3 above); 0 = none. Own clock: independent
-   *  of `lastEscPress` so the two Esc windows never bleed into each other. */
+   *  running-stop window; 0 = none. */
   lastRunningEscPress: number
   /** Timestamp (ms) of the last ctrl+c arrival (press OR repeat); 0 = none. */
   lastCtrlCPress: number
@@ -157,8 +149,6 @@ export type KeyAction =
   | { kind: 'noop'; consumes: false }                // nothing to do
   | { kind: 'interrupt-arm-stop'; consumes: true }   // 1st Esc while running - arms the stop double-press
   | { kind: 'interrupt-cancel'; consumes: true }     // 2nd Esc while running - cancels the task
-  | { kind: 'interrupt-arm'; consumes: true }        // 1st Esc, empty editor
-  | { kind: 'interrupt-double'; consumes: true }     // 2nd Esc within window
   | { kind: 'ctrl-c-cancel'; consumes: true }        // 1st Ctrl+C while running
   | { kind: 'ctrl-c-clear'; consumes: true }         // 1st Ctrl+C while idle
   | { kind: 'ctrl-c-quit'; consumes: true }          // 2nd Ctrl+C within window
@@ -174,7 +164,7 @@ export type KeyAction =
   /**
    * Esc arriving inside the post-popup guard window - the trailing press of a
    * panel-close double-press. Consumed and inert: it must never arm the
-   * running-stop or the idle /session double.
+   * running-stop window.
    */
   | { kind: 'esc-after-overlay'; consumes: true }
   /**
@@ -190,8 +180,8 @@ export type KeyAction =
    * Auto-repeat of a windowed key (Ctrl+C / armed Esc) - the key is being
    * held. Either explicitly flagged by the kitty protocol (`:2`) or deduced
    * from the arrival gap on terminals without event types. Consumed so the
-   * editor never sees it, but no action fires and the Esc double-press clocks
-   * do NOT advance (a repeat must never arm or complete an Esc double press).
+   * editor never sees it, but no action fires and the Esc double-press clock
+   * does NOT advance (a repeat must never arm or complete an Esc double press).
    * The executor can use the `key` to cancel a pending quit confirmation (a
    * repeat betrays a held key).
    */
@@ -221,7 +211,7 @@ function resolveEscape(state: KeyPressState, now: number): KeyAction {
   if (state.autocompleteOpen) return { kind: 'autocomplete-close', consumes: false }
   // 1b. The trailing Esc of a panel-close double-press: the popup already
   //     consumed the first press moments ago - this one is still aimed at the
-  //     (gone) popup, never at the task or the idle double.
+  //     (gone) popup, never at the task.
   if (insideOverlayEscGuard(state.lastOverlayEscPress, now)) {
     return { kind: 'esc-after-overlay', consumes: true }
   }
@@ -236,15 +226,10 @@ function resolveEscape(state: KeyPressState, now: number): KeyAction {
       ? { kind: 'interrupt-cancel', consumes: true }
       : { kind: 'interrupt-arm-stop', consumes: true }
   }
-  // 3. Idle: a non-empty editor is untouched (pi's anti-misfire core).
-  if (state.editorHasText) return { kind: 'noop', consumes: false }
-  // 4. Empty editor, idle: first press arms, second within the window fires
-  //    the double action (/session — dsh has no pi /tree). Auto-repeat of the
-  //    armed key never fires the double action.
-  if (isGapRepeat(state.lastEscPress, now)) return { kind: 'key-repeat', key: 'escape', consumes: true }
-  return isDoublePress(state.lastEscPress, now)
-    ? { kind: 'interrupt-double', consumes: true }
-    : { kind: 'interrupt-arm', consumes: true }
+  // 3. Idle (empty or non-empty editor): NO-OP — pi's anti-misfire core.
+  //    (pi's empty-editor double-Esc opens /tree; dsh deliberately does not
+  //    map it — /session stays slash-command only.)
+  return { kind: 'noop', consumes: false }
 }
 
 /**

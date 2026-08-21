@@ -35,7 +35,6 @@ function state(overrides = {}) {
     editorHasText: false,
     autocompleteOpen: false,
     runningAgents: 0,
-    lastEscPress: 0,
     lastRunningEscPress: 0,
     lastCtrlCPress: 0,
     lastOverlayEscPress: 0,
@@ -69,14 +68,15 @@ test('Esc with a popup open is left to the popup (no interception) — the subag
   assert.notEqual(action.kind, 'interrupt-arm-stop')
 })
 
-test('the running-stop and idle double-Esc windows own separate clocks', () => {
-  // A recent arm on the running clock must not count toward the idle
-  // /session double when the turn settled in between...
-  const settled = resolveKeyAction(ESC, state({ running: false, lastRunningEscPress: 1000, lastEscPress: 0 }), 1300)
-  assert.equal(settled.kind, 'interrupt-arm')
-  assert.notEqual(settled.kind, 'interrupt-double')
-  // ...and a recent idle arm must not let a mid-run press fire an early stop.
-  const running = resolveKeyAction(ESC, state({ running: true, lastEscPress: 1000, lastRunningEscPress: 0 }), 1300)
+test('an idle Esc is a no-op even right after a running-stop arm (no idle double window)', () => {
+  // The turn settled in between: the armed running clock must not leak into
+  // any idle behavior — and there IS no idle double anymore (the old
+  // empty-editor double-Esc opened /session; that binding was removed).
+  const settled = resolveKeyAction(ESC, state({ running: false, lastRunningEscPress: 1000 }), 1300)
+  assert.equal(settled.kind, 'noop')
+  assert.equal(settled.consumes, false)
+  // ...while a mid-run press still arms the stop window.
+  const running = resolveKeyAction(ESC, state({ running: true }), 1300)
   assert.equal(running.kind, 'interrupt-arm-stop')
   assert.notEqual(running.kind, 'interrupt-cancel')
 })
@@ -104,17 +104,15 @@ test('Esc while idle with a non-empty editor is a no-op (pi anti-misfire)', () =
   assert.equal(action.consumes, false)
 })
 
-test('Esc on an empty idle editor: first press arms, second within the window fires the double action', () => {
-  const first = resolveKeyAction(ESC, state(), 0)
-  assert.equal(first.kind, 'interrupt-arm')
-  assert.equal(first.consumes, true)
-  // Second press exactly at the window boundary is still a double.
-  const atBoundary = resolveKeyAction(ESC, state({ lastEscPress: 1000 }), 1500)
-  assert.equal(atBoundary.kind, 'interrupt-double')
-  assert.equal(atBoundary.consumes, true)
-  // One ms past the window re-arms instead.
-  const stale = resolveKeyAction(ESC, state({ lastEscPress: 1000 }), 1501)
-  assert.equal(stale.kind, 'interrupt-arm')
+test('Esc on an empty idle editor is a no-op — the double-Esc /session binding is gone', () => {
+  // Every idle press on an empty editor is inert, including a rapid second
+  // one inside what used to be the 500ms double-press window: /session opens
+  // via the slash command only.
+  for (const now of [0, 200, 499, 500, 1500]) {
+    const action = resolveKeyAction(ESC, state(), now)
+    assert.equal(action.kind, 'noop', `now=${now}`)
+    assert.equal(action.consumes, false, `now=${now}`)
+  }
 })
 
 test('Esc with the editor autocomplete open only closes the list — even mid-turn', () => {
@@ -262,7 +260,7 @@ test('kitty key-release events are swallowed - a slow key release is never a sec
   // and matchesKey matches BOTH - without the filter the release landed
   // 150-500ms after the press, right inside the double-press window.
   for (const data of [KITTY_CTRL_C_RELEASE, KITTY_ESC_RELEASE]) {
-    const action = resolveKeyAction(data, state({ running: true, lastCtrlCPress: 1000, lastEscPress: 1000, lastRunningEscPress: 1000 }), 1300)
+    const action = resolveKeyAction(data, state({ running: true, lastCtrlCPress: 1000, lastRunningEscPress: 1000 }), 1300)
     assert.equal(action.kind, 'key-release', JSON.stringify(data))
     assert.equal(action.consumes, true)
   }
@@ -319,16 +317,13 @@ test('quit minimum gap constant is 150ms (above repeat rates, under human double
   assert.equal(QUIT_MIN_GAP_MS, 150)
 })
 
-test('held Esc does not fire the empty-editor double-Esc action', () => {
-  const arm = resolveKeyAction(ESC, state(), 1000)
-  assert.equal(arm.kind, 'interrupt-arm')
-  const repeat = resolveKeyAction(ESC, state({ lastEscPress: 1000 }), 1035)
-  assert.equal(repeat.kind, 'key-repeat')
-  assert.equal(repeat.key, 'escape')
-  // Running never reads the idle /session clock: a held Esc there arms the
-  // stop window (once), then repeats are swallowed (see the running-repeat
-  // test) — it can never pop /session.
-  const running = resolveKeyAction(ESC, state({ running: true, lastEscPress: 1000, lastRunningEscPress: 0 }), 1035)
+test('a held Esc on an empty idle editor is inert (no idle window left to fire)', () => {
+  const action = resolveKeyAction(ESC, state(), 1000)
+  assert.equal(action.kind, 'noop')
+  assert.equal(action.consumes, false)
+  // Running still arms the stop window once; its repeats are swallowed by
+  // the gap floor (see the held-Esc-while-running test).
+  const running = resolveKeyAction(ESC, state({ running: true }), 1035)
   assert.equal(running.kind, 'interrupt-arm-stop')
 })
 

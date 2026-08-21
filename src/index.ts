@@ -191,8 +191,8 @@ export function apply(ctx: Context): void {
       // App-level keys (pi interrupt chain): Esc on a running task is a
       // deliberate double-press — the first press arms the window (with
       // feedback), the second within 500ms stops the whole task (parent +
-      // subagents); popup/autocomplete first, anti-misfire no-op on a
-      // non-empty editor, and an empty idle editor double-Esc opens /session.
+      // subagents); popup/autocomplete first, and an idle Esc (any editor)
+      // is an anti-misfire no-op.
       // Ctrl+C cancels a running turn or clears the editor — a second press
       // within 500ms quits — and Ctrl+D quits only on an empty editor.
       // Ctrl+G opens the subagent picker while children run. All decisions
@@ -240,12 +240,6 @@ export function apply(ctx: Context): void {
             void stopTask()
             break
           }
-          case 'interrupt-double':
-            // Double-Esc on an empty editor: pi's default double action is
-            // /tree; dsh has no /tree, so this opens /session (the session
-            // info panel — the closest non-invasive analogue).
-            void sessionHandler('', new AbortController().signal)
-            break
           case 'ctrl-c-clear':
             // First Ctrl+C while idle: clear the editor (pi app.clear); a
             // second press within 500ms quits.

@@ -30,7 +30,6 @@ class MockTerminal {
 
 const tui = new TuiAltScreen(new MockTerminal(), false)
 const editor = new CwdBorderEditor(tui, lightTheme.editor, process.cwd(), {})
-let lastEsc = 0
 let lastRunningEsc = 0
 let lastCtrlC = 0
 let lastOverlayEsc = 0
@@ -48,13 +47,11 @@ tui.addInputListener(data => {
     editorHasText: editor.getText() !== '',
     autocompleteOpen: false,
     runningAgents: 1,
-    lastEscPress: lastEsc,
     lastRunningEscPress: lastRunningEsc,
     lastCtrlCPress: lastCtrlC,
     lastOverlayEscPress: lastOverlayEsc,
   }, now)
-  if (action.kind === 'interrupt-arm' || action.kind === 'interrupt-double') lastEsc = now
-  else if (action.kind === 'interrupt-arm-stop' || action.kind === 'interrupt-cancel') lastRunningEsc = now
+  if (action.kind === 'interrupt-arm-stop' || action.kind === 'interrupt-cancel') lastRunningEsc = now
   else if (action.kind === 'overlay-esc') lastOverlayEsc = now
   if (action.kind !== 'key-release' && (data === '\x1b[99;5u' || data === '\x03')) lastCtrlC = now
   if (action.kind !== 'key-release' && action.kind !== 'overlay-esc' && action.kind !== 'esc-after-overlay' && action.kind !== 'noop') {

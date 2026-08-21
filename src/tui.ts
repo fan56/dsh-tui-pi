@@ -43,7 +43,7 @@ export interface StartTuiOptions {
    * Executes an app-level key action (see keymap.ts for the pi-aligned
    * interrupt chain: double-Esc stop, windowed Ctrl+C, empty-editor Ctrl+D
    * quit). Absent (smoke-test mode): Ctrl+C family and Ctrl+D quit fall back
-   * to a plain exit(130); interrupt-arm/arm-stop/double are no-ops.
+   * to a plain exit(130); interrupt-arm-stop/cancel are no-ops.
    */
   onKeyAction?: (action: KeyAction) => void
   /** Whether the agent is mid-turn; feeds the Esc/Ctrl+C decision. Defaults to false. */
@@ -296,15 +296,14 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
    * popup/overlay first (a popup closes itself and never stops the running
    * task), then the editor's autocomplete, then the running agent — where a
    * DOUBLE Esc within `DOUBLE_PRESS_MS` stops the whole task (parent +
-   * subagents; the first press only arms the stop window) — and finally the
-   * empty-editor double-press windows. Every decision is delegated to the
-   * pure `resolveKeyAction`; the listener only composes live state, advances
-   * the double-press timestamps, and reports whether the key was consumed.
+   * subagents; the first press only arms the stop window). An idle Esc is a
+   * no-op. Every decision is delegated to the pure `resolveKeyAction`; the
+   * listener only composes live state, advances the double-press timestamps,
+   * and reports whether the key was consumed.
    * `matchesKey('escape')` is true for the lone ESC byte `\x1b` — and,
    * because legacy terminal Ctrl+[ sends the same byte, for Ctrl+[ too
    * (pi-tui keys.js normalizes both to `escape`).
    */
-  let lastEscPress = 0
   let lastRunningEscPress = 0
   let lastCtrlCPress = 0
   let lastOverlayEscPress = 0
@@ -319,25 +318,19 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       editorHasText: editor.getText() !== '',
       autocompleteOpen: editor.isShowingAutocomplete(),
       runningAgents: getRunningAgents(),
-      lastEscPress,
       lastRunningEscPress,
       lastCtrlCPress,
       lastOverlayEscPress,
     }, now, keyBindingsRef)
-    // Advance the double-press windows for the keys this chain owns. Two
-    // separate Esc windows keep their own clocks: the running-stop arm
-    // (`interrupt-arm-stop` -> `interrupt-cancel`) and the idle double-Esc
-    // (`interrupt-arm` -> `interrupt-double`), so an Esc that armed a stop
-    // never pops /session once the turn settles inside the window, and vice
-    // versa. A fired stop re-arms the running clock at the cancel timestamp:
+    // Advance the double-press windows for the keys this chain owns. The
+    // running-stop arm (`interrupt-arm-stop` -> `interrupt-cancel`) owns the
+    // only Esc clock. A fired stop re-arms the clock at the cancel timestamp:
     // lashes of held-key Esc after the cancel land <80ms later and resolve as
     // swallowable `key-repeat` instead of re-noticing another arm. Esc
-    // `key-repeat` never advances an Esc window - a held key must not arm or
+    // `key-repeat` never advances the window - a held key must not arm or
     // complete an Esc double press. A popup-owned Esc (`overlay-esc`) arms
-    // ONLY the post-popup guard clock - never the stop/idle windows.
-    if (action.kind === 'interrupt-arm' || action.kind === 'interrupt-double') {
-      lastEscPress = now
-    } else if (action.kind === 'interrupt-arm-stop' || action.kind === 'interrupt-cancel') {
+    // ONLY the post-popup guard clock - never the stop window.
+    if (action.kind === 'interrupt-arm-stop' || action.kind === 'interrupt-cancel') {
       lastRunningEscPress = now
     } else if (action.kind === 'overlay-esc') {
       lastOverlayEscPress = now
