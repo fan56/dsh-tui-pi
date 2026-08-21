@@ -5,9 +5,7 @@
  * A custom route is a hand-declared `llm-pi-ai.providers.<id>` profile that
  * carries a `baseURL` and is NOT one of the built-in catalog routes
  * (provider-catalog.ts): discovery against a catalog route would short-circuit
- * back to the installed pi-ai catalog, which is exactly what /models-sync
- * (plural — delegated to the dsh-model-sync plugin) already maintains. This
- * command is the counterpart for gateways pi-ai does not ship: it interrogates
+ * back to the installed pi-ai catalog. This command interrogates
  * each route's `GET ${baseURL}/models` through the official seam
  * (`LlmRuntime.discoverModels`, registered for the `llm-pi-ai` namespace by
  * dsh-llm-pi-ai with catalog short-circuit + stored-credential resolution),
@@ -124,7 +122,7 @@ function storedModelId(entry: StoredModel): string | undefined {
  * Select the custom (hand-declared) routes worth syncing from a providers
  * dict: profiles carrying a non-empty `baseURL` whose key is not a built-in
  * catalog route — a catalog key would short-circuit discovery back to the
- * installed catalog, which is /models-sync's job. Sorted by route key so the
+ * installed catalog. Sorted by route key so the
  * report order is stable regardless of document order.
  */
 export function selectCustomProviders(
@@ -285,12 +283,12 @@ export async function runModelSync(
       if (catalogEntry(wanted) !== undefined) {
         return {
           kind: 'error',
-          text: `Provider "${wanted}" is a built-in catalog route — /model-sync syncs hand-declared (baseURL) routes only; catalog routes are covered by /models-sync.`,
+          text: `Provider "${wanted}" is a built-in catalog route — /model-sync syncs hand-declared (baseURL) routes only.`,
         }
       }
       return {
         kind: 'error',
-        text: `Provider "${wanted}" has no baseURL — /model-sync syncs hand-declared routes only; catalog routes are covered by /models-sync.`,
+        text: `Provider "${wanted}" has no baseURL — /model-sync syncs hand-declared routes only.`,
       }
     }
   } else {

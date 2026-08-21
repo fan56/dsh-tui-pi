@@ -593,33 +593,10 @@ export function apply(ctx: Context): void {
       handler: invocation => thinkHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /think')
 
-    // /models-sync: run one dsh-model-sync catalog round on demand and show
-    // its report. Agentless like the pickers above — the sync only touches the
-    // settings document, never a conversation, so no throwaway session. The
-    // service is optional: without the dsh-model-sync plugin loaded, the
-    // command says so instead of failing elsewhere.
-    const modelSyncHandler: LocalCommandHandler = async () => {
-      const modelSync = ctx.get('modelSync') as { syncNow(): Promise<string> } | undefined
-      if (modelSync === undefined) {
-        return { kind: 'error' as const, text: 'dsh-model-sync plugin is not loaded.' }
-      }
-      const report = await modelSync.syncNow()
-      return { kind: 'success' as const, text: report }
-    }
-    commands.registerLocal('models-sync', modelSyncHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'models-sync',
-      description: 'Sync the model catalog from configured providers (custom providers excluded)',
-      handler: invocation => modelSyncHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /models-sync')
-
-    // /model-sync (singular): discover models for CUSTOM provider routes — the
+    // /model-sync: discover models for CUSTOM provider routes — the
     // hand-declared llm-pi-ai profiles carrying a baseURL — straight from each
     // endpoint's model listing, merged additively back into settings.yaml.
-    // Agentless like /models-sync above: only the settings document is
-    // touched, never a conversation. The two commands are complements:
-    // /models-sync (plural) runs a dsh-model-sync catalog round and excludes
-    // custom providers; this one covers exactly those excluded routes.
+    // Agentless: only the settings document is touched, never a conversation.
     const modelSyncCustomHandler: LocalCommandHandler = async (rawInput, signal) => {
       const settings = ctx.get('settings')
       if (settings === undefined) {

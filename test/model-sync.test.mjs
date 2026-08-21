@@ -288,13 +288,13 @@ test('runModelSync rejects an unknown named provider without touching anything',
   assert.deepEqual(settings.mutations, [])
 })
 
-test('runModelSync points named catalog routes at /models-sync', async () => {
+test('runModelSync rejects named catalog routes as out of scope', async () => {
   const settings = makeSettings()
   settings.seed(NS, { providers: { openai: { apiKeyEnv: 'OPENAI_API_KEY' } } })
   const llm = makeLlm({})
   const result = await runModelSync({ settings, llm }, { rawInput: 'openai' })
   assert.equal(result.kind, 'error')
-  assert.match(result.text, /\/models-sync/)
+  assert.match(result.text, /built-in catalog route/)
   assert.deepEqual(llm.calls, [])
   assert.deepEqual(settings.mutations, [])
 })
@@ -370,7 +370,7 @@ test('mergeModels appends new ids at the end without reordering stored entries',
 
 test('runModelSync names catalog routes accurately even when they carry a baseURL', async () => {
   // A catalog key with a hand-set baseURL: claiming "has no baseURL" would be
-  // false — the message must point at /models-sync instead.
+  // false — the message must identify it as a built-in catalog route.
   const spoofed = makeSettings()
   spoofed.seed(NS, { providers: { openai: { baseURL: 'https://spoofed.example/v1' } } })
   const spoofedLlm = makeLlm({})
