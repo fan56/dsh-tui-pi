@@ -12,8 +12,8 @@ importers:
         specifier: 0.5.1
         version: 0.5.1
       '@aiwayds/dsh-subagent-registry':
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: 0.3.0
+        version: 0.3.0
       '@earendil-works/pi-tui':
         specifier: 0.84.2
         version: 0.84.2
@@ -69,8 +69,8 @@ packages:
       '@deepseek-ai/schemastery':
         optional: true
 
-  '@aiwayds/dsh-subagent-registry@0.2.0':
-    resolution: {integrity: sha512-LzfAEBjiNHllbWiiEa0BnGsLlTG9/ZPQyS6AoBZXryS1kSRayf7OUN4eSDdugED4ojunloiKTcBPNkWjJHCZDA==}
+  '@aiwayds/dsh-subagent-registry@0.3.0':
+    resolution: {integrity: sha512-Umfk0U8rjjCWiGAyOiW0kXEefaexNEwexz+KiBSLMrJw9h59AeAOfv7w900PzxV+QlxPMP95rLuPTTZ2L9DJ7Q==}
     engines: {node: '>=22.19.0'}
     peerDependencies:
       '@deepseek-ai/dsh-agent': 0.1.0-rc.8
@@ -118,7 +118,7 @@ snapshots:
 
   '@aiwayds/dsh-dcp@0.5.1': {}
 
-  '@aiwayds/dsh-subagent-registry@0.2.0': {}
+  '@aiwayds/dsh-subagent-registry@0.3.0': {}
 
   '@earendil-works/pi-tui@0.84.2':
     dependencies:

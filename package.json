@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@aiwayds/dsh-dcp": "0.5.1",
-    "@aiwayds/dsh-subagent-registry": "0.2.0",
+    "@aiwayds/dsh-subagent-registry": "0.3.0",
     "@earendil-works/pi-tui": "0.84.2"
   },
   "devDependencies": {
