@@ -40,6 +40,7 @@ import { applyIconSet, resolveIconSet, stopIcon, type IconSet } from './icons.ts
 import { detectNerdFontAvailable } from './font-detect.ts'
 import { openAgentManager } from './agents.ts'
 import { openSettingsBrowser } from './settings.ts'
+import { openSkillsManagerPanel } from './skills-manager.ts'
 import { openLoginFlow, openLogoutFlow } from './login.ts'
 import { reloadPlugin } from './reload.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
@@ -818,7 +819,6 @@ export function apply(ctx: Context): void {
         tui: ui.tui,
         theme: ui.theme,
         restoreFocus: () => ui.tui.setFocus(ui.editor),
-        agent: bridge.getAgent(),
         onError: message => {
           // Buffered notice: the settings browser outlives the write, so the
           // line must survive a theme hot-swap (the doc.clear() rebuild).
@@ -839,6 +839,20 @@ export function apply(ctx: Context): void {
       description: 'Browse and edit configuration (namespaces, values, resets)',
       handler: invocation => settingsHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /settings')
+
+    // /skills-manager: standalone skill browser with Installed/Available dual
+    // mode. Enter/Space toggles or symlinks; Tab switches views; Esc exits.
+    const skillsManagerHandler: LocalCommandHandler = async () => {
+      const agent = bridge.getAgent()
+      openSkillsManagerPanel(ctx, ui.tui, ui.theme, () => ui.tui.setFocus(ui.editor), agent ?? undefined, () => {})
+      return { kind: 'success' as const, text: 'Skills manager opened.' }
+    }
+    commands.registerLocal('skills-manager', skillsManagerHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'skills-manager',
+      description: 'Manage user skills (installed and available)',
+      handler: invocation => skillsManagerHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /skills-manager')
 
     // /theme: pick a color scheme and apply it immediately — the choice is
     // persisted to the dsh-tui settings namespace (`applies: 'live'`, so the
@@ -1137,7 +1151,7 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'skill', 'login', 'logout'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'skill', 'login', 'logout', 'skills-manager'])
 
     /**
      * Dispatch one user skill invocation (function 1). The skill is validated

@@ -76,23 +76,6 @@ import {
   unconfiguredCatalogEntries,
   type ProviderCatalogEntry,
 } from './provider-catalog.ts'
-import {
-  applySkillFrontmatter,
-  clampScrollOffset,
-  clampSkillCursor,
-  filterSkillRows,
-  isPrintableInput,
-  readSkillToggle,
-  skillDisableUpdates,
-  skillEnableUpdates,
-  skillEnabled,
-  skillJumpCursor,
-  skillPanelRowLine,
-  skillToggleEnabled,
-  type SkillJump,
-  type SkillPanelRow,
-} from './skills.ts'
-import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 
 /**
  * Structural face of the credential seam (`ctx.credentials`) the add-provider
@@ -131,7 +114,6 @@ export const CATEGORY_MAP: readonly SettingsCategory[] = [
   { id: 'models', label: 'Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
   { id: 'plugins', label: 'Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
   { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
-  { id: 'skills', label: 'Skills', namespaces: [] },
 ]
 
 /** Cap for a category row's member-name description line. */
@@ -145,10 +127,7 @@ const NS_AGENT_DEFAULT_MODEL = settingsNamespace('agent-default-model')
 /**
  * Group a describe() namespace list into ordered categories — general, models,
  * plugins, agent, then `other` for everything unmapped. Categories with no
- * members are dropped, including `other` when nothing falls into it. The
- * Skills category is the exception: it is not namespace-driven (it lists the
- * `ctx.skills` registry's user skills, see the Skills category view) and
- * always appears.
+ * members are dropped, including `other` when nothing falls into it.
  *
  * Defensive: duplicate namespaces in the input count once (a namespace
  * registered twice must not be listed twice), and the `mapped` guard resolves
@@ -160,11 +139,6 @@ export function categorizeNamespaces(nses: string[]): SettingsCategory[] {
   const mapped = new Set<string>()
   const input = new Set(nses)
   for (const def of CATEGORY_MAP) {
-    if (def.id === 'skills') {
-      // Namespace-independent: the user-skill browser always shows.
-      categories.push({ id: def.id, label: def.label, namespaces: [] })
-      continue
-    }
     const members = [...new Set(def.namespaces)].filter(ns => input.has(ns) && !mapped.has(ns))
     if (members.length === 0) continue
     for (const ns of members) mapped.add(ns)
@@ -571,251 +545,7 @@ class ModelsCategoryView implements Component {
   }
 }
 
-/**
- * Self-drawn Skills panel for the `/settings` Skills category, aligned to the
- * FW panel style (accent BOLD title + footer with scroll info; colors through
- * panelThemeFns). Drawn directly (no pi-tui SettingsList) so a row shows its
- * toggle state exactly once, in front — SettingsList forces the currentValue
- * into a right-hand value column too, which duplicated the state
- * (`true  [s] x     true`). Navigation is up/down plus PgUp/PgDn paging
- * and Home/End jump; Enter/Space toggles (the same keys SettingsList accepts),
- * Esc exits; the selected row's description is shown under the list. Every
- * rendered row is clipped to the panel width so narrow terminals truncate
- * instead of overflowing. The browser swaps rows in asynchronously (loading /
- * empty / no-service states come through setStatus).
- */
-class SkillsPanel implements Component {
-  private readonly tui: TUI
-  private readonly theme: TuiTheme
-  private readonly onToggle: (name: string, enable: boolean) => void
-  private readonly onExit: () => void
-  private rows: SkillPanelRow[] = []
-  private cursor = 0
-  private scrollOffset = 0
-  /** One-line notice shown in place of the list (loading / empty / no service). */
-  private status: string | undefined
-  /** Filter query accumulated from printable keystrokes; Backspace/Delete erases. */
-  private filterQuery = ''
 
-  /** The overlay renders at `maxHeight` of terminal rows; FramedOverlay adds
-   *  4 chrome rows (top border + spacer + bottom spacer + border); the child
-   *  adds 8 rows around the skill list (title + top rule + header + mid rule
-   *  above, bottom rule + description + spacer + footer below). */
-  private static readonly FRAME_OVERHEAD = 4
-  private static readonly TAIL_ROWS = 8
-
-  constructor(
-    tui: TUI,
-    theme: TuiTheme,
-    onToggle: (name: string, enable: boolean) => void,
-    onExit: () => void,
-  ) {
-    this.tui = tui
-    this.theme = theme
-    this.onToggle = onToggle
-    this.onExit = onExit
-  }
-
-  invalidate(): void {
-    this.tui.requestRender()
-  }
-
-  /** Replace the whole list (keeps the cursor clamped to the filtered length). */
-  setRows(rows: readonly SkillPanelRow[]): void {
-    this.rows = [...rows]
-    this.status = undefined
-    this.cursor = clampSkillCursor(this.cursor, this.getFilteredRows().length)
-    this.scrollToCursor()
-    this.tui.requestRender()
-  }
-
-  /** Show a one-line notice in place of the list. */
-  setStatus(text: string | undefined): void {
-    this.status = text
-    this.rows = []
-    this.cursor = 0
-    this.scrollOffset = 0
-    this.tui.requestRender()
-  }
-
-  render(width: number): string[] {
-    const fns = panelThemeFns(this.theme)
-    const wrap = Math.max(2, width - 2)
-    const lines: string[] = [
-      fns.accent(BOLD + clipToWidth('⚙ Skills', wrap) + RESET),
-    ]
-    if (this.rows.length === 0) {
-      lines.push(fns.muted(clipToWidth(this.status ?? '', wrap)))
-      return lines
-    }
-
-    const filtered = this.getFilteredRows()
-    if (filtered.length === 0) {
-      lines.push(fns.muted(clipToWidth(`No matches for '${this.filterQuery}'`, wrap)))
-      lines.push('')
-      lines.push(fns.subtle(clipToWidth(this.footer + this.scrollText(filtered), wrap)))
-      return lines
-    }
-
-    // Calculate how many skill rows fit. The overlay is capped at 80% of
-    // terminal rows (SettingsBrowser's maxHeight); FramedOverlay adds 4 chrome
-    // rows; the child adds TAIL_ROWS around the skill list (see the constant).
-    const maxVisibleRows = this.maxVisibleRows()
-
-    // Ensure the cursor is in the visible window.
-    this.scrollToCursor(maxVisibleRows, filtered.length)
-
-    const visibleRows = filtered.slice(this.scrollOffset, this.scrollOffset + maxVisibleRows)
-
-    // The FW table: ON icon column │ SKILL name (flex). No index column, no
-    // state text — ●/○ carries the toggle state, colored on unselected rows.
-    const columns: readonly TableColumn[] = [
-      { key: 'on', title: 'On', width: 2 },
-      { key: 'name', title: 'Skill', flex: true },
-    ]
-    const widths = columnWidths(wrap - MARKER_W, columns)
-    // The booktabs trio seals the table right under the title.
-    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
-    lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), wrap)))
-    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┼'), wrap)))
-    // Fixed-width prefix before the separator: marker(2) + icon(2) = 4.
-    const prefixCols = 2 + 2
-    for (let vi = 0; vi < visibleRows.length; vi++) {
-      const i = this.scrollOffset + vi
-      const row = filtered[i]
-      const selected = i === this.cursor
-      // One plain-text row (marker + on-icon + separator + padded name),
-      // clipped once to width, then colored per fixed-width segment — the
-      // prefix is fixed width so slicing the clipped line is column-exact.
-      const plain = clipToWidth(
-        skillPanelRowLine(selected, row.enabled, padCell(row.name, widths[1])),
-        width,
-      )
-      if (selected) {
-        lines.push(fns.accent(BOLD + plain + RESET))
-      } else {
-        lines.push(
-          fns[row.enabled ? 'success' : 'subtle'](plain.slice(0, prefixCols))
-          + fns.muted(plain.slice(prefixCols)),
-        )
-      }
-    }
-    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), wrap)))
-    const sel = filtered[this.cursor]
-    if (sel !== undefined && sel.description !== '') {
-      lines.push(fns.subtle(clipToWidth(`  ${sel.description}`, wrap)))
-    }
-    lines.push('')
-    lines.push(fns.subtle(clipToWidth(this.footer + this.scrollText(filtered), wrap)))
-    return lines
-  }
-
-  /** Skill rows that fit under the framed overlay on this terminal. */
-  private maxVisibleRows(): number {
-    return Math.max(1,
-      Math.floor(this.tui.terminal.rows * 0.8) - SkillsPanel.FRAME_OVERHEAD - SkillsPanel.TAIL_ROWS)
-  }
-
-  /** Scroll suffix ` (x/y)` — only when the list overflows the viewport. */
-  private scrollText(filtered: readonly SkillPanelRow[]): string {
-    return filtered.length > this.maxVisibleRows() ? ` (${this.cursor + 1}/${filtered.length})` : ''
-  }
-
-  handleInput(data: string): void {
-    const kb = getKeybindings()
-    if (kb.matches(data, 'tui.select.cancel')) {
-      // Esc with an active filter clears it first; a second Esc exits.
-      if (this.filterQuery !== '') {
-        this.filterQuery = ''
-        this.cursor = 0
-        this.scrollOffset = 0
-        this.tui.requestRender()
-        return
-      }
-      this.onExit()
-      return
-    }
-    if (kb.matches(data, 'tui.select.up')) {
-      this.move('up')
-      return
-    }
-    if (kb.matches(data, 'tui.select.down')) {
-      this.move('down')
-      return
-    }
-    if (kb.matches(data, 'tui.select.pageUp')) {
-      this.move('pageUp')
-      return
-    }
-    if (kb.matches(data, 'tui.select.pageDown')) {
-      this.move('pageDown')
-      return
-    }
-    // There is no tui.select.home/end binding, so match the raw keys with
-    // matchesKey (the same check the keybindings manager uses internally,
-    // including ctrl+home/end variants).
-    if (matchesKey(data, 'home')) {
-      this.move('home')
-      return
-    }
-    if (matchesKey(data, 'end')) {
-      this.move('end')
-      return
-    }
-    // Enter (tui.select.confirm) or Space — the same toggle keys SettingsList
-    // accepts (SettingsList treats a raw space as confirm when not searching).
-    if (kb.matches(data, 'tui.select.confirm') || data === ' ') {
-      const filtered = this.getFilteredRows()
-      const row = filtered[this.cursor]
-      if (row !== undefined) this.onToggle(row.name, !row.enabled)
-      return
-    }
-    // Backspace / Delete — erase the last character of the filter query.
-    if (data === '\x7f' || matchesKey(data, 'backspace')) {
-      if (this.filterQuery !== '') {
-        this.filterQuery = this.filterQuery.slice(0, -1)
-        this.cursor = 0
-        this.scrollOffset = 0
-        this.tui.requestRender()
-      }
-      return
-    }
-    // Printable characters accumulate into the filter query.
-    if (isPrintableInput(data)) {
-      this.filterQuery += data
-      this.cursor = 0
-      this.scrollOffset = 0
-      this.tui.requestRender()
-    }
-  }
-
-  /** Move the cursor by a jump kind, then scroll into view and repaint. */
-  private move(jump: SkillJump): void {
-    const filtered = this.getFilteredRows()
-    this.cursor = skillJumpCursor(this.cursor, filtered.length, jump)
-    this.tui.requestRender()
-  }
-
-  /** Adjust scrollOffset so the cursor is within `[offset, offset+visibleRows)`. */
-  private scrollToCursor(visibleRows?: number, length?: number): void {
-    const vr = visibleRows ?? this.maxVisibleRows()
-    const len = length ?? this.getFilteredRows().length
-    this.scrollOffset = clampScrollOffset(this.cursor, vr, len, this.scrollOffset)
-  }
-
-  /** The rows after applying the current filter query. */
-  private getFilteredRows(): SkillPanelRow[] {
-    return filterSkillRows(this.rows, this.filterQuery)
-  }
-
-  /** Footer hint changes when a filter is active. */
-  private get footer(): string {
-    if (this.filterQuery !== '') {
-      return `Filter: ${this.filterQuery} · Backspace clear · Esc clear filter`
-    }
-    return '↑↓ nav · PgUp/PgDn page · Home/End jump · Enter/Space toggle · Esc back'
-  }
-}
 
 /** Commit a provider (profile + key); resolves with an outcome or none. */
 export interface AddProviderOptions {
@@ -999,18 +729,7 @@ export interface OpenSettingsBrowserOptions {
   restoreFocus: () => void
   /** Error sink for writes that fail outside an inline editor (transcript). */
   onError: (message: string) => void
-  /**
-   * The live agent, when one exists — the scope/cwd seed for the skills
-   * browser (project-relative skills). Absent on a fresh TUI, the browser
-   * reads the global skill layer / current working directory.
-   */
-  agent?: SkillScopeAgent
-}
-
-/** The couplet the Skills browser needs off an agent: its session cwd. */
-export interface SkillScopeAgent {
-  session: { header: { cwd?: string } }
-}
+  }
 
 /**
  * Open the modal settings browser. Resolves when it closes with the number of
@@ -1030,7 +749,6 @@ class SettingsBrowser {
   private readonly settings: SettingsProvider
   private readonly restoreFocus: () => void
   private readonly onError: (message: string) => void
-  private readonly agent: SkillScopeAgent | undefined
 
   private descriptors: SettingsDescriptor[] = []
   /** Rehydrated schema roots, cached per namespace (schemas never change). */
@@ -1041,8 +759,6 @@ class SettingsBrowser {
   private nsList: SettingsListPanel | undefined
   private modelsView: ModelsCategoryView | undefined
   private modelsExit: (() => void) | undefined
-  private skillsView: SkillsPanel | undefined
-  private skillsExit: (() => void) | undefined
   /**
    * Credential refs just stored by the add flow (possibly several in one
    * browser session) — their rows read as key set via the merged env.
@@ -1066,7 +782,6 @@ class SettingsBrowser {
     this.settings = options.settings
     this.restoreFocus = options.restoreFocus
     this.onError = options.onError
-    this.agent = options.agent
     // Assigned here, not as a field initializer: a later field declaration
     // would `defineProperty(…, undefined)` over the promise's resolve.
     this.closed = new Promise<void>(resolve => { this.closeResolve = resolve })
@@ -1092,8 +807,6 @@ class SettingsBrowser {
     this.nsList = undefined
     this.modelsView = undefined
     this.modelsExit = undefined
-    this.skillsView = undefined
-    this.skillsExit = undefined
     this.justStoredRefs.clear()
     this.restoreFocus()
     this.closeResolve()
@@ -1140,9 +853,7 @@ class SettingsBrowser {
       description: this.categoryDescription(cat),
       submenu: cat.id === 'models'
         ? (_current, done) => this.openModelsSubmenu(done)
-        : cat.id === 'skills'
-          ? (_current, done) => this.openSkillsSubmenu(done)
-          : (_current, done) => {
+        : (_current, done) => {
               const list = this.namespaceList(
                 cat.label,
                 this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
@@ -1486,135 +1197,6 @@ class SettingsBrowser {
       // calling it again here would double-refresh (C8).
       onCancel: () => { exit() },
     })
-  }
-
-  /** Cap for a skill row's description line (columns; width-safe). */
-  private static readonly SKILL_DESC_MAX = 60
-
-  // ------------------------------------------------------------- skills category --
-
-  /**
-   * The Skills category is not namespace-driven: it lists the live
-   * `ctx.skills` registry's user skills, each with an enabled/disabled toggle
-   * that writes the skill's own SKILL.md frontmatter (`disable-model-
-   * invocation` / `user-invocable`). Listing is async (unlike the namespace
-   * walk), so the category opens with a "Loading…" notice and swaps in the
-   * rows when discovery settles. Degrades to a distinct notice when the skills
-   * service is absent.
-   */
-  private openSkillsSubmenu(done: () => void): SkillsPanel {
-    this.skillsExit = () => {
-      this.refreshCategoryList()
-      done()
-    }
-    const panel = new SkillsPanel(
-      this.tui,
-      this.theme,
-      (name, enable) => { void this.toggleSkill(name, enable) },
-      () => { this.skillsExit?.() },
-    )
-    this.skillsView = panel
-    panel.setStatus('Loading skills…')
-    this.refreshSkillsList()
-    return panel
-  }
-
-  /**
-   * Re-fetch the skill list onto the current panel. An optional `diskEnabled`
-   * map overrides the enabled flag for the named skills with on-disk truth
-   * (readSkillToggle) — the toggle path passes it so a stale in-memory summary
-   * or a failed write never leaves a lying row.
-   */
-  private refreshSkillsList(diskEnabled?: ReadonlyMap<string, boolean>): void {
-    const view = this.skillsView
-    if (view === undefined) return
-    const skills = this.ctx.get('skills')
-    if (skills === undefined) {
-      // Skills service absent — the category degrades to a distinct notice
-      // (vs. an empty list, which means "no user skills").
-      view.setStatus('Skills are not available in this environment.')
-      return
-    }
-    const cwd = this.agent?.session.header.cwd ?? process.cwd()
-    void skills
-      .list({ scope: this.agent, cwd })
-      .then(listed => {
-        // The category may have closed or re-opened while discovery ran.
-        if (this.skillsView !== view) return
-        if (listed.length === 0) {
-          view.setStatus('No user-invocable skills available.')
-        } else {
-          view.setRows(this.buildSkillRows(listed, diskEnabled))
-        }
-      })
-      .catch(() => {
-        if (this.skillsView !== view) return
-        view.setStatus('No user-invocable skills available.')
-      })
-  }
-
-  private buildSkillRows(
-    listed: readonly SkillSummary[],
-    diskEnabled?: ReadonlyMap<string, boolean>,
-  ): SkillPanelRow[] {
-    return listed.map(skill => ({
-      name: skill.name,
-      description: clipToWidth(skill.description, SettingsBrowser.SKILL_DESC_MAX),
-      // On-disk truth (readSkillToggle) wins over the in-memory summary when
-      // present, so the toggle reflects the file even before the watcher.
-      enabled: diskEnabled?.has(skill.name)
-        ? diskEnabled.get(skill.name)!
-        : skillEnabled(skill),
-    }))
-  }
-
-  /** The on-disk enabled flag for one skill, as a name→value disk-truth map. */
-  private diskToggleOverride(path: string, name: string): Map<string, boolean> | undefined {
-    const toggle = readSkillToggle(path)
-    if (toggle === undefined) return undefined
-    return new Map([[name, skillToggleEnabled(toggle)]])
-  }
-
-  /** Toggle one user skill by editing its SKILL.md frontmatter. */
-  private async toggleSkill(name: string, enable: boolean): Promise<void> {
-    const skills = this.ctx.get('skills')
-    if (skills === undefined) return
-    const cwd = this.agent?.session.header.cwd ?? process.cwd()
-    let path: string | undefined
-    try {
-      const skill = await skills.get(name, { scope: this.agent, cwd })
-      if (skill === undefined) {
-        this.onError(`Skill "${name}" is no longer available.`)
-        this.refreshSkillsList()
-        return
-      }
-      path = skill.path
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.onError(message)
-      this.refreshSkillsList()
-      return
-    }
-    if (path === undefined) {
-      // A non-local (runtime-registered) skill has no file to edit.
-      this.onError(`Skill "${name}" is not a local file and cannot be toggled.`)
-      this.refreshSkillsList()
-      return
-    }
-    const error = applySkillFrontmatter(path, enable ? skillEnableUpdates() : skillDisableUpdates())
-    // Read the file's actual toggle state as the row's disk truth: a failed
-    // write (or a watcher/summary lag) must not leave a lying on-screen value.
-    const diskOverride = this.diskToggleOverride(path, name)
-    if (error !== undefined) {
-      this.onError(error)
-      // Re-sync the row to the on-disk truth (the cycle already flipped the
-      // displayed value before the write was attempted).
-      this.refreshSkillsList(diskOverride)
-      return
-    }
-    // The skill-filesystem watcher rescans the file (no restart needed);
-    // refetch the list so the on-screen rows show the new state.
-    this.refreshSkillsList(diskOverride)
   }
 
   /** Value column of the Default model row: provider/model · think level. */
