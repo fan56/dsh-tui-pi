@@ -1,0 +1,59 @@
+# CI: typecheck + tests on every push to main and every pull request.
+#
+# The source imports `@deepseek-ai/*` packages (cordis, dsh-session, …) that
+# are NOT declared in package.json — they resolve through symlinks into a dsh
+# install's own node_modules (see scripts/link-dsh-closure.mjs). A clean CI
+# runner has no global dsh, so we install the dsh CLI from npm; `pnpm check`'s
+# precheck hook then re-runs the linker, which resolves the global closure
+# (nested or npm's flat layout) into node_modules/@deepseek-ai.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Check & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # No packageManager field in package.json; lockfileVersion 9.0.
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # engines: node >=22.19.0
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install dsh CLI (provides the @deepseek-ai/* closure)
+        # Pinned to an exact rc so CI typechecks against the same closure as
+        # dev machines. To upgrade: bump the pin here (and in release.yml) to
+        # the version installed locally (`npm ls -g @deepseek-ai/dsh`), then
+        # confirm `pnpm check` still passes.
+        run: npm install -g @deepseek-ai/dsh@0.1.0-rc.8 --no-audit --no-fund
+
+      - name: Check (tsc --noEmit)
+        run: pnpm check
+
+      - name: Test (pretest builds lib/, then node --test)
+        run: pnpm test

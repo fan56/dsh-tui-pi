@@ -1,0 +1,112 @@
+# Release: publish to npm + create the GitHub Release when a v* tag is pushed.
+#
+# The package is published (@aiwayds/dsh-tui-pi, scoped, no "private" field),
+# so this workflow runs check+test as a gate, builds lib/, verifies the tag
+# matches package.json, publishes with npm provenance (OIDC), then opens a
+# GitHub Release whose body is the annotated tag message. Two jobs: if the
+# GitHub Release step fails after a successful publish, re-run the `release`
+# job alone — the npm publish is never repeated.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Check, Test & Publish
+    # Only the upstream repo publishes; forks skip this job (and the release
+    # job below is skipped with it via needs).
+    if: github.repository == 'fan56/dsh-tui-pi'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # npm provenance (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # No packageManager field in package.json; lockfileVersion 9.0.
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # engines: node >=22.19.0
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install dsh CLI (provides the @deepseek-ai/* closure)
+        # Pinned to an exact rc so CI typechecks against the same closure as
+        # dev machines. To upgrade: bump the pin here (and in ci.yml) to the
+        # version installed locally (`npm ls -g @deepseek-ai/dsh`), then
+        # confirm `pnpm check` still passes.
+        run: npm install -g @deepseek-ai/dsh@0.1.0-rc.8 --no-audit --no-fund
+
+      # Gate: never publish from a tree that does not typecheck or pass tests.
+      # `pnpm check`'s precheck hook re-runs scripts/link-dsh-closure.mjs,
+      # which resolves the global dsh closure (nested or npm's flat layout) —
+      # no manual symlink step needed.
+      - name: Check & Test (pretest builds lib/)
+        run: pnpm check && pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "package.json ${PKG_VERSION} vs tag ${GITHUB_REF_NAME} -> ${TAG_VERSION}"
+          if [ "${PKG_VERSION}" != "${TAG_VERSION}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${PKG_VERSION} — refusing to publish"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full fetch so the annotated tag object is available for the
+          # tag-message extraction step below.
+          fetch-depth: 0
+
+      - name: Read tag message
+        id: tag_message
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          {
+            echo 'BODY<<EOF_TAG_MESSAGE'
+            # Annotated tag → its message; lightweight tag → falls back to the
+            # commit message. %(contents:subject) + blank line + %(contents:body).
+            git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$TAG"
+            echo 'EOF_TAG_MESSAGE'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.tag_message.outputs.BODY }}

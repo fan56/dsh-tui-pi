@@ -52,11 +52,17 @@ function findDshClosure() {
       if (existsSync(join(closure, 'cordis'))) return closure
     }
   } catch { /* dsh not on PATH */ }
-  // 2) Fall back to the global node_modules root.
+  // 2) Fall back to the global node_modules root — the dsh package's own
+  //    nested closure (what current npm produces for a global install).
   try {
     const root = execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim()
-    const closure = join(root, '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai')
-    if (existsSync(join(closure, 'cordis'))) return closure
+    const nested = join(root, '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai')
+    if (existsSync(join(nested, 'cordis'))) return nested
+    // 3) Last resort: npm's flat global layout, where dsh's @deepseek-ai/*
+    //    deps are hoisted straight into <npm root -g>/@deepseek-ai next to
+    //    the dsh package itself.
+    const flat = join(root, '@deepseek-ai')
+    if (existsSync(join(flat, 'cordis'))) return flat
   } catch { /* npm unavailable */ }
   return undefined
 }
