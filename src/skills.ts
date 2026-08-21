@@ -54,24 +54,18 @@ export function skillToggleEnabled(toggle: { disable: boolean; invoke: boolean }
   return !toggle.disable && toggle.invoke
 }
 
-const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-
 /**
  * Parse a `/skill`-shaped line into its requested action.
- * @returns `{ kind: 'invoke', name }` for `/skill:<name>`; `{ kind: 'picker' }`
- *   for a bare `/skill`; `undefined` for anything else (not a skill command).
+ * Only a bare `/skill` is recognized (opens the picker).
+ * The `/skill:<name>` colon form is no longer supported.
+ * @returns `{ kind: 'picker' }` for a bare `/skill`; `undefined` for anything
+ *   else (not a skill command).
  */
 export function parseSkillCommand(
   line: string,
-): { kind: 'invoke'; name: string } | { kind: 'picker' } | undefined {
-  const m = /^\/skill(?::(\S+))?\s*$/.exec(line.trim())
-  if (m === null) return undefined
-  const name = m[1]
-  if (name === undefined || name === '') return { kind: 'picker' }
-  // The public skill-name grammar is kebab-case; anything else (a space, a
-  // second colon, an underscore) is malformed for a direct invocation.
-  if (!SKILL_NAME_RE.test(name)) return undefined
-  return { kind: 'invoke', name }
+): { kind: 'picker' } | undefined {
+  if (/^\/skill\s*$/.test(line.trim())) return { kind: 'picker' }
+  return undefined
 }
 
 /**
@@ -87,13 +81,13 @@ export function skillGesture(name: string): string {
  * Extract the skill-completion query from a leading slash token, or `undefined`
  * when this token is not a skill completion. The token may carry the leading
  * `/` the cursor reads off the editor (the canonical shape from tokenAtCursor),
- * so it is stripped before matching. The bare `skill` prefix yields an empty
- * query (all user skills), `skill:<prefix>` filters by the text after the colon.
+ * so it is stripped before matching. Only the bare `skill` prefix yields an
+ * empty query (all user skills); the `/skill:<name>` colon form is no longer
+ * recognized.
  */
 export function skillCompletionQuery(token: string): string | undefined {
   const lower = token.toLowerCase().replace(/^\//, '')
   if (lower === 'skill') return ''
-  if (lower.startsWith('skill:')) return lower.slice('skill:'.length)
   return undefined
 }
 
@@ -304,14 +298,6 @@ export function isSkillCompletionItem(item: AutocompleteItem): boolean {
 }
 
 /**
- * The explicit `/skill:<name>` row completes a whole invocation — it must not
- * gain the trailing-space separator a command/native skill gets.
- */
-export function isExplicitSkillItem(item: AutocompleteItem): boolean {
-  return itemKind(item) === 'explicit-skill'
-}
-
-/**
  * The native display name used for prefix filtering and mixed-list sorting:
  * the value after the leading `/`, with a `/skill:` form reduced to the name
  * after the colon so an explicit row sorts under its real skill name rather
@@ -344,31 +330,6 @@ export function mergeMixedSkillItems(
     item => query === '' || completionName(item).toLowerCase().startsWith(query),
   )
   return sortCompletionItems(filtered)
-}
-
-/**
- * Autocomplete items for the explicit `/skill:<name>` form: `value`/`label`
- * are the full invocation (no argument), `description` is the skill's own
- * routing line. Carries `kind: 'explicit-skill'` so applyCompletion omits the
- * trailing-space separator (a completed `/skill:<name>` is a complete call —
- * Enter submits it). Filtered by the prefix after `skill:`.
- */
-export function buildSkillCompletionCandidates(
-  skills: readonly Pick<SkillSummary, 'name' | 'description' | 'invocation'>[],
-  afterColon: string,
-): AutocompleteItem[] {
-  const q = afterColon.toLowerCase()
-  return skills
-    .filter(skill => isUserSkill(skill) && (q === '' || skill.name.toLowerCase().startsWith(q)))
-    .map(skill => {
-      const value = `/skill:${skill.name}`
-      return {
-        value,
-        label: styledCompletionLabel('explicit-skill', value),
-        description: styledDescription(skill.description),
-        kind: 'explicit-skill' as const,
-      }
-    })
 }
 
 /**

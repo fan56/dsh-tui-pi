@@ -1197,27 +1197,16 @@ export function apply(ctx: Context): void {
     }
 
     /**
-     * Handle one `/skill`-shaped command line: `/skill:<name>` invokes the
-     * named skill; a bare `/skill` opens the picker and invokes the selection.
-     * A skill-shaped line that fails `parseSkillCommand` (arguments, a bad
-     * name, or a case mismatch) is surfaced as a usage notice instead of
-     * vanishing — the submit() interception already committed this line as a
-     * skill, so it is never silently swallowed or forwarded to the model.
+     * Handle a bare `/skill` command: open the picker and invoke the selection.
+     * The `/skill:<name>` colon form is no longer supported.
      */
-    const runSkillCommand = async (echoLine: string, _signal: AbortSignal): Promise<void> => {
-      const parsed = parseSkillCommand(echoLine)
-      if (parsed === undefined) {
-        renderer.renderNotice('usage: /skill[:<name>]', 'error')
-        return
-      }
-      if (parsed.kind === 'invoke') {
-        await invokeSkill(parsed.name, echoLine)
-        return
-      }
+    const runSkillCommand = async (_echoLine: string, _signal: AbortSignal): Promise<void> => {
+      const parsed = parseSkillCommand('/skill')
+      if (parsed === undefined) return
       const agent = bridge.getAgent()
       const picked = await pickSkill(ctx, ui.tui, ui.theme, agent, () => ui.tui.setFocus(ui.editor))
       if (picked === undefined) return
-      await invokeSkill(picked, `/skill:${picked}`)
+      await invokeSkill(picked, `/skill`)
     }
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
@@ -1231,12 +1220,12 @@ export function apply(ctx: Context): void {
       const signal = name !== undefined && MODAL_COMMANDS.has(name)
         ? new AbortController().signal
         : AbortSignal.timeout(30_000)
-      // Function 1: /skill:<name> and bare /skill both dispatch a user skill.
+      // Function 1: bare /skill opens the skill picker.
       // This must run before the generic command dispatch — `/skill:foo` is
       // not a valid command name for parseCommand, so the generic path would
       // otherwise fall through to the model untouched. The translation to the
       // harness's `/name ` gesture lives in runSkillCommand/invokeSkill.
-      if (name === 'skill' || name?.startsWith('skill:')) {
+      if (name === 'skill') {
         await runSkillCommand(line, signal)
         return
       }

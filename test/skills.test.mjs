@@ -15,14 +15,12 @@ import {
   applySkillFrontmatter,
   badgeText,
   buildNativeSkillCandidates,
-  buildSkillCompletionCandidates,
   clampScrollOffset,
   clampSkillCursor,
   completionLabel,
   completionName,
   filterSkillRows,
   itemKind,
-  isExplicitSkillItem,
   isPrintableInput,
   isSkillCompletionItem,
   isUserSkill,
@@ -50,12 +48,6 @@ const disabled = { invocation: { modelInvocable: false, userInvocable: false } }
 
 // ------------------------------------------------------------- parsing / labels --
 
-test('parseSkillCommand parses /skill:<name> into an invoke', () => {
-  assert.deepEqual(parseSkillCommand('/skill:data-analysis'), { kind: 'invoke', name: 'data-analysis' })
-  assert.deepEqual(parseSkillCommand('/skill:data-analysis '), { kind: 'invoke', name: 'data-analysis' })
-  assert.deepEqual(parseSkillCommand('  /skill:lark-base  '), { kind: 'invoke', name: 'lark-base' })
-})
-
 test('parseSkillCommand maps a bare /skill to picker', () => {
   assert.deepEqual(parseSkillCommand('/skill'), { kind: 'picker' })
   assert.deepEqual(parseSkillCommand('/skill '), { kind: 'picker' })
@@ -64,14 +56,10 @@ test('parseSkillCommand maps a bare /skill to picker', () => {
 test('parseSkillCommand rejects non-skill and malformed names', () => {
   assert.equal(parseSkillCommand('/model'), undefined)
   assert.equal(parseSkillCommand('hello world'), undefined)
-  // A trailing colon with no name is malformed, not a picker.
+  // The colon form is no longer supported — all return undefined.
+  assert.equal(parseSkillCommand('/skill:data-analysis'), undefined)
+  assert.equal(parseSkillCommand('/skill:lark-base'), undefined)
   assert.equal(parseSkillCommand('/skill:'), undefined)
-  // Uppercase, underscore and multi-segment names are outside the public
-  // kebab skill-name grammar → a malformed direct invocation.
-  assert.equal(parseSkillCommand('/skill:DataAnalysis'), undefined)
-  assert.equal(parseSkillCommand('/skill:data_analysis'), undefined)
-  assert.equal(parseSkillCommand('/skill:data/analysis'), undefined)
-  assert.equal(parseSkillCommand('/skill:a b'), undefined)
 })
 
 test('skillGesture builds the harness-native /name gesture line', () => {
@@ -87,33 +75,26 @@ test('skillGesture builds the harness-native /name gesture line', () => {
 test('parseSkillCommand rejects skill-shaped lines with arguments', () => {
   assert.equal(parseSkillCommand('/skill some-args'), undefined)
   assert.equal(parseSkillCommand('/skill --list'), undefined)
-  assert.equal(parseSkillCommand('/skill:foo bar'), undefined)
   assert.equal(parseSkillCommand('/skill list'), undefined)
 })
 
 test('parseSkillCommand rejects case-mismatched skill commands', () => {
-  // The submit() interception lowercases the first token, so /SKILL and
-  // /Skill:foo both reach the skill path; the case-sensitive grammar must not
-  // accept them as invocations (they need an explicit usage notice instead).
+  // The submit() interception lowercases the first token, so /SKILL reaches
+  // the skill path; the case-sensitive grammar must not accept it as an
+  // invocation (it needs an explicit usage notice instead).
   assert.equal(parseSkillCommand('/SKILL'), undefined)
-  assert.equal(parseSkillCommand('/SKILL:foo'), undefined)
-  assert.equal(parseSkillCommand('/Skill:foo'), undefined)
 })
 
 test('skillCompletionQuery identifies skill completion tokens', () => {
   assert.equal(skillCompletionQuery('skill'), '')
-  assert.equal(skillCompletionQuery('skill:da'), 'da')
-  assert.equal(skillCompletionQuery('SKILL:data'), 'data')
   assert.equal(skillCompletionQuery('model'), undefined)
   assert.equal(skillCompletionQuery('data'), undefined)
 })
 
 // Regression: tokenAtCursor hands the provider a token with its leading `/`
-// (the canonical `/skill:da` shape), which must not defeat the match.
+// (the canonical `/skill` shape), which must not defeat the match.
 test('skillCompletionQuery accepts the leading-slash token from tokenAtCursor', () => {
   assert.equal(skillCompletionQuery('/skill'), '')
-  assert.equal(skillCompletionQuery('/skill:da'), 'da')
-  assert.equal(skillCompletionQuery('/SKILL:data'), 'data')
   assert.equal(skillCompletionQuery('/model'), undefined)
   assert.equal(skillCompletionQuery('/data'), undefined)
 })
@@ -152,15 +133,15 @@ test('completionLabel prefixes an aligned badge to the candidate value', () => {
 })
 
 test('styledCompletionLabel wraps the WHOLE skill label italic, commands plain', () => {
-  const styled = styledCompletionLabel('explicit-skill', '/skill:data-analysis')
+  const styled = styledCompletionLabel('native-skill', '/data-analysis')
   // The whole label (badge + value) is one italic span — not just the badge.
-  assert.equal(styled, '\x1b[3m[s] /skill:data-analysis\x1b[23m')
+  assert.equal(styled, '\x1b[3m[s] /data-analysis\x1b[23m')
   // Commands keep the plain completionLabel exactly (no ANSI injected).
   assert.equal(styledCompletionLabel('command', '/model'), completionLabel('command', '/model'))
   assert.equal(styledCompletionLabel('command', '/model'), '[c] /model')
   // The italic escapes are zero-width, so the styled label aligns and
   // truncates exactly like the plain one (visibleWidth strips SGR).
-  assert.equal(visibleWidth(styled), visibleWidth(completionLabel('explicit-skill', '/skill:data-analysis')))
+  assert.equal(visibleWidth(styled), visibleWidth(completionLabel('native-skill', '/data-analysis')))
 })
 
 test('styledDescription wraps skill descriptions italic, empty stays empty', () => {
@@ -183,8 +164,8 @@ test('styled skill rows survive SelectList truncation without leaking italic', (
   // over a width range that both fits and truncates the long skill row).
   const items = [
     {
-      value: '/skill:connectedsafety-dify-knowledge',
-      label: styledCompletionLabel('explicit-skill', '/skill:connectedsafety-dify-knowledge'),
+      value: '/connectedsafety-dify-knowledge',
+      label: styledCompletionLabel('native-skill', '/connectedsafety-dify-knowledge'),
       description: styledDescription('a description long enough to be truncated'),
     },
     { value: '/model', label: completionLabel('command', '/model'), description: 'select model' },
@@ -228,8 +209,8 @@ test('selected skill row keeps its backdrop through the inline italic descriptio
   // the whole selected row renders in one themed span.
   const items = [
     {
-      value: '/skill:lark-base',
-      label: styledCompletionLabel('explicit-skill', '/skill:lark-base'),
+      value: '/lark-base',
+      label: styledCompletionLabel('native-skill', '/lark-base'),
       description: styledDescription('lark base'),
     },
     { value: '/model', label: completionLabel('command', '/model'), description: 'select model' },
@@ -356,38 +337,6 @@ test('skillJumpCursor moves by one, a page, or jumps to an end', () => {
 })
 
 
-test('buildSkillCompletionCandidates filters by user-invocable and prefix', () => {
-  const skills = [
-    { name: 'data-analysis', description: 'analyze data', ...enabled },
-    { name: 'lark-base', description: 'lark base', ...enabled },
-    { name: 'data-viz', description: 'plot', ...modelOnly }, // not user-invocable
-    { name: 'data-eda', description: 'eda', ...disabled }, // fully hidden
-  ]
-  const all = buildSkillCompletionCandidates(skills, '')
-  assert.deepEqual(
-    all.map(s => s.value),
-    ['/skill:data-analysis', '/skill:lark-base'],
-  )
-  const prefix = buildSkillCompletionCandidates(skills, 'data')
-  assert.deepEqual(
-    prefix.map(s => s.value),
-    ['/skill:data-analysis'],
-  )
-})
-
-test('buildSkillCompletionCandidates emits carry the explicit-skill kind + styled row', () => {
-  const items = buildSkillCompletionCandidates([{ name: 'lark-base', description: 'lark base', ...enabled }], '')
-  assert.equal(items.length, 1)
-  assert.equal(items[0].value, '/skill:lark-base')
-  // The dropdown styles the whole skill row italic: label AND description
-  // (see styledCompletionLabel / styledDescription).
-  assert.equal(items[0].label, '\x1b[3m[s] /skill:lark-base\x1b[23m')
-  assert.equal(items[0].description, '\x1b[3mlark base\x1b[23m')
-  assert.equal(itemKind(items[0]), 'explicit-skill')
-  assert.equal(isSkillCompletionItem(items[0]), true)
-  assert.equal(isExplicitSkillItem(items[0]), true)
-})
-
 test('buildNativeSkillCandidates lists user skills under their own /name', () => {
   const skills = [
     { name: 'data-analysis', description: 'analyze data', ...enabled },
@@ -402,24 +351,19 @@ test('buildNativeSkillCandidates lists user skills under their own /name', () =>
   // Native skills complete like commands (trailing space), so they are NOT
   // the explicit form — distinguishability drives applyCompletion.
   assert.equal(isSkillCompletionItem(items[0]), true)
-  assert.equal(isExplicitSkillItem(items[0]), false)
 })
 
-test('isSkillCompletionItem / isExplicitSkillItem classify rows by kind', () => {
+test('isSkillCompletionItem classify rows by kind', () => {
   const debug = (kind) => ({ value: '/x', label: '/x', kind })
   assert.equal(isSkillCompletionItem(debug('explicit-skill')), true)
   assert.equal(isSkillCompletionItem(debug('native-skill')), true)
   assert.equal(isSkillCompletionItem(debug('command')), false)
   assert.equal(isSkillCompletionItem({ value: '/model', label: '/model' }), false) // unmarked = command
-  assert.equal(isExplicitSkillItem(debug('explicit-skill')), true)
-  assert.equal(isExplicitSkillItem(debug('native-skill')), false)
-  assert.equal(isExplicitSkillItem(debug('command')), false)
 })
 
-test('completionName strips the slash and the /skill: prefix for sorting', () => {
+test('completionName strips the slash for sorting', () => {
   assert.equal(completionName({ value: '/model', label: '/model' }), 'model')
   assert.equal(completionName({ value: '/data-analysis', label: '/data-analysis' }), 'data-analysis')
-  assert.equal(completionName({ value: '/skill:data-analysis', label: '/skill:data-analysis' }), 'data-analysis')
 })
 
 test('sortCompletionItems orders the mixed list by native name', () => {
@@ -427,15 +371,11 @@ test('sortCompletionItems orders the mixed list by native name', () => {
     { value: '/model', label: '/model', kind: 'command' },
     { value: '/data-analysis', label: '[s] /data-analysis', kind: 'native-skill' },
     { value: '/agents', label: '/agents', kind: 'command' },
-    // The explicit /skill: form sorts under its real name (data-viz), not in
-    // the `s` bucket — that is what keeps the mixed list from grouping skills.
-    { value: '/skill:data-viz', label: '[s] /skill:data-viz', kind: 'explicit-skill' },
   ]
   const sorted = sortCompletionItems(mixed)
-  // Ordering by completionName: agents < data-analysis < data-viz < model.
-  assert.deepEqual(sorted.map(s => completionName(s)), ['agents', 'data-analysis', 'data-viz', 'model'])
-  // The values themselves keep their kinds (explicit rows stay /skill:<name>).
-  assert.deepEqual(sorted.map(s => s.value), ['/agents', '/data-analysis', '/skill:data-viz', '/model'])
+  // Ordering by completionName: agents < data-analysis < model.
+  assert.deepEqual(sorted.map(s => completionName(s)), ['agents', 'data-analysis', 'model'])
+  assert.deepEqual(sorted.map(s => s.value), ['/agents', '/data-analysis', '/model'])
 })
 
 test('sortCompletionItems is stable and does not mutate the input', () => {
@@ -542,18 +482,6 @@ test('skillToggleEnabled maps a disk toggle read onto enabled', () => {
   assert.equal(skillToggleEnabled({ disable: true, invoke: true }), false)
   assert.equal(skillToggleEnabled({ disable: false, invoke: false }), false)
   assert.equal(skillToggleEnabled({ disable: true, invoke: false }), false)
-})
-
-test('trailing-space decision: only the explicit /skill:<name> omits the space', () => {
-  const explicit = { value: '/skill:data-analysis', label: '[s] /skill:data-analysis', kind: 'explicit-skill' }
-  const native = { value: '/data-analysis', label: '[s] /data-analysis', kind: 'native-skill' }
-  const command = { value: '/model', label: '/model', kind: 'command' }
-  const unmarked = { value: '/model', label: '/model' }
-  // applyCompletion appends a trailing space unless the row is explicit.
-  assert.equal(isExplicitSkillItem(explicit), true)
-  for (const item of [native, command, unmarked]) {
-    assert.equal(isExplicitSkillItem(item), false)
-  }
 })
 
 // ------------------------------------------------------------- frontmatter keys --
