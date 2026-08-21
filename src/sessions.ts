@@ -1,9 +1,10 @@
 /**
  * Session TUI overlays: the `/session` info panel and the `/resume`
  * persisted-session picker — terminal counterparts of the web surface's
- * session management. The picker is the FW table (TablePanel in a framed
- * overlay + `restoreFocus` on close); the info panel is a one-shot
- * read-only component in the style of settings' ReadOnlyViewer.
+ * session management. Both speak the shared FW table language (panels.ts):
+ * the picker is a TablePanel and the info panel a read-only auto table
+ * (autoColumns + booktabs rules), each in a framed overlay with
+ * `restoreFocus` on close.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -11,8 +12,19 @@ import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-se
 import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
 import { basename } from 'node:path'
 import { wrapFramedOverlay } from './frame.ts'
-import { autoColumns, TablePanel, type TableColumn } from './panels.ts'
-import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
+import {
+  autoColumns,
+  columnWidths,
+  MARKER_W,
+  padCell,
+  panelThemeFns,
+  TablePanel,
+  tableHeaderLine,
+  tableRuleLine,
+  TABLE_SEP,
+  type TableColumn,
+} from './panels.ts'
+import { BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 
 // ------------------------------------------------------------- `/session` panel --
@@ -36,11 +48,43 @@ export interface SessionPanelData {
   parentSession: string | undefined
 }
 
-/** Label column width for the key-value rows (longest: "cache read/write"). */
-const LABEL_WIDTH = 12
+/** Fit cap for the FIELD column (the longest label is "cache read/write"). */
+const FIELD_CAP = 12
 
-/** One-shot read-only panel; Esc/Enter hides the overlay and resolves. */
-class SessionInfoPanel implements Component {
+/**
+ * The `/session` key-value rows, in display order — pure so the panel's data
+ * contract stays unit-testable. Values are PLAIN text: the panel clips/pads
+ * them through the shared FW table helpers and paints afterwards.
+ */
+export function sessionInfoRows(data: SessionPanelData): ReadonlyArray<{ field: string; value: string }> {
+  return [
+    { field: 'session', value: data.id ?? '—' },
+    { field: 'cwd', value: data.cwd ?? '—' },
+    { field: 'created', value: data.createdAt === undefined ? '—' : new Date(data.createdAt).toLocaleString() },
+    { field: 'model', value: data.model ?? '—' },
+    { field: 'think', value: data.effort ?? '—' },
+    { field: 'status', value: data.status },
+    { field: 'messages', value: String(data.msgCount) },
+    { field: 'tool calls', value: String(data.toolCallCount) },
+    { field: 'tokens in', value: String(data.inputTokens) },
+    { field: 'tokens out', value: String(data.outputTokens) },
+    { field: 'cache read', value: String(data.cacheReadTokens) },
+    { field: 'cache write', value: String(data.cacheWriteTokens) },
+    { field: 'events', value: data.eventCount === undefined ? '—' : String(data.eventCount) },
+    // Same short form the /resume rows use — a parent id is a pointer, not
+    // something to read in full.
+    { field: 'parent', value: data.parentSession === undefined ? '—' : clipToWidth(data.parentSession, 8) },
+  ]
+}
+
+/**
+ * One-shot read-only info panel in the shared FW auto-table style: FIELD
+ * fits its content, VALUE runs to the right edge and clips (never wraps),
+ * width-exact padded cells under the booktabs rule trio — the same table
+ * language as the /resume picker and every other panel. Esc/Enter hides the
+ * overlay and resolves.
+ */
+export class SessionInfoPanel implements Component {
   private readonly theme: TuiTheme
   private readonly data: SessionPanelData
   private readonly onClose: () => void
@@ -54,43 +98,51 @@ class SessionInfoPanel implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const fg = (hex: string) => (text: string) => ansiFg(hex) + text + RESET
-    const p = this.theme.palette
-    const lines: string[] = [
-      fg(p.accent)(BOLD + 'ⓘ session' + RESET),
-      '',
-    ]
-    const id = this.data.id
-    if (id === undefined) {
-      lines.push(fg(p.fgDefault)('  no active session — send a prompt or /resume one'))
-    } else {
-      const max = Math.max(2, width - LABEL_WIDTH - 4)
-      const clip = (text: string): string => clipToWidth(text, max)
-      const row = (label: string, value: string): void => {
-        lines.push(fg(p.fgMuted)(label.padEnd(LABEL_WIDTH)) + fg(p.fgDefault)(clip(value)))
-      }
-      const shortId = clipToWidth(id, 8)
-      row('session', shortId)
-      if (visibleWidth(id) > 8) {
-        lines.push('  ' + ' '.repeat(LABEL_WIDTH) + fg(p.fgSubtle)(clip(id)))
-      }
-      row('cwd', this.data.cwd ?? '—')
-      row('created', this.data.createdAt === undefined ? '—' : new Date(this.data.createdAt).toLocaleString())
-      row('model', this.data.model ?? '—')
-      row('think', this.data.effort ?? '—')
-      row('status', this.data.status === 'running' ? fg(p.accent)(this.data.status) : this.data.status)
-      row('messages', String(this.data.msgCount))
-      row('tool calls', String(this.data.toolCallCount))
-      row('tokens in', String(this.data.inputTokens))
-      row('tokens out', String(this.data.outputTokens))
-      row('cache read', String(this.data.cacheReadTokens))
-      row('cache write', String(this.data.cacheWriteTokens))
-      row('events', this.data.eventCount === undefined ? '—' : String(this.data.eventCount))
-      const parent = this.data.parentSession
-      row('parent', parent === undefined ? '—' : clipToWidth(parent, 8))
+    const fns = panelThemeFns(this.theme)
+    const lines: string[] = [fns.accent(BOLD + clipToWidth('ⓘ session', width) + RESET)]
+    if (this.data.id === undefined) {
+      lines.push('')
+      lines.push(fns.muted(clipToWidth('no active session — send a prompt or /resume one', width)))
+      lines.push('')
+      lines.push(fns.subtle(clipToWidth('Esc to close', width)))
+      return lines
     }
-    lines.push('')
-    lines.push(fg(p.fgSubtle)('  Esc to close'))
+
+    // Auto layout: FIELD fits its content (capped), VALUE is flex — it takes
+    // the remainder and clips, so long values (cwd, full session id) never wrap.
+    const rows = sessionInfoRows(this.data)
+    const columns = autoColumns(
+      [
+        { key: 'field', title: 'Field', cap: FIELD_CAP },
+        { key: 'value', title: 'Value' },
+      ],
+      rows,
+      (row, key) => (key === 'value' ? row.value : row.field),
+    )
+    const widths = columnWidths(width - MARKER_W, columns)
+
+    // The booktabs trio seals the table right under the title (no gap row):
+    // TOP ┬ / header / MID ┼ / rows / BOTTOM ┴. Total height stays at 20 rows
+    // so the framed overlay keeps its bottom border on a 24-row terminal.
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), width)))
+    lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), width)))
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┼'), width)))
+    for (const row of rows) {
+      // Clip plain text BEFORE applying ANSI (iron rule 3). The flex column
+      // is additionally clamped to the space actually left on the row (the
+      // MIN_FLEX_WIDTH floor can push the layout past `width` on narrow
+      // terminals), so the painted line never needs a second clip — cutting
+      // ANSI-carrying text would leave a dangling SGR fragment behind.
+      const fieldCell = padCell(row.field, widths[0]!)
+      const remaining = width - MARKER_W - visibleWidth(TABLE_SEP) - visibleWidth(fieldCell)
+      const valueCell = padCell(row.value, Math.min(widths[1]!, Math.max(remaining, 0)))
+      const paintedValue = row.field === 'status' && this.data.status === 'running'
+        ? fns.accent(valueCell)
+        : fns.muted(valueCell)
+      lines.push(`${' '.repeat(MARKER_W)}${fieldCell}${TABLE_SEP}${paintedValue}`)
+    }
+    lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), width)))
+    lines.push(fns.subtle(clipToWidth('Esc to close', width)))
     return lines
   }
 
@@ -122,7 +174,7 @@ export async function showSessionInfo(
     })
     // maxHeight only ever slices (never stretches), and the framed overlay
     // needs 4 extra rows for its borders: cap high so the bottom border
-    // survives on small terminals (24 rows: 19 panel rows + 4 frame rows).
+    // survives on small terminals (24 rows: 20 panel rows + 4 frame rows).
     const overlay = tui.showOverlay(wrapFramedOverlay(theme, panel), { width: '70%', maxHeight: '100%' })
   })
 }

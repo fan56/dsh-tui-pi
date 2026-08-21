@@ -4,6 +4,24 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The `/session` info panel now renders in the same FW auto-table style as
+  every other panel (`autoColumns` + booktabs rules from `src/panels.ts`):
+  a fitted FIELD column, a flex VALUE column that clips instead of wrapping,
+  and the shared theme fns. Same data rows — the session row now shows the
+  full id (the flex column clips it rather than hiding it); the row data is
+  locked by `sessionInfoRows` unit tests.
+
+### Removed
+
+- The empty-editor double-Esc binding that opened `/session`. An idle Esc is
+  now always a no-op (pi's anti-misfire behavior); `/session` opens via the
+  slash command only. The running-task double-Esc stop and the Ctrl+C /
+  Ctrl+D / Ctrl+L / Ctrl+G chains are unchanged.
+
 ## [0.12.0] — 2026-08-21
 
 ### Added

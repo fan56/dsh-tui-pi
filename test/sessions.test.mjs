@@ -6,7 +6,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizePreview, previewOfEvents, isResumableSessionHeader } from '../lib/sessions.js'
+import { normalizePreview, previewOfEvents, isResumableSessionHeader, sessionInfoRows } from '../lib/sessions.js'
 import { stashSessionIdForReload, takeStashedSessionId } from '../lib/session.js'
 
 const userMsg = (text, sourceKind = 'user', extra = {}) => ({
@@ -128,4 +128,91 @@ test('isResumableSessionHeader handles persisted shapes (jsonl round-trip materi
   assert.equal(isResumableSessionHeader(persistedUserFork), true)
   assert.equal(isResumableSessionHeader(persistedSpawn), false)
   assert.equal(isResumableSessionHeader(persistedForkChild), false)
+})
+
+
+// ---------------------------------------------------------------------------
+// /session info rows: `sessionInfoRows` is the pure data contract of the
+// /session panel's auto table (the FW table language shared with every other
+// panel). The panel clips/pads/paints these plain values; here we lock the
+// row set, the order and the missing-value fallbacks.
+
+const fullPanelData = {
+  id: '12345678-9abc-def0-1234-56789abcdef0',
+  cwd: '/tmp/work',
+  createdAt: new Date('2026-01-02T03:04:05').getTime(),
+  model: 'deepseek/v4-flash',
+  effort: 'medium',
+  msgCount: 3,
+  toolCallCount: 7,
+  inputTokens: 100,
+  outputTokens: 200,
+  cacheReadTokens: 300,
+  cacheWriteTokens: 400,
+  status: 'running',
+  eventCount: 42,
+  parentSession: 'parent-session-id',
+}
+
+test('sessionInfoRows renders every stat in display order with plain values', () => {
+  const rows = sessionInfoRows(fullPanelData)
+  assert.deepEqual(rows.map(row => row.field), [
+    'session', 'cwd', 'created', 'model', 'think', 'status', 'messages',
+    'tool calls', 'tokens in', 'tokens out', 'cache read', 'cache write',
+    'events', 'parent',
+  ])
+  const byField = Object.fromEntries(rows.map(row => [row.field, row.value]))
+  assert.equal(byField.session, fullPanelData.id) // full id — the flex VALUE column clips, never hides it
+  assert.equal(byField.cwd, '/tmp/work')
+  assert.ok(byField.created.length > 0)
+  assert.equal(byField.model, 'deepseek/v4-flash')
+  assert.equal(byField.think, 'medium')
+  assert.equal(byField.status, 'running')
+  assert.equal(byField.messages, '3')
+  assert.equal(byField['tool calls'], '7')
+  assert.equal(byField['tokens in'], '100')
+  assert.equal(byField['tokens out'], '200')
+  assert.equal(byField['cache read'], '300')
+  assert.equal(byField['cache write'], '400')
+  assert.equal(byField.events, '42')
+})
+
+test('sessionInfoRows falls back to em-dash and clips the parent id to 8 columns', () => {
+  const rows = sessionInfoRows({
+    ...fullPanelData,
+    id: undefined,
+    cwd: undefined,
+    createdAt: undefined,
+    model: undefined,
+    effort: undefined,
+    eventCount: undefined,
+    parentSession: 'parent-session-id',
+  })
+  const byField = Object.fromEntries(rows.map(row => [row.field, row.value]))
+  for (const field of ['session', 'cwd', 'created', 'model', 'think', 'events']) {
+    assert.equal(byField[field], '—', field)
+  }
+  assert.equal(byField.parent, 'parent-s') // same short form the /resume rows use
+})
+
+// Narrow-width regression (review B1): the panel must clip the plain VALUE
+// text BEFORE painting it with ANSI. When the terminal is narrower than the
+// content, the MIN_FLEX_WIDTH floor can push the layout past `width`; a
+// clip applied to the painted line would cut mid-SGR and leave a dangling
+// `\x1b[38;2;` fragment on screen.
+test('SessionInfoPanel at narrow width clips plain text before ANSI — no dangling SGR fragment', async () => {
+  const { SessionInfoPanel } = await import('../lib/sessions.js')
+  const { buildTheme } = await import('../lib/theme/index.js')
+  const { githubDark } = await import('../lib/theme/palette.js')
+  const theme = buildTheme(githubDark)
+  const panel = new SessionInfoPanel(theme, fullPanelData, () => {})
+  for (const width of [20, 24, 30, 40, 80]) {
+    for (const line of panel.render(width)) {
+      // No unterminated SGR: every escape sequence is a complete CSI …m
+      assert.doesNotMatch(line, /\x1b\[[0-9;]*(?:$|[^0-9;m])/, `width ${width}: dangling escape in ${JSON.stringify(line)}`)
+      // Visible width never exceeds the requested width
+      const { visibleWidth } = await import('../lib/text.js')
+      assert.ok(visibleWidth(line) <= width, `width ${width}: line too wide (${visibleWidth(line)})`)
+    }
+  }
 })
