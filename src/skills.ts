@@ -28,6 +28,7 @@ import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { rowMarker, TABLE_SEP } from './panels.ts'
+import type { UsageSnapshot } from './usage.ts'
 
 /**
  * Enabled state of a skill for a human user: visible and loadable on every
@@ -271,27 +272,58 @@ export function completionName(item: AutocompleteItem): string {
   return item.value.slice(1)
 }
 
-/** Sort completion rows by their native display name (stable, locale-aware). */
-export function sortCompletionItems(items: readonly AutocompleteItem[]): AutocompleteItem[] {
-  return [...items].sort((a, b) => completionName(a).localeCompare(completionName(b)))
+/**
+ * Frequency-first comparator over usage counts: higher count wins; equal
+ * counts fall back to native name order. `Array.prototype.sort` is stable,
+ * so rows the comparator cannot separate (same count AND same name) keep
+ * their input order — the non-mutation/stability guarantees of the plain
+ * sort hold here too.
+ */
+function usageFirstCompare(a: AutocompleteItem, b: AutocompleteItem, usage: UsageSnapshot): number {
+  const byUsage = (usage.get(completionName(b)) ?? 0) - (usage.get(completionName(a)) ?? 0)
+  if (byUsage !== 0) return byUsage
+  return completionName(a).localeCompare(completionName(b))
+}
+
+/**
+ * Sort completion rows for the generic `/` dropdown (stable, never mutates
+ * the input). With a non-empty `usage` table (name → count), most-used rows
+ * come first and native display name only breaks ties; without usage data
+ * every row has count 0, which degenerates to exactly the historical
+ * name-only ordering.
+ */
+export function sortCompletionItems(
+  items: readonly AutocompleteItem[],
+  usage?: UsageSnapshot,
+): AutocompleteItem[] {
+  const ordered = [...items]
+  if (usage === undefined || usage.size === 0) {
+    ordered.sort((a, b) => completionName(a).localeCompare(completionName(b)))
+    return ordered
+  }
+  ordered.sort((a, b) => usageFirstCompare(a, b, usage))
+  return ordered
 }
 
 /**
  * Merge command rows with the user skills' native `/name` rows into one
  * mixed completion list (the generic `/` completion), each filtered by the
- * query prefix and the combined set sorted by native display name. Extracted
- * from the autocomplete provider so the interleave/filter/sort is unit-testable
- * without a live CommandService.
+ * query prefix and the combined set sorted by usage frequency (when a usage
+ * table is supplied) with native display name as tie-break. Extracted from
+ * the autocomplete provider so the interleave/filter/sort is unit-testable
+ * without a live CommandService. Because sorting runs after filtering, a
+ * filtered-down subset keeps its frequency-first ordering.
  */
 export function mergeMixedSkillItems(
   commandItems: readonly AutocompleteItem[],
   nativeSkillItems: readonly AutocompleteItem[],
   query: string,
+  usage?: UsageSnapshot,
 ): AutocompleteItem[] {
   const filtered = [...commandItems, ...nativeSkillItems].filter(
     item => query === '' || completionName(item).toLowerCase().startsWith(query),
   )
-  return sortCompletionItems(filtered)
+  return sortCompletionItems(filtered, usage)
 }
 
 /**

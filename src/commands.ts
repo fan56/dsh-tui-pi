@@ -28,8 +28,10 @@ import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } 
 import {
   buildNativeSkillCandidates,
   completionLabel,
+  isUserSkill,
   mergeMixedSkillItems,
 } from './skills.ts'
+import type { UsageRecorder } from './usage.ts'
 import type { DshSessionBridge } from './session.ts'
 
 /**
@@ -124,10 +126,16 @@ export class CommandService {
   private readonly bridge: DshSessionBridge
   /** TUI-owned command bodies, dispatchable without a live agent. */
   private readonly local = new Map<string, LocalCommandHandler>()
+  /**
+   * Optional usage memory backing frequency-sorted completions. Undefined in
+   * tests / degraded setups: the completion list then stays name-sorted.
+   */
+  private readonly usage: UsageRecorder | undefined
 
-  constructor(ctx: Context, bridge: DshSessionBridge) {
+  constructor(ctx: Context, bridge: DshSessionBridge, usage?: UsageRecorder) {
     this.ctx = ctx
     this.bridge = bridge
+    this.usage = usage
   }
 
   /**
@@ -159,6 +167,8 @@ export class CommandService {
       try {
         const result = await localHandler(parsed.rawInput, signal)
         if (result.kind === 'error') return { handled: true, error: result.text }
+        // Successful invocation — count it for frequency-sorted completions.
+        this.usage?.record(parsed.name)
         return { handled: true, ...result.text === undefined ? {} : { text: result.text } }
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
@@ -179,6 +189,16 @@ export class CommandService {
     if (commands.find(agent, parsed.name) === undefined) {
       // Syntactically a command but unregistered → treat as ordinary text so
       // the model still sees it (matches "unknown command" falling through).
+      // When the name IS a user-invocable skill, this line is the harness's
+      // `/name` skill gesture: the prompt lands on the model untouched and
+      // tool-skill's agent/pre-step injects the rendered skill content —
+      // count it so completions rank the skill by real usage. (Names outside
+      // parseCommand's charset never get here; those gestures stay uncounted,
+      // an accepted edge. Without a recorder the registry probe is skipped
+      // entirely — no skills.list() round-trip for plain fall-throughs.)
+      if (this.usage !== undefined && (await this.isUserSkillName(parsed.name))) {
+        this.usage.record(parsed.name)
+      }
       return { handled: false }
     }
 
@@ -186,6 +206,8 @@ export class CommandService {
       const execution = await executeCommand(commands, agent, line, signal)
       if (execution === undefined) return { handled: false }
       if (execution.result.kind === 'error') return { handled: true, error: execution.result.text }
+      // Successful invocation — count it for frequency-sorted completions.
+      this.usage?.record(parsed.name)
       return { handled: true, ...execution.result.text === undefined ? {} : { text: execution.result.text } }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
@@ -226,8 +248,8 @@ export class CommandService {
         if (at.start !== 0 && line.slice(0, at.start).trim() !== '') return null
 
         // Generic `/` completion: commands and the user skills' native `/name`
-        // rows in one mixed list, sorted by display name and filtered by the
-        // token after the slash.
+        // rows in one mixed list, ordered most-used first (usage table) with
+        // display name as tie-break, filtered by the token after the slash.
         const query = at.token.slice(1).toLowerCase()
         const descriptors = await this.list()
         const commandItems: AutocompleteItem[] = descriptors
@@ -239,7 +261,7 @@ export class CommandService {
             kind: 'command' as const,
           }))
         const nativeSkillItems = await this.nativeSkillCandidates()
-        const items = mergeMixedSkillItems(commandItems, nativeSkillItems, query)
+        const items = mergeMixedSkillItems(commandItems, nativeSkillItems, query, this.usage?.snapshot())
         if (items.length === 0) return null
         return { items, prefix: at.token } satisfies AutocompleteSuggestions
       },
@@ -288,5 +310,16 @@ export class CommandService {
   /** Native `/name` skill candidates for the mixed `/` command list. */
   private async nativeSkillCandidates(): Promise<AutocompleteItem[]> {
     return buildNativeSkillCandidates(await this.listSkills())
+  }
+
+  /**
+   * Whether `name` matches a user-invocable skill in the live registry —
+   * the confirmation that a fall-through line is a genuine skill gesture.
+   * An absent or failing skills registry answers false (nothing counted).
+   */
+  private async isUserSkillName(name: string): Promise<boolean> {
+    const lower = name.toLowerCase()
+    const skills = await this.listSkills()
+    return skills.some(skill => isUserSkill(skill) && skill.name.toLowerCase() === lower)
   }
 }

@@ -46,6 +46,7 @@ import { reloadPlugin } from './reload.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
+import { commandUsagePath, CommandUsageTracker } from './usage.ts'
 import type { AgentView } from './dsh-events.ts'
 import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { rgbIsLight } from './theme/palette.ts'
@@ -471,7 +472,12 @@ export function apply(ctx: Context): void {
         : presets.current(agent.session.events)
     }
 
-    const commands = new CommandService(ctx, bridge)
+    // Usage memory for the slash completion list: successful commands and
+    // skill gestures bump per-name counters persisted under $DSH_HOME. The
+    // disk copy is authoritative — a /reload swaps this plugin fiber and the
+    // fresh tracker re-reads the file, so counts survive hot reloads too.
+    const commandUsage = new CommandUsageTracker(commandUsagePath())
+    const commands = new CommandService(ctx, bridge, commandUsage)
     // Wiring through the handle: the editor is rebuilt on theme hot-swap, and
     // these providers are re-applied to the replacement instance.
     ui.setEditorAutocompleteProvider(commands.autocompleteProvider())
