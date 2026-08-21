@@ -1,21 +1,23 @@
 /**
- * Skill invocation surface for the TUI.
+ * Skill surface helpers for the TUI.
  *
  * dsh exposes skills through the `ctx.skills` registry service (list / get /
  * snapshot); skills are not commands, so they are absent from the command
- * catalog. This module owns the pure logic behind two user-facing surfaces:
+ * catalog. A user-invocable skill is triggered the way the harness itself
+ * does it — the `/name ` gesture on a user message (packages/skill/tool-skill
+ * scans user messages in `agent/pre-step` and injects the rendered
+ * `<skill_content>`). This module owns the pure logic behind:
  *
- *   1. `/skill:<name>` completion + invocation. A skill is triggered the way
- *      the harness itself does it — the `/name ` gesture on a user message
- *      (packages/skill/tool-skill scans user messages in `agent/pre-step` and
- *      injects the rendered `<skill_content>`). The colon form `/skill:<name>`
- *      is a TUI convenience that is not a valid command name (parseCommand
- *      rejects `:`), so the TUI translates it to the native gesture
- *      (`/<name> `) and sends that through the normal prompt path.
- *   2. The `/settings` Skills browser's enable/disable toggle, which edits the
- *      skill's own SKILL.md frontmatter (`disable-model-invocation` /
- *      `user-invocable`) — the same keys skill-filesystem parses, so the
- *      harness watcher picks the change up with no restart.
+ *   1. Completion: each user skill appears in the generic `/` dropdown as a
+ *      native `/name` row alongside the commands (buildNativeSkillCandidates
+ *      + mergeMixedSkillItems). Submitting such a line falls through the
+ *      command dispatcher to the model untouched, where tool-skill's
+ *      pre-step does the injection.
+ *   2. The `/skills` browser's FW table rows, filtering and navigation.
+ *   3. The enable/disable toggle, which edits the skill's own SKILL.md
+ *      frontmatter (`disable-model-invocation` / `user-invocable`) — the
+ *      same keys skill-filesystem parses, so the harness watcher picks the
+ *      change up with no restart.
  *
  * The pure functions here are unit-tested against the built lib/; the
  * frontmatter editing keeps this file's body and non-invocation keys intact.
@@ -54,43 +56,6 @@ export function skillToggleEnabled(toggle: { disable: boolean; invoke: boolean }
   return !toggle.disable && toggle.invoke
 }
 
-/**
- * Parse a `/skill`-shaped line into its requested action.
- * Only a bare `/skill` is recognized (opens the picker).
- * The `/skill:<name>` colon form is no longer supported.
- * @returns `{ kind: 'picker' }` for a bare `/skill`; `undefined` for anything
- *   else (not a skill command).
- */
-export function parseSkillCommand(
-  line: string,
-): { kind: 'picker' } | undefined {
-  if (/^\/skill\s*$/.test(line.trim())) return { kind: 'picker' }
-  return undefined
-}
-
-/**
- * The harness-native gesture line the model-facing injection recognizes:
- * `/name ` (a whitespace-bounded `/name` token — see tool-skill's
- * SKILL_GESTURE). Skill names are validated kebab-case by construction.
- */
-export function skillGesture(name: string): string {
-  return `/${name} `
-}
-
-/**
- * Extract the skill-completion query from a leading slash token, or `undefined`
- * when this token is not a skill completion. The token may carry the leading
- * `/` the cursor reads off the editor (the canonical shape from tokenAtCursor),
- * so it is stripped before matching. Only the bare `skill` prefix yields an
- * empty query (all user skills); the `/skill:<name>` colon form is no longer
- * recognized.
- */
-export function skillCompletionQuery(token: string): string | undefined {
-  const lower = token.toLowerCase().replace(/^\//, '')
-  if (lower === 'skill') return ''
-  return undefined
-}
-
 // ------------------------------------------------------------ completion rows --
 
 /**
@@ -98,8 +63,9 @@ export function skillCompletionQuery(token: string): string | undefined {
  * pi-tui `AutocompleteItem` shape (label/value/description) so applyCompletion
  * and the tests can distinguish them without guessing at the value string:
  *
- * - `explicit-skill` — the `/skill:<name>` form: completing it is a complete
- *   invocation, so it must NOT gain the trailing-space separator.
+ * - `explicit-skill` — a bare skill-name row without the leading slash (the
+ *   label vocabulary shared with the settings/Skills row label); kept
+ *   distinct from `command` so its badge stays `[s]`.
  * - `native-skill` — a skill under its own `/name` in the mixed command list:
  *   completes like a command (trailing space readies it for arguments).
  * - `command` — a registry command row.
@@ -291,7 +257,7 @@ export function itemKind(item: AutocompleteItem): CompletionItemKind {
   return tagged.kind ?? 'command'
 }
 
-/** A skill completion row (native `/name` or explicit `/skill:<name>`). */
+/** A skill completion row (either skill kind, never a plain command row). */
 export function isSkillCompletionItem(item: AutocompleteItem): boolean {
   const kind = itemKind(item)
   return kind === 'native-skill' || kind === 'explicit-skill'
@@ -299,14 +265,10 @@ export function isSkillCompletionItem(item: AutocompleteItem): boolean {
 
 /**
  * The native display name used for prefix filtering and mixed-list sorting:
- * the value after the leading `/`, with a `/skill:` form reduced to the name
- * after the colon so an explicit row sorts under its real skill name rather
- * than stacking in the `s` bucket.
+ * the value after the leading `/`.
  */
 export function completionName(item: AutocompleteItem): string {
-  const value = item.value
-  if (value.startsWith('/skill:')) return value.slice('/skill:'.length)
-  return value.slice(1)
+  return item.value.slice(1)
 }
 
 /** Sort completion rows by their native display name (stable, locale-aware). */

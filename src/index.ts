@@ -23,8 +23,7 @@ import { TranscriptRenderer } from './messages.ts'
 import type { PanelHeight } from './activity.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
-import { pickEffort, pickModel, pickPermission, pickSkill, pickTheme } from './selectors.ts'
-import { parseSkillCommand, skillGesture } from './skills.ts'
+import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts'
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
 import {
   currentThemePreference,
@@ -545,27 +544,6 @@ export function apply(ctx: Context): void {
       handler: invocation => subagentsHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /subagents')
 
-    // /skill: invoke a user skill. Skills are not commands (there is no
-    // ctx.skills enable/disable runtime API), so the TUI owns the surface:
-    // `/skill:data-analysis` and the bare `/skill` picker both dispatch the
-    // harness's own `/name ` gesture through the normal prompt path (see
-    // invokeSkill below). The command is registered in both channels for
-    // discoverability/parity; submit() intercepts skill lines before the
-    // generic dispatch (the colon form is not a valid command name).
-    const skillHandler: LocalCommandHandler = (rawInput, signal) => {
-      void runSkillCommand(`/skill${rawInput ?? ''}`, signal)
-      return { kind: 'success' as const, text: undefined }
-    }
-    commands.registerLocal('skill', skillHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'skill',
-      description: 'Invoke a user skill (shows a picker; or use /skill:<name>)',
-      handler: invocation => {
-        void runSkillCommand(`/skill${invocation.rawInput}`, invocation.signal)
-        return { kind: 'success' as const, text: undefined }
-      },
-    }), 'dsh-tui-pi: /skill')
-
     // /think: cycle the current model's reasoning effort without re-picking
     // the model. A no-session /think still lands in the selection ref and
     // survives the lazy session creation (bridge seeds only an empty ref).
@@ -840,19 +818,19 @@ export function apply(ctx: Context): void {
       handler: invocation => settingsHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /settings')
 
-    // /skills-manager: standalone skill browser with Installed/Available dual
-    // mode. Enter/Space toggles or symlinks; Tab switches views; Esc exits.
-    const skillsManagerHandler: LocalCommandHandler = async () => {
+    // /skills: standalone skill browser with Installed/Available dual mode.
+    // Enter/Space toggles or symlinks; Tab switches views; Esc exits.
+    const skillsHandler: LocalCommandHandler = async () => {
       const agent = bridge.getAgent()
       openSkillsManagerPanel(ctx, ui.tui, ui.theme, () => ui.tui.setFocus(ui.editor), agent ?? undefined, () => {})
       return { kind: 'success' as const, text: 'Skills manager opened.' }
     }
-    commands.registerLocal('skills-manager', skillsManagerHandler)
+    commands.registerLocal('skills', skillsHandler)
     ctx.effect(() => ctx.commands.register({
-      name: 'skills-manager',
+      name: 'skills',
       description: 'Manage user skills (installed and available)',
-      handler: invocation => skillsManagerHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /skills-manager')
+      handler: invocation => skillsHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /skills')
 
     // /theme: pick a color scheme and apply it immediately — the choice is
     // persisted to the dsh-tui settings namespace (`applies: 'live'`, so the
@@ -1151,63 +1129,7 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'skill', 'login', 'logout', 'skills-manager'])
-
-    /**
-     * Dispatch one user skill invocation (function 1). The skill is validated
-     * against `ctx.skills` (exists + user-invocable), then the user's line is
-     * echoed verbatim while the model receives the harness's own `/name `
-     * gesture through the normal prompt path — tool-skill's `agent/pre-step`
-     * scans user messages for that gesture and injects the rendered
-     * `<skill_content>` as instructions context. This reuses the authoritative
-     * injection chain (the web client's path) with zero duplicated injection
-     * code.
-     */
-    const invokeSkill = async (name: string, echoLine: string): Promise<void> => {
-      const skills = ctx.get('skills')
-      if (skills === undefined) {
-        renderer.renderNotice('Skills are not available in this environment.', 'error')
-        return
-      }
-      const agent = bridge.getAgent()
-      const cwd = agent?.session.header.cwd ?? process.cwd()
-      let gesture: string
-      try {
-        const skill = await skills.get(name, { scope: agent, cwd })
-        if (skill === undefined || !skill.invocation.userInvocable) {
-          renderer.renderNotice(`Skill "${name}" is unknown or not user-invocable.`, 'error')
-          return
-        }
-        gesture = skillGesture(name)
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error)
-        renderer.renderNotice(message, 'error')
-        return
-      }
-      // Echo the user's own line; the session echo of the translated gesture
-      // is deduped against the gesture text (renderPromptEcho's sessionEcho).
-      // A light marker rides the echo so the transcript says the skill loaded.
-      renderer.renderPromptEcho(echoLine, gesture, `skill ${name} loaded`)
-      try {
-        await bridge.prompt(gesture)
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error)
-        renderer.renderNotice(message, 'error')
-      }
-    }
-
-    /**
-     * Handle a bare `/skill` command: open the picker and invoke the selection.
-     * The `/skill:<name>` colon form is no longer supported.
-     */
-    const runSkillCommand = async (_echoLine: string, _signal: AbortSignal): Promise<void> => {
-      const parsed = parseSkillCommand('/skill')
-      if (parsed === undefined) return
-      const agent = bridge.getAgent()
-      const picked = await pickSkill(ctx, ui.tui, ui.theme, agent, () => ui.tui.setFocus(ui.editor))
-      if (picked === undefined) return
-      await invokeSkill(picked, `/skill`)
-    }
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {
@@ -1220,15 +1142,6 @@ export function apply(ctx: Context): void {
       const signal = name !== undefined && MODAL_COMMANDS.has(name)
         ? new AbortController().signal
         : AbortSignal.timeout(30_000)
-      // Function 1: bare /skill opens the skill picker.
-      // This must run before the generic command dispatch — `/skill:foo` is
-      // not a valid command name for parseCommand, so the generic path would
-      // otherwise fall through to the model untouched. The translation to the
-      // harness's `/name ` gesture lives in runSkillCommand/invokeSkill.
-      if (name === 'skill') {
-        await runSkillCommand(line, signal)
-        return
-      }
       // Bare /permission (no arguments) opens the preset picker — UI sugar
       // over dsh's canonical command: a picked row is replayed as
       // `/permission <name>` through the normal execute path below, so the

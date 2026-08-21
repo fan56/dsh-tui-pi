@@ -6,6 +6,23 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+- `/skill` (singular): the skill-invocation picker command is gone from both
+  registration channels, `MODAL_COMMANDS`, and the `submit()` intercept;
+  `pickSkill` and the `parseSkillCommand`/`skillGesture`/
+  `skillCompletionQuery` helpers behind it are deleted. User-invocable
+  skills remain reachable by typing their native `/name ` gesture directly
+  (harness tool-skill injects the content) and still appear as `[s]` rows in
+  the `/` autocomplete.
+
+### Changed
+
+- `/skills-manager` is renamed to `/skills`: same standalone skill browser
+  (`src/skills-manager.ts` keeps its filename), now registered under the
+  shorter name in both channels and in `MODAL_COMMANDS`. The editor token
+  charset drops `:`, mirroring dsh-commands' COMMAND_NAME exactly.
+
 ## [0.10.6] — 2026-08-21
 
 ### Changed

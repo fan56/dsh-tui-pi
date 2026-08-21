@@ -348,7 +348,6 @@ call sites are wrapped:
 | selectors.ts `pickTheme` | TablePanel (theme) | 80% / 75% |
 | selectors.ts `pickPermission` | TablePanel (presets) | 80% / 75% |
 | selectors.ts `pickModel` (stage 1) | TablePanel (models) | 80% / 75% |
-| selectors.ts `pickSkill` | TablePanel (skills) | 80% / 75% |
 | sessions.ts `showSessionInfo` | SessionInfoPanel | 70% / 100% |
 | sessions.ts `pickPersistedSession` | TablePanel (sessions) | 80% / 75% |
 | login.ts logout picker | TablePanel (providers) | 80% / 75% |

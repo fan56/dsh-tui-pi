@@ -35,12 +35,12 @@ import type { DshSessionBridge } from './session.ts'
 /**
  * Token ending at the cursor on one editor line, for command detection.
  * Returns the leading slash token when the caret sits inside one. The token
- * charset admits `:` (after the first letter) so the TUI's `/skill:<name>`
- * form reads as a single token and drives skill completion.
+ * charset mirrors dsh-commands' COMMAND_NAME (`[a-z][a-z0-9_-]*`), so exactly
+ * the lines parseCommand accepts read as a single command token.
  */
 function tokenAtCursor(line: string, cursorCol: number): { token: string; start: number } | undefined {
   const upto = line.slice(0, cursorCol)
-  const match = /(^|\s)\/([a-z][a-z0-9_:-]*)?$/u.exec(upto)
+  const match = /(^|\s)\/([a-z][a-z0-9_-]*)?$/u.exec(upto)
   if (match === null) return undefined
   const start = match.index + (match[1] ?? '').length
   return { token: upto.slice(start), start }
@@ -227,8 +227,7 @@ export class CommandService {
 
         // Generic `/` completion: commands and the user skills' native `/name`
         // rows in one mixed list, sorted by display name and filtered by the
-        // token after the slash. Skills are interleaved with commands (not
-        // grouped under a `/skill:` prefix).
+        // token after the slash.
         const query = at.token.slice(1).toLowerCase()
         const descriptors = await this.list()
         const commandItems: AutocompleteItem[] = descriptors

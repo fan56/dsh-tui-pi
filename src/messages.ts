@@ -139,11 +139,10 @@ export class TranscriptRenderer {
   /**
    * Render a submitted prompt immediately, before the session echoes it back.
    * `sessionEcho` overrides the dedup key when the session will echo a
-   * different string than the rendered text — the skill trigger renders the
-   * user's `/skill:<name>` but the session echoes the translated `/name `
-   * gesture, so the gesture's echo is dropped instead of shown twice.
-   * `marker` appends a light `ⓘ …` caption under the echo (the skill trigger
-   * uses it to say "skill <name> loaded"); an absent marker renders nothing.
+   * different string than the rendered text (e.g. a translated gesture whose
+   * own echo would otherwise show twice).
+   * `marker` appends a light `ⓘ …` caption under the echo; an absent marker
+   * renders nothing.
    */
   renderPromptEcho(text: string, sessionEcho?: string, marker?: string): void {
     // Buffer the raw text: the echo bubble renders it verbatim, while the

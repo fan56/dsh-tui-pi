@@ -1,6 +1,7 @@
 /**
- * Skill-invocation module tests — pure helpers and the frontmatter toggle
- * writer, no TTY/dsh runtime needed. Runs against the built lib/.
+ * Skill-surface module tests — completion rows, panel helpers and the
+ * frontmatter toggle writer, no TTY/dsh runtime needed. Runs against the
+ * built lib/.
  */
 
 import test from 'node:test'
@@ -25,13 +26,10 @@ import {
   isSkillCompletionItem,
   isUserSkill,
   mergeMixedSkillItems,
-  parseSkillCommand,
   readSkillToggle,
-  skillCompletionQuery,
   skillDisableUpdates,
   skillEnableUpdates,
   skillEnabled,
-  skillGesture,
   skillJumpCursor,
   skillPanelRowLine,
   skillSettingRowLabel,
@@ -46,58 +44,7 @@ const modelOnly = { invocation: { modelInvocable: true, userInvocable: false } }
 const userOnly = { invocation: { modelInvocable: false, userInvocable: true } }
 const disabled = { invocation: { modelInvocable: false, userInvocable: false } }
 
-// ------------------------------------------------------------- parsing / labels --
-
-test('parseSkillCommand maps a bare /skill to picker', () => {
-  assert.deepEqual(parseSkillCommand('/skill'), { kind: 'picker' })
-  assert.deepEqual(parseSkillCommand('/skill '), { kind: 'picker' })
-})
-
-test('parseSkillCommand rejects non-skill and malformed names', () => {
-  assert.equal(parseSkillCommand('/model'), undefined)
-  assert.equal(parseSkillCommand('hello world'), undefined)
-  // The colon form is no longer supported — all return undefined.
-  assert.equal(parseSkillCommand('/skill:data-analysis'), undefined)
-  assert.equal(parseSkillCommand('/skill:lark-base'), undefined)
-  assert.equal(parseSkillCommand('/skill:'), undefined)
-})
-
-test('skillGesture builds the harness-native /name gesture line', () => {
-  assert.equal(skillGesture('data-analysis'), '/data-analysis ')
-  assert.equal(skillGesture('lark-base'), '/lark-base ')
-})
-
-// Regression: submit() intercepts any line whose lowered name is `skill` or a
-// `skill:` prefix, INCLUDING lines that are not a valid skill command (args,
-// uppercase). parseSkillCommand must reject those (so the caller surfaces a
-// usage notice rather than silently dropping the user's input), and the prefix
-// must not leak through the name regex into a half-baked invoke.
-test('parseSkillCommand rejects skill-shaped lines with arguments', () => {
-  assert.equal(parseSkillCommand('/skill some-args'), undefined)
-  assert.equal(parseSkillCommand('/skill --list'), undefined)
-  assert.equal(parseSkillCommand('/skill list'), undefined)
-})
-
-test('parseSkillCommand rejects case-mismatched skill commands', () => {
-  // The submit() interception lowercases the first token, so /SKILL reaches
-  // the skill path; the case-sensitive grammar must not accept it as an
-  // invocation (it needs an explicit usage notice instead).
-  assert.equal(parseSkillCommand('/SKILL'), undefined)
-})
-
-test('skillCompletionQuery identifies skill completion tokens', () => {
-  assert.equal(skillCompletionQuery('skill'), '')
-  assert.equal(skillCompletionQuery('model'), undefined)
-  assert.equal(skillCompletionQuery('data'), undefined)
-})
-
-// Regression: tokenAtCursor hands the provider a token with its leading `/`
-// (the canonical `/skill` shape), which must not defeat the match.
-test('skillCompletionQuery accepts the leading-slash token from tokenAtCursor', () => {
-  assert.equal(skillCompletionQuery('/skill'), '')
-  assert.equal(skillCompletionQuery('/model'), undefined)
-  assert.equal(skillCompletionQuery('/data'), undefined)
-})
+// -------------------------------------------------------------------- labels --
 
 test('skillEnabled requires both invocation controls', () => {
   assert.equal(skillEnabled(enabled), true)
@@ -127,8 +74,8 @@ test('badgeText keeps every row at the shared badge width for aligned names', ()
 test('completionLabel prefixes an aligned badge to the candidate value', () => {
   // The badge tag is always the fixed width (see badgeText), so every row
   // starts its value at the same column; the raw value itself is preserved
-  // verbatim (so the explicit form keeps the full `/skill:<name>`).
-  assert.equal(completionLabel('explicit-skill', '/skill:data-analysis'), '[s] /skill:data-analysis')
+  // verbatim.
+  assert.equal(completionLabel('explicit-skill', 'data-analysis'), '[s] data-analysis')
   assert.equal(completionLabel('command', '/model'), '[c] /model')
 })
 

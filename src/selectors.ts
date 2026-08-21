@@ -1,7 +1,7 @@
 /**
  * TUI overlays for the pickers — the `/model` picker (two-stage), the
- * reasoning effort picker, the `/theme` preference picker, the `/permission`
- * preset picker and the skill picker. Every picker is the same FW table:
+ * reasoning effort picker, the `/theme` preference picker and the
+ * `/permission` preset picker. Every picker is the same FW table:
  * `●` title, uppercase header row, the ─┼─ rule under it, `│`-separated
  * aligned columns — one visual language across every slash-command panel.
  */
@@ -364,65 +364,6 @@ export async function pickModel(
         return
       }
       resolve({ provider: picked.provider, model: picked.id, reasoningEffort: chosen.effort })
-    }
-  })
-}
-
-/**
- * Open the skill picker overlay listing the user-invocable skills for the
- * current agent/cwd. Resolves with the picked skill's name, or `undefined`
- * when cancelled or when no skills service / user skills exist. Focus returns
- * to `restoreFocus` on close.
- */
-export async function pickSkill(
-  ctx: Context,
-  tui: TUI,
-  theme: TuiTheme,
-  agent: { session: { header: { cwd?: string } } } | undefined,
-  restoreFocus: () => void,
-): Promise<string | undefined> {
-  const skills = ctx.get('skills')
-  if (skills === undefined) return undefined
-  const cwd = agent?.session.header.cwd ?? process.cwd()
-
-  let userSkills: Array<{ name: string; description: string }>
-  try {
-    const listed = await skills.list({ scope: agent, cwd })
-    userSkills = listed
-      .filter(skill => skill.invocation.userInvocable)
-      .map(skill => ({ name: skill.name, description: skill.description }))
-  } catch {
-    return undefined
-  }
-  if (userSkills.length === 0) return undefined
-
-  const rows: PickerItem[] = userSkills.map(skill => ({
-    value: skill.name,
-    label: skill.name,
-    description: skill.description === '' ? undefined : skill.description,
-  }))
-
-  return new Promise<string | undefined>(resolve => {
-    const list = new TablePanel(theme, {
-      title: '● Skill',
-      columns: labelDescriptionColumns('Skill', rows),
-      rows,
-      renderCell: itemCell,
-      onSelect: row => finish(row.value),
-      onCancel: () => finish(undefined),
-    })
-    let overlay: OverlayHandle
-    try {
-      overlay = mountPicker(tui, theme, list)
-    } catch (error) {
-      restoreFocus()
-      throw error
-    }
-
-    function finish(picked: string | undefined): void {
-      overlay.hide()
-      restoreFocus()
-      resolve(picked)
     }
   })
 }

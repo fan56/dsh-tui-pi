@@ -1,5 +1,5 @@
 /**
- * `/skills-manager` panel — standalone skill browser listing all public
+ * `/skills` panel — standalone skill browser listing all public
  * skills from `~/.agents/skills/`. Shows which are already symlinked to
  * `~/.dsh/skills/`. Space toggles pending state, Enter applies all
  * pending changes (batch create/delete symlinks), ESC discards.
@@ -553,7 +553,7 @@ interface AvailableSkillEntry {
 // -------------------------------------------------------- public entry point --
 
 /**
- * Open the /skills-manager panel as a framed overlay.
+ * Open the /skills panel as a framed overlay.
  * The panel manages its own lifecycle through the PanelHost.
  */
 export function openSkillsManagerPanel(
