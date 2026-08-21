@@ -10,10 +10,19 @@
  * isolation. Runs against the built lib/ (pnpm build && pnpm test). No test
  * here touches the real ~/.dsh/settings.yaml — everything runs on in-memory
  * fakes.
+ *
+ * The tail section pins the /model-sync local-handler wiring in src/index.ts:
+ * services are resolved through ctx.get(...) (a bare ctx.llm read throws
+ * "cannot get property without inject" under cordis outside an inject scope)
+ * and an absent LLM runtime degrades to an error card instead of crashing.
  */
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { Context } from '@deepseek-ai/cordis'
 import { settingsNamespace, SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import {
   mergeModels,
@@ -21,6 +30,10 @@ import {
   sanitizeDiscoveredModel,
   selectCustomProviders,
 } from '../lib/model-sync.js'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const SRC_INDEX = readFileSync(join(here, '../src/index.ts'), 'utf8')
+const LIB_INDEX = readFileSync(join(here, '../lib/index.js'), 'utf8')
 
 const NS = settingsNamespace('llm-pi-ai')
 
@@ -379,4 +392,116 @@ test('runModelSync names catalog routes accurately even when they carry a baseUR
   assert.doesNotMatch(plainResult.text, /built-in catalog route/)
   assert.deepEqual(plainLlm.calls, [])
   assert.deepEqual(plain.mutations, [])
+})
+
+// ---------------------------------------------------------------------------
+// /model-sync local handler (src/index.ts wiring) — service-resolution
+// contract. Regression: the handler read `ctx.llm` directly, which cordis
+// rejects outside an inject scope ("cannot get property \"llm\" without
+// inject") once the TUI fiber is live — every invocation failed before its
+// own logic ran (found by tmux e2e at 4d69419). The fix resolves the service
+// through ctx.get('llm') and degrades to an error card when the runtime is
+// absent. The handler lives inside the plugin's runTui closure with no
+// importable seam, so coverage is layered: (1) the cordis mechanism on a
+// real context, (2) the real compiled handler executed against fakes, and
+// (3) a source-level tripwire over src/ and lib/.
+// ---------------------------------------------------------------------------
+
+/** The /model-sync registration block: from the handler const to its registerLocal. */
+function modelSyncHandlerBlock(source) {
+  const start = source.indexOf('const modelSyncCustomHandler')
+  assert.notEqual(start, -1, 'model-sync custom handler found in source')
+  const end = source.indexOf("commands.registerLocal('model-sync'", start)
+  assert.notEqual(end, -1, 'model-sync registerLocal found after the handler')
+  return source.slice(start, end)
+}
+
+/**
+ * The REAL compiled /model-sync handler from lib/index.js, evaluated with the
+ * two closure names it captures (`ctx`, `runModelSync`) supplied by the test.
+ * A regression to a bare `ctx.llm` read therefore fails loudly here: the fake
+ * ctx exposes cordis-shaped getters that throw exactly like a live fiber.
+ */
+function compileModelSyncHandler(ctx, runModelSyncOverride) {
+  const marker = 'const modelSyncCustomHandler = '
+  const block = modelSyncHandlerBlock(LIB_INDEX)
+  const start = block.indexOf(marker)
+  assert.notEqual(start, -1, 'compiled handler expression found in lib/index.js')
+  const expression = block.slice(start + marker.length).trim().replace(/;$/, '')
+  return new Function('ctx', 'runModelSync', `return (${expression});`)(
+    ctx,
+    runModelSyncOverride ?? runModelSync,
+  )
+}
+
+test('cordis rejects a bare ctx.llm read on a live fiber while ctx.get degrades to undefined', async () => {
+  const root = new Context()
+  const fiber = await root.plugin({ name: 'probe', apply() {} })
+  assert.throws(
+    () => fiber.ctx.llm,
+    /cannot get property "llm" without inject/,
+    'the exact failure the fix removes: bare property access outside an inject scope',
+  )
+  assert.equal(
+    fiber.ctx.get('llm'),
+    undefined,
+    'ctx.get is the safe seam — the absent-service guard branch is genuinely reachable',
+  )
+})
+
+test('/model-sync handler resolves llm via ctx.get and degrades when the runtime is absent', async () => {
+  const settings = { describe() { return [] } }
+  const gets = []
+  const ctx = {
+    get(name) {
+      gets.push(name)
+      return name === 'settings' ? settings : undefined
+    },
+    // Cordis-shaped tripwire: reading this property instead of calling
+    // ctx.get('llm') throws exactly like a live fiber outside inject.
+    get llm() { throw new Error('cannot get property "llm" without inject') },
+  }
+  const runModelSyncCalls = []
+  const handler = compileModelSyncHandler(ctx, deps => {
+    runModelSyncCalls.push(deps)
+    return { kind: 'success', text: 'unreachable' }
+  })
+
+  const result = await handler('', undefined)
+  assert.deepEqual(gets, ['settings', 'llm'], 'services resolved through ctx.get, settings first')
+  assert.deepEqual(result, { kind: 'error', text: 'LLM runtime is unavailable.' })
+  assert.deepEqual(runModelSyncCalls, [], 'the sync never runs without the LLM runtime')
+})
+
+test('/model-sync handler forwards settings + llm to runModelSync when both services exist', async () => {
+  const settings = { describe() { return [] } }
+  const llm = { async discoverModels() { return [] } }
+  const calls = []
+  const ctx = {
+    get: name => (name === 'settings' ? settings : name === 'llm' ? llm : undefined),
+  }
+  const sentinel = { kind: 'success', text: 'gw: added 1 · kept 0 · skipped 0' }
+  const handler = compileModelSyncHandler(ctx, (deps, opts) => {
+    calls.push({ deps, opts })
+    return sentinel
+  })
+
+  const signal = new AbortController().signal
+  const result = await handler('gw', signal)
+  assert.equal(result, sentinel, "the handler returns runModelSync's result verbatim")
+  assert.equal(calls.length, 1)
+  assert.strictEqual(calls[0].deps.settings, settings)
+  assert.strictEqual(calls[0].deps.llm, llm)
+  assert.equal(calls[0].opts.rawInput, 'gw')
+  assert.strictEqual(calls[0].opts.signal, signal)
+})
+
+test('model-sync registration block pins ctx.get resolution and bans the bare property read', () => {
+  for (const [label, source] of [['src/index.ts', SRC_INDEX], ['lib/index.js', LIB_INDEX]]) {
+    const block = modelSyncHandlerBlock(source)
+    assert.ok(block.includes("ctx.get('settings')"), `${label}: settings resolved via ctx.get`)
+    assert.ok(block.includes("ctx.get('llm')"), `${label}: llm resolved via ctx.get`)
+    assert.ok(block.includes("'LLM runtime is unavailable.'"), `${label}: graceful degradation guard present`)
+    assert.doesNotMatch(block, /ctx\s*\.\s*llm\b/, `${label}: no bare ctx.llm property access`)
+  }
 })

@@ -625,7 +625,11 @@ export function apply(ctx: Context): void {
       if (settings === undefined) {
         return { kind: 'error' as const, text: 'Settings service is unavailable.' }
       }
-      return runModelSync({ settings, llm: ctx.llm }, { rawInput, signal })
+      const llm = ctx.get('llm')
+      if (llm === undefined) {
+        return { kind: 'error' as const, text: 'LLM runtime is unavailable.' }
+      }
+      return runModelSync({ settings, llm }, { rawInput, signal })
     }
     commands.registerLocal('model-sync', modelSyncCustomHandler)
     ctx.effect(() => ctx.commands.register({
