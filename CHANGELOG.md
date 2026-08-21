@@ -4,7 +4,28 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.0] — 2026-08-21
+
+### Added
+
+- `/model-sync`: imports discoverable models into a custom provider's
+  stored model list. Discovery goes through `LlmRuntime.discoverModels`
+  (the same seam as settings' "Fetch available models"); new ids are
+  appended after the existing entries without reordering them, and a
+  sync that finds nothing new skips the settings write entirely
+  (no-op = zero mutations). Named catalog routes are not sync targets
+  and are redirected to `/models-sync` with an accurate error message.
+  The handler resolves the llm runtime via `ctx.get('llm')`, so it works
+  on the live command fiber and degrades to an unavailable-runtime error
+  when no LLM runtime is mounted. `test/model-sync.test.mjs` carries 18
+  cases; the suite stands at 493 tests across 34 files.
+
+### Changed
+
+- `/skills-manager` is renamed to `/skills`: same standalone skill browser
+  (`src/skills-manager.ts` keeps its filename), now registered under the
+  shorter name in both channels and in `MODAL_COMMANDS`. The editor token
+  charset drops `:`, mirroring dsh-commands' COMMAND_NAME exactly.
 
 ### Removed
 
@@ -15,13 +36,6 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   skills remain reachable by typing their native `/name ` gesture directly
   (harness tool-skill injects the content) and still appear as `[s]` rows in
   the `/` autocomplete.
-
-### Changed
-
-- `/skills-manager` is renamed to `/skills`: same standalone skill browser
-  (`src/skills-manager.ts` keeps its filename), now registered under the
-  shorter name in both channels and in `MODAL_COMMANDS`. The editor token
-  charset drops `:`, mirroring dsh-commands' COMMAND_NAME exactly.
 
 ## [0.10.6] — 2026-08-21
 
