@@ -237,18 +237,20 @@ wezterm → `wezterm.font("…")`。下次启动时 `auto` 就会解析成 Power
 
 ## 安装（本地）
 
-```sh
-# 一步构建 + 打包 + 安装到 profile
-node scripts/dev-install.mjs        # pnpm build → pnpm pack → 刷新 profile 副本
+`tui` profile 通过 npm registry 安装本插件——profile 的 `package.json` 钉
+`"@aiwayds/dsh-tui-pi": "<version>"`，由 pnpm 像普通依赖一样解析。发版后
+升级 profile：
 
-# 或手动：
-pnpm pack                            # → aiwayds-dsh-tui-pi-<version>.tgz
-dsh plugin --profile tui add /path/to/aiwayds-dsh-tui-pi-<version>.tgz
+```sh
+node scripts/dev-upgrade.mjs                  # 最新版
+node scripts/dev-upgrade.mjs 0.15.1 --dry-run # 先预览执行计划
 ```
 
-Profile 的 `package.json` 包含两个指向同一 tarball 的键：
-`dsh-tui-pi`（dsh 通过此名称解析 bundle）和
-`@aiwayds/dsh-tui-pi`（`cordis.patch.yml` 中的 loader 入口）。
+脚本先在 registry 上校验版本存在，然后只更新
+`~/.dsh/profiles/tui/package.json` 里的 `"@aiwayds/dsh-tui-pi"` 一个键
+（保格式的 read-modify-write），在该目录执行 `pnpm install`，最后校验安装
+副本的版本与目标一致。绝不碰 `~/.dsh/settings.yaml` 和
+`.credentials.yaml`。重启 dsh（或在 TUI 内 `/reload`）加载新副本。
 
 ## 安装（npm）
 

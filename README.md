@@ -262,18 +262,21 @@ the powerline glyphs on the next start.
 
 ## Install (local)
 
-```sh
-# build + pack + install into the profile in one step
-node scripts/dev-install.mjs        # pnpm build → pnpm pack → refresh profile copies
+The `tui` profile installs this plugin from the npm registry — its
+`package.json` pins `"@aiwayds/dsh-tui-pi": "<version>"`, resolved by pnpm
+like any other dependency. After a release, upgrade the profile with:
 
-# or manually:
-pnpm pack                            # → aiwayds-dsh-tui-pi-<version>.tgz
-dsh plugin --profile tui add /path/to/aiwayds-dsh-tui-pi-<version>.tgz
+```sh
+node scripts/dev-upgrade.mjs                  # latest
+node scripts/dev-upgrade.mjs 0.15.1 --dry-run # preview the plan first
 ```
 
-The profile's `package.json` carries two keys pointing at the tarball:
-`dsh-tui-pi` (dsh resolves the bundle by this name) and
-`@aiwayds/dsh-tui-pi` (the loader entry in `cordis.patch.yml`).
+The script verifies the version exists on the registry, updates ONLY the
+`"@aiwayds/dsh-tui-pi"` key in `~/.dsh/profiles/tui/package.json`
+(formatting-preserving read-modify-write), runs `pnpm install` there, then
+checks the installed copy reports the target version. It never touches
+`~/.dsh/settings.yaml` or `.credentials.yaml`. Restart dsh (or `/reload`
+inside the TUI) to load the new copy.
 
 ## Install (npm)
 
