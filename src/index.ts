@@ -54,7 +54,7 @@ import { clipToWidth } from './text.ts'
 import { type KeyAction } from './keymap.ts'
 import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.ts'
 import { startTui, type TuiHandle } from './tui.ts'
-import { cyclePreset, currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, type PresetState } from './preset.ts'
+import { cyclePreset, currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, initialPresetIndex, type PresetState } from './preset.ts'
 
 export const name = 'dsh-tui-pi'
 
@@ -189,7 +189,16 @@ export function apply(ctx: Context): void {
     // current selection. The roster is fetched once at startup from the
     // api-proxy service; an empty roster (no service / no presets) disables
     // the feature gracefully (Tab is a no-op, footer shows plain "dsh").
-    const presetState: PresetState = { roster: presetRoster, index: 0 }
+    // Out of the box the selection starts on the `standard` preset when the
+    // roster supplies one; otherwise it falls back to the first-scanned
+    // entry (initialPresetIndex). This is a local selection only: before the
+    // user interacts with /preset or presses Tab, NO `meta.agentPreset` is
+    // sent at session create, so the server-side default (`agent-presets.default`
+    // settings / deployment config) governs; the footer reflects the local
+    // selection only. We deliberately do NOT seed
+    // `bridge.setAgentPreset(DEFAULT_PRESET_ID)` at init — that would override
+    // the server-side default with a client-side assumption.
+    const presetState: PresetState = { roster: presetRoster, index: initialPresetIndex(presetRoster) }
     const ui = startTui({
       onSubmit: text => {
         void submit(text)

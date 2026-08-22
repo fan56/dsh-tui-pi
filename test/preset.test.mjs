@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cyclePreset, currentPreset, findPresetByName, formatPresetLabel } from '../lib/preset.js'
+import { cyclePreset, currentPreset, DEFAULT_PRESET_ID, findPresetByName, formatPresetLabel, initialPresetIndex } from '../lib/preset.js'
 
 const roster = [
   { id: 'standard', name: 'Standard', trust: 'system', isDefault: true },
@@ -64,4 +64,28 @@ test('findPresetByName matches display name', () => {
 test('formatPresetLabel returns name or empty string', () => {
   assert.equal(formatPresetLabel(roster[0]), 'Standard')
   assert.equal(formatPresetLabel(undefined), '')
+})
+
+test('DEFAULT_PRESET_ID is standard', () => {
+  assert.equal(DEFAULT_PRESET_ID, 'standard')
+})
+
+test('initialPresetIndex selects the standard preset when present', () => {
+  // `standard` is not the first-scanned entry here — scan order must not win.
+  const scanned = [
+    { id: 'code', name: 'Code', trust: 'system', isDefault: false },
+    { id: 'minimal', name: 'Minimal', trust: 'system', isDefault: false },
+    { id: 'standard', name: 'Standard', trust: 'system', isDefault: false },
+  ]
+  assert.equal(initialPresetIndex(scanned), 2)
+})
+
+test('initialPresetIndex falls back to the first entry without a standard preset', () => {
+  const noStandard = roster.filter(p => p.id !== 'standard')
+  assert.ok(noStandard.length > 0)
+  assert.equal(initialPresetIndex(noStandard), 0)
+})
+
+test('initialPresetIndex returns 0 for an empty roster', () => {
+  assert.equal(initialPresetIndex([]), 0)
 })

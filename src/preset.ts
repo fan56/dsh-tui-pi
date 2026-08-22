@@ -67,7 +67,8 @@ function resolvePresetRoots(): PresetRoot[] {
 /**
  * Scan one preset root directory for valid presets. A preset is a directory
  * containing `agent.cordis.yml` (the composition file). Directories without
- * it are skipped. Returns entries sorted by id.
+ * it are skipped. Entries come back in readdir order — no explicit sort is
+ * applied here.
  */
 async function scanRoot(root: PresetRoot): Promise<PresetEntry[]> {
   let entries: import('node:fs').Dirent[]
@@ -147,6 +148,23 @@ export function currentPreset(state: PresetState): PresetEntry | undefined {
 export function findPresetByName(state: PresetState, name: string): PresetEntry | undefined {
   const lower = name.toLowerCase()
   return state.roster.find(p => p.id.toLowerCase() === lower || p.name.toLowerCase() === lower)
+}
+
+/** The preset id selected out of the box when the roster supplies it. It
+ *  mirrors the dsh shipped default, but there is no mechanical binding:
+ *  until the user interacts with /preset or Tab, the server-side
+ *  `agent-presets.default` setting still governs session creation. */
+export const DEFAULT_PRESET_ID = 'standard'
+
+/**
+ * Initial selection index for a freshly scanned roster: the DEFAULT_PRESET_ID
+ * entry when present, otherwise 0 (the first-scanned entry). Deployments
+ * without a `standard` preset keep the previous first-entry behaviour instead
+ * of failing — the default is a preference, never a requirement.
+ */
+export function initialPresetIndex(roster: readonly PresetEntry[]): number {
+  const i = roster.findIndex(p => p.id === DEFAULT_PRESET_ID)
+  return i < 0 ? 0 : i
 }
 
 /**
