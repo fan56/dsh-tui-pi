@@ -37,7 +37,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -136,7 +136,7 @@ function resolveRegistryVersion(request) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim()
-  if (!/^\d+\.\d+\.\d+/.test(out)) {
+  if (!/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(out)) {
     throw new Error(`registry returned an unexpected version for ${spec}: ${out}`)
   }
   return out
@@ -217,10 +217,26 @@ async function main() {
     console.error(`[dev-upgrade] refusing to write: ${err.message}`)
     process.exit(1)
   }
-  writeFileSync(manifestPath, updated)
+  atomicWriteFileSync(manifestPath, updated)
 
-  // 3. Install in the profile.
-  run('pnpm', ['install'], profileDir)
+  // 3. Install in the profile. If pnpm fails AFTER the manifest was already
+  //    rewritten, atomically restore the original pin so the profile stays
+  //    consistent with what is actually installed under node_modules.
+  try {
+    run('pnpm', ['install'], profileDir)
+  } catch {
+    atomicWriteFileSync(manifestPath, source)
+    console.error(
+      `[dev-upgrade] pnpm install failed — the pin in ${manifestPath} was restored to ${current}.`,
+    )
+    console.error(
+      `[dev-upgrade] Re-run this command once pnpm / the network is healthy to retry the upgrade.`,
+    )
+    console.error(
+      '[dev-upgrade] Note: a partially updated pnpm-lock.yaml converges on the next `pnpm install`.',
+    )
+    process.exit(1)
+  }
 
   // 4. Verify the installed copy.
   const installedPkg = join(profileDir, 'node_modules', ...PKG_NAME.split('/'), 'package.json')
@@ -232,6 +248,29 @@ async function main() {
 
   console.log(`[dev-upgrade] ${args.profile} upgraded to ${PKG_NAME}@${target}.`)
   console.log('[dev-upgrade] restart dsh (or /reload inside the TUI) to load the new copy.')
+}
+
+/**
+ * Atomic replace in the same directory: write a sibling temp file then rename
+ * over the target, so a crash mid-write never leaves a truncated manifest
+ * behind. Same convention as src/skills.ts.
+ */
+function atomicWriteFileSync(filePath, content) {
+  const pathBase = filePath.split('/').pop() ?? 'file'
+  const tmp = join(dirname(filePath), `.${pathBase}.tmp-${process.pid}`)
+  try {
+    writeFileSync(tmp, content)
+    renameSync(tmp, filePath)
+  } catch (error) {
+    // A failed write/rename can leave the `.<name>.tmp-<pid>` sibling behind;
+    // clean it up so nothing ever sees a stray temp file.
+    try {
+      rmSync(tmp, { force: true })
+    } catch {
+      // Best-effort — the original error is what we surface.
+    }
+    throw error
+  }
 }
 
 function run(cmd, args, cwd) {

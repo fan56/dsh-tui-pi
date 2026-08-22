@@ -77,6 +77,36 @@ test('bumpDependencyText refuses missing keys and non-pin refs', () => {
   }
 })
 
+test('bumpDependencyText refuses rewrites when the line formatting differs verbatim', () => {
+  // Same JSON content, different formatting (no spaces around the colon) —
+  // the verbatim needle cannot match, so the rewrite must be refused rather
+  // than guessed.
+  const compact = PROFILE_MANIFEST.replace('"@aiwayds/dsh-tui-pi": "0.15.0"', '"@aiwayds/dsh-tui-pi":"0.15.0"')
+  assert.throws(
+    () => bumpDependencyText(compact, '@aiwayds/dsh-tui-pi', '0.16.0'),
+    /could not find .* verbatim/,
+  )
+})
+
+test('bumpDependencyText preserves CRLF manifests byte-for-byte except the pin', () => {
+  const crlf = PROFILE_MANIFEST.split('\n').join('\r\n')
+  const updated = bumpDependencyText(crlf, '@aiwayds/dsh-tui-pi', '0.16.0')
+  // Only the pin literal differs; every byte — including every CRLF — is
+  // preserved verbatim.
+  assert.equal(updated, crlf.replace('"@aiwayds/dsh-tui-pi": "0.15.0"', '"@aiwayds/dsh-tui-pi": "0.16.0"'))
+  const expectedLfCount = crlf.split('\r\n').length - 1
+  assert.equal(updated.split('\r\n').length - 1, expectedLfCount)
+  assert.ok(!/(?<!\r)\n/.test(updated), 'no bare LF outside CRLF pairs')
+})
+
+test('bumpDependencyText accepts prerelease pins like 0.16.0-rc.1', () => {
+  const updated = bumpDependencyText(PROFILE_MANIFEST, '@aiwayds/dsh-tui-pi', '0.16.0-rc.1')
+  assert.equal(JSON.parse(updated).dependencies['@aiwayds/dsh-tui-pi'], '0.16.0-rc.1')
+  assert.doesNotThrow(() =>
+    assertOnlyDependencyChanged(PROFILE_MANIFEST, updated, '@aiwayds/dsh-tui-pi', '0.16.0-rc.1'),
+  )
+})
+
 test('assertOnlyDependencyChanged accepts exactly the one intended change', () => {
   const before = PROFILE_MANIFEST
   const after = bumpDependencyText(before, '@aiwayds/dsh-tui-pi', '0.16.0')
