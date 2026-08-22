@@ -6,16 +6,21 @@
  * the next guard execution / turn count reads the new value):
  * - `maxAgents` caps concurrent live children. A `tools.guard` registered on
  *   the plugin root ctx denies model-facing spawn tools once the bridge's
- *   live child count meets the cap. Registered globally, every agent in the
- *   process obeys — this TUI's session and any delegation nesting. The
- *   workflow/ralph fan-out bypasses the tool pipeline (its worker thread
+ *   live child count meets the cap. The live-child COUNT covers every child
+ *   in the process, but like `disableSubagent` the DENIAL is scoped to
+ *   sessions this bridge created or resumed (`TUI_SURFACE_KEY`): unmarked
+ *   callers fail open. The workflow/ralph fan-out bypasses the tool pipeline (its worker thread
  *   spawns through the subagent provider directly), so a `subagent/start`
  *   listener prunes any newcomer that slips past the guard.
  * - `disableSubagent` disables the plain native `subagent` tool: its calls
- *   are denied for every agent (and it is hidden from the main agent's
- *   catalog), so delegation goes through registered agent definitions
- *   (`~/.dsh/agents/*.md` via the registry's `use_agent`). `subagent_fork`,
- *   `workflow` and `ralph` stay available.
+ *   are denied for every TUI session (and it is hidden from the main
+ *   agent's catalog), so delegation goes through registered agent
+ *   definitions (`~/.dsh/agents/*.md` via the registry's `use_agent`).
+ *   `subagent_fork`, `workflow` and `ralph` stay available. Enforcement is
+ *   scoped to sessions this bridge created or resumed (see
+ *   `TUI_SURFACE_KEY`): the guard reads the calling agent's surface marker
+ *   and FAILS OPEN for everything else, so a future web-profile deployment
+ *   of this plugin never disables the native tool inside Web UI sessions.
  * - `maxRounds` caps a child's assistant messages (each LLM round-trip is
  *   one "round"): on the bridge's `onRoundCount` the policy injects one
  *   plugin-sourced user message telling the child to wrap up. Queued as the
@@ -78,6 +83,55 @@ export function installSpawnToolFence(agentCtx: Context): void {
   }
 }
 
+/**
+ * Cordis context key marking an agent scope as owned by this TUI: set on the
+ * bridge's `agentCtx` in BOTH session setups (create and resume — dsh runs
+ * the setup callback on the resume path too), read by BOTH enforcement
+ * branches of the global guard (the disableSubagent fence AND the maxAgents
+ * cap). Session meta is NOT usable for this: dsh's
+ * session store folds only its known header fields (`cwd`, `parentSession`,
+ * `seedLength`, `origin`, `delegationDepth`, `agentPreset`) into the durable
+ * `SessionHeader`, so any custom field would be silently dropped at create
+ * AND absent on resume. An in-process scope marker survives neither concern:
+ * it exists exactly while the TUI-owned agent lives, re-installed by every
+ * resume setup, and never leaks into persistence or other processes.
+ */
+export const TUI_SURFACE_KEY = 'dshTuiSurface'
+
+/**
+ * Mark ONE agent scope as created/resumed by this TUI bridge. Call from the
+ * bridge's agent setup; pairs with the guard's surface check below.
+ *
+ * Must be `provide`, never `set`: on a real cordis Context, `set` of a name
+ * that was not provided first throws (`cannot set property ... without
+ * provide`) — and this runs inside the session setups, where a throw rolls
+ * back the whole session create/resume. `provide` defines the property on
+ * the scope and reads back through plain `get` (regression-tested against a
+ * real Context).
+ */
+export function markTuiSurface(agentCtx: Context): void {
+  agentCtx.provide(TUI_SURFACE_KEY, true)
+}
+
+/**
+ * Whether the agent a spawn-tool call runs on behalf of carries the TUI
+ * surface marker. Defensive end to end: `exec.agent` may be undefined, lack
+ * a ctx, or its get may throw (foreign service shapes) — anything but a
+ * confirmed marker reads as NOT TUI-owned, so BOTH enforcement branches
+ * (the disableSubagent denial and the maxAgents cap) fail open outside this
+ * plugin's own sessions.
+ */
+function isTuiSurfaceAgent(agent: unknown): boolean {
+  if (agent === null || typeof agent !== 'object') return false
+  const ctx = (agent as { readonly ctx?: unknown }).ctx
+  if (ctx === null || typeof ctx !== 'object' || typeof (ctx as { get?: unknown }).get !== 'function') return false
+  try {
+    return (ctx as { get(name: string): unknown }).get(TUI_SURFACE_KEY) === true
+  } catch {
+    return false
+  }
+}
+
 /** Injected into a child that reached `maxRounds` — wrap up and report back. */
 export const SUMMARY_MESSAGE: string = '总结和结束这个任务，汇报情况。'
 
@@ -90,7 +144,7 @@ interface SubagentStartInfo {
 /** Structural view of the tool registry's guard hook (`@deepseek-ai/dsh-tools`). */
 interface ToolsService {
   /** Register a global monotonic guard; the returned disposer unregisters it. */
-  guard(execution: (exec: { readonly name: string }) => string | undefined): () => void
+  guard(execution: (exec: { readonly name: string; readonly agent?: unknown }) => string | undefined): () => void
 }
 
 /** The policy's live backstop — the bridge's per-child accessors. */
@@ -126,21 +180,35 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
   const disposers: Array<() => void> = []
   const injected = new Set<string>()
 
-  // maxAgents guard: global (plugin root ctx), every spawn-tool call is
-  // denied while live children are at the cap. Zero disables the guard.
+  // maxAgents guard: the live-child count is global (the bridge counts every
+  // child it discovers), but the DENIAL — like the disableSubagent fence —
+  // only fires for agents this bridge created or resumed (the surface
+  // marker; unmarked callers fail open). Zero disables the guard.
   // The cap is approximate, not a hard admission lock: a burst of parallel
   // spawn calls can briefly overshoot before the bridge's firehose discovery
   // counts the newcomers — the subagent/start backstop below prunes the
   // overshoot, and the next spawn's guard reads the caught-up count.
   //
-  // disableSubagent fence: the plain native `subagent` tool is denied
-  // outright (checked before the cap - a tool violation is the reason even
-  // when the cap would also deny). `use_agent`, the fork/workflow/ralph
-  // variants and every non-spawn tool pass through to the cap check below.
+  // disableSubagent fence: the plain native `subagent` tool is denied —
+  // but ONLY for agents this bridge created or resumed (the surface marker
+  // set by `markTuiSurface` in the session setups; checked before the cap -
+  // a tool violation is the reason even when the cap would also deny).
+  // Fail-open by design: an unmarked agent (a Web UI session in a shared
+  // process, a foreign caller, an absent exec.agent) passes through to the
+  // cap check below, so the fence never disables the native tool outside
+  // the TUI's own sessions. `use_agent`, the fork/workflow/ralph variants
+  // and every non-spawn tool pass through to the cap check too.
+  //
+  // maxAgents cap: SAME surface scoping as the fence — only a marked TUI
+  // session's spawn calls are denied at the cap. The live-children COUNT is
+  // still global (the bridge counts every child it discovers), but the
+  // denial fires only for marked callers, so foreign sessions sharing this
+  // process keep spawning freely while the TUI's own budget is enforced.
   const tools = ctx.get('tools') as ToolsService | undefined
   if (tools?.guard !== undefined) {
     disposers.push(tools.guard((exec) => {
       if (!SPAWN_TOOLS.includes(exec.name)) return undefined
+      if (!isTuiSurfaceAgent(exec.agent)) return undefined
       if (readSubagentLimits(ctx).disableSubagent && NATIVE_SPAWN_TOOLS.includes(exec.name)) {
         return `Tool "subagent" is disabled here - delegation goes through registered agents. `
           + 'Dispatch the work through the use_agent tool with one of the registered agent names instead.'

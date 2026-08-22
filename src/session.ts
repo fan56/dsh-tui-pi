@@ -19,7 +19,7 @@ import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-ses
 import { readAppendSystem } from './append-system.ts'
 import type { AgentView } from './dsh-events.ts'
 import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
-import { installSpawnToolFence } from './subagent-policy.ts'
+import { installSpawnToolFence, markTuiSurface } from './subagent-policy.ts'
 import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
 
 /**
@@ -647,8 +647,11 @@ export class DshSessionBridge {
         // Install the mutable selection so `/model` can live-switch the route,
         // the APPEND_SYSTEM.md section on this agent ONLY (never its
         // subagents), and the spawn-tool hide so the agent sees a single
-        // `use_agent` delegation entry.
+        // `use_agent` delegation entry. The surface marker scopes the live
+        // disableSubagent guard to THIS agent (resume runs setup too, so a
+        // resumed session is re-marked without relying on persisted meta).
         setup: async agentCtx => {
+          markTuiSurface(agentCtx)
           installModelSelection(agentCtx, this.selectionRef)
           installAppendSystem(agentCtx)
           installSpawnToolFence(agentCtx)
@@ -1094,8 +1097,10 @@ export class DshSessionBridge {
       // Install the mutable selection so `/model` can live-switch the route,
       // the APPEND_SYSTEM.md section on this agent ONLY (never its
       // subagents), and the spawn-tool hide so the agent sees a single
-      // `use_agent` delegation entry.
+      // `use_agent` delegation entry. The surface marker scopes the live
+      // disableSubagent guard to THIS agent.
       setup: async agentCtx => {
+        markTuiSurface(agentCtx)
         installModelSelection(agentCtx, this.selectionRef)
         installAppendSystem(agentCtx)
         installSpawnToolFence(agentCtx)

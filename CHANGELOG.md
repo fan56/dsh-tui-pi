@@ -4,6 +4,36 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-08-22
+
+### Fixed
+
+- The `disableSubagent` guard now denies the native `subagent` tool only for
+  sessions this TUI created or resumed, failing open for everything else.
+  Previously the guard was process-global (plain-context dsh semantics), so
+  installing this plugin into a web profile would also have disabled the
+  built-in subagent inside Web UI sessions. The bridge now marks its agent
+  scope with a surface key in both session setups (create and resume — dsh
+  runs setup on the resume path too); the guard reads the calling agent's
+  marker via `exec.agent` and passes unmarked callers through to the
+  `maxAgents` cap check. Session meta was not usable as the carrier: dsh's
+  session store folds only its known header fields into the durable
+  `SessionHeader`, silently dropping custom fields at create time. The
+  per-session spawn-tool hide (`tools.restrict`) is unchanged. Known semantic
+  edge: children spawned by a TUI session through `use_agent` carry no
+  marker, so their own plain `subagent` calls are no longer denied — the
+  documented fail-open trade-off.
+- The surface key is written with cordis `provide`, not `set`: on a real
+  Context, `set` of a name that was not provided first throws ("cannot set
+  property ... without provide"), and the marker is installed inside the
+  session setups — a throw there would have rolled back every session
+  create/resume. Regression-tested against a real `@deepseek-ai/cordis`
+  Context (provide → get roundtrip + guard read-back).
+- Boundary convergence: the `maxAgents` cap denial now carries the same
+  surface-marker condition as the fence, so it too only fires for sessions
+  this TUI created or resumed. The live-children count stays global; an
+  unmarked agent sharing this process spawns freely even over the cap.
+
 ## [0.15.0] - 2026-08-22
 
 ### Changed
