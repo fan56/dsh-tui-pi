@@ -1,18 +1,21 @@
 /**
- * Agent-preset state manager — fetches the roster from the api-proxy service,
- * tracks the user's Tab selection, and formats the footer label.
+ * Agent-preset state manager — scans the filesystem for preset directories
+ * (same discovery logic as @deepseek-ai/dsh-agent-presets), tracks the user's
+ * Tab selection, and formats the footer label.
  *
  * Presets are a dsh deployment concept: each preset composes a session's agent
- * from a different set of plugins/tools. The TUI fetches the roster once at
- * startup and lets the user cycle through it with Tab; the chosen preset is
- * applied to the next blank session on first submit.
+ * from a different set of plugins/tools. The TUI scans the preset roots once
+ * at startup and lets the user cycle through them with Tab; the chosen preset
+ * is applied to the next blank session on first submit.
  *
  * The roster is O(1) to read (an in-memory array); cycle is O(1) mutation of
  * the index. The module is pure except for the async `fetchPresetRoster` which
- * calls the api-proxy service.
+ * scans the filesystem.
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import { access, readdir, readFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { homedir } from 'node:os'
 
 /** One preset entry from the deployment roster. */
 export interface PresetEntry {
@@ -29,30 +32,102 @@ export interface PresetState {
   index: number
 }
 
+/** A preset root: a directory containing preset subdirectories. */
+interface PresetRoot {
+  path: string
+  trust: 'system' | 'user'
+}
+
 /**
- * Fetch the preset roster from the api-proxy service. Returns an empty array
- * when the service is absent (standalone / no presets configured).
+ * Resolve the preset roots — same logic as dsh-app-boot's profile-boot:
+ *   1. shipped root: `<dsh install>/config/agent-presets/`
+ *   2. user root: `~/.dsh/.agent-presets/`
+ * The shipped root is found via the dsh CLI's install location; the user root
+ * is the conventional `~/.dsh/.agent-presets/` (dsh-agent-presets USER_PRESET_DIR).
  */
-export async function fetchPresetRoster(ctx: Context): Promise<PresetEntry[]> {
-  const api = ctx.get('apiProxy') as
-    | { agentPresets?: { list: (payload: Record<string, never>) => Promise<{ data?: { presets?: readonly { id: string; name?: string; description?: string; trust: 'system' | 'user'; isDefault: boolean; broken?: string }[] } }> } }
-    | undefined
-  if (api?.agentPresets === undefined) return []
-  try {
-    const res = await api.agentPresets.list({})
-    const presets = res.data?.presets ?? []
-    return presets
-      .filter(p => p.broken === undefined)
-      .map(p => ({
-        id: p.id,
-        name: p.name ?? p.id,
-        description: p.description,
-        trust: p.trust,
-        isDefault: p.isDefault,
-      }))
-  } catch {
-    return []
+function resolvePresetRoots(): PresetRoot[] {
+  const roots: PresetRoot[] = []
+  // Shipped root: resolve from the dsh CLI binary location. The dsh binary is
+  // at `/usr/local/bin/dsh` or `/opt/homebrew/bin/dsh`, and the config dir is
+  // at `<dsh-install>/../lib/node_modules/@deepseek-ai/dsh/config/agent-presets/`.
+  // We try the known homebrew path first, then fall back to a `which dsh` probe.
+  const shippedPaths = [
+    '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/config/agent-presets',
+    '/usr/local/lib/node_modules/@deepseek-ai/dsh/config/agent-presets',
+  ]
+  for (const p of shippedPaths) {
+    roots.push({ path: p, trust: 'system' })
   }
+  // User root: ~/.dsh/.agent-presets/
+  const userRoot = resolve(homedir(), '.dsh', '.agent-presets')
+  roots.push({ path: userRoot, trust: 'user' })
+  return roots
+}
+
+/**
+ * Scan one preset root directory for valid presets. A preset is a directory
+ * containing `agent.cordis.yml` (the composition file). Directories without
+ * it are skipped. Returns entries sorted by id.
+ */
+async function scanRoot(root: PresetRoot): Promise<PresetEntry[]> {
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = await readdir(root.path, { withFileTypes: true })
+  } catch {
+    return [] // absent root = no presets
+  }
+  const presets: PresetEntry[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    // Validate id: same regex as dsh-agent-presets (lowercase alphanumeric + hyphens)
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(entry.name)) continue
+    const dir = join(root.path, entry.name)
+    const compositionPath = join(dir, 'agent.cordis.yml')
+    try {
+      await access(compositionPath)
+    } catch {
+      continue // no composition file → skip
+    }
+    // Read optional metadata.yml for name/description
+    let name = entry.name
+    let description: string | undefined
+    try {
+      const meta = await readFile(join(dir, 'metadata.yml'), 'utf8')
+      const nameMatch = meta.match(/^name:\s*(.+)$/m)
+      if (nameMatch) name = nameMatch[1].trim()
+      const descMatch = meta.match(/^description:\s*(.+)$/m)
+      if (descMatch) description = descMatch[1].trim()
+    } catch {
+      // no metadata → use id as name
+    }
+    presets.push({
+      id: entry.name,
+      name,
+      description,
+      trust: root.trust,
+      isDefault: false, // will be set later from settings
+    })
+  }
+  return presets
+}
+
+/**
+ * Fetch the preset roster by scanning the filesystem roots. First-root-wins
+ * per id (shipped root before user root). Returns an empty array when no
+ * presets are found.
+ */
+export async function fetchPresetRoster(): Promise<PresetEntry[]> {
+  const roots = resolvePresetRoots()
+  const seen = new Set<string>()
+  const roster: PresetEntry[] = []
+  for (const root of roots) {
+    for (const preset of await scanRoot(root)) {
+      if (seen.has(preset.id)) continue
+      seen.add(preset.id)
+      roster.push(preset)
+    }
+  }
+  return roster
 }
 
 /** Cycle the preset index forward (default) or backward, wrapping around. */

@@ -155,7 +155,7 @@ export function apply(ctx: Context): void {
     const iconSetPreference = await readIconSetPreference(ctx)
     const nerdfontAvailable = await detectNerdFontAvailable()
     applyIconSet(resolveIconSet(iconSetPreference, nerdfontAvailable))
-    const presetRoster = await fetchPresetRoster(ctx)
+    const presetRoster = await fetchPresetRoster()
     let disposer: (() => void) | undefined
     try {
       disposer = runTui(themePreference, panelHeight, footerHints, nerdfontAvailable, presetRoster)
