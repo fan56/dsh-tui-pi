@@ -111,6 +111,8 @@ dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%) ▸ �
 
 每行显示：spinner + 代理**名称**，重试次数（`↻N≤M`），当前上下文占用（`X/Y` —— 子代理最近一次请求的 billed input+output 加上其后消息的 CJK 估算，除以它的上下文窗口；**不是**只增不减的累计 token 消耗），rounds（`round N/M` —— assistant 消息数对上限，`maxRounds > 0` 时才显示 `/M`），耗时。不显示 provider，无边框，无标题。
 
+**spawn 派生**与 **fork 派生**两类子代理都会被追踪——dsh 通过 `childSessionMeta` 同时写入 `origin: 'subagent'` 和 `delegationDepth` 预算，头部识别对两种标记都认得（只有预算没有 origin 的头部作为防御性兜底也会被接纳，标记为 `fork <id8>`；当前 dsh 不会产生这种形态）。非子代理会话按**值**而非字段有无被挡在板外：jsonl 持久化后端在每条恢复的头部上都会物化 `delegationDepth: 0`，所以闸门要求预算严格 `> 0`。面向用户的会话 fork（fork 出的*对话*：`Session.fork` 只设 `parentSession` + `seedLength`，不带预算）刻意不进子代理面板，仍可通过 `/resume` 恢复——`/resume` 的过滤器（`isResumableSessionHeader`）恰好排除被委派的子代理（`origin: 'subagent'` 或预算 > 0）。
+
 #### Todos 待办面板
 
 `● Todos (done/total)` 树是一个有边框的面板，**固定在输入框上方**（不随对话区滚动）：
@@ -148,6 +150,8 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 
 挂载后 DCP 在后台透明运行。Footer 的 **Context** 分段计算的是当前上下文占用 —— 最近一次请求的 billed context 加上其后消息的 CJK 估算 —— 所以裁剪后下一次请求会变小，显示随之回落（百分比封顶 100，窗口是硬上限）。**Cache-hit** 分段反映会话累计的缓存复用。
 
+在子代理内部，已提交的裁剪同样可见：DCP 在子代理自己的日志里为每次裁剪追加一行 `user/message` **notice**，Ctrl+G 的对话查看器用 `🧹` 标记渲染它（区别于通用的 `ⓘ`），选择器行的描述里带有该子代理的裁剪次数（`🧹 N×`）。DCP 的 `roundInterval` 与 TUI 的 `maxRounds` 数的是**同一样东西**——`assistant/message` 事件，每次 LLM 往返计 1——但行为不同：子代理计数达到 `maxRounds` 时 TUI 排队发一个收尾请求；会话计数达到 `roundInterval` 后 DCP 在下一个空闲边界执行裁剪（修剪上下文）。一个触发工作，一个释放上下文。
+
 ---
 
 ## 斜杠命令
@@ -163,6 +167,7 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 | `/export` | 将当前会话日志导出为 JSONL（默认 `~/Downloads/dsh-session-<id>.jsonl`）。 |
 | `/permission` | 权限预设选择器（read-only / workspace-write / danger-full-access）。 |
 | `/theme` | 配色方案选择器（`auto` / `light` / `dark`），实时生效。 |
+| `/preset` | Agent 预设选择器；`<name>` 直接切换，`next` 向前循环（同 `Tab`）。 |
 | `/agents` | 管理 agent markdown 文件 + 子代理限制（`maxAgents`、`maxRounds`）。 |
 | `/subagents` | 选择运行中/最近的子代理，查看其实时对话。 |
 | `/reload` | 从源码热重载插件（`pnpm build` 后执行，无需重启 dsh）。 |
@@ -182,12 +187,18 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 | `Ctrl+D` | 退出（仅在编辑器为空时） |
 | `Ctrl+L` | 打开模型/推理强度选择器 |
 | `Ctrl+G` | 打开子代理选择器（有运行中的子代理时） |
-| `Tab` | 自动补全 |
+| `Tab` | 循环切换 agent 预设（footer 品牌段显示当前预设 `dsh(<name>)`） |
 | `↑` / `↓` | 浏览历史消息（shell 风格，保留 500 条） |
 
 ### 自定义快捷键
 
-通过 `~/.dsh/keybindings.json` 重新映射任意按键 —— JSON 格式的按键映射表。可手动编辑后 `/reload`，或用 `/hotkeys` 交互式修改（实时生效，无需重启）。
+通过 `~/.dsh/keybindings.json` 重新映射任意应用按键 —— 一个部分 JSON 映射表，键为应用按键、值为按键 id（`ctrl+letter`、`alt+letter`、命名键）。可手动编辑，或用 `/hotkeys` 交互式修改（实时生效，无需重启）。
+
+---
+
+## Agent 预设
+
+当部署提供了 `standard` 预设时，TUI 启动即选中它；否则选中扫描到的第一项。这只是本地选择：在你操作 `/preset` 或按 `Tab` 之前，创建会话时不会发送任何 `meta.agentPreset`，因此仍由服务端默认值（`agent-presets.default`）决定。footer 品牌段反映本地选择（`dsh(<name>)`）；一次切换会在下一个空白会话生效。
 
 ---
 
@@ -199,6 +210,9 @@ GitHub light / GitHub dark 配色方案，运行时热切换：
 - `DSH_TUI_THEME=light|dark` —— 环境变量钉选，优先于偏好设置。
 - `DSH_TUI_TRANSPARENT=1` —— 透明画布（终端背景可见）。
 - `auto` 模式自动检测终端并跟随实时明暗切换。
+
+全屏画布背景随包内置 —— 由写流装饰器（`src/canvas-terminal.ts`）用主题色
+经 BCE 给每条擦除序列上色，无需补丁依赖。
 
 ---
 
@@ -279,16 +293,16 @@ dsh --profile tui
 
 **不会自动完成的事：**
 
-- pi-tui patchedDependencies（编辑器补全边框、SelectList 全行背景）
-  **不会**为 npm 消费者自动应用——需要在 profile 的
-  `pnpm-workspace.yaml` 里手动添加条目。这是**纯外观**问题：TUI 不打
-  补丁照样启动，只是未选中行不会渲染全行背景。
+- 不再有任何补丁相关的事：自 0.8.0 起，仓库和 npm 包运行的是同一个
+  原版 `@earendil-works/pi-tui`——画布背景由我们自己的写流装饰器（BCE）
+  绘制，随包内置，消费方 profile 无需任何 `pnpm-workspace.yaml` 条目。
 
 ### 故障排查
 
 | 症状 | 原因 | 修复 |
 |---|---|---|
 | `Cannot find package '<name>' imported from ~/.dsh/profiles/...` | 某个 bundle 的 `cordis.patch.yml` 的 `name` 字段与 scoped 包名不匹配 | 更新插件（所有 `@aiwayds/*` 插件已修复补丁 `name` 字段） |
+| npm 安装的 dsh 报 `Cannot find package '@deepseek-ai/dsh-client-schema-form'` | npm 分发的 dsh 闭包缺这个包（上游打包缺口——[deepseek-harness discussion #3471](https://github.com/deepseek-ai/deepseek-harness/discussions/3471)） | 本插件自 0.8.1 起已修（辅助函数内置，不再 import 缺失的包）。其他需要它的插件：`cd ~/.dsh/profiles/<profile> && pnpm add @deepseek-ai/dsh-client-schema-form@next` |
 | `Cannot read properties of undefined (reading 'prepare')` | profile 树里出现两个 `@deepseek-ai/cordis` 物理副本（模块重复安装） | 见 AGENTS.md 铁律 8。删掉物理副本：`rm -rf ~/.dsh/profiles/tui/node_modules/@deepseek-ai && dsh --profile tui`（dsh 会重新 heal 为软链） |
 | pnpm 提示 `Peer dependencies that should be installed: @deepseek-ai/...` | 某个插件把 `@deepseek-ai/*` 放在 `dependencies` 而非 `peerDependencies` | 更新插件（所有 `@aiwayds/*` dsh 插件已改用 optional peerDeps），警告无害 |
 | pnpm 提示 `Ignored build scripts: @aiwayds/dsh-tui-pi@...` | pnpm 10 默认阻止 build 脚本，tui-pi 的 postinstall 被跳过 | **正常且无害**——postinstall 只影响仓库开发流，npm 消费者由 dsh 的 `healProfilesModuleFallback` 处理闭包链接 |
@@ -308,12 +322,12 @@ dsh --profile tui        # 或：dsh-tui-pi（bin shim）
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # 输出 lib/
-pnpm test     # 单元测试，node --test 对 lib/ 执行（296 个测试，pretest 自动构建）
+pnpm test     # 单元测试，node --test 对 lib/ 执行（541 个测试，pretest 自动构建）
 ```
 
 本地类型检查通过 symlink `node_modules/@deepseek-ai/*` 指向已安装的 dsh 闭包（`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules`）；这些 symlink 不会打入 tarball。`scripts/link-dsh-closure.mjs`（`postinstall`）在每次 `pnpm install` 后重新创建所有 symlink。
 
-**pi-tui 补丁**：对 `@earendil-works/pi-tui` 0.84.2 的一个小补丁（`pnpm-workspace.yaml`，补丁文件在 `patches/`）添加了 `unselectedText` 和 `selectedPrefix` SelectListTheme 钩子以及编辑器自动补全边框。
+**pi-tui**：npm 上的原版 `@earendil-works/pi-tui` 0.84.2——无补丁、无 fork。全屏画布背景由我们自己的写流装饰器实现（`src/canvas-terminal.ts`，BCE）。
 
 ---
 
@@ -333,7 +347,7 @@ src/
   subagent-policy.ts  maxAgents 守卫 + maxRounds 收尾请求注入
   subagent-viewer.ts  Ctrl+G 选择器 + 实时对话面板
   theme/              GitHub light/dark 配色 + 终端检测
-test/*.test.mjs       单元测试（296 个，覆盖 24 个文件）
+test/*.test.mjs       单元测试（541 个，覆盖 37 个文件）
 ```
 
 ---

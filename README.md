@@ -338,7 +338,7 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (386 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (541 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -371,7 +371,7 @@ src/
   subagent-policy.ts  maxAgents guard + maxRounds wrap-up injection
   subagent-viewer.ts  Ctrl+G picker + live transcript panel
   theme/              GitHub light/dark palettes + terminal detection
-test/*.test.mjs       unit tests (296 across 24 files)
+test/*.test.mjs       unit tests (541 across 37 files)
 ```
 
 ---
