@@ -4,6 +4,28 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-08-22
+
+### Added
+
+- Agent preset switch via **Tab** key: cycles through the deployment's agent
+  presets; the footer brand segment shows the current selection as `dsh(<name>)`.
+  The chosen preset is applied to the next blank session on first submit.
+- `/preset` command: bare opens a picker overlay, `<name>` switches directly,
+  `next` cycles forward (same as Tab).
+- `presetCycle` keybinding in `/hotkeys` (default: Tab, remappable via
+  `keybindings.json`).
+- New `src/preset.ts` module: `fetchPresetRoster` (from `ctx.apiProxy`),
+  `cyclePreset`, `currentPreset`, `findPresetByName`, `formatPresetLabel`.
+- e2e scenario `60-preset`: graceful degradation when no presets are configured.
+
+### Changed
+
+- Footer hint bar now includes `Tab: preset` segment.
+- `FooterDataSource` gains `getPreset(): string | undefined`.
+- `DshSessionBridge` gains `setAgentPreset()` / `isSessionBlank()`; session
+  creation passes `meta.agentPreset` to `ctx.agents.create()`.
+
 ## [0.13.0] - 2026-08-22
 
 ### Changed
