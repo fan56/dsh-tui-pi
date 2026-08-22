@@ -4,6 +4,18 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-08-22
+
+### Changed
+
+- The TUI now starts with the `standard` agent preset selected when the roster
+  supplies one (`initialPresetIndex`), falling back to the first-scanned entry
+  otherwise. This is a local selection only: before user interaction with
+  `/preset` or `Tab`, no `meta.agentPreset` is sent at session create, so the
+  server-side default (`agent-presets.default`) still governs.
+- README documents `/preset`, the `Tab` preset-cycle shortcut and the startup
+  default-selection behavior.
+
 ## [0.14.1] - 2026-08-22
 
 ### Fixed

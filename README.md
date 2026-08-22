@@ -173,6 +173,7 @@ Inside a subagent, a committed compaction is visible too: DCP appends one `user/
 | `/export` | Write the current session log as JSONL (`~/Downloads/dsh-session-<id>.jsonl`). |
 | `/permission` | Permission-preset picker (read-only / workspace-write / danger-full-access). |
 | `/theme` | Color-scheme picker (`auto` / `light` / `dark`). Applies immediately. |
+| `/preset` | Agent-preset picker; `<name>` switches directly, `next` cycles forward (same as `Tab`). |
 | `/agents` | Manage agent markdown files + subagent limits (`maxAgents`, `maxRounds`). |
 | `/subagents` | Pick a running/recent subagent and watch its live transcript. |
 | `/reload` | Hot-reload the plugin from source (after `pnpm build`) without restarting dsh. |
@@ -192,12 +193,18 @@ Anything that is not a resolvable command falls through to the model as an ordin
 | `Ctrl+D` | Quit (only when editor is empty) |
 | `Ctrl+L` | Open model/think picker |
 | `Ctrl+G` | Open subagent picker (while children are running) |
-| `Tab` | Autocomplete |
+| `Tab` | Cycle agent presets (footer brand shows the current one as `dsh(<name>)`) |
 | `↑` / `↓` | Browse submitted-message history (shell-style, 500 entries) |
 
 ### Custom keybindings
 
 Remap any app key through `~/.dsh/keybindings.json` — a partial JSON map of app keys to key ids (`ctrl+letter`, `alt+letter`, named keys). Edit by hand or use `/hotkeys` to change interactively (live-applied, no restart).
+
+---
+
+## Agent presets
+
+The TUI starts with the `standard` agent preset selected when the deployment supplies one; otherwise the first-scanned entry is selected. This is a local selection only: before you interact with `/preset` or press `Tab`, no `meta.agentPreset` is sent at session create, so the server-side default (`agent-presets.default`) governs. The footer brand segment reflects the local selection (`dsh(<name>)`); a switch applies to the next blank session.
 
 ---
 
