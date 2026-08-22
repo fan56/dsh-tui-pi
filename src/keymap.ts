@@ -102,6 +102,8 @@ export interface KeyBindings {
   modelPicker: KeyId
   /** Open the subagent picker / viewer (running children). */
   subagentViewer: KeyId
+  /** Cycle through agent presets. */
+  presetCycle: KeyId
 }
 
 export const DEFAULT_KEYBINDINGS: KeyBindings = {
@@ -110,6 +112,7 @@ export const DEFAULT_KEYBINDINGS: KeyBindings = {
   ctrlD: 'ctrl+d',
   modelPicker: 'ctrl+l',
   subagentViewer: 'ctrl+g',
+  presetCycle: 'tab',
 }
 
 /** Live snapshot of everything the decision needs — composed by tui.ts. */
@@ -155,6 +158,7 @@ export type KeyAction =
   | { kind: 'ctrl-d-quit'; consumes: true }          // Ctrl+D on empty editor
   | { kind: 'model-picker'; consumes: true }         // Ctrl+L opens the picker
   | { kind: 'subagent-viewer'; consumes: true }      // Ctrl+G while subagents run
+  | { kind: 'preset-cycle'; consumes: true }         // Tab cycles agent presets
   /**
    * Esc handed to an open popup - the popup closes itself with it (the popup
    * branch of the Esc chain). Not consumed (the focused popup sees the key);
@@ -325,5 +329,10 @@ export function resolveKeyAction(
   if (matchesKey(data, bindings.ctrlD)) return resolveCtrlD(state)
   if (matchesKey(data, bindings.modelPicker)) return resolveModelPicker(state)
   if (matchesKey(data, bindings.subagentViewer)) return resolveSubagentViewer(state)
+  if (matchesKey(data, bindings.presetCycle)) {
+    if (state.overlayOpen) return { kind: 'overlay', consumes: false }
+    if (state.autocompleteOpen) return { kind: 'autocomplete-close', consumes: false }
+    return { kind: 'preset-cycle', consumes: true }
+  }
   return { kind: 'noop', consumes: false }
 }

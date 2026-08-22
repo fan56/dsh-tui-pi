@@ -209,6 +209,8 @@ export class DshSessionBridge {
   private resuming: Promise<AgentHandle> | undefined
   private readonly disposers: Array<() => void> = []
   private sessionId: SessionId | undefined
+  /** Agent preset id to pass to `meta.agentPreset` on the next `createSession`. */
+  private agentPreset: string | undefined
   private selection: ModelSelection | undefined
   /** Mutable live selection installed into the agent; `/model` mutates `current`. */
   private readonly selectionRef: ModelSelectionRef = { current: undefined, assembled: undefined }
@@ -1084,7 +1086,10 @@ export class DshSessionBridge {
     this.seedSelectionFromDefault()
     return this.ctx.agents.create({
       sessionId: SessionId(crypto.randomUUID()),
-      meta: { cwd: process.cwd() },
+      meta: {
+        cwd: process.cwd(),
+        ...this.agentPreset !== undefined ? { agentPreset: this.agentPreset } : {},
+      },
       agentOptions: this.selection ?? {},
       // Install the mutable selection so `/model` can live-switch the route,
       // the APPEND_SYSTEM.md section on this agent ONLY (never its
@@ -1107,6 +1112,18 @@ export class DshSessionBridge {
   setSelection(next: ModelSelection): void {
     this.selectionRef.current = { ...next }
     this.selection = { ...next }
+  }
+
+  /** Set the agent preset for the next session creation. */
+  setAgentPreset(presetId: string | undefined): void {
+    this.agentPreset = presetId
+  }
+
+  /** Whether the current session has any turns (blank = preset can be changed). */
+  isSessionBlank(): boolean {
+    if (this.sessionId === undefined) return true
+    const agent = this.getAgent()
+    return agent === undefined || agent.session.events.length === 0
   }
 }
 

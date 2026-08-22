@@ -8,6 +8,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
+import type { PresetEntry, PresetState } from './preset.ts'
 import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { OverlayHandle, TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
@@ -364,6 +365,42 @@ export async function pickModel(
         return
       }
       resolve({ provider: picked.provider, model: picked.id, reasoningEffort: chosen.effort })
+    }
+  })
+}
+
+/**
+ * Open the agent preset picker overlay. Resolves with the picked preset id,
+ * or `undefined` when cancelled. The row matching the current selection is
+ * preselected; focus returns to `restoreFocus` on close.
+ */
+export function pickPreset(
+  tui: TUI,
+  theme: TuiTheme,
+  state: PresetState,
+  restoreFocus: () => void,
+): Promise<string | undefined> {
+  const rows: PickerItem[] = state.roster.map(p => ({
+    value: p.id,
+    label: p.name,
+    description: p.description ?? (p.trust === 'system' ? 'shipped preset' : 'user preset'),
+  }))
+  return new Promise(resolve => {
+    const list = new TablePanel(theme, {
+      title: '● Agent preset',
+      columns: labelDescriptionColumns('Preset', rows),
+      rows,
+      renderCell: itemCell,
+      preselect: Math.max(0, state.index),
+      onSelect: row => finish(row.value),
+      onCancel: () => finish(undefined),
+    })
+    const overlay = mountPicker(tui, theme, list)
+
+    function finish(picked: string | undefined): void {
+      overlay.hide()
+      restoreFocus()
+      resolve(picked)
     }
   })
 }

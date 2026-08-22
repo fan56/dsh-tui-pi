@@ -23,7 +23,7 @@ import { TranscriptRenderer } from './messages.ts'
 import type { PanelHeight } from './activity.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
-import { pickEffort, pickModel, pickPermission, pickTheme } from './selectors.ts'
+import { pickEffort, pickModel, pickPermission, pickPreset, pickTheme } from './selectors.ts'
 import { runModelSync } from './model-sync.ts'
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
 import {
@@ -54,6 +54,7 @@ import { clipToWidth } from './text.ts'
 import { type KeyAction } from './keymap.ts'
 import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.ts'
 import { startTui, type TuiHandle } from './tui.ts'
+import { cyclePreset, currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, type PresetState } from './preset.ts'
 
 export const name = 'dsh-tui-pi'
 
@@ -154,9 +155,10 @@ export function apply(ctx: Context): void {
     const iconSetPreference = await readIconSetPreference(ctx)
     const nerdfontAvailable = await detectNerdFontAvailable()
     applyIconSet(resolveIconSet(iconSetPreference, nerdfontAvailable))
+    const presetRoster = await fetchPresetRoster(ctx)
     let disposer: (() => void) | undefined
     try {
-      disposer = runTui(themePreference, panelHeight, footerHints, nerdfontAvailable)
+      disposer = runTui(themePreference, panelHeight, footerHints, nerdfontAvailable, presetRoster)
     } catch (error) {
       // An async-effect failure after startTui would otherwise orphan the
       // terminal in raw mode — the disposer never registers, so nothing ever
@@ -177,12 +179,17 @@ export function apply(ctx: Context): void {
    * reaches cordis. Returns the effect disposer handed back to cordis on
    * teardown.
    */
-  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, nerdfontAvailable: boolean): () => void {
+  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, nerdfontAvailable: boolean, presetRoster: import('./preset.ts').PresetEntry[]): () => void {
     // User keybindings (`~/.dsh/keybindings.json`): a partial map of the app
     // keys, read once per TUI start — `/reload` re-runs apply() and re-reads
     // it. Broken entries surface as notices instead of breaking startup.
     const keyFile = keybindingsPath(dshHome())
     const keyBindings = loadKeyBindings(keyFile)
+    // Preset state: Tab cycles through the roster; the footer reflects the
+    // current selection. The roster is fetched once at startup from the
+    // api-proxy service; an empty roster (no service / no presets) disables
+    // the feature gracefully (Tab is a no-op, footer shows plain "dsh").
+    const presetState: PresetState = { roster: presetRoster, index: 0 }
     const ui = startTui({
       onSubmit: text => {
         void submit(text)
@@ -294,6 +301,17 @@ export function apply(ctx: Context): void {
             // Ctrl+G: open the subagent picker → transcript viewer while
             // children run (modal overlay; Esc / double-x closes).
             void openSubagentViewer(ctx, ui.tui, ui.theme, bridge, () => ui.tui.setFocus(ui.editor))
+            break
+          case 'preset-cycle':
+            // Tab: cycle through agent presets. The footer label updates
+            // immediately; the actual preset is applied on the next session
+            // creation (first submit or /new).
+            if (presetState.roster.length > 1) {
+              cyclePreset(presetState)
+              const preset = currentPreset(presetState)
+              if (preset) bridge.setAgentPreset(preset.id)
+              ui.requestRender()
+            }
             break
           default:
             break
@@ -592,6 +610,46 @@ export function apply(ctx: Context): void {
       description: 'Switch the current model\'s think (reasoning) level',
       handler: invocation => thinkHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /think')
+
+    // /preset: cycle or select an agent preset. Bare `/preset` opens a picker
+    // overlay; `/preset <name>` switches directly; `/preset next` cycles forward.
+    // The preset is applied to the next blank session on first submit.
+    const presetHandler: LocalCommandHandler = async rawInput => {
+      if (presetState.roster.length === 0) {
+        return { kind: 'error' as const, text: 'No agent presets available.' }
+      }
+      const arg = rawInput?.trim() ?? ''
+      if (arg !== '') {
+        if (arg.toLowerCase() === 'next') {
+          cyclePreset(presetState)
+          const preset = currentPreset(presetState)
+          if (preset) bridge.setAgentPreset(preset.id)
+          ui.requestRender()
+          return { kind: 'success' as const, text: `Preset → ${preset?.name}` }
+        }
+        const target = findPresetByName(presetState, arg)
+        if (target === undefined) {
+          return { kind: 'error' as const, text: `Unknown preset: ${arg}` }
+        }
+        presetState.index = presetState.roster.indexOf(target)
+        bridge.setAgentPreset(target.id)
+        ui.requestRender()
+        return { kind: 'success' as const, text: `Preset → ${target.name}` }
+      }
+      // Picker overlay
+      const picked = await pickPreset(ui.tui, ui.theme, presetState, () => ui.tui.setFocus(ui.editor))
+      if (picked === undefined) return { kind: 'success' as const, text: 'Preset unchanged.' }
+      presetState.index = presetState.roster.findIndex(p => p.id === picked)
+      bridge.setAgentPreset(picked)
+      ui.requestRender()
+      return { kind: 'success' as const, text: `Preset → ${currentPreset(presetState)?.name}` }
+    }
+    commands.registerLocal('preset', presetHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'preset',
+      description: 'Cycle or select an agent preset (Tab also cycles)',
+      handler: invocation => presetHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /preset')
 
     // /model-sync: discover models for CUSTOM provider routes — the
     // hand-declared llm-pi-ai profiles carrying a baseURL — straight from each
@@ -1022,6 +1080,7 @@ export function apply(ctx: Context): void {
       getStats: () => bridge.getStats(),
       getSelection: () => bridge.getSelection(),
       getBranch: () => git.getBranch(),
+      getPreset: () => formatPresetLabel(currentPreset(presetState)),
       getContextWindow: () => {
         const selection = bridge.getSelection()
         if (selection === undefined) return undefined
@@ -1132,7 +1191,7 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {

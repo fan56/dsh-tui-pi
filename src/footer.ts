@@ -30,7 +30,7 @@ import { arrowRight } from './icons.ts'
  * 105-118-column terminals and hides its suffix on <=104).
  */
 export const FOOTER_HINT =
-  '⌨ Enter: send · Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents · ↑↓: history'
+  '⌨ Enter: send · Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents · Tab: preset · ↑↓: history'
 
 /** The toggleable footer hint segments, keyed as in the `dsh-tui` settings. */
 export interface FooterHints {
@@ -39,6 +39,7 @@ export interface FooterHints {
   quit: boolean
   quitEmpty: boolean
   subagents: boolean
+  preset: boolean
   history: boolean
 }
 
@@ -49,6 +50,7 @@ export const DEFAULT_FOOTER_HINTS: FooterHints = Object.freeze({
   quit: true,
   quitEmpty: true,
   subagents: true,
+  preset: true,
   history: true,
 })
 
@@ -59,6 +61,7 @@ export const FOOTER_HINT_ITEMS: ReadonlyArray<{ id: keyof FooterHints; label: st
   { id: 'quit', label: 'Ctrl+C ×2: quit' },
   { id: 'quitEmpty', label: 'Ctrl+D: quit (empty)' },
   { id: 'subagents', label: 'Ctrl+G: subagents' },
+  { id: 'preset', label: 'Tab: preset' },
   { id: 'history', label: '↑↓: history' },
 ]
 
@@ -125,6 +128,8 @@ export interface FooterDataSource {
   getContextWindow(): number | undefined
   /** Git branch of the session cwd, when known. */
   getBranch(): string | undefined
+  /** Current agent preset short label (e.g. "Standard"), or undefined. */
+  getPreset(): string | undefined
 }
 
 export function fmtNum(n: number): string {
@@ -188,7 +193,9 @@ export class PowerlineFooter implements Component {
     const stats = this.source.getStats()
     const selection = this.source.getSelection()
 
-    const segs: Segment[] = [{ label: 'dsh', bgHex: POWERLINE.brand }]
+    const presetLabel = this.source.getPreset()
+    const brandLabel = presetLabel ? `dsh(${presetLabel})` : 'dsh'
+    const segs: Segment[] = [{ label: brandLabel, bgHex: POWERLINE.brand }]
     if (selection !== undefined) {
       segs.push({ label: `☁️ ${selection.provider}`, bgHex: POWERLINE.provider })
       const model = clipToWidth(selection.model.split('/').pop()!, 24)

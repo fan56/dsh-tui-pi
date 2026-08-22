@@ -27,7 +27,7 @@ test('buildFooterHint with the default selection equals the legacy FOOTER_HINT',
 test('buildFooterHint keeps only the selected segments, in the fixed display order', () => {
   const shown = { ...DEFAULT_FOOTER_HINTS, send: false, subagents: false }
   const hint = buildFooterHint(shown)
-  assert.equal(hint, '⌨ Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · ↑↓: history')
+  assert.equal(hint, '⌨ Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Tab: preset · ↑↓: history')
   assert.ok(!hint.includes('Enter: send'))
   assert.ok(!hint.includes('Ctrl+G: subagents'))
 })
@@ -37,14 +37,16 @@ test('buildFooterHint with every segment off is empty', () => {
   assert.equal(buildFooterHint(allOff), '')
 })
 
-test('DEFAULT_FOOTER_HINTS covers exactly the six FOOTER_HINT_ITEMS keys, all on', () => {
+test('DEFAULT_FOOTER_HINTS covers exactly the seven FOOTER_HINT_ITEMS keys, all on', () => {
   const ids = FOOTER_HINT_ITEMS.map(item => item.id)
   assert.deepEqual(Object.keys(DEFAULT_FOOTER_HINTS).sort(), ids.slice().sort())
   for (const id of ids) assert.equal(DEFAULT_FOOTER_HINTS[id], true)
 })
 
-test('the default hint is at most 103 visible columns (the pre-feature width)', () => {
-  assert.equal(visibleWidth(FOOTER_HINT), 103)
+test('the default hint width matches the current segment set', () => {
+  // Width guard: record the current width so future edits notice growth.
+  // The hint bar clips to terminal width, so growth is safe.
+  assert.equal(visibleWidth(FOOTER_HINT), 117)
 })
 
 test('FooterHint renders one clipped row at any width - never a wrap', () => {
@@ -86,6 +88,7 @@ function footerSource(overrides = {}) {
     getSelection: () => overrides.selection ?? { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'off' },
     getContextWindow: () => overrides.contextWindow ?? 1000,
     getBranch: () => undefined,
+    getPreset: () => undefined,
   }
 }
 

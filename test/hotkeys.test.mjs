@@ -165,10 +165,10 @@ test('parseKeyInput: empty resets, valid ids pass, typos are rejected', () => {
 
 // --------------------------------------------------------------- table --
 
-test('appHotkeyRows: default table lists the five app keys', () => {
+test('appHotkeyRows: default table lists the six app keys', () => {
   const rows = appHotkeyRows({})
-  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Ctrl+G'])
-  assert.deepEqual(rows.map(row => row.field), ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer'])
+  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Ctrl+G', 'Tab'])
+  assert.deepEqual(rows.map(row => row.field), ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'presetCycle'])
   assert.ok(rows.every(row => !row.custom))
   assert.equal(rows[0].action, 'stop the current task — requires two presses (1st arms, 2nd within 500ms fires)')
 })

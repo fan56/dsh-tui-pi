@@ -190,11 +190,21 @@ test('Ctrl+C while running is a cancel, not a quit, even when the editor has tex
 })
 
 test('unbound keys fall through to the focused component', () => {
-  for (const data of ['a', 'enter', '\r', '\t', '\x1b[A', ' ']) {
+  for (const data of ['a', 'enter', '\r', '\x1b[A', ' ']) {
     const action = resolveKeyAction(data, state(), 1000)
     assert.equal(action.kind, 'noop', `key ${JSON.stringify(data)}`)
     assert.equal(action.consumes, false)
   }
+})
+
+test('Tab cycles agent presets (overlay and autocomplete yield first)', () => {
+  const tab = resolveKeyAction('\t', state(), 1000)
+  assert.equal(tab.kind, 'preset-cycle')
+  assert.equal(tab.consumes, true)
+  // Overlay open → Tab belongs to the popup.
+  assert.equal(resolveKeyAction('\t', state({ overlayOpen: true }), 1000).kind, 'overlay')
+  // Autocomplete open → Tab closes the list.
+  assert.equal(resolveKeyAction('\t', state({ autocompleteOpen: true }), 1000).kind, 'autocomplete-close')
 })
 
 test('custom key bindings remap the app keys (future keybindings.json override)', () => {
