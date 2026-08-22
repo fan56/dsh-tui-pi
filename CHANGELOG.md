@@ -4,6 +4,15 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-08-22
+
+### Fixed
+
+- Preset roster now loads correctly: scan the filesystem directly (shipped
+  root at `<dsh>/config/agent-presets/` and user root at `~/.dsh/.agent-presets/`)
+  instead of relying on the `agentPresets` service which is inaccessible from
+  the TUI plugin fiber.
+
 ## [0.14.0] - 2026-08-22
 
 ### Added
