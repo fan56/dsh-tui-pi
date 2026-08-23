@@ -4,6 +4,84 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-08-23
+
+### Added
+
+- **Steer a running subagent from its transcript viewer** (`Ctrl+G` → pick a
+  child → `Enter`). The transcript footer gains `· Enter steer`; pressing it
+  opens a multi-line steer input overlay built on the pi-tui `Editor` with
+  `disableSubmit`, so the panel owns Enter: `Enter` sends, `Shift+Enter`
+  inserts a newline, `Esc` cancels back to the transcript with nothing
+  injected. Delivery is routed by the child's live `Agent.status`
+  (the public `'idle' | 'running'` signal from `@deepseek-ai/dsh-agent`
+  runtime-types): `running` → `agent.steer()` (consumed at the next step
+  boundary), `idle` but unsettled → `agent.followup()` (its own ordinary
+  turn). A missing registry handle or a settled child never opens the box —
+  the viewer shows "This subagent has ended — steering unavailable" instead,
+  and the same liveness re-check runs at flush time, so a child that settles
+  while the message is being typed is refused too. Mirroring the maxRounds
+  wrap-up fix, the injection runs in a `queueMicrotask` callback — never on
+  the synchronous keypress stack — and only a successful send closes the box;
+  a throwing primitive keeps it open with an inline ✘ error so the draft can
+  be retried. Success returns to the transcript with a transient
+  "Steer message sent" notice (retired by the next keypress; it steals a body
+  row rather than growing the overlay). Injected messages carry
+  `{ kind: 'plugin', plugin: 'dsh-tui-pi' }` source, same as the maxRounds
+  wrap-up. Viewer-internal keys stay hardcoded (not remappable through
+  keybindings.json), like every other in-panel hint. +20 tests
+  (subagent-viewer 15 → 35): route decision matrix, ended-path
+  no-injection with feedback, message content/source shape, and the input
+  panel's deferred/retryable/cancelled submission plus notice rendering and
+  the exact-overlay budget.
+
+## [0.16.2] - 2026-08-23
+
+### Fixed
+
+- The `maxRounds` wrap-up injection no longer dies silently on the append
+  publication window, and a failed attempt no longer abandons the cap for
+  that child forever. `onRoundCount` runs inside a child `session/event`
+  observer — while the store-mounted session is mid-append — so the old
+  synchronous `agent.followup()` reentered that in-flight append through its
+  inbox splice and threw ("session append cannot reenter while another
+  append is being published"); the contained observer dispatch swallowed the
+  error and the already-set `injected` flag made the loss permanent. The
+  followup now runs in a `queueMicrotask` callback (steer/inject are not an
+  alternative: they ride the same splice → append path). The callback
+  re-checks liveness at flush time (`ctx.agents.get(childId) !== agent` or a
+  settled child aborts), marks `injected` only after a successful followup,
+  and leaves it unset on failure so the next counted round retries. A
+  pending injection is also cancelled by `dispose`. All prior
+  semantics hold: `maxRounds <= 0` never injects, counts below the cap never
+  trigger, each child is injected at most once, settled children are never
+  re-awakened.
+- Regression coverage in `test/subagent-policy.test.mjs` (19 → 23 tests):
+  one drives the real path end to end — a SessionStore-mounted session, a
+  real Inbox splice over it, and the policy invoked synchronously from a
+  `session/event` listener — asserting the `agent/inbox/spliced` event lands
+  with a pending inbox message after the microtask flush; another proves a
+  throwing followup keeps the cap unarmed until a retry succeeds.
+
+## [0.16.1] - 2026-08-23
+
+### Fixed
+
+- The subagent compact row no longer shows `↻N≤M` after a successful retry.
+  `dsh` emits no event when a retried request lands, so the bridge itself
+  clears the `retries` / `maxRetries` counters at two points: an
+  `assistant/message` proves the round-trip succeeded (it folds into the
+  existing per-event `agentViews.set` so it cannot clobber the token /
+  lastLine / rounds / contextTokens updates), and a `turn/start` on a
+  continuable child resets the previous run's counters. The latter split is
+  driven by `outcomeCleared = view.outcome !== undefined` plus
+  `retryCleared = view.retries !== 0 || view.maxRetries !== undefined`, so
+  retries are dropped unconditionally on every turn start (safe for fresh
+  views where they are already 0) while outcome/endedAt stay gated by
+  `view.outcome !== undefined`. The `AgentView.retries` /
+  `AgentView.maxRetries` doc comments are updated to reflect the new
+  semantics (0 = no active / pending retry in the current turn).
+
 ## [0.16.0] - 2026-08-23
 
 ### Added

@@ -137,6 +137,8 @@ Icons: `☑` completed, `◐` in-progress, `☐` pending. A settled child drops 
 
 `Ctrl+G` (or `/subagents`) opens an 80% picker over tracked children — running ones first, then the five most recently settled. Enter opens a live transcript viewer (refreshes ~3×/s with tail-follow).
 
+**Steering**: inside the transcript viewer, `Enter` opens a multi-line steer input (`Enter` send · `Shift+Enter` newline · `Esc` cancel). The message is delivered as a plugin-sourced user message, routed by the child's live state: a running child gets it injected at its next step boundary (`steer`), an idle-but-unfinished child gets it queued as its own follow-up turn; a child that has already ended never opens the box — the viewer explains "This subagent has ended — steering unavailable" instead. A failed send keeps the draft with an inline error so it can be retried; a successful one returns to the transcript with a short notice. These viewer keys are hardcoded and not remappable via keybindings.json.
+
 Two caps (`/agents` → `l` to configure):
 
 - **`maxAgents`** (default 4, `0` = unlimited) — spawns are denied when the cap is hit.
@@ -209,7 +211,7 @@ There's no slash command to toggle the feature — it's always on, controlled by
 | `/theme` | Color-scheme picker (`auto` / `light` / `dark`). Applies immediately. |
 | `/preset` | Agent-preset picker; `<name>` switches directly, `next` cycles forward (same as `Tab`). |
 | `/agents` | Manage agent markdown files + subagent limits (`maxAgents`, `maxRounds`). |
-| `/subagents` | Pick a running/recent subagent and watch its live transcript. |
+| `/subagents` | Pick a running/recent subagent and watch its live transcript; `Enter` inside the viewer steers the child (see Subagents). |
 | `/reload` | Hot-reload the plugin from source (after `pnpm build`) without restarting dsh. |
 | `/hotkeys` | Keybinding browser and live editor. |
 
@@ -226,7 +228,7 @@ Anything that is not a resolvable command falls through to the model as an ordin
 | `Ctrl+C` | Mid-turn: first press cancels turn, second quits. Idle: clears editor / quits. **Held-key auto-repeat never quits.** |
 | `Ctrl+D` | Quit (only when editor is empty) |
 | `Ctrl+L` | Open model/think picker |
-| `Ctrl+G` | Open subagent picker (while children are running) |
+| `Ctrl+G` | Open subagent picker (while children are running); inside the transcript viewer, `Enter` opens the steer input (viewer keys hardcoded) |
 | `Tab` | Cycle agent presets (footer brand shows the current one as `dsh(<name>)`) |
 | `↑` / `↓` | Browse submitted-message history (shell-style, 500 entries) |
 
@@ -403,7 +405,7 @@ src/
   footer.ts           PowerlineFooter (7 segments + clock)
   editor.ts           CwdBorderEditor (top border: cwd + git branch)
   subagent-policy.ts  maxAgents guard + maxRounds wrap-up injection
-  subagent-viewer.ts  Ctrl+G picker + live transcript panel
+  subagent-viewer.ts  Ctrl+G picker + live transcript panel + Enter steer injection
   theme/              GitHub light/dark palettes + terminal detection
 test/*.test.mjs       unit tests (569 across 38 files)
 ```

@@ -7,7 +7,10 @@
  * counts), so no dsh services are involved. The TUI-surface marker tests
  * additionally drive a REAL cordis Context from the linked
  * @deepseek-ai/cordis — the guard must read a genuine scope, not just fakes.
- * Runs against the built lib/ (pnpm build && pnpm test).
+ * The deferred-injection regression test goes further: a REAL SessionStore
+ * mount plus a REAL Inbox splice reproduce the append publication window the
+ * bridge observes run inside. Runs against the built lib/ (pnpm build &&
+ * pnpm test).
  */
 
 import test from 'node:test'
@@ -85,13 +88,24 @@ function makeCtx(overrides = {}) {
   return { ctx, captured }
 }
 
-/** Fake state: a live array and a round-count map the test controls. */
+/**
+ * Fake state: a live array and a round-count map the test controls.
+ */
 function makeState({ live = [], roundCounts = {}, settled = [] } = {}) {
   return {
     getLive: () => live,
     getRoundCount: (childId) => roundCounts[childId] ?? 0,
     isSettled: (childId) => settled.includes(childId),
   }
+}
+
+/**
+ * Yield one microtask turn: the policy schedules its followup with
+ * `queueMicrotask`, whose callback sits AHEAD of this continuation in the
+ * microtask queue (FIFO), so a single await deterministically flushes it.
+ */
+function microtaskFlush() {
+  return new Promise(resolve => queueMicrotask(resolve))
 }
 
 test('the guard allows a spawn while live children are under maxAgents', () => {
@@ -250,7 +264,7 @@ test('the maxAgents cap is surface-scoped too: an unmarked spawn over the cap is
   policy.dispose()
 })
 
-test('onRoundCount injects nothing when maxRounds is 0', () => {
+test('onRoundCount injects nothing when maxRounds is 0', async () => {
   const followups = []
   const { ctx } = makeCtx({
     settings: makeSettings({ maxAgents: 4, maxRounds: 0 }),
@@ -258,11 +272,12 @@ test('onRoundCount injects nothing when maxRounds is 0', () => {
   })
   const policy = applySubagentPolicy(ctx, makeState())
   policy.onRoundCount('child-1', 1_000)
+  await microtaskFlush()
   assert.deepEqual(followups, [], 'maxRounds 0: no summary request ever')
   policy.dispose()
 })
 
-test('onRoundCount injects the summary request exactly once at the round cap', () => {
+test('onRoundCount injects the summary request exactly once at the round cap', async () => {
   const followups = []
   const { ctx } = makeCtx({
     settings: makeSettings({ maxAgents: 4, maxRounds: 3 }),
@@ -271,9 +286,11 @@ test('onRoundCount injects the summary request exactly once at the round cap', (
   const policy = applySubagentPolicy(ctx, makeState())
 
   policy.onRoundCount('child-1', 2)
+  await microtaskFlush()
   assert.deepEqual(followups, [], 'below the cap: nothing injected')
 
   policy.onRoundCount('child-1', 3)
+  await microtaskFlush()
   assert.equal(followups.length, 1, 'at the cap: one summary request')
   const message = followups[0]
   assert.equal(message.content[0].type, 'text')
@@ -285,15 +302,17 @@ test('onRoundCount injects the summary request exactly once at the round cap', (
   // pushes the count past maxRounds (max+1, max+2, …) — never re-inject.
   policy.onRoundCount('child-1', 4)
   policy.onRoundCount('child-1', 5)
+  await microtaskFlush()
   assert.equal(followups.length, 1, 'later rounds: no repeat injection')
 
   // A different child still receives its own single request.
   policy.onRoundCount('child-2', 3)
+  await microtaskFlush()
   assert.equal(followups.length, 2, 'each child is injected independently, once')
   policy.dispose()
 })
 
-test('onRoundCount never re-injects when the wrap-up\'s own message crosses the cap', () => {
+test('onRoundCount never re-injects when the wrap-up\'s own message crosses the cap', async () => {
   // The full runaway scenario: at maxRounds the child is injected; the wrap-up
   // prompt makes it produce MORE assistant messages (round max+1, max+2, …),
   // each firing onRoundCount past the cap. The injected set must hold: no
@@ -307,9 +326,11 @@ test('onRoundCount never re-injects when the wrap-up\'s own message crosses the 
   for (let count = 1; count <= 5; count++) {
     policy.onRoundCount('child-1', count)
   }
+  await microtaskFlush()
   assert.equal(followups.length, 1, 'injected once at maxRounds = 5')
   policy.onRoundCount('child-1', 6)
   policy.onRoundCount('child-1', 7)
+  await microtaskFlush()
   assert.equal(followups.length, 1, 'the wrap-up replies (round 6, 7) never re-inject')
   policy.dispose()
 })
@@ -341,6 +362,159 @@ test('onRoundCount never re-awakens a settled child at the round cap', () => {
   policy.onRoundCount('done-child', 3)
   assert.deepEqual(followups, [], 'settled child: no injection')
   policy.dispose()
+})
+
+// ------------------------------------- deferred injection vs. the store ----
+
+test('onRoundCount lands the wrap-up splice after the publication window closes', async () => {
+  // Regression: onRoundCount fires inside a child `session/event` observer —
+  // while the store-mounted session is mid-append (the publication window).
+  // The old code called followup synchronously there; its inbox splice
+  // reentered that very append and threw ("session append cannot reenter
+  // while another append is being published"), the contained observer
+  // dispatch swallowed it, and `injected.add` had ALREADY run — so the cap
+  // was silently abandoned for that child. This drives the REAL path: a real
+  // SessionStore-mounted session, a real Inbox splice over it, and the
+  // policy invoked from a session/event listener exactly where the bridge
+  // invokes it.
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { default: SessionStore, SessionId } = await import('@deepseek-ai/dsh-session')
+  const { createUserMessage, createMessage } = await import('@deepseek-ai/dsh-llm')
+  const { Inbox } = await import('@deepseek-ai/dsh-agent')
+
+  const ctx = new Context()
+  await ctx.plugin(SessionStore)
+  ctx.provide('settings', {
+    describe: () => [{ ns: 'dsh-tui', value: { maxAgents: 4, maxRounds: 1, disableSubagent: false } }],
+  })
+  const session = ctx.sessions.create(SessionId('wrap-child'), { meta: { cwd: process.cwd() } })
+  // A real Inbox over the mounted session: followup rides the genuine
+  // splice → durable append path, not a stub.
+  const inbox = new Inbox(session, { inserted() {}, discarded() {}, claimed() {} })
+  const agent = {
+    followup: (message) => inbox.append('next-turn', message),
+  }
+  ctx.provide('agents', { get: () => agent })
+
+  let windowGuarded = false
+  let counted = 0
+  ctx.on('session/event', (mountedSession, event) => {
+    if (String(mountedSession.id) !== 'wrap-child' || event.type !== 'assistant/message') return
+    counted += 1
+    // Sanity: this listener really runs INSIDE the append publication
+    // window — a nested append against the same mounted session hits the
+    // reentrancy guard. Recorded as a flag (a throwing assert here would be
+    // contained like any observer error and never reach the test body).
+    try {
+      mountedSession.append('turn/end', { turn: counted, reason: { kind: 'completed' } })
+    } catch {
+      windowGuarded = true
+    }
+    // Drive the policy exactly where the bridge drives it: synchronously,
+    // inside the observer.
+    policy.onRoundCount('wrap-child', counted)
+  })
+
+  const policy = applySubagentPolicy(ctx, makeState())
+  session.append('turn/start', { turn: 1 })
+  session.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
+  session.append('assistant/message', {
+    turn: 1,
+    step: 1,
+    message: createMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'round one' }],
+      source: { kind: 'model', provider: 'mock', model: 'mock' },
+    }),
+  }, { surfaceOp: 'append' })
+
+  assert.ok(windowGuarded, 'sanity: the observer really ran inside the publication window')
+  assert.ok(!session.log.some(event => event.type === 'agent/inbox/spliced'), 'synchronously nothing landed yet')
+
+  await microtaskFlush()
+
+  assert.ok(
+    session.log.some(event => event.type === 'agent/inbox/spliced'),
+    'the wrap-up splice published once the window closed',
+  )
+  assert.ok(inbox.hasPending, 'the child inbox carries the pending wrap-up message')
+  assert.equal(inbox.nextTurn.length, 1, 'exactly one wrap-up message was queued')
+  policy.dispose()
+})
+
+test('a failed followup leaves the cap unarmed — the next counted round retries', async () => {
+  // Regression for the permanent-abandonment half of the bug: the old code
+  // marked `injected` BEFORE calling followup, so one failure (the reentrancy
+  // throw above, or any other) permanently gave up capping that child. Now
+  // the mark happens only after success.
+  const followups = []
+  let failing = true
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 3 }),
+    agent: {
+      followup: (msg) => {
+        if (failing) throw new Error('session append cannot reenter while another append is being published')
+        followups.push(msg)
+      },
+    },
+  })
+  const policy = applySubagentPolicy(ctx, makeState())
+
+  policy.onRoundCount('child-1', 3)
+  await microtaskFlush()
+  assert.deepEqual(followups, [], 'failed attempt injects nothing')
+
+  // The retry trigger: the next counted round calls onRoundCount again —
+  // allowed because injected stayed unset.
+  failing = false
+  policy.onRoundCount('child-1', 4)
+  await microtaskFlush()
+  assert.equal(followups.length, 1, 'the next round retries and lands the wrap-up')
+  assert.equal(followups[0].content[0].text, SUMMARY_MESSAGE, 'the retry carries the summary message')
+
+  // After the successful retry the once-per-child cap holds again.
+  policy.onRoundCount('child-1', 5)
+  await microtaskFlush()
+  assert.equal(followups.length, 1, 'no further injection after the successful retry')
+  policy.dispose()
+})
+
+test('the deferred injection re-checks liveness at flush time', async () => {
+  // Between scheduling and flushing the child may settle or its agent may be
+  // replaced/torn down — the stale handle must never receive the injection.
+  const followups = []
+  const { ctx, captured } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 3 }),
+    agent: { followup: (msg) => followups.push(msg) },
+  })
+  const settled = []
+  const policy = applySubagentPolicy(ctx, makeState({ settled }))
+
+  // Settle while queued: the flush abandons the injection.
+  policy.onRoundCount('settled-late', 3)
+  settled.push('settled-late')
+  await microtaskFlush()
+  assert.deepEqual(followups, [], 'a child settled before the flush: no injection')
+
+  // Swap the agent while queued: identity mismatch abandons the injection.
+  policy.onRoundCount('swap-child', 3)
+  captured.agent = { followup: (msg) => followups.push(msg) }
+  await microtaskFlush()
+  assert.deepEqual(followups, [], 'an agent swapped out before the flush: no injection into the stale handle')
+  policy.dispose()
+})
+
+test('dispose cancels a still-queued deferred injection', async () => {
+  const followups = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 3 }),
+    agent: { followup: (msg) => followups.push(msg) },
+  })
+  const policy = applySubagentPolicy(ctx, makeState())
+  policy.onRoundCount('child-1', 3)
+  policy.dispose()
+  await microtaskFlush()
+  assert.deepEqual(followups, [], 'teardown before the flush: no late wrap-up')
 })
 
 /** Fire the captured subagent/start listener for one child id. */

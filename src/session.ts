@@ -888,21 +888,28 @@ export class DshSessionBridge {
             this.childPending.set(sessionId, 0)
           }
           const lastLine = lastTextLine(event.data)
+          // A landed assistant message proves the last request round-tripped
+          // successfully — clear the llm/retry markers so `↻N≤M` does not
+          // linger on the row after the retry succeeded (dsh emits no
+          // retry-cleared event).
+          const retryCleared = view.retries !== 0 || view.maxRetries !== undefined
           const tokensChanged = delta > 0
           const lineChanged = lastLine !== undefined && lastLine !== view.lastLine
           const roundsChanged = count !== view.rounds
           const contextTokens = this.childContextTokens(sessionId)
           const contextChanged = contextTokens !== view.contextTokens
-          if (tokensChanged || lineChanged || roundsChanged || contextChanged) {
+          if (tokensChanged || lineChanged || roundsChanged || contextChanged || retryCleared) {
             // One set: neither delta nor lastLine nor rounds nor contextTokens
-            // may clobber the others. The assembled message is authoritative
-            // for the content tail — its streaming buffer is spent.
+            // nor the retry clear may clobber the others. The assembled
+            // message is authoritative for the content tail — its streaming
+            // buffer is spent.
             this.agentViews.set(sessionId, {
               ...view,
               ...(tokensChanged ? { tokens: view.tokens + delta } : {}),
               ...(lineChanged ? { lastLine } : {}),
               ...(roundsChanged ? { rounds: count } : {}),
               ...(contextChanged ? { contextTokens } : {}),
+              ...(retryCleared ? { retries: 0, maxRetries: undefined } : {}),
             })
             changed = true
           }
@@ -1009,10 +1016,25 @@ export class DshSessionBridge {
           // outcome event): the child's turn closed — the widget drops it.
           this.agentViews.set(sessionId, { ...view, outcome: 'completed', endedAt: event.time })
           changed = true
-        } else if (event.type === 'turn/start' && view.outcome !== undefined) {
-          // A continuable child resumed: mark it running again.
-          this.agentViews.set(sessionId, { ...view, outcome: undefined, endedAt: undefined })
-          changed = true
+        } else if (event.type === 'turn/start') {
+          // Two clears on every turn/start:
+          //  - outcome/endedAt only when the child was previously settled
+          //    (a continuable child resumed); for a fresh view outcome is
+          //    already undefined, so this is a no-op.
+          //  - retries/maxRetries unconditionally — a fresh turn starts
+          //    with no pending retry, and stale markers from the previous
+          //    run must not survive on a continuable child. For new views
+          //    retries is already 0, so this is also a no-op there.
+          const outcomeCleared = view.outcome !== undefined
+          const retryCleared = view.retries !== 0 || view.maxRetries !== undefined
+          if (outcomeCleared || retryCleared) {
+            this.agentViews.set(sessionId, {
+              ...view,
+              ...(outcomeCleared ? { outcome: undefined, endedAt: undefined } : {}),
+              ...(retryCleared ? { retries: 0, maxRetries: undefined } : {}),
+            })
+            changed = true
+          }
         }
       }
     }
