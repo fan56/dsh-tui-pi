@@ -179,6 +179,8 @@ export interface SubagentPolicy {
 export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): SubagentPolicy {
   const disposers: Array<() => void> = []
   const injected = new Set<string>()
+  /** Set by dispose: a pending deferred injection must not fire afterwards. */
+  let disposed = false
 
   // maxAgents guard: the live-child count is global (the bridge counts every
   // child it discovers), but the DENIAL — like the disableSubagent fence —
@@ -254,8 +256,9 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
    * it for a pointless wrap-up round (continuable children that resume later
    * get their chance on the next counted round). Repeated injections are
    * impossible by construction (the `injected` set is only written once per
-   * child) — including the wrap-up's OWN assistant message, which pushes the
-   * count past `maxRounds` and must not re-trigger.
+   * child, and only after a successful followup) — including the wrap-up's
+   * OWN assistant message, which pushes the count past `maxRounds` and must
+   * not re-trigger.
    */
   function onRoundCount(childId: string, count: number): void {
     if (injected.has(childId)) return
@@ -265,16 +268,40 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
     if (state.isSettled(childId)) return
     const agent = ctx.agents.get(SessionId(childId))
     if (agent === undefined) return
-    injected.add(childId)
-    agent.followup(createUserMessage({
-      content: [{ type: 'text', text: SUMMARY_MESSAGE }],
-      source: { kind: 'plugin', plugin: 'dsh-tui-pi' },
-    }))
+    // Defer out of the caller's append publication window. onRoundCount runs
+    // synchronously inside a child `session/event` observer; a followup here
+    // splices the child's inbox, whose durable append reenters the append
+    // that is being published right now and throws ("session append cannot
+    // reenter...") — an error the contained observer dispatch swallows, so
+    // the wrap-up would be lost. Do NOT switch to steer/inject instead: they
+    // ride the same inbox splice → session.append path and hit the same
+    // guard. A microtask runs once the stack unwinds, after the window's
+    // finally block resets the flag.
+    queueMicrotask(() => {
+      if (disposed || injected.has(childId)) return
+      // Re-check liveness at flush time: the child may have settled while
+      // this task sat queued, or its agent may have been replaced or torn
+      // down — never inject into a stale handle.
+      if (ctx.agents.get(SessionId(childId)) !== agent || state.isSettled(childId)) return
+      try {
+        agent.followup(createUserMessage({
+          content: [{ type: 'text', text: SUMMARY_MESSAGE }],
+          source: { kind: 'plugin', plugin: 'dsh-tui-pi' },
+        }))
+      } catch {
+        // Leave `injected` unset: a failed attempt stays eligible, so the
+        // next counted round (or the reconcile pass) retries instead of the
+        // cap being silently abandoned for this child forever.
+        return
+      }
+      injected.add(childId)
+    })
   }
 
   return {
     onRoundCount,
     dispose() {
+      disposed = true
       for (const dispose of disposers.splice(0)) {
         try { dispose() } catch { /* contained */ }
       }
