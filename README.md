@@ -160,6 +160,40 @@ Inside a subagent, a committed compaction is visible too: DCP appends one `user/
 
 ---
 
+### APPEND_SYSTEM.md
+
+A user-editable markdown file whose content is appended to the **system prompt of the main agent this TUI creates** — borrows pi's `~/.pi/agent/APPEND_SYSTEM.md` convention, dsh side: `$DSH_HOME/APPEND_SYSTEM.md` (default `~/.dsh/APPEND_SYSTEM.md`, honors the same `$DSH_HOME` override as the rest of dsh).
+
+- **Hot-applied** — the section provider reads the file at every prompt assembly, so editing the file picks up on the **next request**: no restart, no watcher, no `/reload`.
+- **Auto-seeded on first run** — when the file is missing, the TUI seeds it once at startup from the shipped template `templates/APPEND_SYSTEM.md` (the English orchestrator-identity template: identity, core rules, execution workflow). An existing file is yours — the TUI never overwrites user content.
+- **TUI-owned section** — a marked block (`<!-- dsh-tui-pi:todo-lifecycle -->`) is appended once and then maintained idempotently so the model clears its `todo/write` list when every item is done. A marked file is left byte-identical on later startups.
+- **Legacy migration** — the same todo block used to be delivered through `~/.dsh/AGENTS.md`. On startup the TUI strips that block once (no-op when absent), so the guidance is never duplicated.
+- **Empty / unreadable = no section** — if the file is missing or can't be read, the section is silently dropped. No error, no TUI startup failure.
+
+#### Scope: main agent only
+
+The section is registered on the main agent's **scoped** agent context (`installAppendSystem` in `src/session.ts`) — it lands in that agent's own prompt-scope layer, which subagent scopes never merge. An orchestrator identity ("dispatch sub-agents, never execute yourself") riding on the children would defeat its own purpose, so children see nothing from this file. The mechanism is the same one `dsh-subagent-registry` uses for per-child personas.
+
+#### Example
+
+```sh
+# Auto-seeded on first run from templates/APPEND_SYSTEM.md — open and edit.
+$EDITOR ~/.dsh/APPEND_SYSTEM.md
+
+# Or replace with your own from scratch (the TUI still keeps its marked
+# todo-lifecycle section — it gets re-appended when missing).
+cat > ~/.dsh/APPEND_SYSTEM.md <<'EOF'
+# Project ground rules
+
+- Always run `pnpm test` before claiming a task is done.
+- Prefer dispatching `workhorse` for multi-step investigations.
+EOF
+```
+
+There's no slash command to toggle the feature — it's always on, controlled by the file's contents.
+
+---
+
 ## Slash commands
 
 | Command | What it does |

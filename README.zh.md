@@ -154,6 +154,40 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 
 ---
 
+### APPEND_SYSTEM.md
+
+一份用户可编辑的 markdown 文件，内容会**追加到 TUI 创建的主代理的系统提示末尾** —— 借鉴 pi 的 `~/.pi/agent/APPEND_SYSTEM.md` 约定，dsh 侧对应 `$DSH_HOME/APPEND_SYSTEM.md`（默认 `~/.dsh/APPEND_SYSTEM.md`，沿用 dsh 其余部分共用的 `$DSH_HOME` 覆盖）。
+
+- **热应用** —— section 提供者在每次组装提示词时读盘，改完文件**下一次请求**即生效：无需重启、无需 watcher、无需 `/reload`。
+- **首次启动自动播种** —— 文件不存在时，TUI 在启动时一次性从随包模板 `templates/APPEND_SYSTEM.md`（英文版协调者身份模板：身份、核心规则、执行工作流）创建。已有文件归用户所有 —— TUI 永远不会覆盖用户内容。
+- **TUI 自有段落** —— 一段带标记的 block（`<!-- dsh-tui-pi:todo-lifecycle -->`）只在缺失时追加一次，并保持幂等，确保模型在所有 todo 都完成时清空 `todo/write` 列表。已带标记的文件后续启动原样保留。
+- **旧版迁移** —— 同一段 todo block 早期通过 `~/.dsh/AGENTS.md` 下发。启动时 TUI 一次性把它剥掉（无标记时 no-op），避免重复下发。
+- **空 / 读不到 = 不挂载该 section** —— 文件缺失或读不了时该 section 被静默丢弃，无报错、不影响 TUI 启动。
+
+#### 作用范围：仅限主代理
+
+该 section 注册在主代理**带作用域**的 agent context 上（`src/session.ts` 里的 `installAppendSystem`）—— 落在该 agent 自己的 prompt-scope 层，子代理的 scope 不会合并。协调者身份（「调度子代理、不要自己执行」）如果下发到子代理会自废武功，所以子代理完全看不到这个文件。机制与 `dsh-subagent-registry` 给每个子代理设置人设时相同。
+
+#### 示例
+
+```sh
+# 首次启动从 templates/APPEND_SYSTEM.md 自动播种 —— 直接打开编辑即可。
+$EDITOR ~/.dsh/APPEND_SYSTEM.md
+
+# 或者完全替换为自己的版本（TUI 仍会保留它的标记 todo-lifecycle section，
+# 缺失时会重新追加）。
+cat > ~/.dsh/APPEND_SYSTEM.md <<'EOF'
+# 项目约定
+
+- 任何任务都先跑 `pnpm test` 再声称完成。
+- 多步调研优先派发给 `workhorse` 子代理。
+EOF
+```
+
+该功能没有开关斜杠命令 —— 它始终启用，完全由文件内容控制。
+
+---
+
 ## 斜杠命令
 
 | 命令 | 功能 |
