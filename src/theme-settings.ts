@@ -21,6 +21,7 @@ import {
 import z from '@deepseek-ai/schemastery'
 import { DEFAULT_FOOTER_HINTS, type FooterHints } from './footer.ts'
 import { DEFAULT_PANEL_HEIGHT, isPanelHeight, type PanelHeight } from './activity.ts'
+import { narrowStringList } from './model-list.ts'
 import type { IconSet } from './icons.ts'
 import type { ThemePreference } from './theme/index.ts'
 
@@ -114,6 +115,14 @@ const THEME_SETTINGS_SCHEMA = z.object({
       + 'glyphs (U+E0B0 separator, stop, heavy circle); plain = safe Unicode '
       + 'stand-ins (▸ ■ ●) — auto is the recommended default)',
     ),
+  favoriteModels: z
+    .array(z.string())
+    .default([])
+    .description('Favorite models (provider/id keys) pinned to the top of the /model picker'),
+  hiddenModels: z
+    .array(z.string())
+    .default([])
+    .description('Hidden models (provider/id keys) moved to the Hidden section of the /model picker'),
 })
 
 /** Composition entry below the user layer: fall back to the defaults. */
@@ -125,6 +134,8 @@ const THEME_SETTINGS_ENTRY: {
   disableSubagent: boolean
   footerHints: FooterHints
   iconSet: IconSet
+  favoriteModels: string[]
+  hiddenModels: string[]
 } = {
   theme: 'auto',
   panelHeight: DEFAULT_PANEL_HEIGHT,
@@ -133,6 +144,8 @@ const THEME_SETTINGS_ENTRY: {
   disableSubagent: DEFAULT_SUBAGENT_LIMITS.disableSubagent,
   footerHints: { ...DEFAULT_FOOTER_HINTS },
   iconSet: 'auto',
+  favoriteModels: [],
+  hiddenModels: [],
 }
 
 /**
@@ -245,7 +258,14 @@ function narrowIconSet(value: unknown): IconSet {
  * @returns the resolved section, or `undefined` when no registration is in
  * flight, the settings service is absent, or the namespace has not landed.
  */
-async function readResolvedSection(ctx: Context): Promise<{ theme?: unknown; panelHeight?: unknown; footerHints?: unknown; iconSet?: unknown } | undefined> {
+async function readResolvedSection(ctx: Context): Promise<{
+  theme?: unknown
+  panelHeight?: unknown
+  footerHints?: unknown
+  iconSet?: unknown
+  favoriteModels?: unknown
+  hiddenModels?: unknown
+} | undefined> {
   if (registrationPromise === undefined) return undefined
   let fallback: ReturnType<typeof setTimeout> | undefined
   await Promise.race([
@@ -261,7 +281,14 @@ async function readResolvedSection(ctx: Context): Promise<{ theme?: unknown; pan
   return settings
     .describe()
     .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { theme?: unknown; panelHeight?: unknown; footerHints?: unknown; iconSet?: unknown }
+    | {
+        theme?: unknown
+        panelHeight?: unknown
+        footerHints?: unknown
+        iconSet?: unknown
+        favoriteModels?: unknown
+        hiddenModels?: unknown
+      }
     | undefined
 }
 
@@ -364,8 +391,9 @@ export function currentThemePreference(ctx: Context): ThemePreference {
  */
 async function writeDshTuiPreference(
   ctx: Context,
-  key: 'theme' | 'panelHeight' | 'maxAgents' | 'maxRounds' | 'disableSubagent',
-  value: string | number | boolean,
+  key: 'theme' | 'panelHeight' | 'maxAgents' | 'maxRounds' | 'disableSubagent'
+    | 'favoriteModels' | 'hiddenModels',
+  value: string | number | boolean | string[],
 ): Promise<string | undefined> {
   const settings = ctx.get('settings') as SettingsProvider | undefined
   if (settings === undefined) return 'Settings service is not available.'
@@ -444,4 +472,42 @@ export async function writeSubagentLimit(
   value: number | boolean,
 ): Promise<string | undefined> {
   return writeDshTuiPreference(ctx, key, value)
+}
+
+/** Persisted favorite/hidden model keys (`provider/id` composites). */
+export interface ModelPrefs {
+  /** Models pinned to the top of the /model picker, in join order. */
+  favoriteModels: string[]
+  /** Models moved into the picker's dim Hidden section. */
+  hiddenModels: string[]
+}
+
+/**
+ * Read the persisted model favorites/hiddens (the startup snapshot). Both
+ * lists narrow through `narrowStringList` — a malformed or missing field
+ * degrades to an empty list.
+ */
+export async function readModelPrefs(ctx: Context): Promise<ModelPrefs> {
+  const section = await readResolvedSection(ctx)
+  return {
+    favoriteModels: narrowStringList(section?.favoriteModels),
+    hiddenModels: narrowStringList(section?.hiddenModels),
+  }
+}
+
+/**
+ * Persist one model pref list (favoriteModels or hiddenModels) to the
+ * `dsh-tui` settings namespace via `settings.mutate` (optimistic concurrency,
+ * one retry on `SettingsConflictError`) — never a whole-file rewrite. The
+ * caller invokes this on every f/h toggle, so each press lands immediately.
+ * Best-effort: a deployment without the settings provider surfaces the
+ * failure message; the in-panel state stays session-local either way.
+ * @returns undefined on success, the failure message otherwise.
+ */
+export async function writeModelPref(
+  ctx: Context,
+  key: 'favoriteModels' | 'hiddenModels',
+  value: readonly string[],
+): Promise<string | undefined> {
+  return writeDshTuiPreference(ctx, key, [...value])
 }

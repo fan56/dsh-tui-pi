@@ -261,18 +261,7 @@ export async function openAgentManager(
         ? undefined
         : agents.findIndex(agent => agent.meta.name === pendingPreselect)
       pendingPreselect = undefined
-      // TablePanel has no single-key shortcuts, so the `l` limits entry is a
-      // thin subclass that routes the key before the table's own handling.
-      class AgentTablePanel extends TablePanel<AgentFile> {
-        handleInput(data: string): void {
-          if (data.toLowerCase() === 'l') {
-            showLimits()
-            return
-          }
-          super.handleInput(data)
-        }
-      }
-      const table = new AgentTablePanel(theme, {
+      const table = new TablePanel(theme, {
         title: '● Agents',
         columns: agentColumns(agents),
         rows: agents,
@@ -285,6 +274,7 @@ export async function openAgentManager(
           if (agent !== undefined) showFields(agent)
         },
         onCancel: () => closeManager(),
+        shortcuts: { l: showLimits },
       })
       host.open(table)
     }

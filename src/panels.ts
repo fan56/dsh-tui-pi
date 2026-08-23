@@ -181,35 +181,64 @@ export class ListController {
   scroll = 0
   readonly maxVisible: number
   private readonly length: () => number
+  private readonly selectable: ((index: number) => boolean) | undefined
 
-  constructor(length: () => number, maxVisible = 12) {
+  constructor(
+    length: () => number,
+    maxVisible = 12,
+    selectable?: (index: number) => boolean,
+  ) {
     this.length = length
     this.maxVisible = maxVisible
+    this.selectable = selectable
   }
 
   up(): void {
-    if (this.index > 0) this.index--
-    this.clampScroll()
+    this.moveTo(this.index - 1, -1)
   }
 
   down(): void {
-    if (this.index < this.length() - 1) this.index++
-    this.clampScroll()
+    this.moveTo(this.index + 1, 1)
   }
 
   pageUp(): void {
-    this.index = Math.max(0, this.index - this.maxVisible)
-    this.clampScroll()
+    this.moveTo(Math.max(0, this.index - this.maxVisible), -1)
   }
 
   pageDown(): void {
-    this.index = Math.max(0, Math.min(this.length() - 1, this.index + this.maxVisible))
-    this.clampScroll()
+    this.moveTo(Math.min(this.length() - 1, this.index + this.maxVisible), 1)
   }
 
   setIndex(index: number): void {
-    this.index = Math.max(0, Math.min(this.length() - 1, index))
+    this.moveTo(index, -1)
+  }
+
+  /**
+   * Move to `target` clamped into range, snapping onto the nearest selectable
+   * row: scan from the target toward `fallbackDir`, then the other way. This
+   * keeps the cursor off unselectable rows (dividers, section headers) — a
+   * list with no selectable row at all keeps the cursor where it is.
+   */
+  private moveTo(target: number, fallbackDir: 1 | -1): void {
+    const len = this.length()
+    if (len === 0) {
+      this.index = 0
+      this.clampScroll()
+      return
+    }
+    const clamped = Math.max(0, Math.min(len - 1, target))
+    const otherDir: 1 | -1 = fallbackDir === 1 ? -1 : 1
+    this.index = this.scan(clamped, fallbackDir) ?? this.scan(clamped, otherDir) ?? this.index
     this.clampScroll()
+  }
+
+  /** Nearest selectable index scanning from `start` toward `dir`; undefined when none. */
+  private scan(start: number, dir: 1 | -1): number | undefined {
+    const len = this.length()
+    for (let i = start; i >= 0 && i < len; i += dir) {
+      if (this.selectable?.(i) ?? true) return i
+    }
+    return undefined
   }
 
   private clampScroll(): void {
@@ -286,6 +315,30 @@ export interface TablePanelOptions<T> {
   preselect?: number
   /** Visible rows before scrolling (default 12). */
   maxVisible?: number
+  /** Single-key shortcuts mapped to actions (checked after navigation, before confirm/cancel). */
+  shortcuts?: Readonly<Record<string, () => void>>
+  /** Rows the cursor may rest on (default: every row). Unselectable rows are skipped by navigation. */
+  isSelectable?: (row: T) => boolean
+  /**
+   * Full-width replacement line for structural rows (divider, section header).
+   * Returning a string renders exactly that line (clipped); returning
+   * undefined falls through to the normal cell rendering.
+   */
+  specialRow?: (row: T, width: number) => string | undefined
+  /** Rows rendered in the dimmer subtle color instead of muted (e.g. hidden models). */
+  dimRow?: (row: T) => boolean
+  /**
+   * Live substring filter owned by the caller: `/` engages a single-line
+   * input inside the panel; every keystroke lands in `onQueryChange` (the
+   * caller rebuilds `rows`), Enter confirms and leaves input mode, Esc clears
+   * the query. The query itself is session-local — the panel never persists it.
+   */
+  filter?: {
+    getQuery(): string
+    onQueryChange(query: string): void
+  }
+  /** Live status line (attention-colored) shown above the footer. */
+  status?: () => string | undefined
 }
 
 /**
@@ -297,11 +350,23 @@ export class TablePanel<T> implements Component {
   private readonly theme: TuiTheme
   private readonly options: TablePanelOptions<T>
   private readonly controller: ListController
+  /** True while the filter input line owns the keyboard (see `options.filter`). */
+  private filterInput = false
 
   constructor(theme: TuiTheme, options: TablePanelOptions<T>) {
     this.theme = theme
     this.options = options
-    this.controller = new ListController(() => options.rows.length, options.maxVisible ?? 12)
+    const isSelectable = options.isSelectable
+    this.controller = new ListController(
+      () => options.rows.length,
+      options.maxVisible ?? 12,
+      isSelectable === undefined
+        ? undefined
+        : (index) => {
+            const row = options.rows[index]
+            return row !== undefined && isSelectable(row)
+          },
+    )
     if (options.preselect !== undefined) this.controller.setIndex(options.preselect)
   }
 
@@ -312,9 +377,29 @@ export class TablePanel<T> implements Component {
     return this.options.rows[this.controller.index]
   }
 
+  /**
+   * Move the cursor onto the first row matching `predicate`. Returns whether
+   * a row matched — callers use the miss to fall back to `resyncCursor`
+   * (e.g. the toggled row vanished from the rebuilt list).
+   */
+  focusRow(predicate: (row: T) => boolean): boolean {
+    const index = this.options.rows.findIndex(predicate)
+    if (index < 0) return false
+    this.controller.setIndex(index)
+    return true
+  }
+
+  /**
+   * Re-clamp the cursor after an out-of-band rows swap (the caller reassigns
+   * `options.rows`): keeps it in range and on a selectable row.
+   */
+  resyncCursor(): void {
+    this.controller.setIndex(this.controller.index)
+  }
+
   render(width: number): string[] {
     const fns = panelThemeFns(this.theme)
-    const { columns, rows, renderCell, footer, title } = this.options
+    const { columns, rows, renderCell, footer, title, specialRow, dimRow } = this.options
     // Reserve the row-marker slot so marker + cells never exceed `width`
     // (the old pass-through lost the last 2 columns of right padding).
     const widths = columnWidths(width - MARKER_W, columns)
@@ -332,28 +417,94 @@ export class TablePanel<T> implements Component {
     const controller = this.controller
     for (let i = controller.scroll; i < Math.min(rows.length, controller.scroll + controller.maxVisible); i++) {
       const row = rows[i]
+      // Structural rows render their full-width replacement line — never a
+      // selection marker, never cell columns.
+      if (specialRow !== undefined) {
+        const special = specialRow(row, width)
+        if (special !== undefined) {
+          lines.push(fns.subtle(clipToWidth(special, width)))
+          continue
+        }
+      }
       const selected = i === controller.index
       const cells = columns
         .map((column, j) => padCell(renderCell(row, column), widths[j], column.align))
         .join(seps)
       const line = clipToWidth(`${rowMarker(selected)}${cells}`, width)
-      lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
+      lines.push(selected
+        ? fns.accent(BOLD + line + RESET)
+        : dimRow?.(row) === true ? fns.subtle(line) : fns.muted(line))
     }
+    // An empty body (e.g. an applied filter matching nothing) renders a hint
+    // row between the rules instead of a blank gap.
+    if (rows.length === 0) lines.push(fns.muted(clipToWidth('  No matching models', width)))
     lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), width)))
 
+    // Filter state: an engaged input line shows the live query; an applied
+    // query stays visible as a reminder until cleared.
+    const query = this.options.filter?.getQuery() ?? ''
+    if (this.filterInput) {
+      lines.push(fns.accent(BOLD + clipToWidth(`Filter: ${query}_`, width) + RESET))
+    } else if (query !== '') {
+      lines.push(fns.attention(clipToWidth(`Filter: ${query}`, width)))
+    }
+    // Transient status message (e.g. a failed pref write), FieldPanel-style.
+    const statusLine = this.options.status?.()
+    if (statusLine !== undefined) lines.push(fns.attention(clipToWidth(statusLine, width)))
+
     lines.push('')
-    lines.push(fns.subtle(clipToWidth(`${footer ?? '↑↓ navigate · Enter select · Esc back'}${scrollInfo(controller, rows.length)}`, width)))
+    const footerLine = this.filterInput
+      ? 'Enter apply · Esc clear filter'
+      : `${footer ?? '↑↓ navigate · Enter select · Esc back'}${scrollInfo(controller, rows.length)}`
+    lines.push(fns.subtle(clipToWidth(footerLine, width)))
     return lines
   }
 
   handleInput(data: string): void {
+    const kb = getKeybindings()
+    // The engaged filter input owns the keyboard: printable keys accumulate
+    // into the live query, Enter confirms and leaves input mode, Esc clears
+    // the whole query. Navigation and shortcuts stay suspended meanwhile.
+    if (this.filterInput) {
+      const query = this.options.filter?.getQuery() ?? ''
+      if (kb.matches(data, 'tui.select.confirm')) {
+        this.filterInput = false
+      } else if (kb.matches(data, 'tui.select.cancel')) {
+        this.filterInput = false
+        this.options.filter?.onQueryChange('')
+      } else if (data === '\x7f' || matchesKey(data, 'backspace')) {
+        this.options.filter?.onQueryChange(query.slice(0, -1))
+      } else if (isPrintable(data)) {
+        this.options.filter?.onQueryChange(query + data)
+      }
+      return
+    }
     const controller = this.controller
     if (handleListKeys(data, controller, this.options.rows.length)) return
-    const kb = getKeybindings()
-    if (kb.matches(data, 'tui.select.confirm')) {
-      this.options.onSelect(this.options.rows[controller.index])
-    } else if (kb.matches(data, 'tui.select.cancel')) {
+    if (this.options.filter !== undefined && data === '/') {
+      this.filterInput = true
+      return
+    }
+    if (kb.matches(data, 'tui.select.cancel')) {
+      // Esc with an applied filter clears it first (same contract as
+      // SettingsListPanel); a second Esc pops the panel.
+      const filter = this.options.filter
+      if (filter !== undefined && filter.getQuery() !== '') {
+        filter.onQueryChange('')
+        this.resyncCursor()
+        return
+      }
       this.options.onCancel()
+      return
+    }
+    const shortcut = this.options.shortcuts?.[data.toLowerCase()]
+    if (shortcut !== undefined) {
+      shortcut()
+      return
+    }
+    if (kb.matches(data, 'tui.select.confirm')) {
+      const row = this.options.rows[controller.index]
+      if (row !== undefined) this.options.onSelect(row)
     }
   }
 }

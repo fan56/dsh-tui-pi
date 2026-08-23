@@ -12,15 +12,18 @@ import type { PresetEntry, PresetState } from './preset.ts'
 import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { OverlayHandle, TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
+import {
+  buildModelRows,
+  canHideModelRow,
+  modelKey,
+  toggleStringList,
+  type ListedModel,
+  type ModelRow,
+} from './model-list.ts'
 import { permissionItems } from './permission.ts'
-import { autoColumns, TablePanel, type TableColumn } from './panels.ts'
+import { autoColumns, TablePanel, type TableColumn, type TablePanelOptions } from './panels.ts'
+import { readModelPrefs, writeModelPref } from './theme-settings.ts'
 import type { ThemePreference, TuiTheme } from './theme/index.ts'
-
-interface ListedModel {
-  provider: string
-  id: string
-  name: string
-}
 
 /** Outcome of the reasoning effort picker overlay. */
 export type PickEffortResult =
@@ -237,11 +240,19 @@ export function pickPermission(
   })
 }
 
+/** Footer hints of the model picker with the favorites/hidden/filter keys. */
+const MODEL_PICKER_FOOTER = '↑↓ navigate · Enter select · f favorite · h hide · / filter · Esc back'
+
 /**
  * Open the model picker overlay. Resolves with the picked selection, or
  * `undefined` when cancelled. When the picked model exposes selectable
  * reasoning efforts, a second overlay asks for one; cancelling that stage
  * abandons the whole pick. Focus returns to `restoreFocus` on close.
+ *
+ * The list carries the favorites/hidden structure: `f` toggles the favorite
+ * flag on the cursor model (list reorders live, panel stays open), `h`
+ * toggles hidden, `/` engages a session-local substring filter. Every toggle
+ * persists immediately through the dsh-tui settings namespace (best-effort).
  */
 export async function pickModel(
   ctx: Context,
@@ -264,6 +275,13 @@ export async function pickModel(
   }))
   if (models.length === 0) return undefined
 
+  // Favorites/hiddens persist under dsh-tui settings; the picker works on
+  // local copies and flushes each f/h press immediately (best-effort — a
+  // settings-less deployment keeps the session-local state).
+  const persisted = await readModelPrefs(ctx)
+  let favorites = persisted.favoriteModels
+  let hidden = persisted.hiddenModels
+
   return new Promise<ModelSelection | undefined>(resolve => {
     // Auto layout: MODEL fits its content, PROVIDER runs to the right edge.
     const columns: readonly TableColumn[] = autoColumns(
@@ -274,15 +292,104 @@ export async function pickModel(
       models,
       (model, key) => (key === 'provider' ? model.provider : model.name === '' ? model.id : model.name),
     )
-    const list = new TablePanel<ListedModel>(theme, {
+
+    let query = ''
+    // Transient in-panel failure line for the best-effort pref writes below
+    // (FieldPanel-style status row; auto-clears so it never goes stale).
+    let persistStatus: string | undefined
+    let statusTimer: ReturnType<typeof setTimeout> | undefined
+    const initialRows = buildModelRows(models, favorites, hidden)
+    const options: TablePanelOptions<ModelRow> = {
       title: '● Model',
       columns,
-      rows: models,
-      renderCell: (model, column) => (column.key === 'provider' ? model.provider : model.name === '' ? model.id : model.name),
-      preselect: Math.max(0, models.findIndex(model => model.provider === current?.provider && model.id === current?.model)),
-      onSelect: model => settle(model),
+      rows: initialRows,
+      renderCell: (row, column) => {
+        if (row.kind !== 'model') return ''
+        if (column.key === 'provider') return row.model.provider
+        const label = row.model.name === '' ? row.model.id : row.model.name
+        return row.section === 'favorite' ? `★ ${label}` : label
+      },
+      isSelectable: row => row.kind === 'model',
+      specialRow: (row, width) => {
+        if (row.kind === 'divider') return '─'.repeat(Math.max(1, width))
+        if (row.kind === 'hiddenHeader') return `─ Hidden (${String(row.count)}) ─`
+        return undefined
+      },
+      dimRow: row => row.kind === 'model' && row.section === 'hidden',
+      shortcuts: {
+        f: () => toggle('favorite'),
+        h: () => toggle('hide'),
+      },
+      preselect: Math.max(0, initialRows.findIndex(row =>
+        row.kind === 'model'
+        && row.model.provider === current?.provider
+        && row.model.id === current?.model)),
+      onSelect: row => { if (row.kind === 'model') settle(row.model) },
       onCancel: () => settle(undefined),
-    })
+      footer: MODEL_PICKER_FOOTER,
+      status: () => persistStatus,
+      filter: {
+        getQuery: () => query,
+        onQueryChange: next => {
+          query = next
+          rebuild()
+        },
+      },
+    }
+    const list = new TablePanel<ModelRow>(theme, options)
+
+    /**
+     * Rebuild rows from the live favorites/hidden/filter state. The cursor
+     * follows `keepKey` when given (a toggle must not jump); a miss — the
+     * toggled row vanished from the rebuilt list — falls back to
+     * `resyncCursor`, otherwise the cursor would strand out of range
+     * (`selectedRow()` undefined, no ▸ marker, dead arrow keys).
+     */
+    const rebuild = (keepKey?: string): void => {
+      options.rows = buildModelRows(models, favorites, hidden, query)
+      const followed = keepKey !== undefined
+        && list.focusRow(row => row.kind === 'model' && modelKey(row.model) === keepKey)
+      if (!followed) list.resyncCursor()
+    }
+
+    /** Best-effort persistence of one pref list; failures surface in-panel. */
+    const persist = (key: 'favoriteModels' | 'hiddenModels', value: readonly string[]): void => {
+      void writeModelPref(ctx, key, value).then(
+        error => {
+          if (error !== undefined) flashPersistFailure(error)
+        },
+        err => {
+          flashPersistFailure(err instanceof Error ? err.message : String(err))
+        },
+      )
+    }
+
+    /** Show one failure message for a few seconds, then clear the status row. */
+    const flashPersistFailure = (message: string): void => {
+      persistStatus = `✘ save failed: ${message}`
+      clearTimeout(statusTimer)
+      statusTimer = setTimeout(() => { persistStatus = undefined; tui.requestRender() }, 4000)
+    }
+
+    /** Toggle favorite/hidden on the cursor model and reflow in place. */
+    const toggle = (action: 'favorite' | 'hide'): void => {
+      const row = list.selectedRow()
+      if (row === undefined || row.kind !== 'model') return
+      const key = modelKey(row.model)
+      if (action === 'favorite') {
+        favorites = toggleStringList(favorites, key)
+        persist('favoriteModels', favorites)
+      } else {
+        // Favorite rows are also shown pinned in Favorites: hiding one from
+        // there would silently persist hiddenModels with no visual feedback.
+        // Unfavorite first, then hide.
+        if (!canHideModelRow(row)) return
+        hidden = toggleStringList(hidden, key)
+        persist('hiddenModels', hidden)
+      }
+      rebuild(key)
+    }
+
     const overlay = mountPicker(tui, theme, list)
 
     // Enter settles stage 1 once; while the model info resolves (stage 2 not
@@ -292,6 +399,8 @@ export async function pickModel(
     const settle = (picked: ListedModel | undefined): void => {
       if (settled) return
       settled = true
+      // The picker is going away — drop any pending status-row clear timer.
+      clearTimeout(statusTimer)
       if (picked === undefined) {
         overlay.hide()
         restoreFocus()

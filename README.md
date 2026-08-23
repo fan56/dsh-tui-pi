@@ -164,7 +164,7 @@ Inside a subagent, a committed compaction is visible too: DCP appends one `user/
 
 | Command | What it does |
 |---|---|
-| `/model` | Two-stage provider/model picker (then thinking level). Live switch, persisted. |
+| `/model` | Two-stage provider/model picker (then thinking level). Live switch, persisted; in-panel keys: `f` favorite · `h` hide · `/` filter (favorites/hidden persisted via settings). |
 | `/think` | Reasoning-effort picker for the current model (`Off`/`High`/`Max`). |
 | `/session` | Read-only info panel: id, cwd, model, token usage, event count. |
 | `/resume` | Pick a persisted session, validate its log, then restore it. |
@@ -338,7 +338,7 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (548 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (569 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -371,7 +371,7 @@ src/
   subagent-policy.ts  maxAgents guard + maxRounds wrap-up injection
   subagent-viewer.ts  Ctrl+G picker + live transcript panel
   theme/              GitHub light/dark palettes + terminal detection
-test/*.test.mjs       unit tests (548 across 37 files)
+test/*.test.mjs       unit tests (569 across 38 files)
 ```
 
 ---

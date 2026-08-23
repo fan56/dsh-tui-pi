@@ -158,7 +158,7 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 
 | 命令 | 功能 |
 |---|---|
-| `/model` | 两阶段选择 provider/model（然后选推理等级），实时切换并持久化。 |
+| `/model` | 两阶段选择 provider/model（然后选推理等级），实时切换并持久化。面板内按键：`f` 收藏 · `h` 隐藏 · `/` 过滤（收藏/隐藏经 settings 持久化）。 |
 | `/think` | 当前模型的推理强度选择（`Off`/`High`/`Max`）。 |
 | `/session` | 只读信息面板：id、cwd、模型、token 用量、事件计数。 |
 | `/resume` | 选择已保存的会话，验证日志后恢复。 |
@@ -322,7 +322,7 @@ dsh --profile tui        # 或：dsh-tui-pi（bin shim）
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # 输出 lib/
-pnpm test     # 单元测试，node --test 对 lib/ 执行（548 个测试，pretest 自动构建）
+pnpm test     # 单元测试，node --test 对 lib/ 执行（569 个测试，pretest 自动构建）
 ```
 
 本地类型检查通过 symlink `node_modules/@deepseek-ai/*` 指向已安装的 dsh 闭包（`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules`）；这些 symlink 不会打入 tarball。`scripts/link-dsh-closure.mjs`（`postinstall`）在每次 `pnpm install` 后重新创建所有 symlink。
@@ -347,7 +347,7 @@ src/
   subagent-policy.ts  maxAgents 守卫 + maxRounds 收尾请求注入
   subagent-viewer.ts  Ctrl+G 选择器 + 实时对话面板
   theme/              GitHub light/dark 配色 + 终端检测
-test/*.test.mjs       单元测试（548 个，覆盖 37 个文件）
+test/*.test.mjs       单元测试（569 个，覆盖 38 个文件）
 ```
 
 ---
