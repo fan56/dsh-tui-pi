@@ -744,6 +744,7 @@ export class SteerInputPanel implements Component {
 
   /** Defer the delivery out of the keypress stack, then act on the outcome. */
   private submit(): void {
+    // Defense-in-depth: unreachable via handleInput, kept as the innermost guard.
     if (this.pending) return
     const text = this.editor.getText().trim()
     if (text === '') return
