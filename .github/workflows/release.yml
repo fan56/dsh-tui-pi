@@ -75,7 +75,20 @@ jobs:
           fi
 
       - name: Publish to npm
-        run: npm publish --access public --provenance
+        # Idempotent: if the version is already on the registry, skip the
+        # publish. This guards against `npm publish --provenance`'s known
+        # follow-up PUT that 403s with "cannot publish over previously
+        # published versions" after the first PUT actually succeeded (the
+        # package + provenance did land — observed on v0.15.1 and v0.16.0).
+        # On a re-run, `npm view` confirms presence and we no-op so the
+        # downstream release job can still complete.
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "@aiwayds/dsh-tui-pi@${TAG_VERSION}" version >/dev/null 2>&1; then
+            echo "::notice::@aiwayds/dsh-tui-pi@${TAG_VERSION} is already on npm — skipping publish"
+          else
+            npm publish --access public --provenance
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -106,7 +119,24 @@ jobs:
             echo 'EOF_TAG_MESSAGE'
           } >> "$GITHUB_OUTPUT"
 
+      # Skip if the release was already published (e.g. via `gh release create`
+      # locally with a hand-crafted body — softprops/action-gh-release@v2
+      # would otherwise overwrite that body with the tag message).
+      - name: Check if GitHub Release already exists
+        id: check_release
+        env:
+          TAG: ${{ github.ref_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::GitHub Release $TAG already exists — skipping (preserving existing body)"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GitHub Release
+        if: steps.check_release.outputs.exists != 'true'
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.tag_message.outputs.BODY }}
