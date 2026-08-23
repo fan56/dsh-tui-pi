@@ -4,6 +4,37 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-08-23
+
+### Added
+
+- **Steer a running subagent from its transcript viewer** (`Ctrl+G` → pick a
+  child → `Enter`). The transcript footer gains `· Enter steer`; pressing it
+  opens a multi-line steer input overlay built on the pi-tui `Editor` with
+  `disableSubmit`, so the panel owns Enter: `Enter` sends, `Shift+Enter`
+  inserts a newline, `Esc` cancels back to the transcript with nothing
+  injected. Delivery is routed by the child's live `Agent.status`
+  (the public `'idle' | 'running'` signal from `@deepseek-ai/dsh-agent`
+  runtime-types): `running` → `agent.steer()` (consumed at the next step
+  boundary), `idle` but unsettled → `agent.followup()` (its own ordinary
+  turn). A missing registry handle or a settled child never opens the box —
+  the viewer shows "This subagent has ended — steering unavailable" instead,
+  and the same liveness re-check runs at flush time, so a child that settles
+  while the message is being typed is refused too. Mirroring the maxRounds
+  wrap-up fix, the injection runs in a `queueMicrotask` callback — never on
+  the synchronous keypress stack — and only a successful send closes the box;
+  a throwing primitive keeps it open with an inline ✘ error so the draft can
+  be retried. Success returns to the transcript with a transient
+  "Steer message sent" notice (retired by the next keypress; it steals a body
+  row rather than growing the overlay). Injected messages carry
+  `{ kind: 'plugin', plugin: 'dsh-tui-pi' }` source, same as the maxRounds
+  wrap-up. Viewer-internal keys stay hardcoded (not remappable through
+  keybindings.json), like every other in-panel hint. +20 tests
+  (subagent-viewer 15 → 35): route decision matrix, ended-path
+  no-injection with feedback, message content/source shape, and the input
+  panel's deferred/retryable/cancelled submission plus notice rendering and
+  the exact-overlay budget.
+
 ## [0.16.2] - 2026-08-23
 
 ### Fixed
