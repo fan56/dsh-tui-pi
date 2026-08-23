@@ -46,7 +46,10 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   other than the upstream `DUPLICATE_PROVIDER` are rethrown loudly instead of
   being swallowed silently (a missing `ctx.userQuestions` service degrades
   with a warning), and `@deepseek-ai/dsh-user-questions` is declared in
-  peer/dev dependencies so a fresh clone typechecks. Theme hot-swaps now
+  peer/dev dependencies; typechecking resolves them via the global dsh
+  closure relink (CI installs global dsh and relinks before running the
+  check — a bare fresh clone cannot resolve `@deepseek-ai/*` on its own).
+  Theme hot-swaps now
   apply live to open overlays (theme passed as a getter through
   `wrapFramedOverlay`), upstream `detail` text renders muted under its
   question header, and three dead-code spots were removed. Regression
