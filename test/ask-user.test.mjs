@@ -1,12 +1,13 @@
 /**
  * Ask-user-question: the pure-logic layer (state, envelope, decline,
- * double-Esc state machine, row layout) of `src/ask-user.ts`. The
- * provider/overlay layer is exercised through tui-driven smoke tests in
- * `test/ask-user-overlay.test.mjs` (TODO: that file lands in the next
- * round when we can drive a real TUI without a pty fixture).
+ * double-Esc state machine with key-repeat guard, row layout) AND the
+ * interaction layer (`openAskUserPanel` driven through a fake TUI +
+ * `handleInput`, abort-signal wiring, provider registration failure
+ * semantics) of `src/ask-user.ts`.
  *
- * Pure functions only — no TTY, no TUI dependencies. Runs against the built
- * lib/ (pretest builds).
+ * Pure functions run against the built lib/ (pretest builds); the interaction
+ * layer injects a fake `tui.showOverlay` handle, an injectable clock, and
+ * plain-object ctx seams — no TTY anywhere.
  */
 
 import test from 'node:test'
@@ -17,14 +18,22 @@ import {
   buildAnswerEnvelope,
   buildDeclinedEnvelope,
   buildRowList,
+  canAutoSubmit,
   DECLINE_MESSAGE,
   didDoubleEscFire,
   DOUBLE_ESC_WINDOW_MS,
   enterCustomEdit,
+  ESC_REPEAT_GUARD_MS,
   exitCustomEdit,
+  INCOMPLETE_HINT,
   initialState,
+  isDuplicateProviderError,
+  needsConfirmRow,
   nextSelectableIndex,
+  nextUnansweredRow,
+  openAskUserPanel,
   patchCustomInput,
+  registerAskUserProvider,
   renderQuestionsView,
   renderReviewView,
   setCustomAnswer,
@@ -32,6 +41,7 @@ import {
   toggleOption,
 } from '../lib/ask-user.js'
 import { githubLight } from '../lib/theme/palette.js'
+import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
 
 const theme = { palette: githubLight }
 
@@ -338,4 +348,351 @@ test('renderReviewView: a custom answer reads "✎ <text>" in the answer cell', 
   const state = setCustomAnswer(initialState(singleQuestion()), 0, 'maybe')
   const lines = renderReviewView(theme, state, 60)
   assert.ok(lines.some(line => stripAnsi(line).includes('maybe')))
+})
+
+// ---------------------------------------------- key-repeat (long-press) guard --
+
+test('advanceDoubleEsc: terminal auto-repeat below the guard gap is ignored entirely', () => {
+  const s0 = initialState(singleQuestion())
+  const armed = advanceDoubleEsc(s0, 1000)
+  // Held key repeats ~30 Hz: presses 20–40 ms apart neither fire nor refresh.
+  assert.equal(advanceDoubleEsc(armed, 1000 + ESC_REPEAT_GUARD_MS - 10), armed, 'repeat returns the same state')
+  const stillArmed = advanceDoubleEsc(armed, 1000 + ESC_REPEAT_GUARD_MS - 10)
+  assert.equal(stillArmed.lastEscAt, 1000, 'armed timestamp is NOT refreshed by repeats')
+  assert.equal(stillArmed.cancelHint, true)
+  assert.equal(didDoubleEscFire(armed, stillArmed, 1000 + ESC_REPEAT_GUARD_MS - 10), false)
+})
+
+test('advanceDoubleEsc: a deliberate second press past the guard gap fires within the window', () => {
+  const s0 = initialState(singleQuestion())
+  const armed = advanceDoubleEsc(s0, 1000)
+  const fired = advanceDoubleEsc(armed, 1000 + ESC_REPEAT_GUARD_MS)
+  assert.equal(fired.lastEscAt, null)
+  assert.equal(fired.cancelHint, false)
+  assert.equal(didDoubleEscFire(armed, fired, 1000 + ESC_REPEAT_GUARD_MS), true)
+})
+
+test('advanceDoubleEsc: repeat guard does not block re-arming after the window lapses', () => {
+  const s0 = initialState(singleQuestion())
+  const armed = advanceDoubleEsc(s0, 1000)
+  const rearmed = advanceDoubleEsc(armed, 1000 + DOUBLE_ESC_WINDOW_MS + 1)
+  assert.equal(rearmed.lastEscAt, 1000 + DOUBLE_ESC_WINDOW_MS + 1)
+  assert.equal(rearmed.cancelHint, true)
+})
+
+// --------------------------------------------------- fast-path / confirm row --
+
+test('canAutoSubmit: only a lone single-select fully-answered state auto-submits', () => {
+  const single = singleQuestion()
+  assert.equal(canAutoSubmit(initialState(single)), false, 'unanswered')
+  assert.equal(canAutoSubmit(toggleOption(initialState(single), 0, 'yes')), true, 'answered single-select')
+  const twoAnswered = toggleOption(toggleOption(initialState(baseQuestions()), 0, 'apple'), 1, 'car')
+  assert.equal(canAutoSubmit(twoAnswered), false, 'multi-question never auto-submits')
+})
+
+test('canAutoSubmit: a lone multiSelect question never auto-submits', () => {
+  const multi = [{ id: 'q1', question: 'Tags?', options: [{ label: 'a' }, { label: 'b' }], multiSelect: true }]
+  assert.equal(canAutoSubmit(toggleOption(initialState(multi), 0, 'a')), false)
+  assert.equal(canAutoSubmit(toggleOption(toggleOption(initialState(multi), 0, 'a'), 0, 'b')), false)
+})
+
+test('needsConfirmRow: multi questions and any multiSelect question need one', () => {
+  assert.equal(needsConfirmRow(baseQuestions()), true, 'two questions')
+  const multiSingle = [{ id: 'q1', question: 'Tags?', options: [{ label: 'a' }], multiSelect: true }]
+  assert.equal(needsConfirmRow(multiSingle), true, 'lone multiSelect')
+  assert.equal(needsConfirmRow(singleQuestion()), false, 'lone single-select')
+  assert.equal(needsConfirmRow([]), false)
+})
+
+test('buildRowList: a lone multiSelect question gets a confirm row (submit path)', () => {
+  const multi = [{ id: 'q1', question: 'Tags?', options: [{ label: 'a' }, { label: 'b' }], multiSelect: true }]
+  const rows = buildRowList(multi, initialState(multi).perQuestion)
+  assert.equal(rows[rows.length - 1]?.kind, 'confirm', 'confirm row exists so multiSelect can submit')
+})
+
+// ------------------------------------------------------- cursor hop helper --
+
+test('nextUnansweredRow: hops to the first selectable row of the next unanswered question', () => {
+  const qs = baseQuestions()
+  const rows = buildRowList(qs, initialState(qs).perQuestion)
+  // After answering Q0, first selectable row belonging to an unanswered later question = Q1 option-0 (index 5).
+  assert.equal(nextUnansweredRow(rows, initialState(qs).perQuestion, 0), 5)
+})
+
+test('nextUnansweredRow: returns -1 when every later question is already answered', () => {
+  const qs = baseQuestions()
+  const perQuestion = toggleOption(toggleOption(initialState(qs), 0, 'apple'), 1, 'car').perQuestion
+  const rows = buildRowList(qs, perQuestion)
+  assert.equal(nextUnansweredRow(rows, perQuestion, 0), -1)
+  assert.equal(nextUnansweredRow(rows, perQuestion, 1), -1)
+})
+
+// ------------------------------------------------------ upstream detail field --
+
+test('renderQuestionsView: upstream detail renders muted under its question header', () => {
+  const withDetail = [{
+    id: 'plan', header: 'Plan', question: 'Approve this plan?',
+    detail: 'Step 1: deploy. Step 2: verify.',
+    options: [{ label: 'approve' }, { label: 'decline' }],
+    intent: { kind: 'plan-review', approve: 'approve' },
+  }]
+  const lines = renderQuestionsView(theme, initialState(withDetail), 80)
+  assert.ok(lines.some(line => stripAnsi(line).includes('Step 1: deploy')), 'detail text is rendered')
+})
+
+// ------------------------------------------------------------ attention hint --
+
+test('renderQuestionsView / renderReviewView surface the transient attention hint', () => {
+  const qState = { ...initialState(baseQuestions()), attentionHint: INCOMPLETE_HINT }
+  assert.ok(renderQuestionsView(theme, qState, 60).some(l => stripAnsi(l).includes(INCOMPLETE_HINT)))
+  const rState = { ...toggleOption(initialState(baseQuestions()), 0, 'apple'), reviewIndex: 1, attentionHint: INCOMPLETE_HINT }
+  assert.ok(renderReviewView(theme, rState, 60).some(l => stripAnsi(l).includes(INCOMPLETE_HINT)))
+})
+
+// --------------------------------------------- interaction layer (fake TUI) --
+
+/** Fake TUI harness: captures the framed overlay component and its hide handle. */
+function makeHarness(clockTimes = []) {
+  const calls = { overlays: [], hides: 0, restoreFocus: 0 }
+  const deps = {
+    tui: {
+      showOverlay(component) {
+        const handle = { component, hide() { calls.hides += 1 } }
+        calls.overlays.push(handle)
+        return handle
+      },
+    },
+    theme: () => ({ palette: githubLight }),
+    restoreFocus: () => { calls.restoreFocus += 1 },
+    now: () => clockTimes.shift() ?? 0,
+  }
+  return { deps, calls }
+}
+
+const trackResolution = promise => {
+  const state = { resolved: false, value: undefined }
+  promise.then(v => { state.resolved = true; state.value = v })
+  return state
+}
+
+/** The currently cursor-marked (▸) row label in the questions view. */
+function cursorLine(handle) {
+  const lines = handle.component.render(80).map(l => stripAnsi(l))
+  return lines.find(l => l.includes('▸'))
+}
+
+/** Press `key` until the marked row's label contains `label` (the two-pass nav scan wraps/skips rows). */
+function pressUntil(handle, label, key = '\x1b[B', maxSteps = 16) {
+  for (let i = 0; i < maxSteps; i++) {
+    const line = cursorLine(handle)
+    if (line !== undefined && line.includes(label)) return
+    handle.component.handleInput(key)
+  }
+  throw new Error(`cursor never reached ${JSON.stringify(label)}`)
+}
+
+/** Same, but targets the `nth` row whose label matches (sentinel labels repeat per question). */
+function pressUntilNth(handle, label, nth, key = '\x1b[B', maxSteps = 16) {
+  let seen = 0
+  for (let i = 0; i < maxSteps; i++) {
+    const line = cursorLine(handle)
+    if (line !== undefined && line.includes(label)) {
+      seen += 1
+      if (seen === nth) return
+    }
+    handle.component.handleInput(key)
+  }
+  throw new Error(`cursor never reached ${JSON.stringify(label)} #${nth}`)
+}
+
+test('openAskUserPanel: single-question option Enter fast-path submits the answer envelope', async () => {
+  const { deps, calls } = makeHarness()
+  const result = openAskUserPanel(deps, singleQuestion())
+  const tracked = trackResolution(result)
+  const overlay = calls.overlays[0]
+  overlay.component.handleInput('\x1b[B') // down → an option row
+  overlay.component.handleInput('\r') // Enter on 'no' → auto-submit
+  await result
+  assert.equal(tracked.resolved, true)
+  assert.deepEqual(tracked.value.answers, [{ id: 'q1', selected: ['no'] }])
+  assert.equal(calls.hides, 1)
+  assert.equal(calls.restoreFocus, 1)
+})
+
+test('openAskUserPanel: lone multiSelect question does NOT auto-submit; routes through Confirm → Submit', async () => {
+  const multi = [{ id: 'q1', question: 'Tags?', options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }], multiSelect: true }]
+  const { deps, calls } = makeHarness()
+  const result = openAskUserPanel(deps, multi)
+  const tracked = trackResolution(result)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, 'b'); input('\r') // select 'b'
+  pressUntil(handle, 'c'); input('\r') // add 'c'
+  assert.equal(tracked.resolved, false, 'multiSelect toggles never auto-submit')
+  pressUntil(handle, 'Confirm answers'); input('\r') // confirm → review page
+  for (let i = 0; i < 8 && !(cursorLine(handle)?.includes('Submit answers')); i++) input('\x1b[B')
+  assert.ok(cursorLine(handle).includes('Submit answers'))
+  input('\r') // submit
+  await result
+  assert.equal(tracked.resolved, true)
+  assert.deepEqual(tracked.value.answers, [{ id: 'q1', selected: ['b', 'c'] }])
+})
+
+test('openAskUserPanel: single question answered ONLY by typed custom text submits (deadlock fix B1)', async () => {
+  const noOptions = [{ id: 'q1', question: 'What is your deployment name?' }] // options are optional upstream
+  const { deps, calls } = makeHarness()
+  const result = openAskUserPanel(deps, noOptions)
+  const tracked = trackResolution(result)
+  const input = calls.overlays[0].component.handleInput.bind(calls.overlays[0].component)
+  input('\x1b[B') // down → sentinel row
+  input('\r') // Enter → inline edit
+  input('h'); input('i') // type free text
+  input('\r') // commit → fast-path submit
+  await result
+  assert.equal(tracked.resolved, true)
+  assert.deepEqual(tracked.value.answers, [{ id: 'q1', selected: [], custom: 'hi' }])
+  assert.equal(calls.hides, 1)
+  assert.equal(calls.restoreFocus, 1)
+})
+
+test('openAskUserPanel: committing a sentinel edit in a multi-question layout hops to the next unanswered question', async () => {
+  const { deps, calls } = makeHarness()
+  const result = openAskUserPanel(deps, baseQuestions())
+  const tracked = trackResolution(result)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntilNth(handle, SENTINEL_LABEL, 2) // Q0's sentinel (the ↓ cycle reaches Q1's first)
+  input('\r') // inline edit
+  for (const ch of 'fruit') input(ch)
+  input('\r') // commit → cursor hops to the next unanswered question (Q1 option-0)
+  assert.ok(cursorLine(handle).includes('car'), `expected cursor on Q1 option-0, got: ${cursorLine(handle)}`)
+  input('\r') // select 'car'
+  assert.equal(tracked.resolved, false, 'multi-question waits for the review step')
+  pressUntil(handle, 'Confirm answers', '\x1b[A'); input('\r') // confirm → review
+  for (let i = 0; i < 8 && !(cursorLine(handle)?.includes('Submit answers')); i++) input('\x1b[B')
+  input('\r') // Submit answers
+  await result
+  assert.deepEqual(tracked.value.answers, [
+    { id: 'q1', selected: [], custom: 'fruit' },
+    { id: 'q2', selected: ['car'] },
+  ])
+})
+
+test('openAskUserPanel: double-Esc decline fires; external overlay.hide afterwards is idempotent', async () => {
+  const { deps, calls } = makeHarness([1000, 1050])
+  const result = openAskUserPanel(deps, baseQuestions())
+  const tracked = trackResolution(result)
+  const handle = calls.overlays[0]
+  handle.component.handleInput('\x1b')
+  handle.component.handleInput('\x1b')
+  await result
+  assert.equal(tracked.resolved, true)
+  assert.deepEqual(tracked.value, buildDeclinedEnvelope(baseQuestions()))
+  assert.equal(calls.restoreFocus, 1)
+  // External close after settle must not re-resolve or re-focus.
+  handle.hide()
+  handle.hide()
+  assert.equal(calls.restoreFocus, 1)
+})
+
+test('openAskUserPanel: held-Esc auto-repeat does not fire the decline; a deliberate second press does', async () => {
+  // t=1000 arm · t=1030 repeat (ignored) · t=1060 deliberate fire.
+  const repeatHarness = makeHarness([1000, 1030, 1060])
+  const resultRepeat = openAskUserPanel(repeatHarness.deps, singleQuestion())
+  const trackedRepeat = trackResolution(resultRepeat)
+  const comp = repeatHarness.calls.overlays[0].component
+  comp.handleInput('\x1b')
+  comp.handleInput('\x1b')
+  assert.equal(trackedRepeat.resolved, false, 'auto-repeat burst must not decline')
+  comp.handleInput('\x1b')
+  await resultRepeat
+  assert.equal(trackedRepeat.resolved, true)
+  assert.deepEqual(trackedRepeat.value, buildDeclinedEnvelope(singleQuestion()))
+})
+
+test('openAskUserPanel: abort signal closes the overlay and settles declined', async () => {
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  const result = openAskUserPanel(deps, baseQuestions(), controller.signal)
+  const tracked = trackResolution(result)
+  controller.abort()
+  await result
+  assert.equal(tracked.resolved, true)
+  assert.deepEqual(tracked.value, buildDeclinedEnvelope(baseQuestions()))
+  assert.equal(calls.hides, 1, 'overlay was hidden')
+  assert.equal(calls.restoreFocus, 1)
+})
+
+test('openAskUserPanel: pre-aborted signal declines without ever opening an overlay', async () => {
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  controller.abort()
+  const result = await openAskUserPanel(deps, baseQuestions(), controller.signal)
+  assert.deepEqual(result, buildDeclinedEnvelope(baseQuestions()))
+  assert.equal(calls.overlays.length, 0)
+})
+
+// ------------------------------------------- provider registration semantics --
+
+test('registerAskUserProvider: happy path registers, forwards ask(), and passes the disposer through', async () => {
+  let registered
+  let disposed = 0
+  const ctx = { userQuestions: { registerProvider(provider) { registered = provider; return () => { disposed += 1 } } } }
+  const { deps, calls } = makeHarness()
+  const disposer = registerAskUserProvider(ctx, deps)
+  assert.equal(typeof registered.ask, 'function')
+  const result = registered.ask({ questions: singleQuestion(), signal: undefined })
+  const tracked = trackResolution(result)
+  calls.overlays[0].hide() // external close → declined envelope
+  await result
+  assert.deepEqual(tracked.value, buildDeclinedEnvelope(singleQuestion()))
+  disposer()
+  assert.equal(disposed, 1)
+})
+
+test('registerAskUserProvider: DUPLICATE_PROVIDER yields ownership silently (no-op disposer)', () => {
+  const ctx = { userQuestions: { registerProvider() { throw new UserQuestionError('a user-questions provider is already registered', 'DUPLICATE_PROVIDER') } } }
+  const warnings = captureWarnings(() => {
+    const disposer = registerAskUserProvider(ctx, makeHarness().deps)
+    assert.equal(typeof disposer, 'function')
+    disposer() // must be safe to call
+  })
+  assert.deepEqual(warnings, [])
+})
+
+test('registerAskUserProvider: unexpected registration failures are NOT swallowed', () => {
+  const ctx = { userQuestions: { registerProvider() { throw new TypeError('boom') } } }
+  assert.throws(() => registerAskUserProvider(ctx, makeHarness().deps), /boom/)
+})
+
+test('registerAskUserProvider: missing userQuestions service warns and degrades instead of crashing', () => {
+  const warnings = captureWarnings(() => {
+    const disposer = registerAskUserProvider({}, makeHarness().deps)
+    assert.equal(typeof disposer, 'function')
+    disposer()
+  })
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /userQuestions/)
+})
+
+function captureWarnings(fn) {
+  const warnings = []
+  const original = console.warn
+  console.warn = (...args) => { warnings.push(args.join(' ')) }
+  try {
+    fn()
+  } finally {
+    console.warn = original
+  }
+  return warnings
+}
+
+// ------------------------------------------- duplicate-error classifier (pure) --
+
+test('isDuplicateProviderError: matches only UserQuestionError with code DUPLICATE_PROVIDER', () => {
+  assert.equal(isDuplicateProviderError(new UserQuestionError('already registered', 'DUPLICATE_PROVIDER')), true)
+  assert.equal(isDuplicateProviderError(new UserQuestionError('aborted', 'ASK_ABORTED')), false)
+  assert.equal(isDuplicateProviderError(new TypeError('boom')), false)
+  assert.equal(isDuplicateProviderError('DUPLICATE_PROVIDER'), false)
+  assert.equal(isDuplicateProviderError(undefined), false)
 })

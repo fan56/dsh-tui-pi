@@ -16,13 +16,21 @@
  *       Type something.          (sentinel row — inline input)
  *     Question 2 ···            (continues vertically)
  *     ▸ …
- *     ⏎ Confirm answers        (only when ≥ 2 questions)
+ *     ⏎ Confirm answers        (when ≥ 2 questions, or any multiSelect question)
  *
- * Single-question overlay: Enter on an option (or filled sentinel) submits
- * immediately. Multi-question overlay: Enter on the Confirm row hops to the
- * review page (all answers listed, each editable in place). Esc double-press
- * within 200 ms declines — the provider returns the "declined" envelope and
- * the model reads it as a normal user reply.
+ * Single-question single-select overlay: Enter on an option (or committing a
+ * filled sentinel) submits immediately. A multiSelect question — even a lone
+ * one — gets a Confirm row instead of auto-submitting, so the user can pick
+ * several options first. Multi-question overlay: Enter on the Confirm row
+ * hops to the review page (all answers listed, each editable in place).
+ * Esc double-press within 200 ms declines — but terminal key auto-repeat
+ * (holding Esc) is ignored below `ESC_REPEAT_GUARD_MS`, so a long press
+ * cannot accidentally fire the decline. The provider returns the "declined"
+ * envelope and the model reads it as a normal user reply. An aborted
+ * request signal (`request.signal`) settles declined too — we resolve the
+ * declined envelope instead of rejecting ASK_ABORTED because the upstream
+ * service already screens entry-time aborts and an aborted step discards
+ * the result anyway.
  *
  * Pure logic lives in the top of this file (initial state, answer envelope,
  * declined envelope, double-Esc state machine, row-layout math) so it can
@@ -62,11 +70,22 @@ import { clipToWidth } from './text.ts'
 /** Maximum time between two Esc presses before the second one re-arms instead of firing. */
 export const DOUBLE_ESC_WINDOW_MS = 200
 
+/**
+ * Minimum gap between two Esc presses below which the second one is treated as
+ * terminal key auto-repeat (the user is HOLDING Esc) rather than a deliberate
+ * press: repeats leave the state untouched, so a long press can never fire the
+ * decline gesture on its own.
+ */
+export const ESC_REPEAT_GUARD_MS = 50
+
 /** Sentinel row label appended to every question's option list. */
 export const SENTINEL_LABEL = 'Type something.'
 
 /** Decline message embedded into the answer envelope when the user bails. */
 export const DECLINE_MESSAGE = 'User declined to answer questions.'
+
+/** Transient hint when Enter lands on an incomplete confirm/submit row. */
+export const INCOMPLETE_HINT = 'Answer every question first'
 
 /** Mark left of a question a custom input wrote text into. */
 const CUSTOM_MARK = '✎ '
@@ -81,6 +100,8 @@ export interface FlatRow {
   optionIndex?: number
   label: string
   description?: string
+  /** Upstream `detail` (supporting text rendered under the header, never in labels). */
+  detail?: string
   selectable: boolean
 }
 
@@ -111,6 +132,8 @@ export interface AskUserState {
   lastEscAt: number | null
   /** The status hint shown above the footer after one Esc press. */
   cancelHint: boolean
+  /** Transient "you can't do that yet" hint (e.g. Enter on an incomplete confirm row). Cleared by any navigation. */
+  attentionHint: string | null
 }
 
 // ---------------------------------------- pure functions (testable) --
@@ -127,6 +150,7 @@ export function initialState(questions: readonly AskUserQuestionItem[]): AskUser
     reviewIndex: 0,
     lastEscAt: null,
     cancelHint: false,
+    attentionHint: null,
   }
 }
 
@@ -184,13 +208,27 @@ export function exitCustomEdit(state: AskUserState, commit: boolean): AskUserSta
   return { ...next, cancelHint: false }
 }
 
-/** Double-Esc state machine: 1st press arms; 2nd within the window fires (caller reads `lastEscAt===null + cancelHint===false`). */
-export function advanceDoubleEsc(state: AskUserState, now: number, windowMs: number = DOUBLE_ESC_WINDOW_MS): AskUserState {
+/**
+ * Double-Esc state machine: 1st press arms; 2nd within the window fires
+ * (caller reads `lastEscAt===null + cancelHint===false`). Presses closer than
+ * `repeatGuardMs` are terminal key auto-repeat (held key) and are ignored
+ * entirely — the armed state stays at its original timestamp, so holding Esc
+ * neither fires the decline nor refreshes the window.
+ */
+export function advanceDoubleEsc(
+  state: AskUserState,
+  now: number,
+  windowMs: number = DOUBLE_ESC_WINDOW_MS,
+  repeatGuardMs: number = ESC_REPEAT_GUARD_MS,
+): AskUserState {
   const last = state.lastEscAt
-  if (last === null || now - last > windowMs) {
-    return { ...state, lastEscAt: now, cancelHint: true }
+  if (last !== null && now - last < repeatGuardMs) {
+    return state
   }
-  return { ...state, lastEscAt: null, cancelHint: false }
+  if (last === null || now - last > windowMs) {
+    return { ...state, lastEscAt: now, cancelHint: true, attentionHint: null }
+  }
+  return { ...state, lastEscAt: null, cancelHint: false, attentionHint: null }
 }
 
 /** Was the most recent double-Esc press a "fired" event (the second within the window)? */
@@ -231,6 +269,7 @@ export function buildRowList(questions: readonly AskUserQuestionItem[], perQuest
       questionIndex: qi,
       label: question.header ?? `Question ${qi + 1}`,
       description: question.question,
+      ...(question.detail !== undefined ? { detail: question.detail } : {}),
       selectable: false,
     })
     const options = question.options ?? []
@@ -252,7 +291,7 @@ export function buildRowList(questions: readonly AskUserQuestionItem[], perQuest
       selectable: true,
     })
   })
-  if (questions.length >= 2) {
+  if (needsConfirmRow(questions)) {
     rows.push({ kind: 'confirm', questionIndex: -1, label: '⏎ Confirm answers', selectable: true })
   }
   return rows
@@ -281,10 +320,55 @@ export function allQuestionsAnswered(state: AskUserState): boolean {
   )
 }
 
+/**
+ * Whether the overlay needs an explicit `⏎ Confirm answers` row: any
+ * multi-question layout, plus a lone multiSelect question — multiSelect can
+ * never auto-submit (the user may want more toggles), so it needs a path to
+ * the review page.
+ */
+export function needsConfirmRow(questions: readonly AskUserQuestionItem[]): boolean {
+  return questions.length >= 2 || questions.some(question => question.multiSelect === true)
+}
+
+/**
+ * True when a successful action on THIS state can submit immediately without
+ * the review step: exactly one question, single-select (a multiSelect
+ * question may want further toggles), and every question answered.
+ */
+export function canAutoSubmit(state: AskUserState): boolean {
+  if (state.questions.length !== 1) return false
+  if (state.questions[0]?.multiSelect === true) return false
+  return allQuestionsAnswered(state)
+}
+
+/**
+ * Row index to land on after answering question `answeredQi`: the first
+ * selectable row of the nearest LATER unanswered question, or -1 when every
+ * later question is already answered (caller keeps the current cursor).
+ */
+export function nextUnansweredRow(
+  rows: readonly FlatRow[],
+  perQuestion: readonly PendingAnswer[],
+  answeredQi: number,
+): number {
+  const answered = (qi: number): boolean => {
+    const answer = perQuestion[qi]
+    return answer !== undefined
+      && (answer.selected.length > 0 || (answer.custom !== undefined && answer.custom.trim() !== ''))
+  }
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row === undefined || !row.selectable) continue
+    if (row.questionIndex <= answeredQi) continue
+    if (!answered(row.questionIndex)) return i
+  }
+  return -1
+}
+
 // ------------------------------------------------- render: questions phase --
 
 /** Render width budgets for the questions phase (label flex column + status column). */
-const QUESTIONS_COLUMNS = (wrap: number): readonly TableColumn[] => [
+const QUESTIONS_COLUMNS = (): readonly TableColumn[] => [
   { key: 'label', title: 'Selection', flex: true },
   { key: 'status', title: 'State', width: 14 },
 ]
@@ -321,7 +405,7 @@ export function renderQuestionsView(theme: TuiTheme, state: AskUserState, width:
     return finalizeQuestionsView(fns, wrap, lines, state)
   }
 
-  const columns = QUESTIONS_COLUMNS(wrap)
+  const columns = QUESTIONS_COLUMNS()
   const widths = columnWidths(wrap - MARKER_W, columns)
 
   lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
@@ -337,6 +421,12 @@ export function renderQuestionsView(theme: TuiTheme, state: AskUserState, width:
       const text = `${row.label}  ${row.description ?? ''}`
       const padded = clipToWidth(BOLD + text + RESET, wrap)
       lines.push(fns.accent(padded))
+      // Upstream `detail` is supporting context (mandatory when the question
+      // declares an intent) — render it muted below the header, never inside
+      // option labels.
+      if (row.detail !== undefined && row.detail !== '') {
+        lines.push(fns.muted(clipToWidth(row.detail, wrap)))
+      }
       continue
     }
 
@@ -385,13 +475,16 @@ function finalizeQuestionsView(
   lines: string[],
   state: AskUserState,
 ): string[] {
+  if (state.attentionHint !== null) {
+    lines.push(fns.attention(clipToWidth(state.attentionHint, wrap)))
+  }
   if (state.cancelHint) {
     lines.push(fns.attention(clipToWidth('Press Esc again to decline', wrap)))
   }
   lines.push('')
   const footer = state.customEditingFor !== null
     ? 'Type free text · Enter keep · Esc abandon edit'
-    : `↑↓ navigate · Enter ${state.questions.length === 1 ? 'select' : 'toggle / confirm'} · Esc decline`
+    : `↑↓ navigate · Enter ${needsConfirmRow(state.questions) ? 'toggle / confirm' : 'select'} · Esc decline`
   lines.push(fns.subtle(clipToWidth(footer, wrap)))
   return lines
 }
@@ -437,6 +530,9 @@ export function renderReviewView(theme: TuiTheme, state: AskUserState, width: nu
     lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
   }
   lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), wrap)))
+  if (state.attentionHint !== null) {
+    lines.push(fns.attention(clipToWidth(state.attentionHint, wrap)))
+  }
   lines.push('')
   lines.push(fns.subtle(clipToWidth('↑↓ select · Enter return to edit / submit', wrap)))
   return lines
@@ -454,9 +550,12 @@ function formatAnswerForReview(answer: PendingAnswer | undefined): string {
 /** Options for assembling the panel + provider function. */
 export interface AskUserPanelDeps {
   tui: TUI
-  theme: TuiTheme
+  /** Live theme getter — re-read on every render so a mid-overlay hot-swap applies (frame included). */
+  theme: () => TuiTheme
   /** Re-focus the current editor on overlay close. */
   restoreFocus: () => void
+  /** Injectable clock for tests; defaults to Date.now. */
+  now?: () => number
   /** Width and height of the framed overlay. */
   width?: `${number}%` | number
   maxHeight?: `${number}%` | number
@@ -465,25 +564,47 @@ export interface AskUserPanelDeps {
 /** Result promise from `openAskUserPanel`. Declined carries the canonical decline envelope. */
 export type AskUserResult = AskUserQuestionAnswer
 
-/** Open the AskUser overlay for one set of questions. */
+/**
+ * Open the AskUser overlay for one set of questions.
+ *
+ * `signal` is the caller's abort signal (the tool execution's). Already-aborted
+ * settles declined WITHOUT staging an overlay; a live signal closes the
+ * overlay and settles declined when it fires. We resolve the declined envelope
+ * rather than rejecting with the upstream ASK_ABORTED code on purpose: the
+ * upstream service already screens entry-time aborts, and a step aborted after
+ * this point discards the tool result anyway — resolving keeps the pending
+ * promise from ever hanging either way.
+ */
 export function openAskUserPanel(
   deps: AskUserPanelDeps,
   questions: readonly AskUserQuestionItem[],
+  signal?: AbortSignal,
 ): Promise<AskUserResult> {
+  if (signal?.aborted) {
+    return Promise.resolve(buildDeclinedEnvelope(questions))
+  }
   return new Promise<AskUserResult>((resolve) => {
+    const clock = deps.now ?? Date.now
     const state: AskUserState = initialState(questions)
     let settled = false
+    const onAbort = (): void => {
+      settle(buildDeclinedEnvelope(questions))
+      overlay.hide()
+      deps.restoreFocus()
+    }
     const settle = (envelope: AskUserQuestionAnswer): void => {
       if (settled) return
       settled = true
+      signal?.removeEventListener('abort', onAbort)
       resolve(envelope)
     }
 
     const panel: Component = {
       invalidate() { /* frames are re-rendered on demand */ },
       render(width: number): string[] {
-        if (state.phase === 'review') return renderReviewView(deps.theme, state, width)
-        return renderQuestionsView(deps.theme, state, width)
+        const theme = deps.theme()
+        if (state.phase === 'review') return renderReviewView(theme, state, width)
+        return renderQuestionsView(theme, state, width)
       },
       handleInput(data: string) {
         if (settled) return
@@ -496,7 +617,7 @@ export function openAskUserPanel(
         if (kb.matches(data, 'tui.select.down')) { moveCursor(state, 1); return }
         if (kb.matches(data, 'tui.select.confirm')) { handleConfirm(state); return }
         if (kb.matches(data, 'tui.select.cancel')) {
-          const now = Date.now()
+          const now = clock()
           const prevState: AskUserState = { ...state }
           const after = advanceDoubleEsc(state, now)
           Object.assign(state, after)
@@ -510,11 +631,13 @@ export function openAskUserPanel(
       },
     }
 
-    // Stage the overlay through the standard FramedOverlay wrapper.
+    // Stage the overlay through the standard FramedOverlay wrapper. The theme
+    // getter is passed through so the frame re-reads it per render too.
     const overlay: OverlayHandle = deps.tui.showOverlay(
       wrapFramedOverlay(deps.theme, panel),
       { width: deps.width ?? '85%', maxHeight: deps.maxHeight ?? '80%' },
     )
+    signal?.addEventListener('abort', onAbort, { once: true })
 
     // When the overlay closes (without an explicit settle first), resolve the
     // promise with the decline envelope — covers /reload, theme swap, agent
@@ -534,12 +657,12 @@ export function openAskUserPanel(
       if (s.phase === 'review') {
         const max = s.questions.length // last row is the submit pseudo-row
         s.reviewIndex = Math.max(0, Math.min(max, s.reviewIndex + direction))
-        Object.assign(s, { cancelHint: false })
+        Object.assign(s, { cancelHint: false, attentionHint: null })
         return
       }
       const rows = buildRowList(s.questions, s.perQuestion)
       const next = nextSelectableIndex(rows, s.cursorIndex + direction, direction)
-      Object.assign(s, { cursorIndex: next, cancelHint: false })
+      Object.assign(s, { cursorIndex: next, cancelHint: false, attentionHint: null })
     }
 
     function handleConfirm(s: AskUserState): void {
@@ -551,11 +674,12 @@ export function openAskUserPanel(
             phase: 'questions',
             cursorIndex: first >= 0 ? first : s.cursorIndex,
             cancelHint: false,
+            attentionHint: null,
           })
           return
         }
         if (!allQuestionsAnswered(s)) {
-          Object.assign(s, { cancelHint: false })
+          Object.assign(s, { cancelHint: false, attentionHint: INCOMPLETE_HINT })
           return
         }
         settle(buildAnswerEnvelope(s))
@@ -572,8 +696,10 @@ export function openAskUserPanel(
         if (option === undefined) return
         const next = toggleOption(s, row.questionIndex, option.label)
         Object.assign(s, next)
-        // Single-question fast path: a successful selection submits immediately.
-        if (s.questions.length === 1 && allQuestionsAnswered(next)) {
+        // Single-question single-select fast path: a successful selection
+        // submits immediately. multiSelect never auto-submits — the user may
+        // want more toggles, so it routes through the Confirm row instead.
+        if (canAutoSubmit(next)) {
           settle(buildAnswerEnvelope(s))
           overlay.hide()
           deps.restoreFocus()
@@ -588,7 +714,9 @@ export function openAskUserPanel(
       }
       if (row.kind === 'confirm') {
         if (allQuestionsAnswered(s)) {
-          Object.assign(s, { phase: 'review', cancelHint: false })
+          Object.assign(s, { phase: 'review', reviewIndex: 0, cancelHint: false, attentionHint: null })
+        } else {
+          Object.assign(s, { cancelHint: false, attentionHint: INCOMPLETE_HINT })
         }
       }
     }
@@ -599,6 +727,7 @@ export function openAskUserPanel(
       const kb = getKeybindings()
       if (kb.matches(data, 'tui.select.confirm')) {
         Object.assign(s, exitCustomEdit(s, true))
+        commitCustomAnswer(s, qi)
         return
       }
       if (kb.matches(data, 'tui.select.cancel')) {
@@ -606,7 +735,6 @@ export function openAskUserPanel(
         return
       }
       if (data === '\x7f' || matchesKey(data, 'backspace')) {
-        s.customInputs = (s.customInputs.slice() as (string | null)[])
         const next = s.customInputs.slice()
         next[qi] = (next[qi] ?? '').slice(0, -1)
         s.customInputs = next
@@ -618,25 +746,85 @@ export function openAskUserPanel(
         s.customInputs = next
       }
     }
+
+    /**
+     * After a committed sentinel edit: a lone single-select question whose
+     * answer is now complete submits right away (this is the free-text
+     * counterpart of the option fast path — without it, typing an answer into
+     * a question with no options could never reach `settle`). Otherwise, in a
+     * multi-question layout the cursor hops to the next unanswered question's
+     * first row to cut confirmation cost.
+     */
+    function commitCustomAnswer(s: AskUserState, qi: number): void {
+      if (s.customEditingFor !== null) return // edit not committed (empty buffer)
+      if (s.perQuestion[qi]?.custom === undefined) return
+      if (canAutoSubmit(s)) {
+        settle(buildAnswerEnvelope(s))
+        overlay.hide()
+        deps.restoreFocus()
+        return
+      }
+      if (s.questions.length >= 2) {
+        const rows = buildRowList(s.questions, s.perQuestion)
+        const target = nextUnansweredRow(rows, s.perQuestion, qi)
+        if (target >= 0) Object.assign(s, { cursorIndex: target, cancelHint: false, attentionHint: null })
+      }
+    }
   })
 }
 
 // ----------------------------------------------------- the provider --
 
-/** Wires the provider into `ctx.userQuestions`. Call from inside `ctx.effect`. */
+/**
+ * True only for the upstream's documented duplicate-registration failure
+ * (`UserQuestionError` with code `DUPLICATE_PROVIDER`) — the one case where
+ * yielding the single provider slot to the prior UI is correct. Matched
+ * structurally on `name` + `code` so a cross-realm HarnessError instance or a
+ * test double classifies identically.
+ */
+export function isDuplicateProviderError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  if (error.name !== 'UserQuestionError') return false
+  return (error as { code?: string }).code === 'DUPLICATE_PROVIDER'
+}
+
+/** Minimal structural view of the `ctx.userQuestions` seam we register against. */
+interface UserQuestionsSeam {
+  registerProvider(provider: {
+    ask: (request: { questions: AskUserQuestionItem[]; signal?: AbortSignal }) => Promise<AskUserQuestionAnswer>
+  }): () => void
+}
+
+/**
+ * Wires the provider into `ctx.userQuestions`. Call from inside `ctx.effect`.
+ *
+ * Failure semantics are deliberate (review round BM):
+ * - missing service → warn + no-op disposer. The tool stays mounted by the
+ *   bundle patch; without a provider its calls fail with the upstream
+ *   NO_PROVIDER error, which is better than crashing the whole TUI plugin.
+ * - DUPLICATE_PROVIDER → silent no-op disposer (a prior UI owns the slot).
+ * - anything else → rethrown so the effect fails loudly instead of leaving a
+ *   mounted tool with no UI and no trace.
+ */
 export function registerAskUserProvider(
   ctx: Context,
   deps: AskUserPanelDeps,
 ): () => void {
-  const userQuestions = ctx.userQuestions
+  const userQuestions = (ctx as { userQuestions?: UserQuestionsSeam }).userQuestions
+  if (userQuestions === undefined || typeof userQuestions.registerProvider !== 'function') {
+    console.warn('[dsh-tui-pi] ctx.userQuestions not mounted — ask_user_question calls will fail with NO_PROVIDER')
+    return () => { /* no-op */ }
+  }
   try {
     return userQuestions.registerProvider({
-      ask: (request) =>
-        openAskUserPanel(deps, request.questions).then(envelope => envelope),
+      ask: request => openAskUserPanel(deps, request.questions, request.signal),
     })
-  } catch {
-    // A prior UI is already the provider — yield ownership instead of crashing.
-    return () => { /* no-op */ }
+  } catch (error) {
+    if (isDuplicateProviderError(error)) {
+      // A prior UI is already the provider — yield ownership instead of crashing.
+      return () => { /* no-op */ }
+    }
+    throw error
   }
 }
 

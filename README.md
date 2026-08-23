@@ -198,10 +198,10 @@ There's no slash command to toggle the feature — it's always on, controlled by
 
 While the model is mid-turn it can pause and ask you structured questions via the `ask_user_question` tool (`@deepseek-ai/dsh-tool-ask-user`, mounted by this profile's bundle patch). The TUI hosts the answering side: a framed overlay opens in place, the tool call stays pending until you answer, and your answers flow back to the model as a normal tool result.
 
-- **One overlay, all questions flattened** — every question renders as a header row followed by its option rows plus a `Type something.` sentinel row for free text. Single-select replaces on Enter; multi-select toggles (`[+]` marks).
-- **Single-question fast path** — Enter on an option (or confirming a filled sentinel) submits immediately.
-- **Multi-question review page** — with ≥ 2 questions a `⏎ Confirm answers` row hops to a review listing every answer, each row editable in place; `Submit answers` commits.
-- **Double-Esc declines** — two Esc presses within 200 ms return a declined envelope (the model reads it as a normal reply that no answer was given); closing the overlay through any other path (theme swap, `/reload`, abort) declines too.
+- **One overlay, all questions flattened** — every question renders as a header row followed by its supporting `detail` text (when the model supplies any), option rows, plus a `Type something.` sentinel row for free text. Single-select replaces on Enter; multi-select toggles (`[+]` marks).
+- **Single-question fast path** — a lone single-select question submits immediately on Enter: picking an option or committing typed free text both submit right away (a question without options is answered by typing alone). A lone multiSelect question instead gets a `⏎ Confirm answers` row so you can pick several options before submitting.
+- **Multi-question review page** — with ≥ 2 questions a `⏎ Confirm answers` row hops to a review listing every answer, each row editable in place; `Submit answers` commits (Enter on it while an answer is missing flashes a hint instead of failing silently). After committing free text on one question the cursor hops to the next unanswered one.
+- **Double-Esc declines** — two Esc presses within 200 ms return a declined envelope (the model reads it as a normal reply that no answer was given); holding Esc does not accidentally fire (key auto-repeat below a minimum gap is ignored), and closing the overlay through any other path — theme swap, `/reload`, or the tool call being aborted — settles as declined too.
 - **Conservative-use guidance** — a system-prompt section nudges the model to ask only when it genuinely needs you (1–3 questions, 2–4 options each), so the TUI doesn't turn into a questionnaire.
 - **Keyboard** — `↑↓` navigate · `Enter` select/toggle/confirm · type into the sentinel for free text · `Esc` twice to decline.
 
@@ -422,7 +422,7 @@ src/
   ask-user.ts         Ask User Question overlay: pure state reducers +
                       framed overlay UI + ctx.userQuestions provider
   theme/              GitHub light/dark palettes + terminal detection
-test/*.test.mjs       unit tests (600 across 39 files)
+test/*.test.mjs       unit tests (624 across 39 files)
 ```
 
 ---

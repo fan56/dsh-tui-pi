@@ -44,11 +44,12 @@ function fillLine(theme: TuiTheme, line: string, width: number): string {
  * fillLine); the child renders at width − 2.
  */
 export class FramedOverlay implements Component {
-  private readonly theme: TuiTheme
+  private readonly getTheme: () => TuiTheme
   private readonly child: Component
 
-  constructor(theme: TuiTheme, child: Component) {
-    this.theme = theme
+  /** A theme is either a fixed palette or a live getter (re-read per render). */
+  constructor(theme: TuiTheme | (() => TuiTheme), child: Component) {
+    this.getTheme = typeof theme === 'function' ? theme : () => theme
     this.child = child
   }
 
@@ -58,18 +59,20 @@ export class FramedOverlay implements Component {
 
   render(width: number): string[] {
     const contentWidth = Math.max(1, width - 2)
-    const borderFg = ansiFg(this.theme.palette.panelBoxBorder)
+    // Live read: a mid-overlay theme hot-swap applies to the frame too.
+    const theme = this.getTheme()
+    const borderFg = ansiFg(theme.palette.panelBoxBorder)
     const border = (chars: string) => borderFg + chars + RESET
     // Side-bordered content row: the child's own styling runs between the
     // two `│`s; fillLine re-applies the backdrop after any mid-line RESETs.
     const content = (line: string) => `${borderFg}│${line}${borderFg}│`
     const blankRow = `${borderFg}│${' '.repeat(contentWidth)}│`
     return [
-      fillLine(this.theme, border(`┌${'─'.repeat(contentWidth)}┐`), width),
-      fillLine(this.theme, blankRow, width),
-      ...this.child.render(contentWidth).map(line => fillLine(this.theme, content(line), width)),
-      fillLine(this.theme, blankRow, width),
-      fillLine(this.theme, border(`└${'─'.repeat(contentWidth)}┘`), width),
+      fillLine(theme, border(`┌${'─'.repeat(contentWidth)}┐`), width),
+      fillLine(theme, blankRow, width),
+      ...this.child.render(contentWidth).map(line => fillLine(theme, content(line), width)),
+      fillLine(theme, blankRow, width),
+      fillLine(theme, border(`└${'─'.repeat(contentWidth)}┘`), width),
     ]
   }
 
@@ -79,6 +82,6 @@ export class FramedOverlay implements Component {
 }
 
 /** Build the framed wrapper for `child` (see FramedOverlay). */
-export function wrapFramedOverlay(theme: TuiTheme, child: Component): Component {
+export function wrapFramedOverlay(theme: TuiTheme | (() => TuiTheme), child: Component): Component {
   return new FramedOverlay(theme, child)
 }

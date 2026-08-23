@@ -30,6 +30,30 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cursor movement over unselectable header rows, and both render views —
   suite total 600 across 39 files.
 
+### Fixed
+
+- **Ask User review round**: the request's abort signal
+  is now honored — an aborted tool call closes the overlay and settles
+  declined instead of leaving a zombie overlay that swallowed every keypress.
+  A lone question answered only by typed free text (no options) could never
+  reach submission; committing the sentinel edit now submits, symmetric with
+  the option fast path. A lone multiSelect question no longer auto-submits on
+  the first toggle — it gets a Confirm row so several options can be picked,
+  and Enter on an incomplete confirm/submit row flashes a hint; committing a
+  free-text answer jumps the cursor to the next unanswered question. Holding
+  Esc no longer fires the decline gesture: key auto-repeat below a 50 ms gap
+  is ignored by the double-Esc state machine. Provider registration failures
+  other than the upstream `DUPLICATE_PROVIDER` are rethrown loudly instead of
+  being swallowed silently (a missing `ctx.userQuestions` service degrades
+  with a warning), and `@deepseek-ai/dsh-user-questions` is declared in
+  peer/dev dependencies so a fresh clone typechecks. Theme hot-swaps now
+  apply live to open overlays (theme passed as a getter through
+  `wrapFramedOverlay`), upstream `detail` text renders muted under its
+  question header, and three dead-code spots were removed. Regression
+  coverage grew from 31 to 55 tests (`test/ask-user.test.mjs`, including a
+  fake-TUI interaction layer for the overlay and provider wiring) — suite
+  total 624 across 39 files.
+
 ## [0.16.0] - 2026-08-23
 
 ### Added

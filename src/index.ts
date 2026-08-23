@@ -481,13 +481,15 @@ export function apply(ctx: Context): void {
     // `ctx.userQuestions.ask()` while its tool call is pending, and the
     // provider returns a canonical `{ answers: [{ id, selected, custom? }] }`
     // envelope that the tool surfaces back to the model as the tool result.
-    // We host a single framed overlay per request, mount it through the
-    // standard PanelHost so theme-swap / /reload fallbacks are uniform, and
-    // let the upstream service manage single-provider ownership (duplicate
-    // registration yields no-op rather than crashing).
+    // We host a single framed overlay per request. Focus falls back through
+    // restoreFocus (the current editor instance — it is rebuilt on theme
+    // swap); the theme is passed as a live getter so a mid-overlay hot-swap
+    // re-renders with the new palette. Provider registration failure
+    // semantics live in registerAskUserProvider: DUPLICATE_PROVIDER yields to
+    // the prior UI, anything else fails loudly.
     ctx.effect(() => registerAskUserProvider(ctx, {
       tui: ui.tui,
-      theme: ui.theme,
+      theme: () => ui.theme,
       restoreFocus: () => ui.tui.setFocus(ui.editor),
     }), 'dsh-tui-pi: ask-user-question provider')
 

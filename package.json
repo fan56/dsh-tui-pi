@@ -49,8 +49,17 @@
     "@aiwayds/dsh-subagent-registry": "0.3.0",
     "@earendil-works/pi-tui": "0.84.2"
   },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-user-questions": "0.1.1-rc.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-user-questions": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@deepseek-ai/dsh-user-questions": "0.1.1-rc.2",
     "typescript": "~5.9.0"
   },
   "dsh": {
