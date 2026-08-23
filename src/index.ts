@@ -77,8 +77,14 @@ const QUIT_CONFIRM_MS = 200
  */
 const STOP_CONFIRM_MS = 200
 
-/** The TUI drives the agent factory and registers slash commands. */
-export const inject = ['agents', 'commands']
+/**
+ * The TUI drives the agent factory and registers slash commands. The render
+ * effect also touches `ctx.systemPrompt` (ask-user guidance section) and the
+ * ask-user provider effect touches `ctx.userQuestions` — cordis throws on
+ * property access for services missing from this list (not undefined), so
+ * every `ctx.<service>` access anywhere in this plugin must be declared here.
+ */
+export const inject = ['agents', 'commands', 'userQuestions', 'systemPrompt']
 
 export function apply(ctx: Context): void {
   let handle: TuiHandle | undefined

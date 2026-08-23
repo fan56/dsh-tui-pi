@@ -4,6 +4,23 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.1] - 2026-08-24
+
+### Fixed
+
+- **Startup crash on real profiles**: the cordis plugin declared
+  `inject = ['agents', 'commands']` while its effects also accessed
+  `ctx.userQuestions` (ask-user provider registration) and `ctx.systemPrompt`
+  (the ask-user guidance section). Cordis throws on property access for a
+  service missing from `inject` — it does not yield `undefined` — so on any
+  real profile the TUI died at startup. The inject array now declares all four
+  services (`agents`, `commands`, `userQuestions`, `systemPrompt`).
+- **Regression guard**: new `test/plugin-inject.test.mjs` statically asserts,
+  against `src/index.ts`, that both regression services stay injected and that
+  every direct `ctx.<member>` access in the plugin entry is either an injected
+  service or a known non-service Context member — so a future service touch
+  cannot land without updating `inject`. Suite total 654 across 40 files.
+
 ## [0.18.0] - 2026-08-23
 
 ### Added

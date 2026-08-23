@@ -107,7 +107,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **652 tests** across 39 files (ask-user 55 +
+- `pnpm test` must stay green: **654 tests** across 40 files (ask-user 55 +
   skills 36 +
   live 34 + keymap 28 + login 25 + panels 24 + session-reconcile 26 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
@@ -116,7 +116,8 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   sessions 15 + theme-switch 11 + frame 11 + footer-hints 10 + permission 9 +
   theme-settings 10 + commands 9 + text 8 + font-detect 8 + quotes 7 +
   icons 7 + reload 6 + append-system 6 + install-font 6 + tokens 6 +
-  schema-model 3 + usage 26 + preset 12 + dev-upgrade 8 + model-list 21). New
+  schema-model 3 + usage 26 + preset 12 + dev-upgrade 8 + model-list 21 +
+  plugin-inject 2). New
   pure logic → new test file under `test/` against built `lib/` (`node --test`,
   pretest builds). Update the totals in HANDOFF.md.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
