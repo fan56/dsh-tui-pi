@@ -464,8 +464,8 @@ test('a failed followup leaves the cap unarmed — the next counted round retrie
   await microtaskFlush()
   assert.deepEqual(followups, [], 'failed attempt injects nothing')
 
-  // The retry trigger: the next counted round (or a reconcile pass) calls
-  // onRoundCount again — allowed because injected stayed unset.
+  // The retry trigger: the next counted round calls onRoundCount again —
+  // allowed because injected stayed unset.
   failing = false
   policy.onRoundCount('child-1', 4)
   await microtaskFlush()

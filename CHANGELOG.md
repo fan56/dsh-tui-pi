@@ -20,8 +20,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   alternative: they ride the same splice → append path). The callback
   re-checks liveness at flush time (`ctx.agents.get(childId) !== agent` or a
   settled child aborts), marks `injected` only after a successful followup,
-  and leaves it unset on failure so the next counted round or reconcile pass
-  retries. A pending injection is also cancelled by `dispose`. All prior
+  and leaves it unset on failure so the next counted round retries. A
+  pending injection is also cancelled by `dispose`. All prior
   semantics hold: `maxRounds <= 0` never injects, counts below the cap never
   trigger, each child is injected at most once, settled children are never
   re-awakened.

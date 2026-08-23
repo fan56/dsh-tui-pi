@@ -290,8 +290,8 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
         }))
       } catch {
         // Leave `injected` unset: a failed attempt stays eligible, so the
-        // next counted round (or the reconcile pass) retries instead of the
-        // cap being silently abandoned for this child forever.
+        // next counted round retries instead of the cap being silently
+        // abandoned for this child forever.
         return
       }
       injected.add(childId)
