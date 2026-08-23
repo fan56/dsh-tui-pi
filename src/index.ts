@@ -55,6 +55,7 @@ import { type KeyAction } from './keymap.ts'
 import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.ts'
 import { startTui, type TuiHandle } from './tui.ts'
 import { cyclePreset, currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, initialPresetIndex, type PresetState } from './preset.ts'
+import { registerAskUserProvider } from './ask-user.ts'
 
 export const name = 'dsh-tui-pi'
 
@@ -475,6 +476,41 @@ export function apply(ctx: Context): void {
       isSettled: childId => bridge.isChildSettled(childId),
     })
     bridgeCallbacks.onRoundCount = (childId, count) => subagentPolicy.onRoundCount(childId, count)
+
+    // Ask-user-question provider: the upstream `dsh-tool-ask-user` tool calls
+    // `ctx.userQuestions.ask()` while its tool call is pending, and the
+    // provider returns a canonical `{ answers: [{ id, selected, custom? }] }`
+    // envelope that the tool surfaces back to the model as the tool result.
+    // We host a single framed overlay per request, mount it through the
+    // standard PanelHost so theme-swap / /reload fallbacks are uniform, and
+    // let the upstream service manage single-provider ownership (duplicate
+    // registration yields no-op rather than crashing).
+    ctx.effect(() => registerAskUserProvider(ctx, {
+      tui: ui.tui,
+      theme: ui.theme,
+      restoreFocus: () => ui.tui.setFocus(ui.editor),
+    }), 'dsh-tui-pi: ask-user-question provider')
+
+    // System prompt guidance: nudge the model toward conservative use of
+    // `ask_user_question`. The upstream `dsh-tool-ask-user` is a single
+    // tool-call pause, and over-using it (e.g. for trivial decisions, for
+    // rhetorical questions, or for things the model can decide itself)
+    // turns the TUI into a stuttering questionnaire. Order 112 sits between
+    // the deployment persona (0) and tool-guidance buckets (100–199) so the
+    // rule reads as part of the tooling contract.
+    ctx.effect(() => ctx.systemPrompt.section({
+      name: 'dsh-tui:ask-user',
+      order: 112,
+      text:
+        '## ask_user_question\n\n'
+        + 'Use `ask_user_question` ONLY when you genuinely need the human to: confirm a decision, '
+        + 'pick among concrete options, or supply missing information you cannot infer. Do NOT use it for: '
+        + 'trivial choices you can make yourself; rhetorical or open-ended exploration; or multiple '
+        + 'optionally-related decisions in one call (split, or skip). Prefer 1–3 questions per call, each '
+        + 'with 2–4 concise options. Add a recommendation by putting it first and appending "(Recommended)". '
+        + 'When you DO ask: phrasings should be unambiguous and options should be mutually exclusive. '
+        + 'Never ask what you could decide from existing context.\n',
+    }), 'dsh-tui-pi: ask-user system-prompt section')
 
     /**
      * One O(events) fold of the session log into the effective preset, stored

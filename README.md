@@ -194,6 +194,21 @@ There's no slash command to toggle the feature — it's always on, controlled by
 
 ---
 
+### Ask User Question
+
+While the model is mid-turn it can pause and ask you structured questions via the `ask_user_question` tool (`@deepseek-ai/dsh-tool-ask-user`, mounted by this profile's bundle patch). The TUI hosts the answering side: a framed overlay opens in place, the tool call stays pending until you answer, and your answers flow back to the model as a normal tool result.
+
+- **One overlay, all questions flattened** — every question renders as a header row followed by its option rows plus a `Type something.` sentinel row for free text. Single-select replaces on Enter; multi-select toggles (`[+]` marks).
+- **Single-question fast path** — Enter on an option (or confirming a filled sentinel) submits immediately.
+- **Multi-question review page** — with ≥ 2 questions a `⏎ Confirm answers` row hops to a review listing every answer, each row editable in place; `Submit answers` commits.
+- **Double-Esc declines** — two Esc presses within 200 ms return a declined envelope (the model reads it as a normal reply that no answer was given); closing the overlay through any other path (theme swap, `/reload`, abort) declines too.
+- **Conservative-use guidance** — a system-prompt section nudges the model to ask only when it genuinely needs you (1–3 questions, 2–4 options each), so the TUI doesn't turn into a questionnaire.
+- **Keyboard** — `↑↓` navigate · `Enter` select/toggle/confirm · type into the sentinel for free text · `Esc` twice to decline.
+
+Inspired by [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-ask-user-question).
+
+---
+
 ## Slash commands
 
 | Command | What it does |
@@ -404,8 +419,10 @@ src/
   editor.ts           CwdBorderEditor (top border: cwd + git branch)
   subagent-policy.ts  maxAgents guard + maxRounds wrap-up injection
   subagent-viewer.ts  Ctrl+G picker + live transcript panel
+  ask-user.ts         Ask User Question overlay: pure state reducers +
+                      framed overlay UI + ctx.userQuestions provider
   theme/              GitHub light/dark palettes + terminal detection
-test/*.test.mjs       unit tests (569 across 38 files)
+test/*.test.mjs       unit tests (600 across 39 files)
 ```
 
 ---
@@ -413,3 +430,14 @@ test/*.test.mjs       unit tests (569 across 38 files)
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the release history.
+
+---
+
+## Credits
+
+- [Ask User Question](#ask-user-question) is inspired by
+  [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-ask-user-question) —
+  the interaction design (flattened option list with a free-text sentinel,
+  multi-question review page, decline gesture) was adapted to this TUI's
+  framed-overlay and dsh `userQuestions` provider architecture. All code here
+  is original.

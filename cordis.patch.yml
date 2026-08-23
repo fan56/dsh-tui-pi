@@ -8,7 +8,15 @@
 # its own bundle patch (@aiwayds/dsh-dcp/cordis.patch.yml). Adding dsh-dcp to
 # the profile's bundles mounts it; mounting it here too would duplicate the
 # entry id and crash the loader.
+#
+# dsh-tool-ask-user is mounted here: the upstream tool is a soft-linked
+# closure dependency (not a regular npm dep) and needs an explicit entry in
+# the bundle to be wired into the model-facing tool catalog. Without this
+# insert, the `ask_user_question` tool never registers with the model and
+# the user-questions seam has no visible surface in this profile.
 
 - insert:
     - id: tui-pi
       name: '@aiwayds/dsh-tui-pi'
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'

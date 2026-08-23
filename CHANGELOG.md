@@ -4,6 +4,32 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Ask User Question** — the model can now pause mid-turn and ask the human
+  structured questions through dsh's `ask_user_question` tool
+  (`@deepseek-ai/dsh-tool-ask-user`, newly mounted by this profile's
+  `cordis.patch.yml`). The TUI hosts the answering side via a new provider on
+  the `ctx.userQuestions` capability seam (`src/ask-user.ts`): one framed
+  overlay flattens every question into option rows plus a `Type something.`
+  free-text sentinel row; single-select replaces, multi-select toggles.
+  A single question submits immediately on Enter; two or more route through
+  a review page (every answer listed and editable in place) before
+  `Submit answers` commits. Two Esc presses within 200 ms decline — every
+  question receives a declined envelope — and any external overlay close
+  (theme swap, `/reload`, agent abort) settles as declined too, so the tool
+  call can never hang. A system-prompt section (`order: 112`) nudges the
+  model toward conservative use: only genuine decision points, 1–3 questions
+  with 2–4 mutually exclusive options per call. Inspired by
+  [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-ask-user-question).
+- The new pure logic is unit-tested without a terminal by
+  `test/ask-user.test.mjs` — 31 new tests covering state reducers, answer /
+  declined envelopes, the double-Esc state machine, flat-row layout math,
+  cursor movement over unselectable header rows, and both render views —
+  suite total 600 across 39 files.
+
 ## [0.16.0] - 2026-08-23
 
 ### Added

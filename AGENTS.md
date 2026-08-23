@@ -41,6 +41,9 @@ append-system.ts  APPEND_SYSTEM.md support (pi convention, dsh side
                   legacy ~/.dsh/AGENTS.md
 commands.ts       CommandService: parse + dual-channel dispatch + autocomplete
 frame.ts          FramedOverlay: shared top/bottom ─ border for every popup
+ask-user.ts       Ask User Question: pure state reducers (answer/declined
+                  envelopes, double-Esc machine, flat-row layout) + framed
+                  overlay UI + ctx.userQuestions provider registration
 selectors.ts      /model (2-stage), /think, /theme pickers
 model-list.ts     /model pure logic: row assembly (favorites pinned top, dim
                   Hidden section), filter matcher, toggle/hide-guard helpers —
@@ -104,7 +107,8 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **569 tests** across 38 files (skills 36 +
+- `pnpm test` must stay green: **600 tests** across 39 files (ask-user 31 +
+  skills 36 +
   live 34 + keymap 28 + login 25 + panels 24 + session-reconcile 22 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
   messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 19 +
