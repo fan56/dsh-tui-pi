@@ -4,6 +4,34 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.2] - 2026-08-23
+
+### Fixed
+
+- The `maxRounds` wrap-up injection no longer dies silently on the append
+  publication window, and a failed attempt no longer abandons the cap for
+  that child forever. `onRoundCount` runs inside a child `session/event`
+  observer — while the store-mounted session is mid-append — so the old
+  synchronous `agent.followup()` reentered that in-flight append through its
+  inbox splice and threw ("session append cannot reenter while another
+  append is being published"); the contained observer dispatch swallowed the
+  error and the already-set `injected` flag made the loss permanent. The
+  followup now runs in a `queueMicrotask` callback (steer/inject are not an
+  alternative: they ride the same splice → append path). The callback
+  re-checks liveness at flush time (`ctx.agents.get(childId) !== agent` or a
+  settled child aborts), marks `injected` only after a successful followup,
+  and leaves it unset on failure so the next counted round or reconcile pass
+  retries. A pending injection is also cancelled by `dispose`. All prior
+  semantics hold: `maxRounds <= 0` never injects, counts below the cap never
+  trigger, each child is injected at most once, settled children are never
+  re-awakened.
+- Regression coverage in `test/subagent-policy.test.mjs` (19 → 23 tests):
+  one drives the real path end to end — a SessionStore-mounted session, a
+  real Inbox splice over it, and the policy invoked synchronously from a
+  `session/event` listener — asserting the `agent/inbox/spliced` event lands
+  with a pending inbox message after the microtask flush; another proves a
+  throwing followup keeps the cap unarmed until a retry succeeds.
+
 ## [0.16.1] - 2026-08-23
 
 ### Fixed
