@@ -30,6 +30,7 @@
 | `30-commands` | `/` 自动补全弹出 + 前缀过滤（set/th/hot）+ Esc 关闭；`/think`（effort 选择器）、`/settings`、`/hotkeys`、`/permission` 各 overlay 打开（用 overlay 独有文案断言）、Esc 关闭、编辑器焦点恢复；`/resume` 无历史会话的错误路径；`/model` 对内置 provider 的 picker（只开取消，不选中） |
 | `40-theme` | `/theme` 选择器三行（auto/light/dark）；切 light → 画布 SGR `48;2;252;253;252`、切回 dark → `48;2;13;17;23`；选择通知文案；偏好写入容器内 `settings.yaml`；**重启后偏好持久**（无 env 时以持久化值为准） |
 | `50-resize-exit` | 80×24：TUI 存活、鲸鱼仍渲染（transcript 视口可能裁掉顶部行）、**字标按设计降级消失**；24 行下 overlay 适配；还原 140 列字标恢复；`Ctrl+C ×2` 干净退出（150–500ms 双击窗口）+ 回退 `Ctrl+D`；退出后 shell 提示符 + `pane_current_command=bash` + exit dump 渲染；退出后再完整启动一次 |
+| `70-steer-injection` | **仅宿主机**（需真实 API key，容器内自跳过）：真实派一个 subagent 跑 sleep 循环任务，Ctrl+G → viewer footer `Enter steer` → Enter 弹多行输入框 → 发送后 `Steer message sent` notice 且注入消息出现在 child transcript；负路径：Esc 取消零投递、settled child 显示 ended notice 且不开输入框。宿主机运行时按 AGENTS.md「Config safety」对 `~/.dsh/settings.yaml` / `.credentials.yaml` 做字节级快照 + cmp 还原 |
 
 ## 实测发现（写断言时踩过的坑）
 

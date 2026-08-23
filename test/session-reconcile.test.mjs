@@ -641,3 +641,109 @@ test('the streamed-round ledger survives a reconcile that already saw more messa
   assert.deepEqual(fired, [['child-1', 2]], 'onRoundCount fired once, for the reconciled 2')
   await bridge.dispose()
 })
+
+// ---------------------------------------------------------------------------
+// Stale retry markers (↻N≤M): dsh emits NO event when a retried request
+// finally succeeds, so the bridge itself must clear the llm/retry state —
+// an assistant/message proves the last round-trip landed (retry over), and a
+// turn/start must not resurrect the previous run's counters on a continuable
+// child. Without this, the compact row keeps showing `↻N≤M` forever.
+
+/** One `llm/retry` event (a provider-routed retry after a failed attempt). */
+function llmRetry(seq, time, retry, maxRetries) {
+  return {
+    type: 'llm/retry', seq, time,
+    data: { retry, ...(maxRetries === undefined ? {} : { maxRetries }) },
+  }
+}
+
+function discoveredRetryHarness() {
+  const harness = makeHarness()
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+  return { ...harness, childSession }
+}
+
+test('llm/retry folds its counters onto the view (the ↻N≤M marker source)', async () => {
+  const { ctx, handlers, childSession } = discoveredRetryHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  emit(handlers, childSession, llmRetry(1, 10, 3, 60))
+  let view = bridge.getAgentViews()[0]
+  assert.equal(view.retries, 3, 'the retry attempt number lands on the view')
+  assert.equal(view.maxRetries, 60, 'the policy maxRetries lands on the view')
+  // A retry without maxRetries (mode: 'always') leaves maxRetries unset.
+  emit(handlers, childSession, llmRetry(2, 20, 4))
+  view = bridge.getAgentViews()[0]
+  assert.equal(view.retries, 4)
+  assert.equal(view.maxRetries, undefined, 'maxRetries absent on the event is absent on the view')
+  await bridge.dispose()
+})
+
+test('an assistant/message after llm/retry clears retries/maxRetries (the retry succeeded)', async () => {
+  const { ctx, handlers, childSession } = discoveredRetryHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  emit(handlers, childSession, llmRetry(1, 10, 3, 60))
+  assert.equal(bridge.getAgentViews()[0].retries, 3, 'precondition: the marker is up')
+  // The retried round-trip lands as a message — the marker must drop.
+  emit(handlers, childSession, assistantMessage(2, 30))
+  const view = bridge.getAgentViews()[0]
+  assert.equal(view.retries, 0, 'retries cleared once the message lands')
+  assert.equal(view.maxRetries, undefined, 'maxRetries cleared together with retries')
+  assert.equal(view.rounds, 1, 'the message still counts its round')
+  await bridge.dispose()
+})
+
+test('a turn/start on a resumed child drops the stale retry counters of the previous run', async () => {
+  const { ctx, handlers, childSession } = discoveredRetryHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  emit(handlers, childSession, llmRetry(1, 10, 2, 60))
+  // Settle the run so the continuable child can resume (turn/end best-effort
+  // settle marks it completed).
+  emit(handlers, childSession, {
+    type: 'turn/end', seq: 2, time: 20, data: { turn: 1, reason: { kind: 'stop' } },
+  })
+  assert.equal(bridge.getAgentViews()[0].retries, 2, 'precondition: stale counters still up')
+  // The child resumes — turn/start must reset outcome AND the retry state.
+  emit(handlers, childSession, {
+    type: 'turn/start', seq: 3, time: 30, data: { turn: 2 },
+  })
+  const view = bridge.getAgentViews()[0]
+  assert.equal(view.outcome, undefined, 'resumed child is running again')
+  assert.equal(view.retries, 0, 'stale retries dropped on resume')
+  assert.equal(view.maxRetries, undefined, 'stale maxRetries dropped on resume')
+  await bridge.dispose()
+})
+
+test('a turn/start with retryCleared as the SOLE change still drops the stale retry markers', async () => {
+  // The review-driven split: retries/maxRetries clearing is unconditional on
+  // turn/start (a fresh view has retries=0 anyway, so it's safe). Outcome/
+  // endedAt clearing still needs view.outcome !== undefined. Here the child
+  // was never settled (outcome always undefined), so outcomeCleared=false —
+  // retryCleared is the only change condition. The set must still run.
+  const { ctx, handlers, childSession } = discoveredRetryHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  emit(handlers, childSession, llmRetry(1, 10, 2, 60))
+  assert.equal(bridge.getAgentViews()[0].retries, 2, 'precondition: stale counters up')
+  // turn/start on a child whose outcome was NEVER set: outcomeCleared is
+  // false, but retryCleared is true — the set must still fire and drop
+  // the stale markers (no outcome-gate here).
+  emit(handlers, childSession, {
+    type: 'turn/start', seq: 2, time: 20, data: { turn: 1 },
+  })
+  const view = bridge.getAgentViews()[0]
+  assert.equal(view.outcome, undefined, 'outcome stays undefined (was never set)')
+  assert.equal(view.retries, 0, 'stale retries dropped on turn/start even with outcome already undefined')
+  assert.equal(view.maxRetries, undefined, 'stale maxRetries dropped on turn/start')
+  await bridge.dispose()
+})

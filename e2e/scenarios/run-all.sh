@@ -13,7 +13,9 @@ mkdir -p "$RESULTS_DIR"
 printf 'e2e runner: image toolchain — %s | node %s | tmux %s\n' \
   "$(uname -m)" "$(node --version)" "$(tmux -V)"
 
-for s in 10-install 20-start 30-commands 40-theme 50-resize-exit 60-preset; do
+# 70 self-skips inside the container (host credentials required) and only
+# produces real assertions when run directly on the host tmux.
+for s in 10-install 20-start 30-commands 40-theme 50-resize-exit 60-preset 70-steer-injection; do
   bash "./$s.sh"
 done
 
