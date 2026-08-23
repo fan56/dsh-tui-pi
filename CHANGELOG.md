@@ -4,6 +4,35 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-08-23
+
+### Added
+
+- The `/model` picker gains three in-panel keys. `f` toggles the favorite
+  flag on the cursor model — the list reorders live with favorites pinned
+  on top behind a divider row. `h` toggles hidden — hidden models move to
+  a dim Hidden section at the bottom of the list (with a count header), and
+  the hide is guarded so the last still-visible row cannot be hidden away.
+  `/` engages a session-local substring filter matched case-insensitively
+  against name, id and provider.
+- Favorite/hidden selections persist under the dsh-tui settings namespace
+  as `favoriteModels` / `hiddenModels` string lists (`provider/id` keys).
+  Each toggle flushes immediately, best-effort: a deployment without the
+  settings service keeps the reordered/hidden state for the session only.
+  The picker works on local copies of the lists, so cancelling the overlay
+  never writes anything on its own.
+- `TablePanel` grows selectable-row predicates so structural rows (the
+  favorites divider and the Hidden header) render without being
+  selectable, plus an optional footer hint row; the picker advertises
+  `↑↓ navigate · Enter select · f favorite · h hide · / filter · Esc back`.
+
+### Changed
+
+- Row assembly, filter matching and the toggle/hide-guard helpers moved
+  into the new pure module `src/model-list.ts` (data-in/data-out, no TUI
+  imports), unit-tested by `test/model-list.test.mjs` — 21 new tests,
+  suite total 569 across 38 files.
+
 ## [0.15.1] - 2026-08-22
 
 ### Fixed
