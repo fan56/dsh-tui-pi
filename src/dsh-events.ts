@@ -149,9 +149,14 @@ export interface AgentView {
    * progress while the child works — messages do.
    */
   readonly rounds: number
-  /** Latest `llm/retry` attempt number (0 = none retried). */
+  /**
+   * Retry attempt number from the latest `llm/retry` of the current turn.
+   * 0 = no active/pending retry — cleared when an assistant/message lands
+   * (the retried request succeeded) or a new turn starts; a nonzero value
+   * means the child is (re)working through a retry right now.
+   */
   readonly retries: number
-  /** Latest `llm/retry` maxRetries, when the policy reported one. */
+  /** Latest `llm/retry` maxRetries, when the policy reported one; cleared together with `retries`. */
   readonly maxRetries?: number
   /** Last tool name the child invoked (the activity line), when any. */
   readonly lastTool?: string

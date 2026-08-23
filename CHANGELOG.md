@@ -4,6 +4,25 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-08-23
+
+### Fixed
+
+- The subagent compact row no longer shows `↻N≤M` after a successful retry.
+  `dsh` emits no event when a retried request lands, so the bridge itself
+  clears the `retries` / `maxRetries` counters at two points: an
+  `assistant/message` proves the round-trip succeeded (it folds into the
+  existing per-event `agentViews.set` so it cannot clobber the token /
+  lastLine / rounds / contextTokens updates), and a `turn/start` on a
+  continuable child resets the previous run's counters. The latter split is
+  driven by `outcomeCleared = view.outcome !== undefined` plus
+  `retryCleared = view.retries !== 0 || view.maxRetries !== undefined`, so
+  retries are dropped unconditionally on every turn start (safe for fresh
+  views where they are already 0) while outcome/endedAt stay gated by
+  `view.outcome !== undefined`. The `AgentView.retries` /
+  `AgentView.maxRetries` doc comments are updated to reflect the new
+  semantics (0 = no active / pending retry in the current turn).
+
 ## [0.16.0] - 2026-08-23
 
 ### Added
