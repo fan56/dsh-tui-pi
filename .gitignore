@@ -15,3 +15,8 @@ HANDOFF.md
 *.tgz
 dsh-tui-pi.png
 *.png
+
+# --- Showcase media (large local assets, never committed) ---
+*.gif
+*.mp4
+screenshots/
