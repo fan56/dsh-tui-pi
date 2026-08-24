@@ -4,6 +4,32 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.1] - 2026-08-24
+
+### Changed
+
+- **Footer cache-hit stats are now per provider/model route**
+  (`src/session.ts` + `src/footer.ts` + new
+  `test/session-header-reset.test.mjs`). A `request/header` event whose
+  provider or model VALUE differs from the running baseline restarts the CH
+  accumulators (`inputTokens` / `cacheReadTokens` / `cacheWriteTokens` and
+  the derived `cacheHitRate`) — a new route owns a fresh prompt cache, so
+  mixing its tokens into the previous route's totals diluted both sides'
+  rates. Same-value headers (a resume re-emitting an identical header) keep
+  the totals growing; the first header only establishes the baseline.
+  Route-independent stats (`outputTokens`, `msgCount`, `toolCallCount`,
+  context occupancy) survive the reset untouched. Replay feeds persisted
+  header events through the same `applyEvent` case, so a resumed session
+  re-segments its history identically to the live run (double-replay is
+  idempotent). The README's DCP section documents the new semantics.
+- **/session panel token scope note** (`src/sessions.ts`). With tokens now
+  per-route-segment, the panel title reads `ⓘ session · tokens: current
+  route` — the note rides on the existing title line (no extra row: the
+  panel stays height-budgeted for a 24-row terminal), while messages/events
+  remain session-wide. Regression tests cover both the reset semantics (6
+  cases incl. live/replay parity and route-independent survival) and the
+  title note. Suite total 687 across 41 files.
+
 ## [0.19.0] - 2026-08-24
 
 ### Added
