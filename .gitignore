@@ -20,3 +20,7 @@ dsh-tui-pi.png
 *.gif
 *.mp4
 screenshots/
+
+# --- Showcase docs (local drafts and market submissions, never committed) ---
+docs/showcase-*.md
+docs/market-submissions.md
