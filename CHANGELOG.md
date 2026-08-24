@@ -4,6 +4,19 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Ask-user overlay: separated confirm zone, inline selection marks, word
+  wrap** (`src/ask-user.ts` + new `wrapText` in `src/text.ts`). The
+  `⏎ Confirm answers` row now sits in its own block, split from the question
+  list by a blank line; the dedicated State column is gone — options carry
+  their selection inline (`●` selected / `○` unselected, `✓` on the confirm
+  row once every question is answered); and long question headers, option
+  labels, descriptions and details word-wrap to the pane width (CJK-aware,
+  grapheme-safe) instead of being clipped at the terminal edge.
+
 ## [0.19.1] - 2026-08-24
 
 ### Changed
