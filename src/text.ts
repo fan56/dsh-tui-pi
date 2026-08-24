@@ -36,6 +36,70 @@ export function lastNonBlankLine(text: string): string | undefined {
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
 /**
+ * Word-wrap `text` to at most `maxWidth` terminal columns, returning the
+ * wrapped lines. Width-aware (east-asian-width, grapheme-clustered — same
+ * vocabulary as `clipToWidth`):
+ * - breaks only between words (whitespace boundaries), folding runs of
+ *   spaces at each break into a single line break;
+ * - a single word wider than `maxWidth` is hard-broken at the column limit
+ *   (CJK text has no spaces and must still wrap);
+ * - every returned line satisfies `visibleWidth(line) <= maxWidth`, with one
+ *   exception: a single grapheme wider than `maxWidth` itself is kept whole
+ *   on its own line rather than split (a grapheme cluster is never broken);
+ * - an empty input yields `['']` so callers always get at least one line.
+ */
+export function wrapText(text: string, maxWidth: number): string[] {
+  if (maxWidth <= 0) return ['']
+  const lines: string[] = []
+  let current = ''
+  let currentWidth = 0
+  const pushCurrent = (): void => {
+    lines.push(current)
+    current = ''
+    currentWidth = 0
+  }
+  // Shared hard-break for a word with no usable break point (oversized ASCII
+  // run, space-less CJK): walk grapheme-by-grapheme and break whenever the
+  // next grapheme would overflow the running line. The `current !== ''` guard
+  // keeps a grapheme wider than maxWidth itself WHOLE on its own line —
+  // splitting the cluster is never allowed, and pushing an empty running
+  // line first would leak a ghost blank line into the output.
+  const hardBreakWord = (word: string): void => {
+    for (const { segment } of segmenter.segment(word)) {
+      const width = visibleWidth(segment)
+      if (current !== '' && currentWidth + width > maxWidth) pushCurrent()
+      current += segment
+      currentWidth += width
+    }
+  }
+  for (const word of text.split(/ +/)) {
+    if (word === '') continue
+    const wordWidth = visibleWidth(word)
+    // Word fits on the current line.
+    if (current === '' || currentWidth + 1 + wordWidth <= maxWidth) {
+      if (current !== '') {
+        current += ' '
+        currentWidth += 1
+      }
+      // The word itself may exceed the whole line width → hard-break it,
+      // keeping the tail as the new current line.
+      if (wordWidth > maxWidth) {
+        hardBreakWord(word)
+        continue
+      }
+      current += word
+      currentWidth += wordWidth
+      continue
+    }
+    // Start a new line with this word (hard-breaking again if oversized).
+    pushCurrent()
+    hardBreakWord(word)
+  }
+  pushCurrent()
+  return lines
+}
+
+/**
  * Clip `text` to at most `maxWidth` terminal columns, whole graphemes only.
  *
  * Semantics (content first, ellipsis only when it fits):
