@@ -113,7 +113,7 @@ dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%) ▸ �
   ↳ ⠼ Subagent B 10s 任务 · 562 token · 6.0s
 ```
 
-每行显示：spinner + 代理**名称**，重试次数（`↻N≤M`），当前上下文占用（`X/Y` —— 子代理最近一次请求的 billed input+output 加上其后消息的 CJK 估算，除以它的上下文窗口；**不是**只增不减的累计 token 消耗），rounds（`round N/M` —— assistant 消息数对上限，`maxRounds > 0` 时才显示 `/M`），耗时。不显示 provider，无边框，无标题。
+每行显示：spinner + 代理**名称**，重试次数（`↻N≤M`），当前上下文占用（`X/Y` —— 子代理最近一次请求的 billed input+output 加上其后消息的 CJK 估算，除以它的上下文窗口；**不是**只增不减的累计 token 消耗），rounds（`round N/M` —— assistant 消息数对上限，`maxRounds > 0` 时才显示 `/M`），耗时，以及策略注入（maxRounds 收尾、steer）到达后出现的 `⚡` 标记。不显示 provider，无边框，无标题。
 
 **spawn 派生**与 **fork 派生**两类子代理都会被追踪——dsh 通过 `childSessionMeta` 同时写入 `origin: 'subagent'` 和 `delegationDepth` 预算，头部识别对两种标记都认得（只有预算没有 origin 的头部作为防御性兜底也会被接纳，标记为 `fork <id8>`；当前 dsh 不会产生这种形态）。非子代理会话按**值**而非字段有无被挡在板外：jsonl 持久化后端在每条恢复的头部上都会物化 `delegationDepth: 0`，所以闸门要求预算严格 `> 0`。面向用户的会话 fork（fork 出的*对话*：`Session.fork` 只设 `parentSession` + `seedLength`，不带预算）刻意不进子代理面板，仍可通过 `/resume` 恢复——`/resume` 的过滤器（`isResumableSessionHeader`）恰好排除被委派的子代理（`origin: 'subagent'` 或预算 > 0）。
 
@@ -138,7 +138,7 @@ dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%) ▸ �
 两个限制项（通过 `/agents` → `l` 配置）：
 
 - **`maxAgents`**（默认 4，`0` = 无限制）—— 超过上限时拒绝新的子代理创建。
-- **`maxRounds`**（默认 75，`0` = 无限制）—— 子代理的 assistant 消息数（每次 LLM 往返计 1 round）达到上限后，TUI 排队发送一个收尾请求，从不强制终止。
+- **`maxRounds`**（默认 75，`0` = 无限制）—— 子代理的 assistant 消息数（每次 LLM 往返计 1 round）达到上限后，TUI 注入一条收尾指令，从不强制终止：运行中的子代理在**下一步边界**收到（`steer`，即下一次 LLM 往返），空闲的作为自己的下一个 turn。注入可见：紧凑行、Ctrl+G 选择器行和查看器头部显示 `⚡`，对话记录里注入消息渲染为 `⚡ <文本>`——子代理 LLM 无视收尾指令与注入从未发生，现在可以区分。
 
 ---
 
@@ -163,7 +163,7 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 一份用户可编辑的 markdown 文件，内容会**追加到 TUI 创建的主代理的系统提示末尾** —— 借鉴 pi 的 `~/.pi/agent/APPEND_SYSTEM.md` 约定，dsh 侧对应 `$DSH_HOME/APPEND_SYSTEM.md`（默认 `~/.dsh/APPEND_SYSTEM.md`，沿用 dsh 其余部分共用的 `$DSH_HOME` 覆盖）。
 
 - **热应用** —— section 提供者在每次组装提示词时读盘，改完文件**下一次请求**即生效：无需重启、无需 watcher、无需 `/reload`。
-- **首次启动自动播种** —— 文件不存在时，TUI 在启动时一次性从随包模板 `templates/APPEND_SYSTEM.md`（英文版协调者身份模板：身份、核心规则、执行工作流）创建。已有文件归用户所有 —— TUI 永远不会覆盖用户内容。
+- **首次启动自动播种** —— 文件不存在时，TUI 在启动时一次性从随包模板 `templates/APPEND_SYSTEM.md`（英文版协调者身份模板：身份、核心规则、执行工作流，含「subagent 仅指已注册子代理」的用语铁律）创建。已有文件归用户所有 —— TUI 永远不会覆盖用户内容；只在缺失标记的 todo-lifecycle 段、或尚未出现 subagents 铁律措辞（按短语匹配，幂等）时追加对应段落。
 - **TUI 自有段落** —— 一段带标记的 block（`<!-- dsh-tui-pi:todo-lifecycle -->`）只在缺失时追加一次，并保持幂等，确保模型在所有 todo 都完成时清空 `todo/write` 列表。已带标记的文件后续启动原样保留。
 - **旧版迁移** —— 同一段 todo block 早期通过 `~/.dsh/AGENTS.md` 下发。启动时 TUI 一次性把它剥掉（无标记时 no-op），避免重复下发。
 - **空 / 读不到 = 不挂载该 section** —— 文件缺失或读不了时该 section 被静默丢弃，无报错、不影响 TUI 启动。
@@ -199,7 +199,7 @@ EOF
 | `/model` | 两阶段选择 provider/model（然后选推理等级），实时切换并持久化。面板内按键：`f` 收藏 · `h` 隐藏 · `/` 过滤（收藏/隐藏经 settings 持久化）。 |
 | `/think` | 当前模型的推理强度选择（`Off`/`High`/`Max`）。 |
 | `/session` | 只读信息面板：id、cwd、模型、token 用量、事件计数。 |
-| `/resume` | 选择已保存的会话，验证日志后恢复。 |
+| `/resume` | 选择已保存的会话，验证日志后恢复。按最后更新时间排序（日志文件 mtime），新的在上；`Updated` 列显示生效时间。 |
 | `/new` | 分离当前会话；下一次输入开启新会话。 |
 | `/settings` | 文本式设置浏览器（命名空间、schema 遍历、内联编辑器、密钥脱敏）。 |
 | `/export` | 将当前会话日志导出为 JSONL（默认 `~/Downloads/dsh-session-<id>.jsonl`）。 |
@@ -209,6 +209,8 @@ EOF
 | `/agents` | 管理 agent markdown 文件 + 子代理限制（`maxAgents`、`maxRounds`）。 |
 | `/subagents` | 选择运行中/最近的子代理，查看其实时对话。 |
 | `/reload` | 从源码热重载插件（`pnpm build` 后执行，无需重启 dsh）。 |
+| `/login` | 登录 provider：从目录选择（或 `/login openai` 直达），输入一个 API key。**Custom provider…** 条目（`/login custom`）打开六字段表单，接入 pi-ai 未收录的任意 OpenAI/Anthropic 兼容网关 —— 路由 id、显示名、协议、base URL、模型列表、API key —— 写出与 Web Models 页相同的 hand-declared 路由。 |
+| `/logout` | 选择已登录的 provider，同时删除存储的 key 和 provider 配置。 |
 | `/hotkeys` | 快捷键浏览器和实时编辑。 |
 
 不是已注册命令的内容会作为普通提示词发送给模型。
@@ -383,6 +385,7 @@ src/
   footer.ts           PowerlineFooter（7 分段 + 时钟）
   editor.ts           CwdBorderEditor（顶部边框：cwd + git 分支）
   subagent-policy.ts  maxAgents 守卫 + maxRounds 收尾请求注入
+                     （运行中走 steer；⚡ 标记，查看器可见）
   subagent-viewer.ts  Ctrl+G 选择器 + 实时对话面板
   theme/              GitHub light/dark 配色 + 终端检测
 test/*.test.mjs       单元测试（569 个，覆盖 38 个文件）

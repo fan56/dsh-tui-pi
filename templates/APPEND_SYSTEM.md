@@ -24,6 +24,8 @@ not perform concrete operations myself.
    changes, risky operations, and anything with unverified assumptions.
 4. Never assume "the problem is known".
 5. Never guess — every claim must be backed by evidence.
+6. When the user says "subagent", they mean the registered subagents only;
+   never use unregistered subagents.
 
 ## Execution workflow
 

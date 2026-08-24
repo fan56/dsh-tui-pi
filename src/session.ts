@@ -18,7 +18,7 @@ import { settingsNamespace, SettingsConflictError, type SettingsPathOp } from '@
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
 import type { AgentView } from './dsh-events.ts'
-import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
+import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor, isTuiPluginInjection } from './dsh-events.ts'
 import { installSpawnToolFence, markTuiSurface } from './subagent-policy.ts'
 import type { PendingPromptView } from './steer-flow.ts'
 import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
@@ -1032,14 +1032,23 @@ export class DshSessionBridge {
               (this.childCompactionCounts.get(sessionId) ?? 0) + 1,
             )
           }
+          // A dsh-tui-pi plugin injection (maxRounds wrap-up, Ctrl+G steer)
+          // marks the view: the compact line and the viewer surface `⚡` so
+          // the user can see the policy actually fired.
+          const injectionChanged = isTuiPluginInjection(event) && view.injectedAt === undefined
           this.childPending.set(
             sessionId,
             (this.childPending.get(sessionId) ?? 0)
               + estimateContentTokens((event.data as { content?: unknown }).content),
           )
           const contextTokens = this.childContextTokens(sessionId)
-          if (contextTokens !== view.contextTokens) {
-            this.agentViews.set(sessionId, { ...view, contextTokens })
+          const contextChanged = contextTokens !== view.contextTokens
+          if (contextChanged || injectionChanged) {
+            this.agentViews.set(sessionId, {
+              ...view,
+              ...(injectionChanged ? { injectedAt: event.time } : {}),
+              ...(contextChanged ? { contextTokens } : {}),
+            })
             changed = true
           }
         } else if (event.type === 'tool/result') {

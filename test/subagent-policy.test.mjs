@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import {
   NATIVE_SPAWN_TOOLS,
   SPAWN_TOOLS,
-  SUMMARY_MESSAGE,
+  wrapupMessage,
   TUI_SURFACE_KEY,
   applySubagentPolicy,
   installSpawnToolFence,
@@ -294,7 +294,7 @@ test('onRoundCount injects the summary request exactly once at the round cap', a
   assert.equal(followups.length, 1, 'at the cap: one summary request')
   const message = followups[0]
   assert.equal(message.content[0].type, 'text')
-  assert.equal(message.content[0].text, SUMMARY_MESSAGE, 'the summary message text')
+  assert.equal(message.content[0].text, wrapupMessage(3), 'the summary message text names the cap')
   assert.equal(message.source.kind, 'plugin', 'message is plugin-sourced')
   assert.equal(message.source.plugin, 'dsh-tui-pi', 'message carries the plugin name')
 
@@ -470,7 +470,7 @@ test('a failed followup leaves the cap unarmed — the next counted round retrie
   policy.onRoundCount('child-1', 4)
   await microtaskFlush()
   assert.equal(followups.length, 1, 'the next round retries and lands the wrap-up')
-  assert.equal(followups[0].content[0].text, SUMMARY_MESSAGE, 'the retry carries the summary message')
+  assert.equal(followups[0].content[0].text, wrapupMessage(3), 'the retry carries the summary message')
 
   // After the successful retry the once-per-child cap holds again.
   policy.onRoundCount('child-1', 5)
@@ -597,4 +597,54 @@ test('installSpawnToolFence is best-effort: no tools service or a throwing restr
     },
   }
   assert.doesNotThrow(() => installSpawnToolFence(throwing), 'restrict failure degrades silently')
+})
+test('a RUNNING child is wrapped up through steer — the next step boundary, not a queued turn', async () => {
+  // The original bug: the injection always used followup(), which queues a
+  // whole next TURN. A running child can burn many more rounds (steps) inside
+  // its current turn before the wrap-up lands — the cap visibly never bit.
+  // A running child must take steer() (consumed at the next step boundary,
+  // i.e. the very next LLM round-trip), matching the Ctrl+G steer routing.
+  const steers = []
+  const followups = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 3 }),
+    agent: {
+      status: 'running',
+      steer: msg => steers.push(msg),
+      followup: msg => followups.push(msg),
+    },
+  })
+  const policy = applySubagentPolicy(ctx, makeState())
+  policy.onRoundCount('child-1', 3)
+  await microtaskFlush()
+  assert.equal(steers.length, 1, 'running child receives the wrap-up through steer')
+  assert.equal(followups.length, 0, 'no next-turn followup for a running child')
+  assert.equal(steers[0].content[0].text, wrapupMessage(3))
+  policy.dispose()
+})
+
+test('an IDLE-but-unsettled child is wrapped up through followup (its own ordinary turn)', async () => {
+  const steers = []
+  const followups = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 3 }),
+    agent: {
+      status: 'idle',
+      steer: msg => steers.push(msg),
+      followup: msg => followups.push(msg),
+    },
+  })
+  const policy = applySubagentPolicy(ctx, makeState())
+  policy.onRoundCount('child-1', 3)
+  await microtaskFlush()
+  assert.equal(followups.length, 1, 'idle child receives the wrap-up as its own next turn')
+  assert.equal(steers.length, 0, 'steer is never sent to an idle child')
+  policy.dispose()
+})
+
+test('wrapupMessage is a directive that forbids further tool calls and names the limit', () => {
+  const text = wrapupMessage(12)
+  assert.ok(text.includes('12'), 'names the round limit')
+  assert.ok(/Do NOT call any more tools/i.test(text), 'forbids further tool calls')
+  assert.ok(/final answer/i.test(text), 'demands a final answer')
 })

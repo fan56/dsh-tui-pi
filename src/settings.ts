@@ -557,6 +557,15 @@ export interface AddProviderOptions {
    * whole flow.
    */
   initialEntry?: ProviderCatalogEntry
+  /**
+   * The custom-provider form factory + the entry id that routes to it: the
+   * entry with this id opens `customFlow` (the chained hand-declared-route
+   * form, see custom-provider.ts) instead of the plain key editor. Passed as
+   * an id (not an import) so settings.ts stays free of the cycle
+   * custom-provider.ts → settings.ts (EditField).
+   */
+  customEntryId?: string
+  customFlow?: (done: () => void) => Component
   /** Commit the provider: write the profile, then store the key. */
   onCommit: (entry: ProviderCatalogEntry, key: string) => Promise<CommitResult | undefined>
   /** Pop the whole flow (Esc, or right after a successful commit). */
@@ -589,6 +598,16 @@ export class AddProviderFlow implements Component {
     this.theme = theme
     this.empty = options.entries.length === 0
     this.onExit = options.onExit
+    const isCustom = (entry: ProviderCatalogEntry): boolean =>
+      options.customFlow !== undefined && entry.id === options.customEntryId
+    if (options.initialEntry !== undefined && isCustom(options.initialEntry)) {
+      // Direct launch into the custom form: the picker never shows. The
+      // form's `done` is a no-op (there is no list submenu to close); its
+      // onExit pops the whole flow through the form's own exit path.
+      this.direct = options.customFlow!(() => {})
+      this.list = undefined
+      return
+    }
     if (options.initialEntry !== undefined) {
       // Direct launch: the picker never shows. The key editor's `done` is a
       // no-op (there is no list submenu to close); Esc pops the whole flow
@@ -604,7 +623,9 @@ export class AddProviderFlow implements Component {
         label: entry.name,
         value: '',
         description: entry.hint,
-        submenu: (_current, done) => this.keyEditor(entry, options, done),
+        submenu: (_current, done) => isCustom(entry)
+          ? options.customFlow!(done)
+          : this.keyEditor(entry, options, done),
       })),
       maxVisible: 12,
       enableSearch: true,

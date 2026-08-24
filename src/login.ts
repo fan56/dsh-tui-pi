@@ -36,6 +36,7 @@ import {
   providerProfileFor,
   type ProviderCatalogEntry,
 } from './provider-catalog.ts'
+import { CUSTOM_PROVIDER_ID, CustomProviderFlow, customProviderEntry } from './custom-provider.ts'
 import { AddProviderFlow, commitProvider } from './settings.ts'
 import type { TuiTheme } from './theme/index.ts'
 
@@ -268,16 +269,25 @@ function llmPiAiDirectory(ctx: Context): ReadonlyArray<{ provider: string; decla
 }
 
 /**
- * Every picker entry for /login: all configurable routes, including
+ * Every picker entry for /login: the synthetic "Custom provider…" entry first
+ * (the hand-declared-route form), then all configurable routes, including
  * already-configured ones (a re-login overwrites the key), but never
  * hand-declared routes — a re-login must not overwrite a hand-declared
  * api/baseURL/models profile with the catalog's.
  */
 function loginDirectoryEntries(ctx: Context): readonly ProviderCatalogEntry[] {
   const directory = llmPiAiDirectory(ctx)
-  return directory !== undefined && directory.length > 0
+  const entries = directory !== undefined && directory.length > 0
     ? directoryProviderEntries(directory, new Set())
     : PROVIDER_CATALOG
+  return [customProviderEntry(), ...entries]
+}
+
+/** Route ids a custom provider id must not collide with (catalog + live). */
+function takenRouteIds(ctx: Context): Set<string> {
+  const ids = new Set(PROVIDER_CATALOG.map(entry => entry.id))
+  for (const entry of llmPiAiDirectory(ctx) ?? []) ids.add(entry.provider)
+  return ids
 }
 
 /** Serialized llm-pi-ai profile write for /login (revision read at execution time). */
@@ -356,6 +366,30 @@ export async function openLoginFlow(options: LoginFlowOptions): Promise<LoginFlo
     const flow = new AddProviderFlow(options.tui, options.theme, {
       entries: pickerEntries,
       ...(initialEntry !== undefined ? { initialEntry } : {}),
+      // The "Custom provider…" entry routes to the chained hand-declared-
+      // route form instead of the plain key editor.
+      customEntryId: CUSTOM_PROVIDER_ID,
+      customFlow: done => new CustomProviderFlow({
+        tui: options.tui,
+        theme: options.theme,
+        takenIds: takenRouteIds(options.ctx),
+        onCommit: (entry, key) => commitProvider(
+          options.ctx,
+          () => writeProviderProfile(settings, entry),
+          entry,
+          key,
+        ).then(result => {
+          if (result === undefined || result.notice !== undefined) committedName = entry.name
+          return result
+        }),
+        onExit: () => {
+          done()
+          overlay?.hide()
+          options.restoreFocus()
+          resolve(committedName === undefined ? { kind: 'cancelled' } : { kind: 'configured', name: committedName })
+        },
+        onError: options.onError,
+      }),
       onCommit: (entry, key) => commitProvider(
         options.ctx,
         () => writeProviderProfile(settings, entry),

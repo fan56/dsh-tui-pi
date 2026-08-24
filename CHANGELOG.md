@@ -4,6 +4,69 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`/login` custom provider support** (`src/custom-provider.ts`,
+  `src/login.ts`, `src/settings.ts`). The provider picker gains a
+  "Custom provider…" entry (also reachable as `/login custom`) for
+  enterprise/third-party gateways pi-ai does not ship — the web Models
+  page's add-custom-provider counterpart. Selecting it opens a chained
+  six-field form (route id → display name → API protocol → base URL →
+  model list → masked API key) that composes the hand-declared
+  `llm-pi-ai.providers.<id>` profile (`api`/`baseURL`/`models`/
+  `displayName` + derived `apiKeyEnv`) and commits through the same
+  `commitProvider` chain as a catalog login; the route's models appear in
+  `/model` without a restart. Field validation is pure and unit-tested
+  (slug ids with collision guard against catalog + configured routes,
+  protocol membership, http(s) URLs, de-duplicated model ids).
+- **maxRounds wrap-up injections are now visible** (`src/session.ts`,
+  `src/dsh-events.ts`, `src/live-widgets.ts`, `src/subagent-viewer.ts`).
+  A `dsh-tui-pi`-sourced injection into a child (the maxRounds wrap-up, a
+  Ctrl+G steer) stamps the child's view (`injectedAt`): the compact
+  running-agent line, the Ctrl+G picker row and the viewer header show a
+  `⚡` marker, and the viewer transcript renders the injected message as
+  `⚡ <text>` (instead of the generic `ⓘ`) — a silently-ignored wrap-up is
+  now distinguishable from one that never fired.
+
+### Changed
+
+- **Ask-user questions render as a docked panel, not a floating popup**
+  (`src/ask-user.ts`, `src/tui.ts`, `src/index.ts`). The questions panel
+  now mounts in a new dock slot directly above the chat input (the
+  Todos-panel bordered-box look) instead of a framed overlay: it takes
+  keyboard focus while open, the app keymap treats it exactly like an open
+  overlay (Esc/Ctrl+C/app keys yield to the panel — Esc never arms the
+  running-task stop from inside the modal), and the scroll window derives
+  from the dock budget (terminal rows minus editor/footer/transcript
+  reserve). Focus returns to the current editor on close; a capturing
+  overlay open beneath is dismissed on open (the question is a hard modal).
+- **maxRounds wrap-up delivery is routed by the child's live status**
+  (`src/subagent-policy.ts`). The injection used `followup()` — queued as
+  the child's next TURN — so a running child could burn many more rounds
+  inside its current turn before the wrap-up landed (the cap visibly never
+  bit). A running child now takes `steer()` (consumed at the next step
+  boundary, i.e. the very next LLM round-trip), matching the Ctrl+G steer
+  routing; an idle-but-unsettled child still takes `followup()`. The
+  message is a directive English wrap-up naming the limit and forbidding
+  further tool calls (the soft one-line request was routinely ignored).
+- **/resume orders sessions by last update, newest first**
+  (`src/sessions.ts`). The picker used creation time; a session the user
+  touched recently now surfaces above newer-created stale ones. The
+  last-update source is the jsonl log file's mtime (best-effort walk of
+  `$DSH_SESSION_ROOT` / `$DSH_HOME/sessions`; unknown roots or non-jsonl
+  backends degrade to the previous createdAt ordering). The WHEN column
+  is retitled `Updated` and shows the effective sort time.
+- **The registered-subagents iron rule ships in the default
+  APPEND_SYSTEM.md template** (`templates/APPEND_SYSTEM.md`,
+  `src/append-system.ts`). "When the user says 'subagent', they mean the
+  registered subagents only; never use unregistered subagents" is now
+  Core rule 6 of the shipped orchestrator template, and
+  `ensureAppendSystemFile` appends it idempotently (case-insensitive
+  phrase check) to pre-existing files that do not phrase it yet — a
+  hand-edited rule is never duplicated.
+
 ## [0.20.1] - 2026-08-24
 
 ### Fixed

@@ -10,7 +10,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
-import { basename } from 'node:path'
+import { readdir, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { basename, join } from 'node:path'
 import { wrapFramedOverlay } from './frame.ts'
 import {
   autoColumns,
@@ -207,6 +209,84 @@ const PREVIEW_SESSION_CAP = 30
 /** Concurrent `inspect` calls while enriching previews. */
 const PREVIEW_CONCURRENCY = 6
 
+/**
+ * The jsonl persistence root guess: `$DSH_SESSION_ROOT`, else
+ * `$DSH_HOME/sessions`, else `~/.dsh/sessions` — the dsh CLI convention. Only
+ * used for the mtime-based last-update enrichment; a mismatched root simply
+ * leaves the picker sorted by `createdAt` (the pre-existing behavior).
+ */
+function sessionLogRoot(): string {
+  if (process.env.DSH_SESSION_ROOT !== undefined && process.env.DSH_SESSION_ROOT !== '') {
+    return process.env.DSH_SESSION_ROOT
+  }
+  const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  return join(home, 'sessions')
+}
+
+/** Physical log file names the jsonl backend writes (`logSuffix`). */
+const LOG_FILE_NAMES = ['session.jsonl', 'session.jsonl.zstd'] as const
+
+/**
+ * Best-effort session-id → last-write time map from the jsonl store's file
+ * mtimes: one walk of `<root>/<project>/<session>/session.jsonl[.zstd]`, stat
+ * per log. Session directory names are the path-encoded session ids — UUID
+ * ids encode to themselves, so the common case matches by name; an encoded
+ * mismatch just misses the map and falls back to `createdAt`. Any failure
+ * resolves an empty map (the picker degrades to creation-order sorting).
+ */
+export async function loadSessionLastUpdates(root: string = sessionLogRoot()): Promise<Map<string, number>> {
+  const updates = new Map<string, number>()
+  let projects: string[]
+  try {
+    projects = (await readdir(root, { withFileTypes: true }))
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name)
+  } catch {
+    return updates
+  }
+  for (const project of projects) {
+    let sessionDirs: string[]
+    try {
+      sessionDirs = (await readdir(join(root, project), { withFileTypes: true }))
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+    } catch {
+      continue
+    }
+    for (const dir of sessionDirs) {
+      for (const name of LOG_FILE_NAMES) {
+        try {
+          const info = await stat(join(root, project, dir, name))
+          if (info.mtimeMs > 0) updates.set(dir, info.mtimeMs)
+          break
+        } catch {
+          // Not this suffix — try the next one.
+        }
+      }
+    }
+  }
+  return updates
+}
+
+/**
+ * Order resumable candidates by LAST update (newest first): the mtime map
+ * when a log file is known, else the header's `createdAt`. Ties fall back to
+ * `createdAt` then the id, so the order is deterministic. Pure — the mtime
+ * walk lives in `loadSessionLastUpdates`.
+ */
+export function sortSessionsByLastUpdate(
+  headers: readonly SessionHeader[],
+  lastUpdates: ReadonlyMap<string, number>,
+): SessionHeader[] {
+  return headers.slice().sort((a, b) => {
+    const at = lastUpdates.get(String(a.id)) ?? a.createdAt
+    const bt = lastUpdates.get(String(b.id)) ?? b.createdAt
+    if (bt !== at) return bt - at
+    if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt
+    return String(b.id).localeCompare(String(a.id))
+  })
+}
+
 /** Hard character cap for a preview string; the list column clips it further. */
 const PREVIEW_MAX_CHARS = 140
 
@@ -351,33 +431,39 @@ export async function pickPersistedSession(
   const candidates = headers
     .filter(isResumableSessionHeader)
     .filter(header => String(header.id) !== excludeSessionId)
-    .sort((a, b) => b.createdAt - a.createdAt)
-  if (candidates.length === 0) return { kind: 'empty' }
+  // Order by last update (mtime of the jsonl log when known, else createdAt)
+  // so a session the user touched yesterday-but-created-last-month surfaces
+  // above newer-created stale ones. The mtime walk is best-effort: an
+  // unknown root keeps the previous createdAt ordering.
+  const lastUpdates = await loadSessionLastUpdates()
+  const ordered = sortSessionsByLastUpdate(candidates, lastUpdates)
+  if (ordered.length === 0) return { kind: 'empty' }
 
   // Enrich the most recent candidates with their first-message preview so the
   // rows are distinguishable at a glance; older ones fall back to the header
   // label (cwd + short id).
-  const previews = await loadSessionPreviews(persistence, candidates.slice(0, PREVIEW_SESSION_CAP).map(header => header.id))
+  const previews = await loadSessionPreviews(persistence, ordered.slice(0, PREVIEW_SESSION_CAP).map(header => header.id))
 
-  const rows = candidates.map(header => {
+  const rows = ordered.map(header => {
     const id = String(header.id)
     const preview = previews.get(id)
+    const updated = lastUpdates.get(id) ?? header.createdAt
     return {
       value: id,
       header,
       session: preview ?? `${basename(header.cwd ?? '?')} · ${clipToWidth(id, 8)}`,
-      when: new Date(header.createdAt).toLocaleString(),
+      when: new Date(updated).toLocaleString(),
       dir: header.cwd ?? 'no cwd',
     }
   })
 
   return new Promise<PickSessionResult>(resolve => {
-    // Auto layout: SESSION and WHEN fit their content, DIR runs to the edge
+    // Auto layout: SESSION and UPDATED fit their content, DIR runs to the edge
     // (previews are often CJK, so SESSION gets a wider cap).
     const columns: readonly TableColumn[] = autoColumns(
       [
         { key: 'session', title: 'Session', cap: 36 },
-        { key: 'when', title: 'When', cap: 26 },
+        { key: 'when', title: 'Updated', cap: 26 },
         { key: 'dir', title: 'Dir' },
       ],
       rows,

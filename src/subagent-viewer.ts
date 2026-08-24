@@ -42,7 +42,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import type { AgentView } from './dsh-events.ts'
-import { isDcpCompactionNotice } from './dsh-events.ts'
+import { isDcpCompactionNotice, isTuiPluginInjection } from './dsh-events.ts'
 import { sunglassesIcon } from './icons.ts'
 import type { DshSessionBridge } from './session.ts'
 import { DOUBLE_PRESS_MS, MIN_DOUBLE_PRESS_GAP_MS } from './keymap.ts'
@@ -232,6 +232,13 @@ export function eventLine(event: SessionEvent, callNames: Map<string, string>): 
       if (isDcpCompactionNotice(event)) {
         return `🧹 ${text}`
       }
+      // A dsh-tui-pi injection (maxRounds wrap-up, steer): the `⚡` marker
+      // makes the policy's firing visible in the transcript — the whole
+      // point of this row is that the user can SEE the injected message (and
+      // whether the child obeyed it).
+      if (isTuiPluginInjection(event)) {
+        return `⚡ ${text}`
+      }
       return message.source?.kind === 'user' ? `▎ ${text}` : `ⓘ ${text}`
     }
     case 'assistant/message': {
@@ -327,9 +334,12 @@ export function pickerItems(
       ...(compactions > 0 ? [`🧹 ${compactions}×`] : []),
       `${(elapsedMs / 1000).toFixed(1)}s`,
     ].join(' · ')
+    // `⚡ injected` — a policy wrap-up (or steer) reached this child; shows
+    // the injection landed even when the child LLM then ignored it.
+    const injected = view.injectedAt !== undefined ? ' ⚡ injected' : ''
     return {
       value: view.childId,
-      label: `${statusGlyph(view)} ${view.label}${mode}: ${roundsText}`,
+      label: `${statusGlyph(view)} ${view.label}${mode}: ${roundsText}${injected}`,
       ...(description !== '' ? { description } : {}),
     }
   })
@@ -627,6 +637,7 @@ export class SubagentViewerPanel implements Component {
     if (view.mode !== undefined) tail.push(view.mode)
     const maxRounds = this.readMaxRounds()
     tail.push(`rounds ${this.bridge.getRoundCount(this.childId)}${maxRounds > 0 ? `/${maxRounds}` : ''}`)
+    if (view.injectedAt !== undefined) tail.push('⚡ injected')
     if (view.tokens > 0) tail.push(formatTokens(view.tokens))
     // Budget the plain text so the status suffix (its own color) still fits.
     const budget = Math.max(20, 140 - status.length - 3)

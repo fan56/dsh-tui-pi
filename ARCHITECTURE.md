@@ -66,8 +66,12 @@ entry / wiring   index.ts          command registration, footer/git/clock,
                                    (declaring packages not installed) + AgentView
   └─ commands    commands.ts       parse + dual-channel dispatch + autocomplete
   └─ overlays    selectors.ts      /model /think /theme pickers
-                 sessions.ts       /session panel, /resume picker
+                 sessions.ts       /session panel, /resume picker (ordered
+                                   by last update — jsonl log mtimes,
+                                   best-effort fallback to createdAt)
                  settings.ts       settings browser + add-provider flow
+                 custom-provider.ts /login "Custom provider…" chained form
+                                   (hand-declared llm-pi-ai route)
                  frame.ts          FramedOverlay (popup borders)
   └─ theme       theme/palette.ts  GitHub light/dark palettes + detection
                  theme/index.ts    buildTheme roles, resolveTheme, POWERLINE
@@ -352,6 +356,14 @@ call sites are wrapped:
 | sessions.ts `pickPersistedSession` | TablePanel (sessions) | 80% / 75% |
 | login.ts logout picker | TablePanel (providers) | 80% / 75% |
 | settings.ts `SettingsBrowser.open` | SettingsListPanel (categories) | 80% / 80% |
+
+Not an overlay: the **ask-user questions panel** (`src/ask-user.ts`) mounts
+in its own dock slot between the live widgets and the editor (the
+Todos-panel box look). While open it holds keyboard focus and the app
+keymap treats it exactly like an open overlay (`dockedModalActive` feeds
+the `overlayOpen` composition in tui.ts); a capturing overlay open beneath
+is dismissed on open — the pending question outranks every panel. Focus
+returns to the current editor on close.
 
 maxHeights are tuned so the bottom border survives on a 24-row terminal
 (13 list rows + 4 frame rows ≤ 18 at 75%; ~15 + 4 ≤ 19 at 80%; 19 + 4 at 100%).

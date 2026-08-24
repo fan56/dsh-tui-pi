@@ -52,6 +52,14 @@ export interface StartTuiOptions {
   getRunningAgents?: () => number
   /** Whether a session exists (agent handle); gates the Ctrl+O queue panel. Defaults to false. */
   hasSession?: () => boolean
+  /**
+   * Whether a docked modal panel (the ask-user questions panel in the dock
+   * slot above the editor) currently owns the keyboard. Composed into the
+   * keymap's `overlayOpen`: while active, app keys and the Esc/Ctrl+C chains
+   * yield to the focused panel exactly like an open overlay — Esc never arms
+   * the running-task stop from inside the modal.
+   */
+  dockedModalActive?: () => boolean
   /** User keybindings overrides (`~/.dsh/keybindings.json`); partial merge. */
   keyBindings?: Partial<KeyBindings>
   /** Persisted theme preference; 'auto' falls back to terminal detection. */
@@ -67,6 +75,12 @@ export interface TuiHandle {
   readonly transcript: Container
   /** Fixed slot pinned above the chat window — the live Todos widget. */
   readonly widgets: Container
+  /**
+   * Fixed slot between the live widgets and the editor — the docked ask-user
+   * questions panel mounts here (modal while open: it takes focus and the
+   * keymap yields to it; zero rows when closed).
+   */
+  readonly askUser: Container
   /**
    * Fixed dock slot below the editor — the last-request line + merged
    * running-agent activity (LiveWidgets owns both).
@@ -134,8 +148,11 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // ------------------------------------------------------------- component tree --
   // Live Todos widget, pinned ABOVE the chat input: a plain Container with
   // auto height — it renders zero rows while empty and grows to its
-  // (bordered-panel) content while the model has todos.
+  // (bordered-panel) content while the model has todos. The askUser slot
+  // below it hosts the docked questions panel (zero rows when no question is
+  // pending).
   const widgets = new Container()
+  const askUser = new Container()
   const transcript = new Container()
   const transcriptView = new ScrollView(transcript, {
     follow: 'end',
@@ -167,6 +184,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   const dock = new VStack([
     { component: status, shrink: 1, minSize: 0 },
     { component: widgets, shrink: 1, minSize: 0 },
+    { component: askUser, shrink: 1, minSize: 0 },
     { component: editor, shrink: 1, minSize: 3 },
     { component: lastRequest, shrink: 1, minSize: 0 },
     { component: footer, shrink: 1, minSize: 1 },
@@ -233,6 +251,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     dock.clear()
     dock.addChild(status, { shrink: 1, minSize: 0 })
     dock.addChild(widgets, { shrink: 1, minSize: 0 })
+    dock.addChild(askUser, { shrink: 1, minSize: 0 })
     dock.addChild(next, { shrink: 1, minSize: 3 })
     dock.addChild(lastRequest, { shrink: 1, minSize: 0 })
     dock.addChild(footer, { shrink: 1, minSize: 1 })
@@ -248,6 +267,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     tui,
     transcript,
     widgets,
+    askUser,
     lastRequest,
     status,
     get editor() {
@@ -312,12 +332,15 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   const isRunning = options.isRunning ?? (() => false)
   const getRunningAgents = options.getRunningAgents ?? (() => 0)
   const hasSession = options.hasSession ?? (() => false)
+  // Docked modal (ask-user panel): owns the keyboard like an open overlay, so
+  // the whole app-key chain (Esc stop, Ctrl+C, pickers, Tab) yields to it.
+  const dockedModalActive = options.dockedModalActive ?? (() => false)
 
   tui.addInputListener((data: string) => {
     const now = Date.now()
     const action = resolveKeyAction(data, {
       running: isRunning(),
-      overlayOpen: tui.hasOverlay(),
+      overlayOpen: tui.hasOverlay() || dockedModalActive(),
       editorHasText: editor.getText() !== '',
       autocompleteOpen: editor.isShowingAutocomplete(),
       runningAgents: getRunningAgents(),

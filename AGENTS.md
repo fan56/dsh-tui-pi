@@ -42,15 +42,23 @@ append-system.ts  APPEND_SYSTEM.md support (pi convention, dsh side
 commands.ts       CommandService: parse + dual-channel dispatch + autocomplete
 frame.ts          FramedOverlay: shared top/bottom ─ border for every popup
 ask-user.ts       Ask User Question: pure state reducers (answer/declined
-                  envelopes, double-Esc machine, flat-row layout) + framed
-                  overlay UI + ctx.userQuestions provider registration
+                  envelopes, double-Esc machine, flat-row layout) + the
+                  DOCKED questions panel (Todos-panel box in the askUser dock
+                  slot above the editor — takes focus while open, the app
+                  keymap yields via dockedModalActive, no floating overlay)
+                  + ctx.userQuestions provider registration
+custom-provider.ts /login "Custom provider…" entry: pure field parsers +
+                  the chained EditField form composing a hand-declared
+                  llm-pi-ai route (id/name/protocol/baseURL/models/key)
 selectors.ts      /model (2-stage), /think, /theme pickers
 model-list.ts     /model pure logic: row assembly (favorites pinned top, dim
                   Hidden section), filter matcher, toggle/hide-guard helpers —
                   data-in/data-out, unit-tested without a terminal
 settings.ts       /settings browser: categories, schema walk, write chain,
                   add-provider flow (uses provider-catalog.ts)
-sessions.ts       /session panel + /resume picker
+sessions.ts       /session panel + /resume picker (ordered by last update:
+                  jsonl log mtimes via loadSessionLastUpdates, best-effort
+                  fallback to createdAt)
 reload.ts         /reload hot-reload (cordis-plugin-hmr style)
 hotkeys.ts        /hotkeys — keybindings.json contract + validation + the
                   select-panel manager (FieldPanel + EditField, /agents style)
@@ -107,15 +115,16 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **700 tests** across 41 files (ask-user 84 +
+- `pnpm test` must stay green: **784 tests** across 45 files (ask-user 85 +
   skills 36 +
-  live 34 + keymap 28 + login 25 + panels 24 + session-reconcile 26 +
+  live 35 + keymap 28 + login 25 + panels 24 + session-reconcile 27 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
-  messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 23 +
-  subagent-viewer 35 + history 13 + agent-manager 13 +
-  sessions 15 + theme-switch 11 + frame 11 + footer-hints 10 + permission 9 +
+  custom-provider 12 +
+  messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 26 +
+  subagent-viewer 37 + history 13 + agent-manager 13 +
+  sessions 20 + theme-switch 11 + frame 11 + footer-hints 10 + permission 9 +
   theme-settings 10 + commands 9 + text 15 + font-detect 8 + quotes 7 +
-  icons 7 + reload 6 + append-system 6 + install-font 6 + tokens 6 +
+  icons 7 + reload 6 + append-system 9 + install-font 6 + tokens 6 +
   schema-model 3 + usage 26 + preset 12 + dev-upgrade 8 + model-list 21 +
   plugin-inject 2). New
   pure logic → new test file under `test/` against built `lib/` (`node --test`,

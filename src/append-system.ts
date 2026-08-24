@@ -42,6 +42,29 @@ completed — no pending or in-progress items remain — write an EMPTY todo lis
 (\`todos: []\`) so the panel clears. Never leave a fully-completed list behind.
 `
 
+/**
+ * The subagent vocabulary rule (user iron rule, 2026-08-24): "subagent" means
+ * the registered subagents only. Shipped inside the template's Core rules for
+ * fresh installs; appended idempotently to pre-template files that lack it.
+ */
+export const SUBAGENTS_RULE_SECTION = `## Subagents
+
+When the user says "subagent", they mean the registered subagents only; never use unregistered subagents.
+`
+
+/** Idempotency phrase for the subagents rule (matches template and section). */
+export const SUBAGENTS_RULE_PHRASE = 'registered subagents only'
+
+/**
+ * Append the subagents rule unless the content already carries it (the shipped
+ * template embeds it as a Core rule; a hand-edited file may phrase it anywhere
+ * — the case-insensitive phrase check accepts both).
+ */
+function withSubagentsRule(content: string): string {
+  if (content.toLowerCase().includes(SUBAGENTS_RULE_PHRASE)) return content
+  return `${content.replace(/\s+$/u, '')}\n\n${SUBAGENTS_RULE_SECTION}`
+}
+
 /** Default harness home: `$DSH_HOME` or `~/.dsh`. */
 export function dshHome(): string {
   return process.env.DSH_HOME ?? join(homedir(), '.dsh')
@@ -86,12 +109,13 @@ export function readAppendSystem(path: string = appendSystemPath()): string {
  * marked todo-lifecycle section: a missing file is seeded from
  * `templates/APPEND_SYSTEM.md` (the English orchestrator template) followed
  * by the marked section; an existing file is user-owned — only the marked
- * section is appended when its marker is missing, and a marked file is left
- * untouched.
+ * section is appended when its marker is missing, a marked file is left
+ * untouched, and the subagents vocabulary rule is appended to any file that
+ * does not phrase it yet (template ships it as a Core rule).
  * @param path - target file (injectable for tests).
  * @param templatePath - the shipped template (injectable for tests).
  * @returns an error message on failure, undefined on success (including the
- *   no-op case where the marker is already present).
+ *   no-op case where the marker and the rule are already present).
  */
 export async function ensureAppendSystemFile(
   path: string = appendSystemPath(),
@@ -103,9 +127,13 @@ export async function ensureAppendSystemFile(
   } catch {
     existing = ''
   }
-  if (existing.includes(TODO_LIFECYCLE_MARKER)) return undefined
+  if (existing.includes(TODO_LIFECYCLE_MARKER)) {
+    // Marker section already maintained — only the subagents rule may be new.
+    if (existing.toLowerCase().includes(SUBAGENTS_RULE_PHRASE)) return undefined
+    return writeAtomically(path, withSubagentsRule(existing))
+  }
   if (existing !== '') {
-    return writeAtomically(path, `${existing.replace(/\s+$/u, '')}\n\n${TODO_LIFECYCLE_SECTION}`)
+    return writeAtomically(path, withSubagentsRule(`${existing.replace(/\s+$/u, '')}\n\n${TODO_LIFECYCLE_SECTION}`))
   }
   // Fresh file: seed from the shipped template, then the marked section. A
   // missing template (broken tarball) degrades to the marked section alone.
@@ -116,7 +144,7 @@ export async function ensureAppendSystemFile(
     template = ''
   }
   const seed = template === '' ? TODO_LIFECYCLE_SECTION : `${template.replace(/\s+$/u, '')}\n\n${TODO_LIFECYCLE_SECTION}`
-  return writeAtomically(path, seed)
+  return writeAtomically(path, withSubagentsRule(seed))
 }
 
 /**

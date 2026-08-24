@@ -445,6 +445,9 @@ export class LiveWidgets {
     const width = Math.max(1, process.stdout.columns ?? 80)
     const glyph = AGENT_SPINNER_FRAMES[this.spinnerFrame % AGENT_SPINNER_FRAMES.length]
     const metaParts: string[] = []
+    // `⚡` — a dsh-tui-pi injection (maxRounds wrap-up, steer) reached this
+    // child; surfaced so a silently-ignored wrap-up is visible at a glance.
+    if (view.injectedAt !== undefined) metaParts.push('⚡')
     if (view.retries >= 1) {
       metaParts.push(view.maxRetries === undefined ? `↻${view.retries}` : `↻${view.retries}≤${view.maxRetries}`)
     }

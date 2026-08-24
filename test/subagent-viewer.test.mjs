@@ -160,10 +160,21 @@ test('eventLine renders a dsh-dcp compaction notice with the compaction marker',
   assert.equal(line, '🧹 dcp: compacted 40 history items (~12.3k tokens, round)')
 })
 
-test('eventLine keeps the info marker for a generic plugin message (not a compaction)', () => {
+test('eventLine marks a dsh-tui-pi injection (wrap-up/steer) with the policy marker', () => {
+  // The maxRounds wrap-up and Ctrl+G steers are plugin-sourced by THIS
+  // plugin — the ⚡ marker makes the injection visible in the transcript so
+  // an ignored wrap-up can be told apart from one that never fired.
   const line = eventLine({
     type: 'user/message', seq: 1, time: 0,
-    data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'plugin', plugin: 'dsh-tui-pi' } },
+    data: { content: [{ type: 'text', text: 'Round limit reached (3 LLM round-trips)' }], source: { kind: 'plugin', plugin: 'dsh-tui-pi' } },
+  }, new Map())
+  assert.equal(line, '⚡ Round limit reached (3 LLM round-trips)')
+})
+
+test('eventLine keeps the info marker for a foreign plugin message', () => {
+  const line = eventLine({
+    type: 'user/message', seq: 1, time: 0,
+    data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'plugin', plugin: 'dsh-something-else' } },
   }, new Map())
   assert.equal(line, 'ⓘ hello')
 })
@@ -537,4 +548,12 @@ test('SubagentViewerPanel Esc still closes and x still double-press closes', () 
   )
   panel.handleInput('\x1b')
   assert.equal(closed, 1)
+})
+
+test('pickerItems flags a child that received an injection with ⚡ injected', () => {
+  const views = [{ ...running('a'), injectedAt: 1234 }]
+  const items = pickerItems(views, () => 3, 50)
+  assert.match(items[0].label, /⚡ injected/, 'the picker row shows the injection marker')
+  const plain = pickerItems([running('b')], () => 3, 50)
+  assert.ok(!plain[0].label.includes('⚡'), 'no marker without an injection')
 })

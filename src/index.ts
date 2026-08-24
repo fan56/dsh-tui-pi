@@ -219,6 +219,11 @@ export function apply(ctx: Context): void {
     // `bridge.setAgentPreset(DEFAULT_PRESET_ID)` at init — that would override
     // the server-side default with a client-side assumption.
     const presetState: PresetState = { roster: presetRoster, index: initialPresetIndex(presetRoster) }
+    // Docked-modal liveness (the ask-user questions panel): while a question
+    // is pending the panel owns the keyboard — the keymap treats it like an
+    // open overlay (see tui.ts), and refocusEditor must not steal focus from
+    // it. Flipped by the panel through its setModalActive dep.
+    let askUserActive = false
     const ui = startTui({
       onSubmit: text => {
         void submit(text)
@@ -236,6 +241,7 @@ export function apply(ctx: Context): void {
       isRunning: () => bridge.isRunning(),
       getRunningAgents: () => bridge.getLiveChildren().length,
       hasSession: () => bridge.getSessionId() !== undefined,
+      dockedModalActive: () => askUserActive,
       onKeyAction: (action: KeyAction) => {
         switch (action.kind) {
           case 'interrupt-arm-stop':
@@ -403,18 +409,18 @@ export function apply(ctx: Context): void {
     handle = ui
     /**
      * Focus restoration with the PanelHost preemption guard (review S6):
-     * every flow overlay closes through this. When ANOTHER capturing overlay
-     * is still up — the ask-user panel preempting the route dialog or the
-     * queue panel mid-flow — that overlay owns the keyboard: yanking focus
-     * to the editor would orphan the underlying panel (visible but
+     * every flow overlay closes through this. When ANOTHER capturing surface
+     * is still up — an overlay, or the docked ask-user panel preempting the
+     * route dialog / queue panel mid-flow — that surface owns the keyboard:
+     * yanking focus to the editor would orphan it (visible but
      * keyboard-dead). All of this plugin's overlays capture focus, so
-     * `hasOverlay()` is the exact "someone else holds the keyboard" test;
-     * the ordinary close path lands here only after the last overlay went
-     * away, and still re-focuses the CURRENT editor instance (rebuilt on
-     * theme swap).
+     * `hasOverlay()` is the exact "an overlay holds the keyboard" test, and
+     * `askUserActive` covers the docked questions panel; the ordinary close
+     * path lands here only after the last surface went away, and still
+     * re-focuses the CURRENT editor instance (rebuilt on theme swap).
      */
     const refocusEditor = (): void => {
-      if (ui.tui.hasOverlay()) return
+      if (ui.tui.hasOverlay() || askUserActive) return
       ui.tui.setFocus(ui.editor)
     }
     // Live theme preference, tracked so terminal-following (below) can tell
@@ -583,9 +589,11 @@ export function apply(ctx: Context): void {
     // `ctx.userQuestions.ask()` while its tool call is pending, and the
     // provider returns a canonical `{ answers: [{ id, selected, custom? }] }`
     // envelope that the tool surfaces back to the model as the tool result.
-    // We host a single framed overlay per request. Focus falls back through
+    // We host a single DOCKED panel per request — pinned above the chat input
+    // in the askUser dock slot (the Todos-panel look, not a floating
+    // overlay), taking focus while open. Focus falls back through
     // restoreFocus (the current editor instance — it is rebuilt on theme
-    // swap); the theme is passed as a live getter so a mid-overlay hot-swap
+    // swap); the theme is passed as a live getter so a mid-panel hot-swap
     // re-renders with the new palette. Provider registration failure
     // semantics live in registerAskUserProvider: DUPLICATE_PROVIDER yields to
     // the prior UI, anything else fails loudly.
@@ -593,6 +601,17 @@ export function apply(ctx: Context): void {
       tui: ui.tui,
       theme: () => ui.theme,
       restoreFocus: refocusEditor,
+      mount: component => {
+        ui.askUser.addChild(component)
+        ui.requestRender()
+        return () => {
+          ui.askUser.removeChild(component)
+          ui.requestRender()
+        }
+      },
+      setModalActive: active => {
+        askUserActive = active
+      },
     }), 'dsh-tui-pi: ask-user-question provider')
 
     // System prompt guidance: nudge the model toward conservative use of

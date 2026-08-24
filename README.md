@@ -116,7 +116,7 @@ Running subagent activity is shown in the **last-request area below the editor**
   ↳ ⠼ Subagent B 10s 任务 · 562 token · 6.0s
 ```
 
-Each line shows: spinner + agent **name**, retries (`↻N≤M`), compact **current-context usage** (`X/Y` — the child's latest request's billed input+output plus a CJK estimate of messages after it, over its context window; NOT the cumulative token spend, which only grows), rounds (`round N/M` — the assistant-message count against the cap, `M` only when `maxRounds > 0`), elapsed. No provider shown, no box, no header — just one line per running child.
+Each line shows: spinner + agent **name**, retries (`↻N≤M`), compact **current-context usage** (`X/Y` — the child's latest request's billed input+output plus a CJK estimate of messages after it, over its context window; NOT the cumulative token spend, which only grows), rounds (`round N/M` — the assistant-message count against the cap, `M` only when `maxRounds > 0`), elapsed, and a `⚡` marker when a policy injection (maxRounds wrap-up, steer) reached the child. No provider shown, no box, no header — just one line per running child.
 
 Both **spawn-driven** and **fork-driven** children are tracked — dsh creates both through `childSessionMeta`, which writes `origin: 'subagent'` + a `delegationDepth` budget together, so header discovery recognises either marker (a budget-without-origin header is admitted as a defensive fallback and labelled `fork <id8>`; current dsh does not produce that shape). Non-children stay off the board by **value**, not by field presence: the jsonl persistence backend materialises `delegationDepth: 0` on every restored header, so the gate requires a budget `> 0`. User-facing session forks (a forked *conversation*: `Session.fork` sets `parentSession` + `seedLength`, no budget) are deliberately kept off the subagent board and stay resumable via `/resume` — whose filter (`isResumableSessionHeader`) excludes exactly the delegated children (`origin: 'subagent'` or budget > 0).
 
@@ -143,7 +143,7 @@ Icons: `☑` completed, `◐` in-progress, `☐` pending. A settled child drops 
 Two caps (`/agents` → `l` to configure):
 
 - **`maxAgents`** (default 4, `0` = unlimited) — spawns are denied when the cap is hit.
-- **`maxRounds`** (default 75, `0` = unlimited) — after a child's assistant messages (one per LLM round-trip — the "rounds") reach the cap, the TUI queues one wrap-up request and never force-stops.
+- **`maxRounds`** (default 75, `0` = unlimited) — after a child's assistant messages (one per LLM round-trip — the "rounds") reach the cap, the TUI injects one wrap-up directive and never force-stops: a running child receives it at its next step boundary (`steer` — the very next LLM round-trip), an idle child as its own next turn. The injection is visible: the compact line, the Ctrl+G picker row and the viewer header show a `⚡` marker, and the transcript renders the injected message as `⚡ <text>` — so a wrap-up the child LLM ignored can be told apart from one that never fired.
 
 ---
 
@@ -168,7 +168,7 @@ Inside a subagent, a committed compaction is visible too: DCP appends one `user/
 A user-editable markdown file whose content is appended to the **system prompt of the main agent this TUI creates** — borrows pi's `~/.pi/agent/APPEND_SYSTEM.md` convention, dsh side: `$DSH_HOME/APPEND_SYSTEM.md` (default `~/.dsh/APPEND_SYSTEM.md`, honors the same `$DSH_HOME` override as the rest of dsh).
 
 - **Hot-applied** — the section provider reads the file at every prompt assembly, so editing the file picks up on the **next request**: no restart, no watcher, no `/reload`.
-- **Auto-seeded on first run** — when the file is missing, the TUI seeds it once at startup from the shipped template `templates/APPEND_SYSTEM.md` (the English orchestrator-identity template: identity, core rules, execution workflow). An existing file is yours — the TUI never overwrites user content.
+- **Auto-seeded on first run** — when the file is missing, the TUI seeds it once at startup from the shipped template `templates/APPEND_SYSTEM.md` (the English orchestrator-identity template: identity, core rules, execution workflow — including the registered-subagents vocabulary rule: "subagent" means the registered subagents only). An existing file is yours — the TUI never overwrites user content; it only appends the marked todo-lifecycle section and (idempotently, by phrase match) the subagents rule when a file does not phrase them yet.
 - **TUI-owned section** — a marked block (`<!-- dsh-tui-pi:todo-lifecycle -->`) is appended once and then maintained idempotently so the model clears its `todo/write` list when every item is done. A marked file is left byte-identical on later startups.
 - **Legacy migration** — the same todo block used to be delivered through `~/.dsh/AGENTS.md`. On startup the TUI strips that block once (no-op when absent), so the guidance is never duplicated.
 - **Empty / unreadable = no section** — if the file is missing or can't be read, the section is silently dropped. No error, no TUI startup failure.
@@ -199,12 +199,12 @@ There's no slash command to toggle the feature — it's always on, controlled by
 
 ### Ask User Question
 
-While the model is mid-turn it can pause and ask you structured questions via the `ask_user_question` tool (`@deepseek-ai/dsh-tool-ask-user`, mounted by this profile's bundle patch). The TUI hosts the answering side: a framed overlay opens in place, the tool call stays pending until you answer, and your answers flow back to the model as a normal tool result.
+While the model is mid-turn it can pause and ask you structured questions via the `ask_user_question` tool (`@deepseek-ai/dsh-tool-ask-user`, mounted by this profile's bundle patch). The TUI hosts the answering side: a bordered panel pins itself directly above the chat input (the Todos-panel slot — no floating popup), takes the keyboard while open, the tool call stays pending until you answer, and your answers flow back to the model as a normal tool result.
 
-- **One overlay, all questions flattened** — every question renders as a header row followed by its supporting `detail` text (when the model supplies any), option rows, plus a `Type something.` sentinel row for free text. Single-select replaces on Enter; multi-select toggles (`[+]` marks).
+- **One panel, all questions flattened** — every question renders as a header row followed by its supporting `detail` text (when the model supplies any), option rows, plus a `Type something.` sentinel row for free text. Single-select replaces on Enter; multi-select toggles (`[+]` marks).
 - **Single-question fast path** — a lone single-select question submits immediately on Enter: picking an option or committing typed free text both submit right away (a question without options is answered by typing alone). A lone multiSelect question instead gets a `⏎ Confirm answers` row so you can pick several options before submitting.
 - **Multi-question review page** — with ≥ 2 questions a `⏎ Confirm answers` row hops to a review listing every answer, each row editable in place; `Submit answers` commits (Enter on it while an answer is missing flashes a hint instead of failing silently). After committing free text on one question the cursor hops to the next unanswered one.
-- **Double-Esc declines** — two Esc presses within 200 ms return a declined envelope (the model reads it as a normal reply that no answer was given); holding Esc does not accidentally fire (key auto-repeat below a minimum gap is ignored), and closing the overlay through any other path — theme swap, `/reload`, or the tool call being aborted — settles as declined too.
+- **Double-Esc declines** — two Esc presses within 200 ms return a declined envelope (the model reads it as a normal reply that no answer was given); holding Esc does not accidentally fire (key auto-repeat below a minimum gap is ignored), and the tool call being aborted settles as declined too. While the panel is open it owns the keyboard exactly like an open overlay: Esc never arms the running-task stop, and app keys (Ctrl+L/G/O, Tab) yield to the panel.
 - **Conservative-use guidance** — a system-prompt section nudges the model to ask only when it genuinely needs you (1–3 questions, 2–4 options each), so the TUI doesn't turn into a questionnaire.
 - **Keyboard** — `↑↓` navigate · `Enter` select/toggle/confirm · type into the sentinel for free text · `Esc` twice to decline.
 
@@ -219,7 +219,7 @@ Inspired by [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rp
 | `/model` | Two-stage provider/model picker (then thinking level). Live switch, persisted; in-panel keys: `f` favorite · `h` hide · `/` filter (favorites/hidden persisted via settings). |
 | `/think` | Reasoning-effort picker for the current model (`Off`/`High`/`Max`). |
 | `/session` | Read-only info panel: id, cwd, model, token usage, event count. |
-| `/resume` | Pick a persisted session, validate its log, then restore it. |
+| `/resume` | Pick a persisted session, validate its log, then restore it. Ordered by last update (log-file mtime), newest first; the `Updated` column shows the effective time. |
 | `/new` | Detach the current session; the next prompt opens a fresh one. |
 | `/settings` | Text-based settings browser (namespaces, schema walk, inline editors, secrets masked). |
 | `/export` | Write the current session log as JSONL (`~/Downloads/dsh-session-<id>.jsonl`). |
@@ -229,6 +229,8 @@ Inspired by [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rp
 | `/agents` | Manage agent markdown files + subagent limits (`maxAgents`, `maxRounds`). |
 | `/subagents` | Pick a running/recent subagent and watch its live transcript; `Enter` inside the viewer steers the child (see Subagents). |
 | `/reload` | Hot-reload the plugin from source (after `pnpm build`) without restarting dsh. |
+| `/login` | Log in to a provider: pick from the directory (or `/login openai` to jump), enter one API key. The **Custom provider…** entry (`/login custom`) opens a six-field form for any OpenAI/Anthropic-compatible gateway pi-ai does not ship — route id, display name, protocol, base URL, model list, API key — and writes the same hand-declared route the web Models page composes. |
+| `/logout` | Pick a logged-in provider and remove both the stored key and its provider profile. |
 | `/hotkeys` | Keybinding browser and live editor. |
 
 Anything that is not a resolvable command falls through to the model as an ordinary prompt.
@@ -421,8 +423,9 @@ src/
   footer.ts           PowerlineFooter (7 segments + clock)
   editor.ts           CwdBorderEditor (top border: cwd + git branch)
   subagent-policy.ts  maxAgents guard + maxRounds wrap-up injection
+                     (steer-when-running; ⚡-marked, visible in the viewer)
   subagent-viewer.ts  Ctrl+G picker + live transcript panel + Enter steer injection
-  ask-user.ts         Ask User Question overlay: pure state reducers +
+  ask-user.ts         Ask User Question docked panel: pure state reducers +
                       framed overlay UI + ctx.userQuestions provider
   steer-flow.ts       Steer / follow-up decision layer: routed delivery with
                       race fallback, queue actions (remove / promote), notices

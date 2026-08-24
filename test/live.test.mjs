@@ -732,3 +732,18 @@ test('setTheme recolors the panels in place (live state, no rebuild)', () => {
   const toolRows = todosDoc.render(200).join('')
   assert.ok(toolRows.includes('✔'), 'settled tool renders after the recolor')
 })
+
+test('running agent line: an injected child carries the ⚡ policy marker in the meta', () => {
+  const prev = process.stdout.columns
+  process.stdout.columns = 200
+  try {
+    const { activityDoc, widget } = makeWidget()
+    widget.setLastRequest('dispatch')
+    widget.renderAgents([runningView({ injectedAt: 1234 })])
+    const rows = widgetRows(activityDoc)
+    assert.match(rows[1], /⚡/, 'the ⚡ marker renders in the meta parts')
+    assert.ok(rows[1].indexOf('⚡') < rows[1].indexOf('round 0'), 'the marker leads the meta')
+  } finally {
+    process.stdout.columns = prev
+  }
+})

@@ -6,7 +6,10 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizePreview, previewOfEvents, isResumableSessionHeader, sessionInfoRows } from '../lib/sessions.js'
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { loadSessionLastUpdates, normalizePreview, previewOfEvents, isResumableSessionHeader, sessionInfoRows, sortSessionsByLastUpdate } from '../lib/sessions.js'
 import { stashSessionIdForReload, takeStashedSessionId } from '../lib/session.js'
 
 const userMsg = (text, sourceKind = 'user', extra = {}) => ({
@@ -231,4 +234,60 @@ test('SessionInfoPanel title annotates the per-route token scope', async () => {
   assert.match(lines[0], /tokens: current route/, 'title carries the token scope note')
   // The note rides on the title line itself — no extra row was added.
   assert.equal(lines.length, 20)
+})
+
+// ------------------------------------------------- last-update ordering --
+
+/** Minimal resumable header fixture. */
+function headerOf(id, createdAt) {
+  return { version: 0, id: { toString: () => id }, sessionId: id, createdAt, cwd: '/tmp' }
+}
+
+test('sortSessionsByLastUpdate: mtime wins over createdAt, newest first', () => {
+  const old = headerOf('old-but-fresh', 1_000)
+  const fresh = headerOf('created-newer', 9_000)
+  const stale = headerOf('created-older', 5_000)
+  const updates = new Map([
+    ['old-but-fresh', 99_000], // created earliest, touched latest → first
+    ['created-older', 50_000],
+    // 'created-newer' has no mtime → falls back to createdAt 9_000 → last
+  ])
+  const ordered = sortSessionsByLastUpdate([old, fresh, stale], updates)
+  assert.deepEqual(ordered.map(h => h.sessionId), ['old-but-fresh', 'created-older', 'created-newer'])
+})
+
+test('sortSessionsByLastUpdate: empty map degrades to createdAt desc with deterministic ties', () => {
+  const a = headerOf('a', 100)
+  const b = headerOf('b', 200)
+  const ordered = sortSessionsByLastUpdate([a, b], new Map())
+  assert.deepEqual(ordered.map(h => h.sessionId), ['b', 'a'])
+})
+
+test('loadSessionLastUpdates walks <root>/<project>/<session>/session.jsonl mtimes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-sess-'))
+  try {
+    const when = (ms) => new Date(ms)
+    await mkdir(join(dir, 'proj-a', 'sess-1'), { recursive: true })
+    await writeFile(join(dir, 'proj-a', 'sess-1', 'session.jsonl'), '{}\n', 'utf8')
+    await utimes(join(dir, 'proj-a', 'sess-1', 'session.jsonl'), when(111), when(111))
+    // zstd-compressed sibling naming
+    await mkdir(join(dir, 'proj-b', 'sess-2'), { recursive: true })
+    await writeFile(join(dir, 'proj-b', 'sess-2', 'session.jsonl.zstd'), '\x28\xb5\x2f\xfd', 'utf8')
+    await utimes(join(dir, 'proj-b', 'sess-2', 'session.jsonl.zstd'), when(222), when(222))
+    // Empty project dir and a plain file must not break the walk.
+    await mkdir(join(dir, 'proj-empty'), { recursive: true })
+    await writeFile(join(dir, 'stray.txt'), 'x', 'utf8')
+
+    const updates = await loadSessionLastUpdates(dir)
+    assert.equal(updates.get('sess-1'), 111)
+    assert.equal(updates.get('sess-2'), 222)
+    assert.equal(updates.size, 2)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('loadSessionLastUpdates resolves an empty map for a missing root', async () => {
+  const updates = await loadSessionLastUpdates(join(tmpdir(), 'dsh-tui-nope-' + Date.now()))
+  assert.equal(updates.size, 0)
 })

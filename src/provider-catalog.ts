@@ -51,6 +51,12 @@ export interface ProviderCatalogEntry {
   baseURL?: string
   /** Default models for a hand-declared route (`catalogRoute: false` only). */
   models?: readonly CatalogModel[]
+  /**
+   * Profile `displayName` for hand-declared routes (the web Models page's
+   * custom-provider field): written into the llm-pi-ai profile so /model and
+   * the Models category show it instead of the route key.
+   */
+  displayName?: string
 }
 
 /**
@@ -129,6 +135,7 @@ export function providerProfileFor(entry: ProviderCatalogEntry): {
   api?: string
   baseURL?: string
   models?: Array<{ id: string; name?: string }>
+  displayName?: string
 } {
   const ref = deriveKeyRef(entry.id)
   if (entry.catalogRoute) return { apiKeyEnv: ref }
@@ -137,6 +144,7 @@ export function providerProfileFor(entry: ProviderCatalogEntry): {
   ))
   return {
     apiKeyEnv: ref,
+    ...(entry.displayName !== undefined && entry.displayName !== '' ? { displayName: entry.displayName } : {}),
     ...(entry.api !== undefined ? { api: entry.api } : {}),
     ...(entry.baseURL !== undefined ? { baseURL: entry.baseURL } : {}),
     ...(models.length > 0 ? { models } : {}),

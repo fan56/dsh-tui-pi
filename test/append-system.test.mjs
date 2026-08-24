@@ -15,6 +15,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  appendSystemTemplatePath,
   ensureAppendSystemFile,
   migrateAgentsMdTodoSection,
   readAppendSystem,
@@ -65,14 +66,14 @@ test('appends the section to an existing file without the marker', async () => {
   }
 })
 
-test('leaves an already-marked file byte-identical', async () => {
+test('leaves an already-marked, rule-carrying file byte-identical', async () => {
   const dir = await tempDir()
   try {
     const path = join(dir, 'APPEND_SYSTEM.md')
-    const marked = `# Notes\n\n${TODO_LIFECYCLE_MARKER}\n## Todo list lifecycle (dsh-tui-pi)\n\nKeep it tidy.\n`
+    const marked = `# Notes\n\n${TODO_LIFECYCLE_MARKER}\n## Todo list lifecycle (dsh-tui-pi)\n\nKeep it tidy. Registered subagents only.\n`
     await writeFile(path, marked, 'utf8')
     assert.equal(await ensureAppendSystemFile(path), undefined)
-    assert.equal(await readFile(path, 'utf8'), marked, 'no rewrite when already marked')
+    assert.equal(await readFile(path, 'utf8'), marked, 'no rewrite when marked and the rule is phrased')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -127,6 +128,46 @@ test('reports a failure instead of throwing (missing parent dir)', async () => {
     assert.ok(typeof error === 'string' && error !== '', 'error message returned, not thrown')
     // The tmp file must not linger.
     await assert.rejects(() => readFile(`${path}.tmp`))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('the shipped template carries the registered-subagents iron rule', async () => {
+  const content = await readFile(appendSystemTemplatePath(), 'utf8')
+  assert.ok(content.includes('registered subagents only'), 'rule present in the template')
+})
+
+test('ensure appends the subagents rule to a marked file that lacks it (and stays idempotent)', async () => {
+  const dir = await tempDir()
+  try {
+    const path = join(dir, 'APPEND_SYSTEM.md')
+    const template = join(dir, 'template.md')
+    await writeFile(template, '# T\n', 'utf8')
+    assert.equal(await ensureAppendSystemFile(path, template), undefined)
+    const withMarker = await readFile(path, 'utf8')
+    assert.ok(withMarker.includes('registered subagents only'), 'fresh seed from a rule-less template gets the rule via ensure')
+    // The marker-present early path still appends the rule exactly once.
+    await writeFile(path, `${TODO_LIFECYCLE_SECTION.trimEnd()}\n`, 'utf8')
+    assert.equal(await ensureAppendSystemFile(path, template), undefined)
+    const once = await readFile(path, 'utf8')
+    assert.equal(once.indexOf('registered subagents only'), once.lastIndexOf('registered subagents only'), 'rule appended once')
+    const before = await readFile(path, 'utf8')
+    assert.equal(await ensureAppendSystemFile(path), undefined)
+    assert.equal(await readFile(path, 'utf8'), before, 'phrase-present file is not rewritten')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('ensure skips the subagents rule for a file that phrases it already (user hand-edit)', async () => {
+  const dir = await tempDir()
+  try {
+    const path = join(dir, 'APPEND_SYSTEM.md')
+    await writeFile(path, `## Subagents\n\nWhen the user says "subagent", they mean the registered subagents only; never use unregistered subagents.\n\n${TODO_LIFECYCLE_SECTION}`, 'utf8')
+    const before = await readFile(path, 'utf8')
+    assert.equal(await ensureAppendSystemFile(path), undefined)
+    assert.equal(await readFile(path, 'utf8'), before, 'no duplicate rule for a hand-phrased file')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

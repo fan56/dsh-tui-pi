@@ -2,52 +2,62 @@
  * Ask the human a question while the model is mid-turn.
  *
  * Wires the upstream `ctx.userQuestions` capability seam (`dsh-user-questions`)
- * with a terminal-side UI: an in-place multi-question overlay that pauses the
- * tool call until the human answers, then feeds the canonical
+ * with a terminal-side UI: a DOCKED panel pinned above the chat input (the
+ * Todos-panel slot of the widgets dock — not a floating overlay) that pauses
+ * the tool call until the human answers, then feeds the canonical
  * `AskUserQuestionAnswer` envelope back to `dsh-tool-ask-user` as a normal
  * tool result.
  *
- * Layout — one framed overlay, all questions flattened (numbered rows, a
+ * Layout — one bordered dock panel, all questions flattened (numbered rows, a
  * divider between each question block and its options, and a scroll window
- * so the cursor row is always visible even when the overlay is height-capped):
+ * so the cursor row is always visible even when the dock is height-capped):
  *
- *   ● Questions (2)
- *     SELECTION
- *     ─────────────────────────────        (table chrome)
- *     Fruit  Where should we deploy?      (header — not selectable)
- *     ─────────────────────────────        (divider)
- *     ▸ ● 1. staging                      (cursor + inline selection mark)
- *       ○ 2. production
- *          red and round                  (option description, own muted line)
- *         3. Type something.              (sentinel row — inline input)
- *                                          (blank separator before confirm)
- *         ⏎ Confirm answers               (when ≥ 2 questions, or any multiSelect)
+ *   ┌────────────────────────────────────┐
+ *   │ ● Questions (2)                    │
+ *   │ SELECTION                          │
+ *   │ ─────────────────────────────      │   (table chrome)
+ *   │ Fruit  Where should we deploy?     │   (header — not selectable)
+ *   │ ─────────────────────────────      │   (divider)
+ *   │ ▸ ● 1. staging                     │   (cursor + inline selection mark)
+ *   │   ○ 2. production                  │
+ *   │      red and round                 │   (option description, own muted line)
+ *   │     3. Type something.             │   (sentinel row — inline input)
+ *   │                                    │   (blank separator before confirm)
+ *   │     ⏎ Confirm answers              │   (when ≥ 2 questions, or any multiSelect)
+ *   └────────────────────────────────────┘
+ *
+ * While the panel is open it owns the keyboard: it is mounted into the dock
+ * slot between the live widgets and the editor, takes focus through
+ * `tui.setFocus`, and `setModalActive(true)` routes the app keymap exactly
+ * like an open overlay (Esc/Ctrl+C/app keys yield to the panel — Esc never
+ * arms the running-task stop from inside a modal). On close the panel
+ * unmounts, clears the modal flag, and focus returns to the current editor
+ * through `restoreFocus`.
  *
  * The body renders through a scroll window sized from the live terminal
- * height (`askUserMaxVisibleForRows`; falls back to `ASK_USER_MAX_VISIBLE`
- * when the terminal row count is unknown):
- * pi-tui hard-clips overlay tails at `maxHeight`, so without an inner window
- * the last options fall off-screen while the cursor can still reach them
- * ("unselectable" bug). The window slides with the cursor and the footer
- * gains a `(n/m)` position readout while content overflows.
+ * height (`askUserMaxVisibleForRows`; the dock budget subtracts the editor,
+ * footer and a transcript floor, and falls back to `ASK_USER_MAX_VISIBLE`
+ * when the terminal row count is unknown): pi-tui would lay a taller dock
+ * out at full height and squeeze the transcript to nothing, so the window
+ * caps the body. The window slides with the cursor and the footer gains a
+ * `(n/m)` position readout while content overflows.
  *
- * Single-question single-select overlay: Enter on an option (or committing a
+ * Single-question single-select panel: Enter on an option (or committing a
  * filled sentinel) submits immediately. A multiSelect question — even a lone
  * one — gets a Confirm row instead of auto-submitting, so the user can pick
- * several options first. Multi-question overlay: Enter on the Confirm row
- * hops to the review page (all answers listed, each editable in place).
- * Esc double-press within 200 ms declines — but terminal key auto-repeat
- * (holding Esc) is ignored below `ESC_REPEAT_GUARD_MS`, so a long press
- * cannot accidentally fire the decline. The provider returns the "declined"
- * envelope and the model reads it as a normal user reply. An aborted
- * request signal (`request.signal`) settles declined too — we resolve the
- * declined envelope instead of rejecting ASK_ABORTED because the upstream
- * service already screens entry-time aborts and an aborted step discards
- * the result anyway.
+ * several options first. Multi-question panel: Enter on the Confirm row hops
+ * to the review page (all answers listed, each editable in place). Esc
+ * double-press within 200 ms declines — but terminal key auto-repeat (holding
+ * Esc) is ignored below `ESC_REPEAT_GUARD_MS`, so a long press cannot
+ * accidentally fire the decline. The provider returns the "declined" envelope
+ * and the model reads it as a normal user reply. An aborted request signal
+ * (`request.signal`) settles declined too — we resolve the declined envelope
+ * instead of rejecting ASK_ABORTED because the upstream service already
+ * screens entry-time aborts and an aborted step discards the result anyway.
  *
  * Pure logic lives in the top of this file (initial state, answer envelope,
- * declined envelope, double-Esc state machine, row-layout math) so it can
- * be unit-tested without a TTY. The component below owns the TUI render +
+ * declined envelope, double-Esc state machine, row-layout math) so it can be
+ * unit-tested without a TTY. The component below owns the TUI render +
  * keyboard handling; the install function at the bottom registers the
  * provider under `ctx.userQuestions` (a Cordis effect, single active
  * provider in the tree).
@@ -56,12 +66,19 @@
  * (https://github.com/juicesharp/rpiv-ask-user-question).
  */
 
-import { getKeybindings, matchesKey, type Component, type OverlayHandle, type TUI } from '@earendil-works/pi-tui'
+import { getKeybindings, matchesKey, type Component, type TUI } from '@earendil-works/pi-tui'
 import type { AskUserQuestionAnswer, AskUserQuestionAnswerItem, AskUserQuestionItem, AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
 import type { Context } from '@deepseek-ai/cordis'
 import {
+  borderedRow,
+  panelBottomBorder,
+  panelBoxWidth,
+  panelTopBorder,
+} from './activity.ts'
+import {
   BOLD,
   RESET,
+  ansiFg,
   type TuiTheme,
 } from './theme/index.ts'
 import {
@@ -75,7 +92,6 @@ import {
   tableRuleLine,
   type TableColumn,
 } from './panels.ts'
-import { wrapFramedOverlay } from './frame.ts'
 import { clipToWidth, wrapText } from './text.ts'
 
 // ----------------------------------------------------------------- constants --
@@ -106,56 +122,38 @@ const CUSTOM_MARK = '✎ '
 /**
  * Fallback visible body-line cap for the questions/review panes, used only
  * when the terminal row count is unknown (fake TUIs in tests, exotic
- * terminals). Derived for a 24-row terminal (the e2e matrix floor): 80%
- * maxHeight = 19 framed lines − 2 frame borders = 17 content lines, and
- * title(1) + table chrome(3) + 9 body lines + bottom rule + blank + footer
- * = 16, leaving one line of headroom for a hint. The live path derives the
- * window from the real terminal height via `askUserMaxVisibleForRows`.
+ * terminals). Matches the 24-row dock budget: 24 − 8 reserved (editor 3 +
+ * footer 1 + status 1 + transcript floor 3) − 10 panel chrome lines = 6.
+ * The live path derives the window from the real terminal height via
+ * `askUserMaxVisibleForRows`.
  */
-export const ASK_USER_MAX_VISIBLE = 9
+export const ASK_USER_MAX_VISIBLE = 6
 
 /**
- * Framed-line overhead around the scroll-window body: 2 frame borders +
- * title(1) + table chrome rules/header(3) + bottom rule(1) + blank(1) +
- * footer(1) = 9 fixed lines, plus 1 line of headroom for a transient hint.
+ * Panel-line overhead inside the dock box: 2 box borders + title(1) + table
+ * chrome rules/header(3) + bottom rule(1) + blank(1) + footer(1) = 9 fixed
+ * lines, plus 1 line of headroom for a transient hint.
  */
 const ASK_USER_VIEW_OVERHEAD = 10
 
 /**
- * Mirror of pi-tui's overlay size resolution (`parseSizeValue`, tui.js):
- * numbers pass through floored, `"N%"` floors to N% of the terminal height,
- * anything else is unusable → undefined (caller falls back).
+ * Dock rows the ask panel never claims: the editor (3 — border + input +
+ * border), the footer (1), the status slot (1) and a transcript floor (3) so
+ * the conversation never collapses to nothing while the modal is up.
  */
-function overlayMaxHeightRows(
-  maxHeight: AskUserPanelDeps['maxHeight'],
-  termRows: number | undefined,
-): number | undefined {
-  if (typeof maxHeight === 'number') return Math.floor(maxHeight)
-  if (termRows === undefined || !Number.isFinite(termRows) || termRows <= 0) return undefined
-  if (typeof maxHeight === 'string') {
-    const match = maxHeight.match(/^(\d+(?:\.\d+)?)%$/)
-    if (match !== null) return Math.floor((termRows * parseFloat(match[1]!)) / 100)
-    return undefined
-  }
-  return Math.floor(termRows * 0.8)
-}
+const ASK_DOCK_RESERVED_ROWS = 8
 
 /**
- * Derive the scroll-window size from the terminal height so the window grows
- * with the terminal instead of pinning to the conservative 24-row budget:
- * pi-tui hard-clips the framed overlay at its resolved maxHeight, so body
- * lines beyond `budget − ASK_USER_VIEW_OVERHEAD` would be invisible anyway.
- * At the 24-row e2e floor this yields exactly ASK_USER_MAX_VISIBLE (9);
- * larger terminals scale up proportionally. Without a usable row count it
- * degrades to ASK_USER_MAX_VISIBLE.
+ * Derive the scroll-window size from the terminal height: the dock stacks
+ * (it does not float over the transcript like the old overlay did), so the
+ * panel budget is the terminal height minus the reserved dock rows, minus
+ * the panel's own chrome. At the 24-row e2e floor this yields exactly
+ * ASK_USER_MAX_VISIBLE (6); larger terminals scale up. Without a usable row
+ * count it degrades to ASK_USER_MAX_VISIBLE.
  */
-export function askUserMaxVisibleForRows(
-  termRows: number | undefined,
-  maxHeight: AskUserPanelDeps['maxHeight'] = '80%',
-): number {
-  const budget = overlayMaxHeightRows(maxHeight, termRows)
-  if (budget === undefined) return ASK_USER_MAX_VISIBLE
-  return Math.max(1, budget - ASK_USER_VIEW_OVERHEAD)
+export function askUserMaxVisibleForRows(termRows: number | undefined): number {
+  if (termRows === undefined || !Number.isFinite(termRows) || termRows <= 0) return ASK_USER_MAX_VISIBLE
+  return Math.max(1, Math.floor(termRows) - ASK_DOCK_RESERVED_ROWS - ASK_USER_VIEW_OVERHEAD)
 }
 
 // ------------------------------------------------------- pure types --
@@ -794,30 +792,40 @@ function formatAnswerForReview(answer: PendingAnswer | undefined): string {
 /** Options for assembling the panel + provider function. */
 export interface AskUserPanelDeps {
   tui: TUI
-  /** Live theme getter — re-read on every render so a mid-overlay hot-swap applies (frame included). */
+  /** Live theme getter — re-read on every render so a mid-panel hot-swap applies (borders included). */
   theme: () => TuiTheme
-  /** Re-focus the current editor on overlay close. */
+  /** Re-focus the current editor on panel close. */
   restoreFocus: () => void
+  /**
+   * Mount the panel component into the dock slot above the chat input (the
+   * Todos-panel slot); returns the unmount function. The panel is NOT an
+   * overlay — it renders pinned above the editor like the live widgets.
+   */
+  mount: (component: Component) => () => void
+  /**
+   * Declare the docked modal's keyboard ownership. While active, the app
+   * keymap treats the panel exactly like an open overlay (app keys and the
+   * Esc/Ctrl+C chains yield to the focused panel) and `refocusEditor` must
+   * not steal focus from it.
+   */
+  setModalActive: (active: boolean) => void
   /** Injectable clock for tests; defaults to Date.now. */
   now?: () => number
-  /** Width and height of the framed overlay. */
-  width?: `${number}%` | number
-  maxHeight?: `${number}%` | number
 }
 
 /** Result promise from `openAskUserPanel`. Declined carries the canonical decline envelope. */
 export type AskUserResult = AskUserQuestionAnswer
 
 /**
- * Open the AskUser overlay for one set of questions.
+ * Open the AskUser docked panel for one set of questions.
  *
  * `signal` is the caller's abort signal (the tool execution's). Already-aborted
- * settles declined WITHOUT staging an overlay; a live signal closes the
- * overlay and settles declined when it fires. We resolve the declined envelope
- * rather than rejecting with the upstream ASK_ABORTED code on purpose: the
- * upstream service already screens entry-time aborts, and a step aborted after
- * this point discards the tool result anyway — resolving keeps the pending
- * promise from ever hanging either way.
+ * settles declined WITHOUT mounting a panel; a live signal closes the panel
+ * and settles declined when it fires. We resolve the declined envelope rather
+ * than rejecting with the upstream ASK_ABORTED code on purpose: the upstream
+ * service already screens entry-time aborts, and a step aborted after this
+ * point discards the tool result anyway — resolving keeps the pending promise
+ * from ever hanging either way.
  */
 export function openAskUserPanel(
   deps: AskUserPanelDeps,
@@ -831,9 +839,16 @@ export function openAskUserPanel(
     const clock = deps.now ?? Date.now
     const state: AskUserState = initialState(questions)
     let settled = false
-    const onAbort = (): void => {
-      settle(buildDeclinedEnvelope(questions))
-      overlay.hide()
+
+    /**
+     * Terminal close: unmount the dock panel, clear the modal flag (BEFORE
+     * restoreFocus so refocusEditor's guard sees the modal gone), and hand
+     * the keyboard back. An overlay that was open when the panel mounted was
+     * dismissed then (see below), so focus lands on the current editor.
+     */
+    const close = (): void => {
+      unmount()
+      deps.setModalActive(false)
       deps.restoreFocus()
     }
     const settle = (envelope: AskUserQuestionAnswer): void => {
@@ -842,22 +857,35 @@ export function openAskUserPanel(
       signal?.removeEventListener('abort', onAbort)
       resolve(envelope)
     }
+    const onAbort = (): void => {
+      settle(buildDeclinedEnvelope(questions))
+      close()
+    }
 
     const panel: Component = {
       invalidate() { /* frames are re-rendered on demand */ },
       render(width: number): string[] {
         const theme = deps.theme()
-        // Terminal-height-adaptive scroll window: pi-tui exposes the live
-        // terminal through `TUI.terminal` (same seam skills-manager reads for
-        // its own overlay budget), so grow the window with real rows instead
-        // of pinning to the 24-row fallback. Fake TUIs without a `terminal`
+        // Terminal-height-adaptive scroll window: the dock stacks with the
+        // editor/footer/transcript, so the budget subtracts the reserved rows
+        // (see askUserMaxVisibleForRows). Fake TUIs without a `terminal`
         // degrade to ASK_USER_MAX_VISIBLE.
         const maxVisible = askUserMaxVisibleForRows(
-          deps.tui.terminal?.rows,
-          deps.maxHeight ?? '80%',
+          (deps.tui as { terminal?: { rows?: number } }).terminal?.rows,
         )
-        if (state.phase === 'review') return renderReviewView(theme, state, width, maxVisible)
-        return renderQuestionsView(theme, state, width, maxVisible)
+        // Todos-panel box language: full-width bordered panel pinned above
+        // the chat input. The inner views clip to the box's inner budget.
+        const boxWidth = panelBoxWidth(width)
+        const borderFg = ansiFg(theme.palette.borderDefault)
+        const innerWidth = Math.max(2, boxWidth - 4)
+        const inner = state.phase === 'review'
+          ? renderReviewView(theme, state, innerWidth, maxVisible)
+          : renderQuestionsView(theme, state, innerWidth, maxVisible)
+        return [
+          panelTopBorder(boxWidth, borderFg),
+          ...inner.map(line => borderedRow(boxWidth, borderFg, line)),
+          panelBottomBorder(boxWidth, borderFg),
+        ]
       },
       handleInput(data: string) {
         if (settled) return
@@ -883,33 +911,23 @@ export function openAskUserPanel(
           Object.assign(state, after)
           if (didDoubleEscFire(prevState, state, now)) {
             settle(buildDeclinedEnvelope(questions))
-            overlay.hide()
-            deps.restoreFocus()
+            close()
           }
           return
         }
       },
     }
 
-    // Stage the overlay through the standard FramedOverlay wrapper. The theme
-    // getter is passed through so the frame re-reads it per render too.
-    const overlay: OverlayHandle = deps.tui.showOverlay(
-      wrapFramedOverlay(deps.theme, panel),
-      { width: deps.width ?? '85%', maxHeight: deps.maxHeight ?? '80%' },
-    )
+    // Mount the docked panel and take the keyboard. A capturing overlay that
+    // is up when the question arrives (queue panel, route dialog) would keep
+    // floating OVER the dock with a dead keyboard — the ask panel is a hard
+    // modal that outranks it, so dismiss it first (hideOverlay restores its
+    // own focus chain; setFocus below takes over regardless).
+    const unmount = deps.mount(panel)
+    deps.tui.hideOverlay()
+    deps.tui.setFocus(panel)
+    deps.setModalActive(true)
     signal?.addEventListener('abort', onAbort, { once: true })
-
-    // When the overlay closes (without an explicit settle first), resolve the
-    // promise with the decline envelope — covers /reload, theme swap, agent
-    // abort, and any path that closes the overlay out from under us.
-    const originalHide = overlay.hide.bind(overlay)
-    overlay.hide = (): void => {
-      if (!settled) {
-        settle(buildDeclinedEnvelope(questions))
-        deps.restoreFocus()
-      }
-      originalHide()
-    }
 
     // Local mutator helpers — these write into the closed-over state via
     // Object.assign so the keyboard handler can use the immutable reducers.
@@ -966,8 +984,7 @@ export function openAskUserPanel(
           return
         }
         settle(buildAnswerEnvelope(s))
-        overlay.hide()
-        deps.restoreFocus()
+        close()
         return
       }
       // questions phase
@@ -984,8 +1001,7 @@ export function openAskUserPanel(
         // want more toggles, so it routes through the Confirm row instead.
         if (canAutoSubmit(next)) {
           settle(buildAnswerEnvelope(s))
-          overlay.hide()
-          deps.restoreFocus()
+          close()
         }
         return
       }
@@ -1050,8 +1066,7 @@ export function openAskUserPanel(
       if (s.perQuestion[qi]?.custom === undefined) return
       if (canAutoSubmit(s)) {
         settle(buildAnswerEnvelope(s))
-        overlay.hide()
-        deps.restoreFocus()
+        close()
         return
       }
       if (s.questions.length >= 2) {

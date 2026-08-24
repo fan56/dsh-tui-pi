@@ -98,6 +98,18 @@ export function isDcpCompactionNotice(event: SessionEvent): boolean {
 }
 
 /**
+ * Type guard for a plugin-sourced injection from THIS plugin — the maxRounds
+ * wrap-up or a Ctrl+G steer. The compact line and the viewer mark these with
+ * `⚡` so the user can SEE that the policy fired (and judge whether the child
+ * LLM obeyed it) instead of the injection landing invisibly.
+ */
+export function isTuiPluginInjection(event: SessionEvent): boolean {
+  if (event.type !== 'user/message') return false
+  const source = (event.data as { source?: { kind?: string; plugin?: string } }).source
+  return source?.kind === 'plugin' && source?.plugin === 'dsh-tui-pi'
+}
+
+/**
  * One live subagent row the TUI renders: the bridge's per-child fold of
  * workflow events (parent log) and the child's own session events. Children
  * are keyed by their session id — discovered either from
@@ -162,6 +174,14 @@ export interface AgentView {
   readonly lastTool?: string
   /** Context window from the child's `request/context`, for the % column. */
   readonly contextWindow?: number
+  /**
+   * Unix epoch ms of the first plugin injection this plugin delivered into
+   * the child (maxRounds wrap-up or Ctrl+G steer), when any. Set by the
+   * bridge's fold when the child's log shows a `dsh-tui-pi`-sourced
+   * user/message; surfaced as the `⚡` marker on the compact line, the picker
+   * row and the viewer header so a silently-ignored injection is visible.
+   */
+  readonly injectedAt?: number
   /**
    * Latest visible last line of the child's own CONTENT output (the tail the
    * compact activity row shows so the user knows it is alive). Maintained

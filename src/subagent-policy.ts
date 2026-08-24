@@ -23,14 +23,19 @@
  *   of this plugin never disables the native tool inside Web UI sessions.
  * - `maxRounds` caps a child's assistant messages (each LLM round-trip is
  *   one "round"): on the bridge's `onRoundCount` the policy injects one
- *   plugin-sourced user message telling the child to wrap up. Queued as the
- *   child's next turn, it never interrupts work already underway.
+ *   plugin-sourced user message telling the child to wrap up — via `steer()`
+ *   while the child runs (consumed at the next STEP boundary, the very next
+ *   LLM round-trip) or `followup()` when idle, mirroring the Ctrl+G steer
+ *   routing. The child's log shows the injection with a `⚡` marker on the
+ *   compact line and in the subagent viewer, so an ignored wrap-up is
+ *   visible, not silent.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { readSubagentLimits } from './theme-settings.ts'
+import type { SteerableAgent } from './subagent-viewer.ts'
 
 /**
  * Tool names the maxAgents guard intercepts: the native subagent tool, the
@@ -132,8 +137,18 @@ function isTuiSurfaceAgent(agent: unknown): boolean {
   }
 }
 
-/** Injected into a child that reached `maxRounds` — wrap up and report back. */
-export const SUMMARY_MESSAGE: string = '总结和结束这个任务，汇报情况。'
+/**
+ * The wrap-up message injected into a child that reached `maxRounds`.
+ * English and directive on purpose: it is a policy instruction to the child
+ * LLM, and a soft "please summarize" (the earlier one-line Chinese request)
+ * was routinely ignored while the child kept calling tools. It names the
+ * limit, forbids further tool calls, and demands a final-answer summary.
+ */
+export function wrapupMessage(maxRounds: number): string {
+  return `Round limit reached (${maxRounds} LLM round-trips, set by the dsh-tui maxRounds policy). `
+    + 'Do NOT call any more tools. Finish this task NOW: summarize what you have accomplished so far, '
+    + 'state clearly what remains undone, and return that summary as your final answer.'
+}
 
 /** The `subagent/start` payload's shape — the declaring package is not installed. */
 interface SubagentStartInfo {
@@ -256,9 +271,17 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
    * it for a pointless wrap-up round (continuable children that resume later
    * get their chance on the next counted round). Repeated injections are
    * impossible by construction (the `injected` set is only written once per
-   * child, and only after a successful followup) — including the wrap-up's
+   * child, and only after a successful send) — including the wrap-up's
    * OWN assistant message, which pushes the count past `maxRounds` and must
    * not re-trigger.
+   *
+   * Delivery is ROUTED by the child's live status (the same split the Ctrl+G
+   * steer flow uses): a RUNNING child takes `steer()` — consumed at the next
+   * STEP boundary, i.e. the very next LLM round-trip — while `followup()`
+   * would queue a whole next TURN and the child could burn many more rounds
+   * inside the current turn before seeing the wrap-up (the original bug: the
+   * cap visibly never bit). An idle-but-unsettled child takes `followup()`
+   * (its own ordinary turn).
    */
   function onRoundCount(childId: string, count: number): void {
     if (injected.has(childId)) return
@@ -266,17 +289,17 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
     if (maxRounds <= 0) return
     if (count < maxRounds) return
     if (state.isSettled(childId)) return
-    const agent = ctx.agents.get(SessionId(childId))
+    const agent = ctx.agents.get(SessionId(childId)) as SteerableAgent | undefined
     if (agent === undefined) return
     // Defer out of the caller's append publication window. onRoundCount runs
-    // synchronously inside a child `session/event` observer; a followup here
-    // splices the child's inbox, whose durable append reenters the append
+    // synchronously inside a child `session/event` observer; a steer/followup
+    // here splices the child's inbox, whose durable append reenters the append
     // that is being published right now and throws ("session append cannot
     // reenter...") — an error the contained observer dispatch swallows, so
-    // the wrap-up would be lost. Do NOT switch to steer/inject instead: they
-    // ride the same inbox splice → session.append path and hit the same
-    // guard. A microtask runs once the stack unwinds, after the window's
-    // finally block resets the flag.
+    // the wrap-up would be lost. Do NOT switch to inject instead: it rides
+    // the same inbox splice → session.append path and hits the same guard. A
+    // microtask runs once the stack unwinds, after the window's finally block
+    // resets the flag.
     queueMicrotask(() => {
       if (disposed || injected.has(childId)) return
       // Re-check liveness at flush time: the child may have settled while
@@ -284,10 +307,12 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
       // down — never inject into a stale handle.
       if (ctx.agents.get(SessionId(childId)) !== agent || state.isSettled(childId)) return
       try {
-        agent.followup(createUserMessage({
-          content: [{ type: 'text', text: SUMMARY_MESSAGE }],
+        const message = createUserMessage({
+          content: [{ type: 'text', text: wrapupMessage(maxRounds) }],
           source: { kind: 'plugin', plugin: 'dsh-tui-pi' },
-        }))
+        })
+        if (agent.status === 'running') agent.steer(message)
+        else agent.followup(message)
       } catch {
         // Leave `injected` unset: a failed attempt stays eligible, so the
         // next counted round retries instead of the cap being silently

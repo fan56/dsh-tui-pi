@@ -747,3 +747,53 @@ test('a turn/start with retryCleared as the SOLE change still drops the stale re
   assert.equal(view.maxRetries, undefined, 'stale maxRetries dropped on turn/start')
   await bridge.dispose()
 })
+
+test('a dsh-tui-pi injection into a child marks the view (the ⚡ visibility contract)', async () => {
+  // The maxRounds wrap-up and Ctrl+G steers land as plugin-sourced user
+  // messages in the child's log. The view records injectedAt so the compact
+  // line, the picker and the viewer can show the injection actually fired —
+  // an ignored wrap-up must be visible, not silent.
+  const { ctx, handlers } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onRoundCount: () => {}, onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+  emit(handlers, childSession, {
+    type: 'subagent/descriptor', seq: 0, time: 2,
+    data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
+  })
+
+  emit(handlers, childSession, {
+    type: 'user/message', seq: 4, time: 42,
+    data: {
+      content: [{ type: 'text', text: 'Round limit reached (3 LLM round-trips)' }],
+      source: { kind: 'plugin', plugin: 'dsh-tui-pi' },
+    },
+  })
+  let view = bridge.getAgentViews().find(v => v.childId === 'child-1')
+  assert.equal(view.injectedAt, 42, 'the first injection stamps the view')
+
+  // A second injection (a steer) does not move the first stamp.
+  emit(handlers, childSession, {
+    type: 'user/message', seq: 5, time: 50,
+    data: {
+      content: [{ type: 'text', text: 'focus on the parser' }],
+      source: { kind: 'plugin', plugin: 'dsh-tui-pi' },
+    },
+  })
+  view = bridge.getAgentViews().find(v => v.childId === 'child-1')
+  assert.equal(view.injectedAt, 42, 'the stamp stays at the first injection')
+
+  // Foreign plugin messages do not stamp.
+  emit(handlers, childSession, {
+    type: 'user/message', seq: 6, time: 60,
+    data: {
+      content: [{ type: 'text', text: 'dcp: compacted 40 history items' }],
+      source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice' },
+    },
+  })
+  view = bridge.getAgentViews().find(v => v.childId === 'child-1')
+  assert.equal(view.injectedAt, 42, 'a dsh-dcp notice is not a dsh-tui-pi injection')
+  await bridge.dispose()
+})

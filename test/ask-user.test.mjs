@@ -627,19 +627,29 @@ test('renderReviewView: capped window keeps the review cursor and submit row rea
 
 // --------------------------------------------- interaction layer (fake TUI) --
 
-/** Fake TUI harness: captures the framed overlay component and its hide handle. */
+/** Fake TUI harness: captures the DOCK-MOUNTED panel component and its unmount. */
 function makeHarness(clockTimes = []) {
-  const calls = { overlays: [], hides: 0, restoreFocus: 0 }
+  const calls = { overlays: [], hides: 0, restoreFocus: 0, modal: [], focus: [], hideOverlayCalls: 0 }
   const deps = {
     tui: {
-      showOverlay(component) {
-        const handle = { component, hide() { calls.hides += 1 } }
-        calls.overlays.push(handle)
-        return handle
-      },
+      hideOverlay() { calls.hideOverlayCalls += 1 },
+      setFocus(component) { calls.focus.push(component) },
     },
     theme: () => ({ palette: githubLight }),
     restoreFocus: () => { calls.restoreFocus += 1 },
+    mount(component) {
+      const handle = {
+        component,
+        hide() {
+          calls.hides += 1
+          const index = calls.overlays.indexOf(handle)
+          if (index >= 0) calls.overlays.splice(index, 1)
+        },
+      }
+      calls.overlays.push(handle)
+      return () => handle.hide()
+    },
+    setModalActive(active) { calls.modal.push(active) },
     now: () => clockTimes.shift() ?? 0,
   }
   return { deps, calls }
@@ -844,7 +854,7 @@ test('openAskUserPanel: digit presses are a no-op in the review phase', async ()
   assert.equal(tracked.resolved, false, 'no accidental submit or phase flip')
 })
 
-test('openAskUserPanel: double-Esc decline fires; external overlay.hide afterwards is idempotent', async () => {
+test('openAskUserPanel: double-Esc decline fires; a late extra unmount afterwards is idempotent', async () => {
   const { deps, calls } = makeHarness([1000, 1050])
   const result = openAskUserPanel(deps, baseQuestions())
   const tracked = trackResolution(result)
@@ -907,9 +917,10 @@ test('registerAskUserProvider: happy path registers, forwards ask(), and passes 
   const { deps, calls } = makeHarness()
   const disposer = registerAskUserProvider(ctx, deps)
   assert.equal(typeof registered.ask, 'function')
-  const result = registered.ask({ questions: singleQuestion(), signal: undefined })
+  const controller = new AbortController()
+  const result = registered.ask({ questions: singleQuestion(), signal: controller.signal })
   const tracked = trackResolution(result)
-  calls.overlays[0].hide() // external close → declined envelope
+  controller.abort() // abort → close → declined envelope
   await result
   assert.deepEqual(tracked.value, buildDeclinedEnvelope(singleQuestion()))
   disposer()
@@ -965,25 +976,19 @@ test('isDuplicateProviderError: matches only UserQuestionError with code DUPLICA
 
 // ------------------------------------- terminal-height-adaptive scroll window --
 
-test('askUserMaxVisibleForRows: 24-row terminal keeps the 9-line budget; larger terminals scale up', () => {
-  // floor(24 * 0.8) = 19 budget − 10 overhead = 9 — identical to the old
-  // conservative constant, so the e2e matrix floor is unchanged.
-  assert.equal(askUserMaxVisibleForRows(24), 9)
-  assert.equal(askUserMaxVisibleForRows(40), 22, 'floor(40*0.8)=32 − 10 overhead')
-  assert.equal(askUserMaxVisibleForRows(100), 70, 'big terminals grow proportionally')
+test('askUserMaxVisibleForRows: the dock budget subtracts editor/footer/transcript from the terminal', () => {
+  // Dock stacking: 24 rows − 8 reserved (editor 3 + footer 1 + status 1 +
+  // transcript floor 3) − 10 panel chrome = 6 — the 24-row e2e floor.
+  assert.equal(askUserMaxVisibleForRows(24), 6)
+  assert.equal(askUserMaxVisibleForRows(40), 22, '40 − 18 = 22')
+  assert.equal(askUserMaxVisibleForRows(100), 82, 'big terminals grow proportionally')
 })
 
 test('askUserMaxVisibleForRows: unknown terminal height falls back to ASK_USER_MAX_VISIBLE', () => {
-  assert.equal(askUserMaxVisibleForRows(undefined), 9)
-  assert.equal(askUserMaxVisibleForRows(Number.NaN), 9)
-  assert.equal(askUserMaxVisibleForRows(0), 9)
-  assert.equal(askUserMaxVisibleForRows(-5), 9)
-})
-
-test('askUserMaxVisibleForRows: honors an explicit maxHeight override (number or percentage)', () => {
-  assert.equal(askUserMaxVisibleForRows(24, 30), 20, 'absolute row budget passes through floored')
-  assert.equal(askUserMaxVisibleForRows(24, '50%'), 2, 'floor(24*0.5)=12 − 10 overhead')
-  assert.equal(askUserMaxVisibleForRows(undefined, 30), 20, 'numeric budgets do not need terminal rows')
+  assert.equal(askUserMaxVisibleForRows(undefined), 6)
+  assert.equal(askUserMaxVisibleForRows(Number.NaN), 6)
+  assert.equal(askUserMaxVisibleForRows(0), 6)
+  assert.equal(askUserMaxVisibleForRows(-5), 6)
 })
 
 test('renderQuestionsView: a larger maxVisible reveals body lines the default window clips', () => {
@@ -1007,15 +1012,18 @@ test('openAskUserPanel: the panel derives its window from deps.tui.terminal.rows
   const calls = { overlays: [] }
   const deps = {
     tui: {
-      terminal: { rows: 60 }, // budget floor(48) − 10 = 38 ≥ the 11-line body
-      showOverlay(component) {
-        const handle = { component, hide() {} }
-        calls.overlays.push(handle)
-        return handle
-      },
+      terminal: { rows: 60 }, // 60 − 18 = 42 ≥ the 11-line body
+      hideOverlay() {},
+      setFocus() {},
     },
     theme: () => ({ palette: githubLight }),
     restoreFocus: () => {},
+    mount(component) {
+      const handle = { component, hide() {} }
+      calls.overlays.push(handle)
+      return () => {}
+    },
+    setModalActive() {},
   }
   openAskUserPanel(deps, many)
   const lines = calls.overlays[0].component.render(80).map(stripAnsi)
@@ -1113,4 +1121,37 @@ test('renderQuestionsView: a long option description word-wraps instead of being
   for (const word of longDescription.split(' ')) {
     assert.ok(rejoined.includes(word), `wrapped description keeps the word "${word}"`)
   }
+})
+
+// ------------------------------------------------------- docked-panel contract --
+
+test('openAskUserPanel: mounts into the dock, takes focus, declares the modal; close unmounts and clears it', async () => {
+  const { deps, calls } = makeHarness()
+  const result = openAskUserPanel(deps, singleQuestion())
+  const tracked = trackResolution(result)
+  assert.equal(calls.overlays.length, 1, 'panel mounted into the dock slot')
+  assert.equal(calls.modal[0], true, 'modal keyboard ownership declared on open')
+  assert.equal(calls.focus.length, 1, 'focus moved to the panel')
+  assert.equal(calls.focus[0], calls.overlays[0].component, 'the mounted component holds focus')
+  assert.equal(calls.hideOverlayCalls, 1, 'any capturing overlay beneath is dismissed on open')
+
+  const panel = calls.overlays[0].component
+  panel.handleInput('\x1b[B') // down → an option row
+  panel.handleInput('\r') // Enter → auto-submit
+  await result
+  assert.equal(tracked.resolved, true)
+  assert.deepEqual(calls.modal, [true, false], 'modal flag cleared on close (before restoreFocus)')
+  assert.equal(calls.overlays.length, 0, 'panel unmounted from the dock')
+  assert.equal(calls.restoreFocus, 1, 'focus offered back to the editor')
+})
+
+test('openAskUserPanel: the docked panel renders in the Todos-panel box language', () => {
+  const { deps, calls } = makeHarness()
+  openAskUserPanel(deps, baseQuestions())
+  const lines = calls.overlays[0].component.render(80)
+  assert.ok(lines[0].includes('┌') && lines[0].includes('┐'), 'top box border')
+  assert.ok(lines[lines.length - 1].includes('└') && lines[lines.length - 1].includes('┘'), 'bottom box border')
+  assert.ok(lines.some(l => l.includes('│')), 'side borders on body rows')
+  const stripped = lines.map(l => stripAnsi(l))
+  assert.ok(stripped.some(l => l.includes('Questions (2)')), 'title row inside the box')
 })
