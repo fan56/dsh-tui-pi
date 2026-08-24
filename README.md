@@ -390,7 +390,7 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (654 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (677 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -425,7 +425,7 @@ src/
   ask-user.ts         Ask User Question overlay: pure state reducers +
                       framed overlay UI + ctx.userQuestions provider
   theme/              GitHub light/dark palettes + terminal detection
-test/*.test.mjs       unit tests (654 across 40 files)
+test/*.test.mjs       unit tests (677 across 40 files)
 ```
 
 ---

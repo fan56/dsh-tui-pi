@@ -15,10 +15,12 @@ import assert from 'node:assert/strict'
 import {
   advanceDoubleEsc,
   allQuestionsAnswered,
+  askUserMaxVisibleForRows,
   buildAnswerEnvelope,
   buildDeclinedEnvelope,
   buildRowList,
   canAutoSubmit,
+  clampScrollWindow,
   DECLINE_MESSAGE,
   didDoubleEscFire,
   DOUBLE_ESC_WINDOW_MS,
@@ -36,11 +38,14 @@ import {
   registerAskUserProvider,
   renderQuestionsView,
   renderReviewView,
+  rowIndexForNumber,
+  rowNumber,
   setCustomAnswer,
   SENTINEL_LABEL,
   toggleOption,
 } from '../lib/ask-user.js'
 import { githubLight } from '../lib/theme/palette.js'
+import { visibleWidth } from '../lib/text.js'
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
 
 const theme = { palette: githubLight }
@@ -59,7 +64,11 @@ const singleQuestion = () => [
 test('initialState: cursor on first option, defaults to the questions phase', () => {
   const state = initialState(baseQuestions())
   assert.equal(state.phase, 'questions')
-  assert.equal(state.cursorIndex, 0)
+  // Snapped onto the first SELECTABLE row (index 0 is the unselectable header),
+  // so the ▸ marker is visible before any keypress.
+  assert.equal(state.cursorIndex, 1)
+  const rows = buildRowList(baseQuestions(), state.perQuestion)
+  assert.equal(rows[state.cursorIndex]?.selectable, true)
   assert.deepEqual(state.perQuestion, [{ selected: [] }, { selected: [] }])
   assert.equal(state.customEditingFor, null)
   assert.equal(state.cancelHint, false)
@@ -287,7 +296,9 @@ test('allQuestionsAnswered: a custom answer satisfies the question', () => {
 
 test('renderQuestionsView: title + table + scroll info + footer', () => {
   const state = initialState(baseQuestions())
-  const lines = renderQuestionsView(theme, state, 60)
+  // Wide window (20 body lines) — every row fits; the capped-window behavior
+  // has its own dedicated tests below.
+  const lines = renderQuestionsView(theme, state, 60, 20)
   // Title + 3 booktabs rows + 2 headers + 4 option rows + 2 sentinel + 1 confirm = 9 body lines
   // + possible status line + footer.
   const title = stripAnsi(lines[0])
@@ -449,6 +460,110 @@ test('renderQuestionsView / renderReviewView surface the transient attention hin
   assert.ok(renderReviewView(theme, rState, 60).some(l => stripAnsi(l).includes(INCOMPLETE_HINT)))
 })
 
+// --------------------------------------------- scroll window + numbering --
+
+test('clampScrollWindow: keeps the cursor inside the window and slides minimally', () => {
+  assert.equal(clampScrollWindow(0, 5, 20, 0), 0)
+  assert.equal(clampScrollWindow(4, 5, 20, 0), 0, 'cursor on the bottom edge stays')
+  assert.equal(clampScrollWindow(5, 5, 20, 0), 1, 'cursor past the bottom edge slides the window by one')
+  assert.equal(clampScrollWindow(3, 5, 20, 4), 3, 'cursor above the top edge jumps the window to it')
+  assert.equal(clampScrollWindow(2, 5, 4, 0), 0, 'no overflow → offset pinned to 0')
+  assert.equal(clampScrollWindow(9, 5, 0, 0), 0, 'empty body pins to 0')
+})
+
+test('rowNumber / rowIndexForNumber: per-question numbering with sentinel continuation', () => {
+  const qs = baseQuestions()
+  const rows = buildRowList(qs, initialState(qs).perQuestion)
+  // rows: 0 header Q0 · 1 apple · 2 banana · 3 sentinel Q0 · 4 header Q1
+  //       5 car · 6 bike · 7 sentinel Q1 · 8 confirm
+  assert.equal(rowNumber(rows, 0), null, 'header rows are unnumbered')
+  assert.equal(rowNumber(rows, 1), 1)
+  assert.equal(rowNumber(rows, 2), 2)
+  assert.equal(rowNumber(rows, 3), 3, 'sentinel continues after its question\'s options')
+  assert.equal(rowNumber(rows, 5), 1, 'numbering restarts per question')
+  assert.equal(rowNumber(rows, 8), null, 'confirm keeps its fixed ⏎ symbol instead of a number')
+  assert.equal(rowIndexForNumber(rows, 0, 3), 3, 'digit 3 targets the sentinel')
+  assert.equal(rowIndexForNumber(rows, 0, 4), -1, 'out-of-range digits map to nothing')
+  assert.equal(rowIndexForNumber(rows, 1, 2), 6, 'targets stay inside their question')
+})
+
+test('renderQuestionsView: numbered prefixes + ▸ cursor marker on selectable rows', () => {
+  const lines = renderQuestionsView(theme, initialState(singleQuestion()), 50, 20).map(stripAnsi)
+  const cursor = lines.find(l => l.includes('▸'))
+  assert.ok(cursor !== undefined && cursor.startsWith('▸ 1. yes'), `selected row numbered under the marker, got: ${cursor}`)
+  assert.ok(lines.some(l => l.startsWith('  2. no')), 'unselected rows keep a blank marker slot before their number')
+  assert.ok(lines.some(l => l.includes('3. Type something.')), 'sentinel participates in per-question numbering')
+})
+
+test('renderQuestionsView: a muted ─ divider separates each question from its options', () => {
+  const lines = renderQuestionsView(theme, initialState(baseQuestions()), 60, 20).map(stripAnsi)
+  assert.ok(lines.filter(l => /^─+$/.test(l)).length >= 2, 'one divider per question block')
+  const headerIdx = lines.findIndex(l => l.includes('Fruit'))
+  const dividerIdx = lines.findIndex(l => /^─+$/.test(l))
+  const optionIdx = lines.findIndex(l => l.includes('apple'))
+  assert.ok(headerIdx !== -1 && headerIdx < dividerIdx && dividerIdx < optionIdx, 'divider sits between header and options')
+})
+
+test('renderQuestionsView: option description renders as its own line below the label', () => {
+  const lines = renderQuestionsView(theme, initialState(baseQuestions()), 60, 20).map(stripAnsi)
+  const appleIdx = lines.findIndex(l => l.includes('1. apple'))
+  assert.ok(appleIdx >= 0)
+  assert.ok(!lines[appleIdx].includes('red and round'), 'description no longer concatenated into the label cell')
+  assert.ok(lines[appleIdx + 1]?.includes('red and round'), 'description gets its own indented muted line')
+})
+
+test('renderQuestionsView: labels fold newlines into spaces (single rendered line)', () => {
+  const qs = [{ id: 'q1', question: 'Pick', header: 'H', options: [{ label: 'two\nlines' }] }]
+  const lines = renderQuestionsView(theme, initialState(qs), 60, 20).map(stripAnsi)
+  assert.equal(lines.filter(l => l.includes('two')).length, 1, 'no second rendered row from an embedded newline')
+  assert.ok(lines.some(l => l.includes('1. two lines')), 'newline folded to a space inside one cell')
+})
+
+test('renderQuestionsView: height-capped window clips the body but keeps the cursor visible', () => {
+  const state = initialState(baseQuestions()) // 13 rendered body lines at width 60
+  const lines = renderQuestionsView(theme, state, 60, 5).map(stripAnsi)
+  assert.ok(lines.some(l => l.includes('▸ 1. apple')), 'the cursor row is always inside the window')
+  assert.equal(lines.some(l => l.includes('Confirm answers')), false, 'tail content beyond the window is clipped')
+  // title + 3 table chrome rules + 5 body + bottom rule + blank + footer.
+  assert.ok(lines.length <= 12, `output bounded by the window, got ${lines.length} lines`)
+  assert.match(lines[lines.length - 1], /\(1\/7\)/, 'footer gains the (n/m) readout over selectable rows while overflowing')
+})
+
+test('renderQuestionsView: no overflow → footer carries no (n/m) readout', () => {
+  const lines = renderQuestionsView(theme, initialState(singleQuestion()), 60, 20).map(stripAnsi)
+  const footer = lines.find(l => l.includes('navigate'))
+  assert.ok(footer !== undefined, 'sanity: footer line present')
+  assert.doesNotMatch(footer, /\(\d+\/\d+\)/, 'the position readout only appears while the body overflows')
+})
+
+test('renderQuestionsView: scrolling follows the cursor and survives wrap-around', () => {
+  const qs = [
+    { id: 'q1', question: 'Q1', header: 'A', options: [{ label: 'a1' }, { label: 'a2' }, { label: 'a3' }] },
+    { id: 'q2', question: 'Q2', header: 'B', options: [{ label: 'b1' }, { label: 'b2' }, { label: 'b3' }] },
+    { id: 'q3', question: 'Q3', header: 'C', options: [{ label: 'c1' }, { label: 'c2' }, { label: 'c3' }] },
+  ]
+  let state = initialState(qs) // 13 selectable rows (12 numbered + confirm), 19 body lines
+  const stepDown = () => {
+    state = { ...state, cursorIndex: nextSelectableIndex(buildRowList(state.questions, state.perQuestion), state.cursorIndex, 1) }
+  }
+  for (let i = 0; i < 12; i++) stepDown() // first selectable → last selectable (confirm)
+  let lines = renderQuestionsView(theme, state, 60, 6).map(stripAnsi)
+  assert.ok(lines.some(l => l.includes('▸') && l.includes('Confirm answers')), 'window follows the cursor to the tail')
+  assert.equal(lines.some(l => l.includes('A  Q1')), false, 'head content scrolled out of the window')
+  stepDown() // wrap past the last row back to the first option
+  lines = renderQuestionsView(theme, state, 60, 6).map(stripAnsi)
+  assert.ok(lines.some(l => l.includes('▸ 1. a1')), 'wrap-around lands back on a visible head row')
+})
+
+test('renderReviewView: capped window keeps the review cursor and submit row reachable', () => {
+  const qs = baseQuestions()
+  // reviewIndex 1 = the second question's row; 2 body rows fit a 2-line window.
+  const state = { ...toggleOption(toggleOption(initialState(qs), 0, 'apple'), 1, 'car'), phase: 'review', reviewIndex: 1 }
+  const lines = renderReviewView(theme, state, 60, 2).map(stripAnsi)
+  assert.ok(lines.some(l => l.includes('▸') && l.includes('Vehicle')), 'reviewed cursor row inside the window')
+  assert.match(lines[lines.length - 1], /\(2\/3\)/, 'review footer shows the position readout when overflowing')
+})
+
 // --------------------------------------------- interaction layer (fake TUI) --
 
 /** Fake TUI harness: captures the framed overlay component and its hide handle. */
@@ -561,7 +676,7 @@ test('openAskUserPanel: committing a sentinel edit in a multi-question layout ho
   const tracked = trackResolution(result)
   const handle = calls.overlays[0]
   const input = handle.component.handleInput.bind(handle.component)
-  pressUntilNth(handle, SENTINEL_LABEL, 2) // Q0's sentinel (the ↓ cycle reaches Q1's first)
+  pressUntilNth(handle, SENTINEL_LABEL, 1) // Q0's sentinel (navigation steps one row at a time)
   input('\r') // inline edit
   for (const ch of 'fruit') input(ch)
   input('\r') // commit → cursor hops to the next unanswered question (Q1 option-0)
@@ -576,6 +691,96 @@ test('openAskUserPanel: committing a sentinel edit in a multi-question layout ho
     { id: 'q1', selected: [], custom: 'fruit' },
     { id: 'q2', selected: ['car'] },
   ])
+})
+
+test('openAskUserPanel: digit quick-pick selects the numbered option directly', async () => {
+  const { deps, calls } = makeHarness()
+  const result = openAskUserPanel(deps, singleQuestion())
+  const tracked = trackResolution(result)
+  calls.overlays[0].component.handleInput('2') // pick option 2 ('no') without arrows
+  await result
+  assert.equal(tracked.resolved, true)
+  assert.deepEqual(tracked.value.answers, [{ id: 'q1', selected: ['no'] }])
+  assert.equal(calls.restoreFocus, 1)
+})
+
+test('openAskUserPanel: ↑↓ while editing exits the editor (committing) and then navigates', () => {
+  const { deps, calls } = makeHarness()
+  openAskUserPanel(deps, baseQuestions())
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntilNth(handle, SENTINEL_LABEL, 1) // Q0 sentinel
+  input('\r') // inline edit
+  input('h'); input('i')
+  input('\x1b[B') // ↓ must NOT be swallowed: exit edit (commit 'hi'), then move
+  assert.ok(cursorLine(handle).includes('car'), 'cursor moved off the sentinel')
+  const lines = handle.component.render(80).map(stripAnsi)
+  assert.ok(lines.some(l => l.includes('✎ hi')), 'buffer committed on arrow-exit')
+  assert.ok(!lines.some(l => l.includes('_')), 'no editing cursor left behind')
+})
+
+test('openAskUserPanel: down-navigation wraps and the window follows with scroll info', () => {
+  const qs = [
+    { id: 'q1', question: 'Q1', header: 'A', options: [{ label: 'a1' }, { label: 'a2' }, { label: 'a3' }] },
+    { id: 'q2', question: 'Q2', header: 'B', options: [{ label: 'b1' }, { label: 'b2' }, { label: 'b3' }] },
+    { id: 'q3', question: 'Q3', header: 'C', options: [{ label: 'c1' }, { label: 'c2' }, { label: 'c3' }] },
+  ]
+  const { deps, calls } = makeHarness()
+  openAskUserPanel(deps, qs)
+  const handle = calls.overlays[0]
+  pressUntil(handle, 'Confirm answers') // walk to the last selectable row
+  const tailLines = handle.component.render(80).map(stripAnsi)
+  assert.ok(tailLines.some(l => l.includes('▸') && l.includes('Confirm answers')))
+  handle.component.handleInput('\x1b[B') // wrap past the end
+  assert.ok(cursorLine(handle)?.includes('a1'), 'wrapped cursor lands back on a visible head row')
+  // The framed overlay wraps the panel, so the footer is found by content,
+  // not position.
+  const footer = handle.component.render(80).map(stripAnsi).find(l => l.includes('navigate'))
+  assert.match(footer ?? '', /\(1\/13\)/, '(n/m) readout counts selectable rows only (12 numbered + confirm; headers excluded)')
+})
+
+test('openAskUserPanel: digit jump onto an out-of-window sentinel keeps the edit line visible (M1)', async () => {
+  // 8 options → body = header text + divider + 8 options + sentinel = 11 lines,
+  // over the default 9-line window; the sentinel starts below the fold.
+  const many = [{
+    id: 'q1', question: 'Pick one', header: 'Big',
+    options: Array.from({ length: 8 }, (_, i) => ({ label: `opt${i + 1}` })),
+  }]
+  const { deps, calls } = makeHarness()
+  openAskUserPanel(deps, many)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  assert.equal(
+    handle.component.render(80).map(stripAnsi).some(l => l.includes('_')),
+    false,
+    'sanity: no inline-edit line before the jump',
+  )
+  input('9') // quick-pick the sentinel (numbered N+1 = 9 after the 8 options)
+  const lines = handle.component.render(80).map(stripAnsi)
+  assert.ok(lines.some(l => l.includes('_')), 'the inline-edit line is rendered inside the window')
+  // Footer readout agrees with the viewport: the edited sentinel is the 9th
+  // selectable row of 9 (headers never counted).
+  const footer = lines.find(l => l.includes('abandon edit'))
+  assert.ok(footer !== undefined, 'editing footer present')
+  assert.match(footer, /\(9\/9\)/, 'readout ranks the edited sentinel among global selectable rows')
+})
+
+test('openAskUserPanel: digit presses are a no-op in the review phase', async () => {
+  const { deps, calls } = makeHarness()
+  const result = openAskUserPanel(deps, baseQuestions())
+  const tracked = trackResolution(result)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  input('1') // quick-pick Q0 option 1 (apple)
+  pressUntil(handle, 'car') // walk into Q1
+  input('1') // quick-pick Q1 option 1 (car)
+  pressUntil(handle, 'Confirm answers')
+  input('\r') // → review phase
+  const before = handle.component.render(80).map(stripAnsi)
+  assert.ok(before.some(l => l.includes('Review answers')), 'sanity: reached the review page')
+  input('2') // digit while reviewing must do nothing
+  assert.deepEqual(handle.component.render(80).map(stripAnsi), before, 'review view unchanged by a digit press')
+  assert.equal(tracked.resolved, false, 'no accidental submit or phase flip')
 })
 
 test('openAskUserPanel: double-Esc decline fires; external overlay.hide afterwards is idempotent', async () => {
@@ -695,4 +900,105 @@ test('isDuplicateProviderError: matches only UserQuestionError with code DUPLICA
   assert.equal(isDuplicateProviderError(new TypeError('boom')), false)
   assert.equal(isDuplicateProviderError('DUPLICATE_PROVIDER'), false)
   assert.equal(isDuplicateProviderError(undefined), false)
+})
+
+// ------------------------------------- terminal-height-adaptive scroll window --
+
+test('askUserMaxVisibleForRows: 24-row terminal keeps the 9-line budget; larger terminals scale up', () => {
+  // floor(24 * 0.8) = 19 budget − 10 overhead = 9 — identical to the old
+  // conservative constant, so the e2e matrix floor is unchanged.
+  assert.equal(askUserMaxVisibleForRows(24), 9)
+  assert.equal(askUserMaxVisibleForRows(40), 22, 'floor(40*0.8)=32 − 10 overhead')
+  assert.equal(askUserMaxVisibleForRows(100), 70, 'big terminals grow proportionally')
+})
+
+test('askUserMaxVisibleForRows: unknown terminal height falls back to ASK_USER_MAX_VISIBLE', () => {
+  assert.equal(askUserMaxVisibleForRows(undefined), 9)
+  assert.equal(askUserMaxVisibleForRows(Number.NaN), 9)
+  assert.equal(askUserMaxVisibleForRows(0), 9)
+  assert.equal(askUserMaxVisibleForRows(-5), 9)
+})
+
+test('askUserMaxVisibleForRows: honors an explicit maxHeight override (number or percentage)', () => {
+  assert.equal(askUserMaxVisibleForRows(24, 30), 20, 'absolute row budget passes through floored')
+  assert.equal(askUserMaxVisibleForRows(24, '50%'), 2, 'floor(24*0.5)=12 − 10 overhead')
+  assert.equal(askUserMaxVisibleForRows(undefined, 30), 20, 'numeric budgets do not need terminal rows')
+})
+
+test('renderQuestionsView: a larger maxVisible reveals body lines the default window clips', () => {
+  const many = [{
+    id: 'q1', question: 'Pick one', header: 'Big',
+    options: Array.from({ length: 8 }, (_, i) => ({ label: `opt${i + 1}` })),
+  }]
+  const state = initialState(many)
+  const capped = renderQuestionsView(theme, state, 80).map(stripAnsi) // default 9-line window
+  const grown = renderQuestionsView(theme, state, 80, 20).map(stripAnsi)
+  assert.equal(capped.some(l => l.includes('Type something.')), false, 'default window clips the tail sentinel')
+  assert.equal(grown.some(l => l.includes('Type something.')), true, 'larger window shows the tail sentinel')
+  assert.ok(grown.length > capped.length, `grown output has more lines (${grown.length} > ${capped.length})`)
+})
+
+test('openAskUserPanel: the panel derives its window from deps.tui.terminal.rows', () => {
+  const many = [{
+    id: 'q1', question: 'Pick one', header: 'Big',
+    options: Array.from({ length: 8 }, (_, i) => ({ label: `opt${i + 1}` })),
+  }]
+  const calls = { overlays: [] }
+  const deps = {
+    tui: {
+      terminal: { rows: 60 }, // budget floor(48) − 10 = 38 ≥ the 11-line body
+      showOverlay(component) {
+        const handle = { component, hide() {} }
+        calls.overlays.push(handle)
+        return handle
+      },
+    },
+    theme: () => ({ palette: githubLight }),
+    restoreFocus: () => {},
+  }
+  openAskUserPanel(deps, many)
+  const lines = calls.overlays[0].component.render(80).map(stripAnsi)
+  assert.equal(
+    lines.some(l => l.includes('Type something.')),
+    true,
+    'a tall terminal shows the whole body with no scrolling (old constant would clip it)',
+  )
+})
+
+// ------------------------------------------------- review answer-cell folding --
+
+test('renderReviewView: an answer containing \\n is folded — no bare newline breaks a row', () => {
+  const qs = [{ id: 'q1', question: 'Pick', header: 'H', options: [{ label: 'two\nlines' }, { label: 'other' }] }]
+  const state = toggleOption(initialState(qs), 0, 'two\nlines')
+  const width = 60
+  const lines = renderReviewView(theme, state, width).map(stripAnsi)
+  assert.ok(lines.every(l => !l.includes('\n')), 'no rendered line carries a raw newline')
+  assert.ok(lines.some(l => l.includes('two lines')), 'newline folded to a space inside the answer cell')
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= width, `line width ${visibleWidth(line)} stays within ${width}`)
+  }
+})
+
+test('renderReviewView: a multi-line custom answer folds too', () => {
+  const qs = [{ id: 'q1', question: 'Why?', header: 'H', options: [{ label: 'a' }] }]
+  const state = setCustomAnswer(initialState(qs), 0, 'line one\nline two')
+  const lines = renderReviewView(theme, state, 60).map(stripAnsi)
+  assert.ok(lines.every(l => !l.includes('\n')))
+  assert.ok(lines.some(l => l.includes('✎ line one line two')), 'custom text folded onto one cell line')
+})
+
+// --------------------------------------------------- header bold + clip order --
+
+test('renderQuestionsView: long header text is clipped BEFORE BOLD and fills the wrap exactly', () => {
+  const longQuestion = 'x'.repeat(200)
+  const qs = [{ id: 'q1', question: longQuestion, header: 'Fruit', options: [{ label: 'apple' }] }]
+  const width = 40
+  const wrap = width - 2
+  const lines = renderQuestionsView(theme, initialState(qs), width)
+  const headerLine = lines.find(l => stripAnsi(l).includes('Fruit') && stripAnsi(l).includes('xxx'))
+  assert.ok(headerLine !== undefined, 'header row rendered')
+  assert.ok(headerLine.includes('\x1b[1m'), 'header keeps its BOLD span after truncation')
+  const plain = stripAnsi(headerLine)
+  assert.equal(visibleWidth(plain), wrap, `clipped plain text fills the wrap (${wrap}) exactly`)
+  assert.ok(!plain.includes('\x1b['), 'no SGR fragment leaks into the visible text')
 })

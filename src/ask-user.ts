@@ -7,16 +7,27 @@
  * `AskUserQuestionAnswer` envelope back to `dsh-tool-ask-user` as a normal
  * tool result.
  *
- * Layout — one framed overlay, all questions flattened:
+ * Layout — one framed overlay, all questions flattened (numbered rows, a
+ * divider between each question block and its options, and a scroll window
+ * so the cursor row is always visible even when the overlay is height-capped):
  *
- *   ● Question 1
- *     Where should we deploy?   (left = header / right = question text)
- *     ▸ staging
- *       production
- *       Type something.          (sentinel row — inline input)
- *     Question 2 ···            (continues vertically)
- *     ▸ …
- *     ⏎ Confirm answers        (when ≥ 2 questions, or any multiSelect question)
+ *   ● Questions (2)
+ *     Fruit  Where should we deploy?      (header — not selectable)
+ *     ─────────────────────────────        (divider)
+ *     ▸ 1. staging                        (cursor marker + per-question number)
+ *       2. production
+ *          red and round                  (option description, own muted line)
+ *       3. Type something.                (sentinel row — inline input)
+ *     Vehicle  Pick a vehicle ···         (continues vertically)
+ *     ⏎ Confirm answers                   (when ≥ 2 questions, or any multiSelect)
+ *
+ * The body renders through a scroll window sized from the live terminal
+ * height (`askUserMaxVisibleForRows`; falls back to `ASK_USER_MAX_VISIBLE`
+ * when the terminal row count is unknown):
+ * pi-tui hard-clips overlay tails at `maxHeight`, so without an inner window
+ * the last options fall off-screen while the cursor can still reach them
+ * ("unselectable" bug). The window slides with the cursor and the footer
+ * gains a `(n/m)` position readout while content overflows.
  *
  * Single-question single-select overlay: Enter on an option (or committing a
  * filled sentinel) submits immediately. A multiSelect question — even a lone
@@ -90,6 +101,61 @@ export const INCOMPLETE_HINT = 'Answer every question first'
 /** Mark left of a question a custom input wrote text into. */
 const CUSTOM_MARK = '✎ '
 
+/**
+ * Fallback visible body-line cap for the questions/review panes, used only
+ * when the terminal row count is unknown (fake TUIs in tests, exotic
+ * terminals). Derived for a 24-row terminal (the e2e matrix floor): 80%
+ * maxHeight = 19 framed lines − 2 frame borders = 17 content lines, and
+ * title(1) + table chrome(3) + 9 body lines + bottom rule + blank + footer
+ * = 16, leaving one line of headroom for a hint. The live path derives the
+ * window from the real terminal height via `askUserMaxVisibleForRows`.
+ */
+export const ASK_USER_MAX_VISIBLE = 9
+
+/**
+ * Framed-line overhead around the scroll-window body: 2 frame borders +
+ * title(1) + table chrome rules/header(3) + bottom rule(1) + blank(1) +
+ * footer(1) = 9 fixed lines, plus 1 line of headroom for a transient hint.
+ */
+const ASK_USER_VIEW_OVERHEAD = 10
+
+/**
+ * Mirror of pi-tui's overlay size resolution (`parseSizeValue`, tui.js):
+ * numbers pass through floored, `"N%"` floors to N% of the terminal height,
+ * anything else is unusable → undefined (caller falls back).
+ */
+function overlayMaxHeightRows(
+  maxHeight: AskUserPanelDeps['maxHeight'],
+  termRows: number | undefined,
+): number | undefined {
+  if (typeof maxHeight === 'number') return Math.floor(maxHeight)
+  if (termRows === undefined || !Number.isFinite(termRows) || termRows <= 0) return undefined
+  if (typeof maxHeight === 'string') {
+    const match = maxHeight.match(/^(\d+(?:\.\d+)?)%$/)
+    if (match !== null) return Math.floor((termRows * parseFloat(match[1]!)) / 100)
+    return undefined
+  }
+  return Math.floor(termRows * 0.8)
+}
+
+/**
+ * Derive the scroll-window size from the terminal height so the window grows
+ * with the terminal instead of pinning to the conservative 24-row budget:
+ * pi-tui hard-clips the framed overlay at its resolved maxHeight, so body
+ * lines beyond `budget − ASK_USER_VIEW_OVERHEAD` would be invisible anyway.
+ * At the 24-row e2e floor this yields exactly ASK_USER_MAX_VISIBLE (9);
+ * larger terminals scale up proportionally. Without a usable row count it
+ * degrades to ASK_USER_MAX_VISIBLE.
+ */
+export function askUserMaxVisibleForRows(
+  termRows: number | undefined,
+  maxHeight: AskUserPanelDeps['maxHeight'] = '80%',
+): number {
+  const budget = overlayMaxHeightRows(maxHeight, termRows)
+  if (budget === undefined) return ASK_USER_MAX_VISIBLE
+  return Math.max(1, budget - ASK_USER_VIEW_OVERHEAD)
+}
+
 // ------------------------------------------------------- pure types --
 
 /** A row in the multi-question view. */
@@ -113,7 +179,14 @@ export interface PendingAnswer {
   custom?: string
 }
 
-/** Whole-state of one AskUser overlay. All setters are pure reducers. */
+/**
+ * Whole-state of one AskUser overlay. All setters are pure reducers — with
+ * ONE deliberate exception: the render pass writes the clamped scroll offset
+ * back into `questionsScroll`/`reviewScroll` (see `clampScrollWindow`). The
+ * clamp depends on the rendered body height, which only exists at render
+ * time; persisting it here makes navigation slide smoothly instead of
+ * snapping, and direct render calls simply start from offset 0.
+ */
 export interface AskUserState {
   questions: readonly AskUserQuestionItem[]
   /** Per-question pending answer. */
@@ -134,16 +207,24 @@ export interface AskUserState {
   cancelHint: boolean
   /** Transient "you can't do that yet" hint (e.g. Enter on an incomplete confirm row). Cleared by any navigation. */
   attentionHint: string | null
+  /** Questions-pane scroll offset in rendered body lines (clamped by the render pass, see `clampScrollWindow`). */
+  questionsScroll: number
+  /** Review-pane scroll offset in rendered rows (same mechanism). */
+  reviewScroll: number
 }
 
 // ---------------------------------------- pure functions (testable) --
 
 /** Initial state for a `questions` payload — defaults: cursor on Q0/option-0, no edit, no Esc history. */
 export function initialState(questions: readonly AskUserQuestionItem[]): AskUserState {
+  // Snap the starting cursor onto the first SELECTABLE row: index 0 is the
+  // question header (unselectable), and a cursor parked there would render
+  // no ▸ marker at all and ignore Enter/digits.
+  const rows = buildRowList(questions, questions.map(() => ({ selected: [] })))
   return {
     questions,
     perQuestion: questions.map(() => ({ selected: [] })),
-    cursorIndex: 0,
+    cursorIndex: nextSelectableIndex(rows, 0, 1),
     customInputs: questions.map(() => null),
     customEditingFor: null,
     phase: 'questions',
@@ -151,6 +232,8 @@ export function initialState(questions: readonly AskUserQuestionItem[]): AskUser
     lastEscAt: null,
     cancelHint: false,
     attentionHint: null,
+    questionsScroll: 0,
+    reviewScroll: 0,
   }
 }
 
@@ -198,7 +281,14 @@ export function enterCustomEdit(state: AskUserState, questionIndex: number): Ask
   return { ...state, customEditingFor: questionIndex, customInputs, cancelHint: false }
 }
 
-/** Leave inline-edit mode; commit when `commit === true` and the buffer is non-empty. */
+/**
+ * Leave inline-edit mode; commit when `commit === true` and the buffer is
+ * non-empty. Intentionally NEVER triggers auto-submit on its own: submission
+ * decisions live exclusively with the callers (`commitCustomAnswer` after an
+ * Enter commit, plain navigation after the ↑↓ arrow-exit path), so exiting
+ * the editor — especially via arrow keys mid-multi-question flow — can never
+ * settle the overlay as a side effect.
+ */
 export function exitCustomEdit(state: AskUserState, commit: boolean): AskUserState {
   if (state.customEditingFor === null) return state
   const qi = state.customEditingFor
@@ -321,6 +411,62 @@ export function allQuestionsAnswered(state: AskUserState): boolean {
 }
 
 /**
+ * Fold newlines (and the whitespace around them) into single spaces so a
+ * label can never break a table row into two rendered lines. Width clipping
+ * still happens later via `clipToWidth`.
+ */
+export function foldText(text: string): string {
+  return text.replace(/\s*[\r\n]+\s*/g, ' ')
+}
+
+/**
+ * The scroll offset that keeps `cursor` inside `[offset, offset + visibleRows)`
+ * for a body of `length` rendered lines — same contract as skills.ts's
+ * `clampScrollOffset`, kept local so ask-user scrolling is self-contained.
+ * Pure; an empty body or non-positive window pins to 0.
+ */
+export function clampScrollWindow(cursor: number, visibleRows: number, length: number, currentOffset: number): number {
+  if (length <= 0 || visibleRows <= 0) return 0
+  if (cursor < currentOffset) return cursor
+  if (cursor >= currentOffset + visibleRows) return cursor - visibleRows + 1
+  return currentOffset
+}
+
+/**
+ * 1-based per-question number of the selectable row at `index`: options count
+ * `1..N` inside their question and the sentinel continues after them (`N+1`).
+ * Header rows and the confirm pseudo-row are unnumbered (null). Pure so both
+ * the renderer and tests share one numbering vocabulary.
+ */
+export function rowNumber(rows: readonly FlatRow[], index: number): number | null {
+  const row = rows[index]
+  if (row === undefined || !row.selectable || row.kind === 'confirm') return null
+  let n = 0
+  for (let i = 0; i <= index; i++) {
+    const r = rows[i]
+    if (r !== undefined && r.selectable && r.kind !== 'confirm' && r.questionIndex === row.questionIndex) n++
+  }
+  return n
+}
+
+/**
+ * Inverse of `rowNumber` for the digit quick-pick: the index of the `n`-th
+ * numbered row belonging to question `qi`, or -1 when out of range. Rows are
+ * scanned in display order, so options come before the question's sentinel.
+ */
+export function rowIndexForNumber(rows: readonly FlatRow[], qi: number, n: number): number {
+  if (!Number.isInteger(n) || n < 1) return -1
+  let seen = 0
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row === undefined || !row.selectable || row.kind === 'confirm' || row.questionIndex !== qi) continue
+    seen++
+    if (seen === n) return i
+  }
+  return -1
+}
+
+/**
  * Whether the overlay needs an explicit `⏎ Confirm answers` row: any
  * multi-question layout, plus a lone multiSelect question — multiSelect can
  * never auto-submit (the user may want more toggles), so it needs a path to
@@ -391,8 +537,13 @@ function rowStatusText(kind: FlatRow['kind'], state: AskUserState, row: FlatRow,
   return ''
 }
 
-/** Render the questions pane as a flat table line list. */
-export function renderQuestionsView(theme: TuiTheme, state: AskUserState, width: number): string[] {
+/** Render the questions pane as a flat table line list behind a scroll window. */
+export function renderQuestionsView(
+  theme: TuiTheme,
+  state: AskUserState,
+  width: number,
+  maxVisible: number = ASK_USER_MAX_VISIBLE,
+): string[] {
   const fns = panelThemeFns(theme)
   const wrap = Math.max(2, width - 2)
   const title = state.questions.length === 1
@@ -408,9 +559,26 @@ export function renderQuestionsView(theme: TuiTheme, state: AskUserState, width:
   const columns = QUESTIONS_COLUMNS()
   const widths = columnWidths(wrap - MARKER_W, columns)
 
+  // Global position among SELECTABLE rows (headers are never counted), so the
+  // questions pane and the review page share one (n/m) vocabulary and neither
+  // clashes with the per-question numbering printed on the rows themselves.
+  let selectableTotal = 0
+  let cursorRank = 0
+  rows.forEach((row, i) => {
+    if (!row.selectable) return
+    selectableTotal += 1
+    if (i <= state.cursorIndex) cursorRank = selectableTotal
+  })
+
   lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
   lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), wrap)))
   lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┼'), wrap)))
+
+  // Body lines are collected first because the scroll window slices rendered
+  // LINES: option descriptions and header details make line count ≠ row count.
+  const visible = Math.max(1, maxVisible)
+  const body: string[] = []
+  let cursorLine = -1
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
@@ -418,15 +586,20 @@ export function renderQuestionsView(theme: TuiTheme, state: AskUserState, width:
 
     if (row.kind === 'question-header') {
       // Header rows: full-width title, skip the table columns.
-      const text = `${row.label}  ${row.description ?? ''}`
-      const padded = clipToWidth(BOLD + text + RESET, wrap)
-      lines.push(fns.accent(padded))
+      const text = `${foldText(row.label)}  ${foldText(row.description ?? '')}`
+      // Clip the plain text FIRST, then wrap it in BOLD — clipToWidth counts
+      // SGR fragments as visible columns, so clipping an already-styled
+      // string can truncate mid-escape and leak raw ANSI.
+      const padded = BOLD + clipToWidth(text, wrap) + RESET
+      body.push(fns.accent(padded))
       // Upstream `detail` is supporting context (mandatory when the question
       // declares an intent) — render it muted below the header, never inside
       // option labels.
       if (row.detail !== undefined && row.detail !== '') {
-        lines.push(fns.muted(clipToWidth(row.detail, wrap)))
+        body.push(fns.muted(clipToWidth(foldText(row.detail), wrap)))
       }
+      // Visual divider between a question's text and its option list.
+      body.push(fns.muted(clipToWidth('─'.repeat(wrap), wrap)))
       continue
     }
 
@@ -434,39 +607,70 @@ export function renderQuestionsView(theme: TuiTheme, state: AskUserState, width:
       ? state.questions[row.questionIndex]?.multiSelect === true
       : false
     const selected = i === state.cursorIndex && state.customEditingFor === null
-    let displayLabel = row.label
-    if (row.kind === 'option') {
-      const opt = state.questions[row.questionIndex]?.options?.[row.optionIndex ?? -1]
-      if (opt?.description !== undefined && opt.description !== '') {
-        displayLabel = `${opt.label}  ${opt.description}`
-      }
-    }
+    // The actively edited sentinel anchors the scroll window even though the
+    // ▸ marker leaves it while editing (selected requires customEditingFor
+    // === null). Without this, a digit quick-pick straight onto an
+    // out-of-window sentinel opened the editor with cursorLine still -1, the
+    // window froze on the previous offset and the edit line was invisible.
+    const editingAnchor = !selected && row.kind === 'sentinel'
+      && state.customEditingFor === row.questionIndex
+    let displayLabel = foldText(row.label)
     if (row.kind === 'sentinel' && state.customEditingFor === row.questionIndex) {
       displayLabel = `${state.customInputs[row.questionIndex] ?? ''}_`
     }
+    // Per-question numbering on every numbered row: options 1..N, sentinel N+1;
+    // the confirm pseudo-row keeps its fixed ⏎ symbol instead.
+    const number = rowNumber(rows, i)
+    const prefix = number !== null ? `${number}. ` : ''
     const status = rowStatusText(row.kind, state, row, isMulti)
-    const labelCell = padCell(clipToWidth(displayLabel, widths[0]), widths[0])
+    const labelCell = padCell(clipToWidth(prefix + displayLabel, widths[0]), widths[0])
     const statusCell = padCell(clipToWidth(status, widths[1]), widths[1])
     const plain = `${rowMarker(selected)}${labelCell}${TABLE_SEP}${statusCell}`
     const line = clipToWidth(plain, wrap)
-    if (selected) {
-      lines.push(fns.accent(BOLD + line + RESET))
+    if (selected || editingAnchor) {
+      cursorLine = body.length
+      body.push(fns.accent(BOLD + line + RESET))
     } else if (row.kind === 'option'
       && (state.perQuestion[row.questionIndex]?.selected.includes(
         state.questions[row.questionIndex]?.options?.[row.optionIndex ?? -1]?.label ?? '',
       ) ?? false)) {
-      lines.push(fns.success(line))
+      body.push(fns.success(line))
     } else if (row.kind === 'sentinel'
       && (state.perQuestion[row.questionIndex]?.custom !== undefined
         && state.perQuestion[row.questionIndex]?.custom !== '')) {
-      lines.push(fns.success(line))
+      body.push(fns.success(line))
     } else {
-      lines.push(fns.muted(line))
+      body.push(fns.muted(line))
+    }
+    // Option descriptions get their own muted line under the label (two-line
+    // header/detail pattern) — no more concatenation + hard clipping.
+    if (row.kind === 'option') {
+      const description = state.questions[row.questionIndex]?.options?.[row.optionIndex ?? -1]?.description
+      if (description !== undefined && description !== '') {
+        const indent = MARKER_W + `${number}. `.length
+        body.push(fns.muted(clipToWidth(`${' '.repeat(indent)}${foldText(description)}`, wrap)))
+      }
     }
   }
 
+  // Scroll window (skills-manager scrollToCursor pattern): clamp the persisted
+  // offset so the cursor line always sits inside the visible slice. Written
+  // back into the panel-owned state so navigation slides smoothly instead of
+  // snapping; direct render calls simply start from offset 0.
+  const prevOffset = Math.max(0, state.questionsScroll)
+  const offset = clampScrollWindow(cursorLine < 0 ? prevOffset : cursorLine, visible, body.length, prevOffset)
+  state.questionsScroll = offset
+  lines.push(...body.slice(offset, offset + visible))
+  const overflow = body.length > visible
+
   lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), wrap)))
-  return finalizeQuestionsView(fns, wrap, lines, state)
+  return finalizeQuestionsView(
+    fns,
+    wrap,
+    lines,
+    state,
+    overflow ? ` (${cursorRank}/${selectableTotal})` : '',
+  )
 }
 
 function finalizeQuestionsView(
@@ -474,6 +678,7 @@ function finalizeQuestionsView(
   wrap: number,
   lines: string[],
   state: AskUserState,
+  scrollInfo = '',
 ): string[] {
   if (state.attentionHint !== null) {
     lines.push(fns.attention(clipToWidth(state.attentionHint, wrap)))
@@ -483,16 +688,23 @@ function finalizeQuestionsView(
   }
   lines.push('')
   const footer = state.customEditingFor !== null
-    ? 'Type free text · Enter keep · Esc abandon edit'
-    : `↑↓ navigate · Enter ${needsConfirmRow(state.questions) ? 'toggle / confirm' : 'select'} · Esc decline`
-  lines.push(fns.subtle(clipToWidth(footer, wrap)))
+    ? 'Type free text · Enter keep · ↑↓ move · Esc abandon edit'
+    : `↑↓ navigate · Enter ${needsConfirmRow(state.questions) ? 'toggle / confirm' : 'select'} · 1-9 pick · Esc decline`
+  // The (n/m) readout goes FIRST so narrow terminals clip the hint, never
+  // the scroll info.
+  lines.push(fns.subtle(clipToWidth(scrollInfo + footer, wrap)))
   return lines
 }
 
 // -------------------------------------------------- render: review phase --
 
-/** Render the review page for multi-question overlays. */
-export function renderReviewView(theme: TuiTheme, state: AskUserState, width: number): string[] {
+/** Render the review page for multi-question overlays (scroll-windowed). */
+export function renderReviewView(
+  theme: TuiTheme,
+  state: AskUserState,
+  width: number,
+  maxVisible: number = ASK_USER_MAX_VISIBLE,
+): string[] {
   const fns = panelThemeFns(theme)
   const wrap = Math.max(2, width - 2)
   const lines: string[] = [fns.accent(BOLD + clipToWidth('● Review answers', wrap) + RESET)]
@@ -509,16 +721,19 @@ export function renderReviewView(theme: TuiTheme, state: AskUserState, width: nu
   lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
   lines.push(fns.subtle(clipToWidth(tableHeaderLine(columns, widths), wrap)))
   lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┼'), wrap)))
+  // Review rows render one line each, so the window slices rows directly.
+  const visible = Math.max(1, maxVisible)
+  const body: string[] = []
   state.questions.forEach((question, qi) => {
     const answer = state.perQuestion[qi]
-    const left = `${question.header ?? `Q${qi + 1}`}  ${question.question}`
+    const left = `${question.header ?? `Q${qi + 1}`}  ${foldText(question.question)}`
     const right = formatAnswerForReview(answer)
     const selected = qi === state.reviewIndex
     const leftCell = padCell(clipToWidth(left, widths[0]), widths[0])
     const rightCell = padCell(clipToWidth(right, widths[1]), widths[1])
     const plain = `${rowMarker(selected)}${leftCell}${TABLE_SEP}${rightCell}`
     const line = clipToWidth(plain, wrap)
-    lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
+    body.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
   })
   // Submit row (review pane).
   {
@@ -527,22 +742,30 @@ export function renderReviewView(theme: TuiTheme, state: AskUserState, width: nu
     const rightCell = padCell(clipToWidth(allQuestionsAnswered(state) ? '✓ ready' : '— incomplete', widths[1]), widths[1])
     const plain = `${rowMarker(selected)}${leftCell}${TABLE_SEP}${rightCell}`
     const line = clipToWidth(plain, wrap)
-    lines.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
+    body.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
   }
+  const prevOffset = Math.max(0, state.reviewScroll)
+  const offset = clampScrollWindow(state.reviewIndex, visible, body.length, prevOffset)
+  state.reviewScroll = offset
+  lines.push(...body.slice(offset, offset + visible))
   lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), wrap)))
   if (state.attentionHint !== null) {
     lines.push(fns.attention(clipToWidth(state.attentionHint, wrap)))
   }
   lines.push('')
-  lines.push(fns.subtle(clipToWidth('↑↓ select · Enter return to edit / submit', wrap)))
+  const footer = '↑↓ select · Enter return to edit / submit'
+  const scrollInfo = body.length > visible ? ` (${state.reviewIndex + 1}/${body.length})` : ''
+  lines.push(fns.subtle(clipToWidth(scrollInfo + footer, wrap)))
   return lines
 }
 
 function formatAnswerForReview(answer: PendingAnswer | undefined): string {
   if (answer === undefined) return ''
-  if (answer.custom !== undefined && answer.custom !== '') return `${CUSTOM_MARK}${answer.custom}`
+  // Fold newlines exactly like the questions pane (foldText): an answer cell
+  // renders as ONE table row, and a bare \n inside it would split the row.
+  if (answer.custom !== undefined && answer.custom !== '') return foldText(`${CUSTOM_MARK}${answer.custom}`)
   if (answer.selected.length === 0) return '(no answer)'
-  return answer.selected.join(', ')
+  return foldText(answer.selected.join(', '))
 }
 
 // ------------------------------------------------------------ panel --
@@ -603,8 +826,17 @@ export function openAskUserPanel(
       invalidate() { /* frames are re-rendered on demand */ },
       render(width: number): string[] {
         const theme = deps.theme()
-        if (state.phase === 'review') return renderReviewView(theme, state, width)
-        return renderQuestionsView(theme, state, width)
+        // Terminal-height-adaptive scroll window: pi-tui exposes the live
+        // terminal through `TUI.terminal` (same seam skills-manager reads for
+        // its own overlay budget), so grow the window with real rows instead
+        // of pinning to the 24-row fallback. Fake TUIs without a `terminal`
+        // degrade to ASK_USER_MAX_VISIBLE.
+        const maxVisible = askUserMaxVisibleForRows(
+          deps.tui.terminal?.rows,
+          deps.maxHeight ?? '80%',
+        )
+        if (state.phase === 'review') return renderReviewView(theme, state, width, maxVisible)
+        return renderQuestionsView(theme, state, width, maxVisible)
       },
       handleInput(data: string) {
         if (settled) return
@@ -616,6 +848,13 @@ export function openAskUserPanel(
         if (kb.matches(data, 'tui.select.up')) { moveCursor(state, -1); return }
         if (kb.matches(data, 'tui.select.down')) { moveCursor(state, 1); return }
         if (kb.matches(data, 'tui.select.confirm')) { handleConfirm(state); return }
+        // Digit quick-pick: jump the cursor to the numbered row and activate
+        // it (same path as Enter — toggles an option / opens the sentinel
+        // edit). Only outside inline editing; digits feed the buffer there.
+        if (data.length === 1 && data >= '1' && data <= '9') {
+          handleDigitSelect(state, Number(data))
+          return
+        }
         if (kb.matches(data, 'tui.select.cancel')) {
           const now = clock()
           const prevState: AskUserState = { ...state }
@@ -661,8 +900,31 @@ export function openAskUserPanel(
         return
       }
       const rows = buildRowList(s.questions, s.perQuestion)
-      const next = nextSelectableIndex(rows, s.cursorIndex + direction, direction)
+      // nextSelectableIndex scans from `from + direction`, so it must receive
+      // the raw cursor — passing cursor+direction double-stepped every press
+      // (masked for years by the initial cursor parking on the header row).
+      const next = nextSelectableIndex(rows, s.cursorIndex, direction)
       Object.assign(s, { cursorIndex: next, cancelHint: false, attentionHint: null })
+    }
+
+    /**
+     * Digit quick-pick: move the cursor onto the `digit`-th numbered row of
+     * the question the cursor currently sits in, then run the normal confirm
+     * path (toggle / open sentinel edit). Out-of-range digits and presses on
+     * the confirm row are ignored — there is no question to target.
+     */
+    function handleDigitSelect(s: AskUserState, digit: number): void {
+      // Digits only mean quick-pick while the questions pane is up; in the
+      // review phase they must be a no-op instead of relying on incidental
+      // cursor invariants.
+      if (s.phase !== 'questions') return
+      const rows = buildRowList(s.questions, s.perQuestion)
+      const anchor = rows[s.cursorIndex]
+      if (anchor === undefined || anchor.kind === 'confirm' || anchor.questionIndex < 0) return
+      const target = rowIndexForNumber(rows, anchor.questionIndex, digit)
+      if (target < 0) return
+      s.cursorIndex = target
+      handleConfirm(s)
     }
 
     function handleConfirm(s: AskUserState): void {
@@ -732,6 +994,13 @@ export function openAskUserPanel(
       }
       if (kb.matches(data, 'tui.select.cancel')) {
         Object.assign(s, exitCustomEdit(s, false))
+        return
+      }
+      // ↑↓ never get swallowed by the edit: leave the editor first (committing
+      // a non-empty buffer — the "Enter keep" semantics), then navigate.
+      if (kb.matches(data, 'tui.select.up') || kb.matches(data, 'tui.select.down')) {
+        Object.assign(s, exitCustomEdit(s, true))
+        moveCursor(s, kb.matches(data, 'tui.select.up') ? -1 : 1)
         return
       }
       if (data === '\x7f' || matchesKey(data, 'backspace')) {

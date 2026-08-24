@@ -4,6 +4,74 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-08-24
+
+### Added
+
+- **Ask-user scrolling window** (`src/ask-user.ts` + `test/ask-user.test.mjs`).
+  pi-tui overlays are hard-clipped at `maxHeight` (`tui.js` `slice(0, maxHeight)`),
+  so on short terminals or with many questions the tail options were off-screen
+  while the cursor could still reach them — the "unselectable" bug. The body
+  now renders through a scroll window that follows the cursor:
+  `clampScrollWindow` (new pure function, semantics aligned with
+  `skills.ts clampScrollOffset`) slides the offset so the cursor row is
+  always visible. The window size adapts to the live terminal: new pure
+  helper `askUserMaxVisibleForRows(termRows, maxHeight)` parses the overlay
+  `maxHeight` budget like pi-tui's `parseSizeValue` then subtracts the
+  fixed chrome (`ASK_USER_VIEW_OVERHEAD = 10` for the two borders, title,
+  table chrome, footer rule, blank line, footer, and a hint of slack),
+  matching `skills-manager.maxVisibleRows()`. A 24-row terminal resolves to
+  9 (the prior constant), larger terminals scale up, unknown row counts
+  fall back to `ASK_USER_MAX_VISIBLE`. While content overflows the
+  footer gains a `(n/m)` position readout so the user can see the total
+  option count at a glance.
+- **Per-question numbered options with cursor marker** (`rowNumber` /
+  `rowIndexForNumber` shared vocabulary). Every selectable row now renders
+  `▸ 1. staging` / `  2. production`, with the sentinel row continuing the
+  numbering and the confirm row keeping its fixed `⏎` glyph. `1`-`9` now
+  jump straight to that row within the current question and follow the
+  same confirm path as Enter — toggle a multi-select option, open the
+  sentinel for editing, or auto-submit on a single-select. Out-of-range
+  digits and digits on the confirm row are ignored; the footer hint
+  gains `· 1-9 pick`. The numbering vocabulary is the same for the
+  rendered prefix and the key-to-row reverse lookup, so the two stay in
+  sync by construction.
+- **Question / choice visual separation**. Each question header (and its
+  optional detail) is now followed by a muted `─` divider line that
+  visually fences the option block from the header above and the next
+  question below. Headers stay `selectable: false`; the divider is its
+  own content line that participates in the scroll window. Option
+  descriptions are rendered on a separate muted, indented line aligned to
+  the label's first column — labels no longer hard-truncate against their
+  description via concat-clip, and `foldText` folds any embedded `\n`
+  into a single space before `clipToWidth`.
+
+### Fixed
+
+- **Unreachable options on short / wide overlays**: see Added — the scroll
+  window eliminates the "cursor reaches a row that isn't visible" case.
+  The footer `(n/m)` now reflects what the user actually sees (cursor row
+  out of total selectable rows, headers excluded) — same metric the
+  review page uses, so the two views agree.
+- **Navigation off-by-one**: `moveCursor` used to pass `cursorIndex + direction`
+  to `nextSelectableIndex`, but the latter already scans from
+  `from + direction`, so each arrow press skipped two rows. The bug had
+  been masked for years by the initial cursor landing on the unselectable
+  header row (index 0), where the first `↓` happens to land on index 2.
+  The reducer now passes the raw cursor index, and `initialState` snaps
+  the cursor to the first selectable row so the `▸` marker and Enter /
+  digit targets are real from the start.
+- **Digit select into a windowed sentinel**: the in-progress edit row
+  now participates in `clampScrollWindow` anchoring (`editingAnchor`,
+  accent bold) instead of relying on the `selected` flag — so jumping to
+  a sentinel that's just outside the window opens the editor with the
+  row actually visible and the footer readout in sync.
+- **Header render order**: the bolded header line previously wrapped
+  `clipToWidth(BOLD + text + RESET)`, which violates the iron rule
+  "clip plain text before applying ANSI". It now clips the plain text
+  first and then wraps the surviving segment in `BOLD`/`RESET`. A
+  repo-wide scan found no other offenders.
+
 ## [0.18.1] - 2026-08-24
 
 ### Fixed
