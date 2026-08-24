@@ -907,13 +907,17 @@ export type PanelSize = number | `${number}%`
  * Overlay lifecycle for one interactive flow: swap overlays (show the next
  * before hiding the previous — no focus flash), tear down cleanly on a
  * showOverlay failure, and hand the keyboard back through `onError` when a
- * half-mounted overlay must not strand it.
+ * half-mounted overlay must not strand it. A panel holding resources (e.g.
+ * the queue panel's live-refresh interval) declares `dispose()`; the host
+ * calls it on EVERY teardown path — close, replace and error — so nothing
+ * leaks behind an overlay that went away (review S4).
  */
 export class PanelHost {
   private readonly tui: TUI
   private readonly theme: TuiTheme
   private readonly onError: ((message: string) => void) | undefined
   private current: OverlayHandle | undefined
+  private currentComponent: Component | undefined
 
   constructor(tui: TUI, theme: TuiTheme, onError?: (message: string) => void) {
     this.tui = tui
@@ -921,7 +925,7 @@ export class PanelHost {
     this.onError = onError
   }
 
-  /** Show `component`, hiding the previous overlay. Returns undefined on failure. */
+  /** Show `component`, hiding (and disposing) the previous one. Returns undefined on failure. */
   open(component: Component, width: PanelSize = '80%', maxHeight: PanelSize = '80%'): OverlayHandle | undefined {
     let next: OverlayHandle
     try {
@@ -931,13 +935,24 @@ export class PanelHost {
       this.onError?.(error instanceof Error ? error.message : String(error))
       return undefined
     }
-    this.current?.hide()
+    // Swap AFTER the new overlay mounted (no focus flash); the replaced
+    // panel's dispose releases any resources it still holds.
+    this.teardown(this.current, this.currentComponent)
     this.current = next
+    this.currentComponent = component
     return next
   }
 
   close(): void {
-    this.current?.hide()
+    this.teardown(this.current, this.currentComponent)
     this.current = undefined
+    this.currentComponent = undefined
+  }
+
+  /** Hide one mounted overlay and dispose its component exactly once. */
+  private teardown(handle: OverlayHandle | undefined, component: Component | undefined): void {
+    if (handle === undefined) return
+    handle.hide()
+    ;(component as { dispose?: () => void } | undefined)?.dispose?.()
   }
 }

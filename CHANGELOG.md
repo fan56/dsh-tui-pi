@@ -4,6 +4,86 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Submit routing dialog while the agent runs** (`src/route-dialog.ts`,
+  `src/index.ts`). Submitting a prompt mid-turn now opens a two-option
+  overlay — "Queue as follow-up" / "Steer now" — instead of silently
+  queuing: ↑↓ or `1`/`2` select, Enter confirms, Esc cancels and restores
+  the draft into the editor untouched (nothing is sent). An idle agent
+  keeps the direct-send path.
+- **Race fallback for steering** (`src/steer-flow.ts`). A chosen "Steer now"
+  re-checks the driver status at flush time; when the turn ended in between
+  (or the steer primitive rejects), the message automatically degrades to a
+  queued follow-up with an info notice stating the actual route taken.
+  Delivery runs deferred out of the keypress stack (subagent steer-input
+  timing defense).
+- **Pending-message queue panel** (`src/queue-panel.ts`, Ctrl+O). Lists every
+  pending (unclaimed) prompt from the live agent inbox — next-step steering
+  (`↪ steer`) and queued follow-ups (`⏳ queued`). On an entry: `d` removes it
+  (core `Inbox.remove`; a claimed/removed item reports not-found and the list
+  refreshes), `s` promotes it out of the queue into an immediate strict
+  steer — with the same race fallback, so a promote racing the turn end
+  stays queued as a follow-up and says so. Esc closes; the list re-reads
+  live (~300 ms). The binding registers in the app keymap layer and the
+  `/hotkeys` `keybindings.json` contract (remappable).
+- **Pending badge on routed echoes** (`src/messages.ts`). A prompt routed
+  while the agent runs echoes locally with a display-only badge prefix on
+  its bubble (`⏳ queued · …` / `↪ steer · …`). When the agent's inbox claims
+  the message, the SAME bubble restyles back to the ordinary user bubble in
+  place (no new line), theme rebuilds reflect the consumed state, and the
+  badge never enters any persisted text.
+
+### Changed
+
+- `/hotkeys` now lists seven app keys (new `queuePanel`, default Ctrl+O).
+- The ` ● last-request` line under the editor now tracks model prompts only —
+  slash commands and cancelled routing dialogs no longer leave stale residue.
+- Degrade notices share one wording source (`steer-flow.ts` constants) across
+  the dialog path, the queue panel and the transcript mirrors.
+
+### Fixed
+
+- **Badge terminal states (no more ghost badges)** (`src/messages.ts`,
+  `src/index.ts`). A pending badge previously had only one exit — the claim
+  event. Now every other ending resolves the bubble explicitly: a revoke in
+  the queue panel turns it into a faded struck-through `✕ canceled · …` line,
+  a delivery that failed for good becomes `✘ not delivered · …`, and a turn
+  aborted/failed prunes echoes whose messages no longer exist in the inbox.
+  All terminal states restyle the SAME bubble in place, survive theme
+  rebuilds via the replay op, and matching keys off the delivered message id
+  first (trimmed text only as fallback).
+- **Degrade flips the badge** (`src/index.ts`, review S3). A steer that
+  raced into a degrade used to keep advertising `↪ steer`; the bubble now
+  flips to `⏳ queued` in place (dialog path and queue-panel promote alike)
+  so it tells the truth until the follow-up is claimed.
+- **Promote double-failure can no longer orphan a message**
+  (`src/steer-flow.ts`, review S2). Promote removes from the inbox before
+  delivering; if steer AND its built-in follow-up fallback both failed, the
+  message was left neither queued nor delivered. One recovery `followup` of
+  the original object now re-queues it first; only when even that throws
+  does an error surface — stating plainly that the message was NOT delivered
+  and must be submitted again.
+- **Multi-line draft survives a routing-dialog cancel** (`src/index.ts`,
+  `src/route-dialog.ts`, review S1). Esc restores the RAW submitted text
+  (the trimmed form mangled drafts with leading/trailing blank lines), and
+  the dialog's draft preview folds onto one clipped row instead of breaking
+  the overlay layout with raw newlines.
+- **Queue-panel live-refresh timer has no leak path** (`src/panels.ts`,
+  `src/queue-panel.ts`, review S4). `PanelHost` now disposes its panel
+  component on close AND on replace (plus the half-mounted-overlay error
+  path), and the panel closes itself when its session-validity gate
+  (`shouldStayOpen`) turns false mid-view instead of ticking against a dead
+  inbox.
+- **Ask-user focus preemption no longer orphans flow overlays**
+  (`src/index.ts`, review S6). Every overlay close funnels through a guarded
+  refocus: while another capturing overlay (the ask-user panel preempting
+  the route dialog / queue panel) still holds the keyboard, focus stays with
+  it instead of being yanked to the editor, leaving the underlying panel
+  visible but keyboard-dead.
+
 ## [0.19.0] - 2026-08-24
 
 ### Added

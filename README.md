@@ -390,7 +390,7 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (677 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (722 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -424,8 +424,14 @@ src/
   subagent-viewer.ts  Ctrl+G picker + live transcript panel + Enter steer injection
   ask-user.ts         Ask User Question overlay: pure state reducers +
                       framed overlay UI + ctx.userQuestions provider
+  steer-flow.ts       Steer / follow-up decision layer: routed delivery with
+                      race fallback, queue actions (remove / promote), notices
+  route-dialog.ts     Submit routing dialog (queue as follow-up vs steer now):
+                      pure key reducer + framed overlay
+  queue-panel.ts      Ctrl+O pending-message queue: d remove · s steer now,
+                      live-refreshed overlay
   theme/              GitHub light/dark palettes + terminal detection
-test/*.test.mjs       unit tests (677 across 40 files)
+test/*.test.mjs       unit tests (722 across 43 files)
 ```
 
 ---

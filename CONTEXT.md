@@ -37,3 +37,27 @@ live in ARCHITECTURE.md / HANDOFF.md.
   信封；overlay 被外部关闭（主题切换 / `/reload` / abort）同样按拒答结算
   (two Esc presses within 200 ms decline the overlay — every question gets
   the declined envelope; an externally closed overlay settles as declined too)
+- **Steer message**: agent 运行中提交、于当前 turn 的下一个 step 边界注入的消息
+  （core 原语 `agent.steer()`，target `'next-step'`）
+  (a message submitted while the agent is running, injected at the next step
+  boundary of the current turn)
+- **Follow-up message**: 排队等待、在下一 turn 开始时作为首条消息投递的消息
+  （core 原语 `agent.followup()`，target `'next-turn'`）
+  (a queued message delivered as the first input of the next turn)
+- **Pending**: 已提交但尚未被 inbox 领取的消息；唯一可撤销/可改道的阶段
+  (submitted but not yet claimed from the inbox; the only phase where a
+  message can be undone or rerouted)
+- **Claimed (consumed)**: 已被 inbox 领取并落盘为普通 user 消息；此后不可撤销，
+  无特殊展示
+  (taken from the inbox and persisted as a plain user message; no longer
+  undoable, no special display)
+- **Promote (strict steer)**: 把排队的 follow-up 移出队列并立即 steer 注入当前轮
+  (removing a queued follow-up from the inbox and immediately steering it
+  into the current turn)
+- **Badge terminal state**: 路由回显徽标的终态——撤销→淡色删除线
+  `✕ canceled`、投递失败→`✘ not delivered`、abort 后已不在 inbox 的消息同样按
+  canceled 收尾；⏳/↪ 不允许永久残留
+  (the end state of a routed-echo badge — a revoke shows a faded
+  struck-through `✕ canceled`, a failed delivery shows `✘ not delivered`,
+  and an abort resolves echoes whose message left the inbox as canceled; a
+  ⏳/↪ badge may never linger as a ghost)

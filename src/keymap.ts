@@ -52,6 +52,10 @@
  * Ctrl+G chain (dsh's subagent viewer): opens the subagent picker only while
  * a subagent runs (`runningAgents > 0`) — idle it falls through untouched.
  * Same overlay-yields-first rule as the other app keys.
+ *
+ * Ctrl+O chain (pending-message queue panel): opens the steer / follow-up
+ * queue manager only while a session exists (`hasSession`); overlay yields
+ * first like every other app key, and a sessionless press falls through.
  */
 
 import { isKeyRelease, isKeyRepeat, matchesKey, type KeyId } from '@earendil-works/pi-tui'
@@ -102,6 +106,8 @@ export interface KeyBindings {
   modelPicker: KeyId
   /** Open the subagent picker / viewer (running children). */
   subagentViewer: KeyId
+  /** Open the pending-message queue panel (steer / follow-up management). */
+  queuePanel: KeyId
   /** Cycle through agent presets. */
   presetCycle: KeyId
 }
@@ -112,6 +118,7 @@ export const DEFAULT_KEYBINDINGS: KeyBindings = {
   ctrlD: 'ctrl+d',
   modelPicker: 'ctrl+l',
   subagentViewer: 'ctrl+g',
+  queuePanel: 'ctrl+o',
   presetCycle: 'tab',
 }
 
@@ -127,6 +134,11 @@ export interface KeyPressState {
   autocompleteOpen: boolean
   /** Live (not settled) subagent count; 0 = nothing for ctrl+g to open. */
   runningAgents: number
+  /**
+   * Whether a session exists (an agent handle to inspect). Gates the pending
+   * queue panel: without a session there is no inbox to list.
+   */
+  hasSession?: boolean
   /** Timestamp (ms) of the last handled escape press that armed the
    *  running-stop window; 0 = none. */
   lastRunningEscPress: number
@@ -158,6 +170,7 @@ export type KeyAction =
   | { kind: 'ctrl-d-quit'; consumes: true }          // Ctrl+D on empty editor
   | { kind: 'model-picker'; consumes: true }         // Ctrl+L opens the picker
   | { kind: 'subagent-viewer'; consumes: true }      // Ctrl+G while subagents run
+  | { kind: 'queue-panel'; consumes: true }          // Ctrl+O opens the pending queue
   | { kind: 'preset-cycle'; consumes: true }         // Tab cycles agent presets
   /**
    * Esc handed to an open popup - the popup closes itself with it (the popup
@@ -277,6 +290,18 @@ function resolveSubagentViewer(state: KeyPressState): KeyAction {
 }
 
 /**
+ * Ctrl+O — open the pending-message queue panel (revoke / promote routed
+ * prompts). Needs a live session (there is no inbox otherwise); an open
+ * overlay yields first, like every other app key.
+ */
+function resolveQueuePanel(state: KeyPressState): KeyAction {
+  if (state.overlayOpen) return { kind: 'overlay', consumes: false }
+  if (state.hasSession === true) return { kind: 'queue-panel', consumes: true }
+  // No session → nothing pending anywhere; let the key fall through.
+  return { kind: 'noop', consumes: false }
+}
+
+/**
  * Resolve one raw terminal input sequence into an app-level action.
  * `data` is the single decoded key sequence `addInputListener` receives
  * (e.g. "\x1b" for Escape, "\x03" for Ctrl+C); see keys.js for the
@@ -329,6 +354,7 @@ export function resolveKeyAction(
   if (matchesKey(data, bindings.ctrlD)) return resolveCtrlD(state)
   if (matchesKey(data, bindings.modelPicker)) return resolveModelPicker(state)
   if (matchesKey(data, bindings.subagentViewer)) return resolveSubagentViewer(state)
+  if (matchesKey(data, bindings.queuePanel)) return resolveQueuePanel(state)
   if (matchesKey(data, bindings.presetCycle)) {
     if (state.overlayOpen) return { kind: 'overlay', consumes: false }
     if (state.autocompleteOpen) return { kind: 'autocomplete-close', consumes: false }

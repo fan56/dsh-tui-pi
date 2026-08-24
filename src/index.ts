@@ -47,6 +47,19 @@ import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from '
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
 import { commandUsagePath, CommandUsageTracker } from './usage.ts'
+import {
+  buildUserPrompt,
+  decideSubmitPath,
+  deliverToAgent,
+  promotePending,
+  removeFromInbox,
+  STEER_UNAVAILABLE_NOTICE,
+  TURN_ENDED_QUEUED_NOTICE,
+  type PromptRoute,
+  type QueueActionResult,
+} from './steer-flow.ts'
+import { openSubmitRouteDialog } from './route-dialog.ts'
+import { openPendingQueuePanel } from './queue-panel.ts'
 import type { AgentView } from './dsh-events.ts'
 import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { rgbIsLight } from './theme/palette.ts'
@@ -222,6 +235,7 @@ export function apply(ctx: Context): void {
       // live in keymap.ts.
       isRunning: () => bridge.isRunning(),
       getRunningAgents: () => bridge.getLiveChildren().length,
+      hasSession: () => bridge.getSessionId() !== undefined,
       onKeyAction: (action: KeyAction) => {
         switch (action.kind) {
           case 'interrupt-arm-stop':
@@ -316,8 +330,56 @@ export function apply(ctx: Context): void {
           case 'subagent-viewer':
             // Ctrl+G: open the subagent picker → transcript viewer while
             // children run (modal overlay; Esc / double-x closes).
-            void openSubagentViewer(ctx, ui.tui, ui.theme, bridge, () => ui.tui.setFocus(ui.editor))
+            void openSubagentViewer(ctx, ui.tui, ui.theme, bridge, refocusEditor)
             break
+          case 'queue-panel': {
+            // Ctrl+O: manage pending routed prompts — d removes one from the
+            // inbox, s promotes it to an immediate steer (with the same
+            // race fallback as the submit dialog). Degrade/error outcomes
+            // mirror into the buffered transcript notice channel so they
+            // survive theme rebuilds.
+            void openPendingQueuePanel(ui.tui, ui.theme, {
+              readItems: () => bridge.getPendingPrompts(),
+              onRemove: item => {
+                const agent = bridge.getAgent()
+                if (agent === undefined) return { kind: 'error' as const, error: 'No active session.' }
+                const result = removeFromInbox(agent.inbox, item)
+                // Review B1: a successful revoke must retire the transcript
+                // badge — the echo bubble becomes an explicit canceled line
+                // instead of a permanent ⏳/↪ ghost.
+                if (result.kind === 'removed') {
+                  renderer.resolvePendingEcho({ id: item.message.id, text: item.text }, 'canceled')
+                }
+                return result
+              },
+              onPromote: item => {
+                const agent = bridge.getAgent()
+                if (agent === undefined) return { kind: 'error' as const, error: 'No active session.' }
+                const result = promotePending(agent, item)
+                if (result.kind === 'promoted' && result.degraded) {
+                  // Review S3: the steer degraded back into the queue — flip
+                  // the badge to ⏳ queued so it tells the truth.
+                  renderer.rebadgePendingEcho({ id: item.message.id, text: item.text }, 'queued')
+                } else if (result.kind === 'error') {
+                  // Review B1/S2: promote failed for good (the recovery
+                  // re-queue threw too) — the badge becomes an explicit
+                  // not-delivered line instead of a ghost.
+                  renderer.resolvePendingEcho({ id: item.message.id, text: item.text }, 'failed')
+                }
+                return result
+              },
+              onOutcome: (result: QueueActionResult) => {
+                if (result.kind === 'promoted' && result.degraded) {
+                  renderer.renderNotice(STEER_UNAVAILABLE_NOTICE, 'info')
+                } else if (result.kind === 'error') {
+                  renderer.renderNotice(result.error, 'error')
+                }
+              },
+              restoreFocus: refocusEditor,
+              shouldStayOpen: () => bridge.getSessionId() !== undefined,
+            })
+            break
+          }
           case 'preset-cycle':
             // Tab: cycle through agent presets. The footer label updates
             // immediately; the actual preset is applied on the next session
@@ -336,6 +398,22 @@ export function apply(ctx: Context): void {
       themePreference,
     })
     handle = ui
+    /**
+     * Focus restoration with the PanelHost preemption guard (review S6):
+     * every flow overlay closes through this. When ANOTHER capturing overlay
+     * is still up — the ask-user panel preempting the route dialog or the
+     * queue panel mid-flow — that overlay owns the keyboard: yanking focus
+     * to the editor would orphan the underlying panel (visible but
+     * keyboard-dead). All of this plugin's overlays capture focus, so
+     * `hasOverlay()` is the exact "someone else holds the keyboard" test;
+     * the ordinary close path lands here only after the last overlay went
+     * away, and still re-focuses the CURRENT editor instance (rebuilt on
+     * theme swap).
+     */
+    const refocusEditor = (): void => {
+      if (ui.tui.hasOverlay()) return
+      ui.tui.setFocus(ui.editor)
+    }
     // Live theme preference, tracked so terminal-following (below) can tell
     // 'auto' (follow the terminal) from an explicit light/dark pin.
     let themePreferenceRef: ThemePreference = themePreference
@@ -458,6 +536,15 @@ export function apply(ctx: Context): void {
         if (event.type === 'todo/write') {
           liveWidgets.renderTodos(event.data.todos)
         }
+        if (event.type === 'turn/end' && (event.data.reason?.kind === 'aborted' || event.data.reason?.kind === 'error')) {
+          // Review B1, agent-abort path: an aborted/failed turn can strand
+          // routed badges whose messages never got claimed AND no longer
+          // exist in the inbox — resolve those echoes to explicit canceled
+          // bubbles instead of permanent ⏳/↪ ghosts. Entries still queued
+          // (keepInbox) or still steerable stay pending.
+          const alive = new Set(bridge.getPendingPrompts().map(prompt => String(prompt.message.id)))
+          renderer.prunePendingEchoes(messageId => alive.has(String(messageId)))
+        }
         if (PERMISSION_KNOB_EVENTS.has(event.type)) {
           refreshPermissionPreset()
           ui.requestRender()
@@ -496,7 +583,7 @@ export function apply(ctx: Context): void {
     ctx.effect(() => registerAskUserProvider(ctx, {
       tui: ui.tui,
       theme: () => ui.theme,
-      restoreFocus: () => ui.tui.setFocus(ui.editor),
+      restoreFocus: refocusEditor,
     }), 'dsh-tui-pi: ask-user-question provider')
 
     // System prompt guidance: nudge the model toward conservative use of
@@ -558,7 +645,7 @@ export function apply(ctx: Context): void {
     const modelHandler: LocalCommandHandler = async () => {
       const picked = await pickModel(
         ctx, ui.tui, ui.theme, bridge.getSelection(),
-        () => ui.tui.setFocus(ui.editor),
+        refocusEditor,
       )
       if (picked === undefined) return { kind: 'success' as const, text: 'Model unchanged.' }
       const llm = ctx.get('llm')
@@ -589,7 +676,7 @@ export function apply(ctx: Context): void {
     const agentsHandler: LocalCommandHandler = async rawInput => {
       const trimmed = rawInput?.trim() ?? ''
       const result = await openAgentManager(
-        ctx, ui.tui, ui.theme, () => ui.tui.setFocus(ui.editor),
+        ctx, ui.tui, ui.theme, refocusEditor,
         trimmed === '' ? undefined : trimmed,
       )
       if (result === undefined) return { kind: 'success' as const, text: 'Agents unchanged.' }
@@ -606,7 +693,7 @@ export function apply(ctx: Context): void {
     // settled) subagent and inspect its live transcript in the 80% viewer.
     // Same flow as the key path; empty board closes immediately.
     const subagentsHandler: LocalCommandHandler = async () => {
-      await openSubagentViewer(ctx, ui.tui, ui.theme, bridge, () => ui.tui.setFocus(ui.editor))
+      await openSubagentViewer(ctx, ui.tui, ui.theme, bridge, refocusEditor)
       return { kind: 'success' as const, text: 'Subagent viewer closed.' }
     }
     commands.registerLocal('subagents', subagentsHandler)
@@ -624,7 +711,7 @@ export function apply(ctx: Context): void {
       if (current === undefined) {
         return { kind: 'error' as const, text: 'No model selected — pick one with /model first.' }
       }
-      const result = await pickEffort(ctx, ui.tui, ui.theme, current, () => ui.tui.setFocus(ui.editor))
+      const result = await pickEffort(ctx, ui.tui, ui.theme, current, refocusEditor)
       if (result.kind === 'unsupported') {
         return {
           kind: 'error' as const,
@@ -690,7 +777,7 @@ export function apply(ctx: Context): void {
         return { kind: 'success' as const, text: `Preset → ${target.name}` }
       }
       // Picker overlay
-      const picked = await pickPreset(ui.tui, ui.theme, presetState, () => ui.tui.setFocus(ui.editor))
+      const picked = await pickPreset(ui.tui, ui.theme, presetState, refocusEditor)
       if (picked === undefined) return { kind: 'success' as const, text: 'Preset unchanged.' }
       presetState.index = presetState.roster.findIndex(p => p.id === picked)
       bridge.setAgentPreset(picked)
@@ -748,7 +835,7 @@ export function apply(ctx: Context): void {
         status: agent === undefined ? 'none' : agentStatus,
         eventCount: agent === undefined ? undefined : agent.session.events.length,
         parentSession: header?.parentSession === undefined ? undefined : String(header.parentSession),
-      }, () => ui.tui.setFocus(ui.editor))
+      }, refocusEditor)
       return { kind: 'success' as const, text: agent === undefined ? 'No active session.' : 'Session info shown.' }
     }
     commands.registerLocal('session', sessionHandler)
@@ -767,7 +854,7 @@ export function apply(ctx: Context): void {
         picked = await pickPersistedSession(
           ctx, ui.tui, ui.theme,
           currentId === undefined ? undefined : String(currentId),
-          () => ui.tui.setFocus(ui.editor),
+          refocusEditor,
         )
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
@@ -910,7 +997,7 @@ export function apply(ctx: Context): void {
         ctx,
         tui: ui.tui,
         theme: ui.theme,
-        restoreFocus: () => ui.tui.setFocus(ui.editor),
+        restoreFocus: refocusEditor,
         onError: message => {
           // Buffered notice: the settings browser outlives the write, so the
           // line must survive a theme hot-swap (the doc.clear() rebuild).
@@ -936,7 +1023,7 @@ export function apply(ctx: Context): void {
     // Enter/Space toggles or symlinks; Tab switches views; Esc exits.
     const skillsHandler: LocalCommandHandler = async () => {
       const agent = bridge.getAgent()
-      openSkillsManagerPanel(ctx, ui.tui, ui.theme, () => ui.tui.setFocus(ui.editor), agent ?? undefined, () => {})
+      openSkillsManagerPanel(ctx, ui.tui, ui.theme, refocusEditor, agent ?? undefined, () => {})
       return { kind: 'success' as const, text: 'Skills manager opened.' }
     }
     commands.registerLocal('skills', skillsHandler)
@@ -958,7 +1045,7 @@ export function apply(ctx: Context): void {
       }
       // Preselect from the live settings value (which may have changed since
       // startup via the /settings browser), not the startup snapshot.
-      const picked = await pickTheme(ui.tui, ui.theme, currentThemePreference(ctx), () => ui.tui.setFocus(ui.editor))
+      const picked = await pickTheme(ui.tui, ui.theme, currentThemePreference(ctx), refocusEditor)
       if (picked === undefined) return { kind: 'success' as const, text: 'Theme unchanged.' }
       const writeError = await writeThemePreference(ctx, picked)
       if (writeError !== undefined) return { kind: 'error' as const, text: writeError }
@@ -1007,7 +1094,7 @@ export function apply(ctx: Context): void {
       const summary = await openHotkeysManager(ui.tui, ui.theme, {
         filePath: keyFile,
         apply: bindings => ui.setKeyBindings(bindings),
-        restoreFocus: () => ui.tui.setFocus(ui.editor),
+        restoreFocus: refocusEditor,
       })
       return { kind: 'success' as const, text: summary ?? 'Keybindings unchanged.' }
     }
@@ -1034,7 +1121,7 @@ export function apply(ctx: Context): void {
         ctx,
         tui: ui.tui,
         theme: ui.theme,
-        restoreFocus: () => ui.tui.setFocus(ui.editor),
+        restoreFocus: refocusEditor,
         onError: message => renderer.renderNotice(message, 'error'),
         target: rawInput?.trim() ?? '',
       })
@@ -1068,7 +1155,7 @@ export function apply(ctx: Context): void {
         ctx,
         tui: ui.tui,
         theme: ui.theme,
-        restoreFocus: () => ui.tui.setFocus(ui.editor),
+        restoreFocus: refocusEditor,
         onError: message => renderer.renderNotice(message, 'error'),
       })
       if (result.kind === 'none') {
@@ -1250,7 +1337,6 @@ export function apply(ctx: Context): void {
     const submit = async (text: string): Promise<void> => {
       const line = text.trim()
       if (line === '') return
-      liveWidgets.setLastRequest(line)
       const tokens = line.startsWith('/') ? line.slice(1).split(/\s+/) : []
       const name = tokens[0]?.toLowerCase()
       let executeLine = line
@@ -1271,7 +1357,7 @@ export function apply(ctx: Context): void {
           const current = agent === undefined ? undefined : presets.current(agent.session.events)
           let picked: string | undefined
           try {
-            picked = await pickPermission(ctx, ui.tui, ui.theme, current, () => ui.tui.setFocus(ui.editor))
+            picked = await pickPermission(ctx, ui.tui, ui.theme, current, refocusEditor)
           } catch (error: unknown) {
             // Picker failure (preset service or overlay error) — pickPermission
             // restores focus itself before rejecting, so the editor is usable
@@ -1308,6 +1394,28 @@ export function apply(ctx: Context): void {
         renderer.renderCommandEcho(line, command.error, command.text)
         return
       }
+      // Submit routing (docs/design-steer-followup.md §二.1): while the agent
+      // runs, the dialog decides steer vs follow-up — Esc cancels and the
+      // draft goes back into the editor untouched. Idle → direct send (the
+      // two primitives are equivalent there: both wake a fresh turn).
+      if (decideSubmitPath(bridge.isRunning()) === 'dialog') {
+        const route = await openSubmitRouteDialog(ui.tui, ui.theme, text, refocusEditor)
+        if (route === undefined) {
+          // Review S1: restore the RAW submitted text — restoring the trimmed
+          // line used to mangle multi-line drafts (leading/trailing blank
+          // lines silently dropped). setText places the cursor at the end of
+          // the restored draft; nothing was sent.
+          ui.editor.setText(text)
+          ui.requestRender()
+          return
+        }
+        deliverRoutedPrompt(text, route)
+        return
+      }
+      // The ` ● last-request` line tracks MODEL prompts only — setting it for
+      // slash commands or cancelled dialogs left stale residue below the
+      // editor for text that never ran.
+      liveWidgets.setLastRequest(line)
       renderer.renderPromptEcho(line)
       try {
         await bridge.prompt(line)
@@ -1321,6 +1429,40 @@ export function apply(ctx: Context): void {
       // permission pin event was likely dropped by the session-id filter,
       // which binds only after agent creation completes.
       refreshPermissionPreset()
+    }
+
+    /**
+     * Deliver one routed prompt to the LIVE agent with the pending-badge
+     * echo (`⏳ queued` / `↪ steer`) and the design's race fallback: the
+     * delivery defers out of the await stack into a microtask (SteerInputPanel
+     * timing defense), `deliverToAgent` re-checks the driver status at flush
+     * time, and every badge reaches a truthful end state — a steer that can
+     * no longer land flips its badge to ⏳ queued (review S3), a failed
+     * delivery marks the bubble ✘ not delivered instead of leaving a ghost
+     * (review B1).
+     */
+    const deliverRoutedPrompt = (raw: string, route: PromptRoute): void => {
+      const agent = bridge.getAgent()
+      if (agent === undefined) {
+        // Running without a handle cannot deliver — say so instead of
+        // dropping the message silently.
+        renderer.renderNotice('No active session — the message was not delivered.', 'error')
+        return
+      }
+      const message = buildUserPrompt(raw)
+      renderer.renderPendingEcho(raw, route === 'steer' ? 'steer' : 'queued', message.id)
+      liveWidgets.setLastRequest(raw)
+      queueMicrotask(() => {
+        const outcome = deliverToAgent(agent, message, route)
+        if (outcome.outcome === 'degraded') {
+          renderer.rebadgePendingEcho({ id: message.id }, 'queued')
+          renderer.renderNotice(TURN_ENDED_QUEUED_NOTICE, 'info')
+        } else if (outcome.outcome === 'error') {
+          renderer.resolvePendingEcho({ id: message.id }, 'failed')
+          renderer.renderNotice(outcome.error, 'error')
+        }
+        ui.requestRender()
+      })
     }
 
     /**

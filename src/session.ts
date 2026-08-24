@@ -20,6 +20,7 @@ import { readAppendSystem } from './append-system.ts'
 import type { AgentView } from './dsh-events.ts'
 import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor } from './dsh-events.ts'
 import { installSpawnToolFence, markTuiSurface } from './subagent-policy.ts'
+import type { PendingPromptView } from './steer-flow.ts'
 import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
 
 /**
@@ -514,6 +515,36 @@ export class DshSessionBridge {
   /** The live agent when a session already exists (no creation side effect). */
   getAgent(): Agent | undefined {
     return this.handle?.agent
+  }
+
+  /**
+   * Snapshot of the live agent's PENDING prompts — submitted but not yet
+   * claimed by the inbox (docs/design-steer-followup.md: the only removable /
+   * re-routeable stage). Reads the agent's own inbox projection O(1): the
+   * next-step list (steering, `↪`) then next-turn (queued follow-ups,
+   * `⏳`). Each view keeps the original message identity so a promote
+   * re-sends the exact queued object. Empty without a live agent.
+   */
+  getPendingPrompts(): readonly PendingPromptView[] {
+    const agent = this.handle?.agent
+    if (agent === undefined) return []
+    const fold = (message: { content: ReadonlyArray<{ type: string; text?: string }> }): string => {
+      let text = ''
+      for (const block of message.content) {
+        if (block.type === 'text' && typeof block.text === 'string') {
+          text += (text === '' ? '' : ' ') + block.text
+        }
+      }
+      return text.trim()
+    }
+    const views: PendingPromptView[] = []
+    for (const message of agent.inbox.nextStep) {
+      views.push({ id: String(message.id), text: fold(message), target: 'next-step', message })
+    }
+    for (const message of agent.inbox.nextTurn) {
+      views.push({ id: String(message.id), text: fold(message), target: 'next-turn', message })
+    }
+    return views
   }
 
   /** Whether the bridge's agent is mid-turn (mirror of `agent/status`). */

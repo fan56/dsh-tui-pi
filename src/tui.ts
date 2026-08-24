@@ -50,6 +50,8 @@ export interface StartTuiOptions {
   isRunning?: () => boolean
   /** Live running-subagent count; feeds the Ctrl+G viewer decision. Defaults to 0. */
   getRunningAgents?: () => number
+  /** Whether a session exists (agent handle); gates the Ctrl+O queue panel. Defaults to false. */
+  hasSession?: () => boolean
   /** User keybindings overrides (`~/.dsh/keybindings.json`); partial merge. */
   keyBindings?: Partial<KeyBindings>
   /** Persisted theme preference; 'auto' falls back to terminal detection. */
@@ -309,6 +311,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   let lastOverlayEscPress = 0
   const isRunning = options.isRunning ?? (() => false)
   const getRunningAgents = options.getRunningAgents ?? (() => 0)
+  const hasSession = options.hasSession ?? (() => false)
 
   tui.addInputListener((data: string) => {
     const now = Date.now()
@@ -318,6 +321,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
       editorHasText: editor.getText() !== '',
       autocompleteOpen: editor.isShowingAutocomplete(),
       runningAgents: getRunningAgents(),
+      hasSession: hasSession(),
       lastRunningEscPress,
       lastCtrlCPress,
       lastOverlayEscPress,

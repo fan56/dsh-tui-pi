@@ -340,3 +340,29 @@ test('a held Esc on an empty idle editor is inert (no idle window left to fire)'
 test('repeat floor constant is 80ms (above common repeat rates, under human double-presses)', () => {
   assert.equal(MIN_DOUBLE_PRESS_GAP_MS, 80)
 })
+
+// ------------------------------------------------- Ctrl+O queue panel --
+
+const CTRL_O = '\x0f'
+// The keybindings file contract must keep offering the queue panel for
+// remapping (src/hotkeys.ts APP_KEY_FIELDS reads the same field).
+import { DEFAULT_KEYBINDINGS } from '../lib/keymap.js'
+
+test('Ctrl+O with a session opens the pending queue panel and consumes the key', () => {
+  assert.equal(DEFAULT_KEYBINDINGS.queuePanel, 'ctrl+o')
+  const action = resolveKeyAction(CTRL_O, state({ hasSession: true }), 1000)
+  assert.equal(action.kind, 'queue-panel')
+  assert.equal(action.consumes, true)
+})
+
+test('Ctrl+O yields to an open overlay like every other app key', () => {
+  const action = resolveKeyAction(CTRL_O, state({ overlayOpen: true, hasSession: true }), 1000)
+  assert.equal(action.kind, 'overlay')
+  assert.equal(action.consumes, false)
+})
+
+test('Ctrl+O without a session falls through untouched (no inbox to list)', () => {
+  const action = resolveKeyAction(CTRL_O, state(), 1000)
+  assert.equal(action.kind, 'noop')
+  assert.equal(action.consumes, false)
+})

@@ -58,9 +58,74 @@ interface StreamingState {
 type ReplayOp =
   | { kind: 'welcome' }
   | { kind: 'event'; event: SessionEvent }
-  | { kind: 'promptEcho'; text: string; sessionEcho?: string; marker?: string }
+  | {
+    kind: 'promptEcho'
+    text: string
+    sessionEcho?: string
+    marker?: string
+    badge?: PendingBadge
+    terminal?: PendingTerminal
+    /** Delivered message identity of a pending (badged) echo. */
+    messageId?: unknown
+  }
   | { kind: 'commandEcho'; line: string; error?: string; text?: string }
   | { kind: 'notice'; text: string; level: 'error' | 'info' }
+
+/**
+ * Pending-route badge of a locally echoed prompt that was routed while the
+ * agent ran (docs/design-steer-followup.md §三). Display-only vocabulary
+ * (English-only per AGENTS.md): the badge prefixes the bubble until the
+ * message is claimed by the agent's inbox, then the bubble returns to the
+ * ordinary style IN PLACE. The badge never enters the persisted text.
+ */
+export type PendingBadge = 'queued' | 'steer'
+
+/**
+ * Terminal state of a pending routed echo (review B1): a badge must never be
+ * a ghost. Revoking the message (`d` in the queue panel) cancels its echo;
+ * a delivery that failed for good fails it; an abort prunes echoes whose
+ * messages no longer exist anywhere. Both terminal styles are explicit and
+ * durable (they survive theme rebuilds via the replay op).
+ */
+export type PendingTerminal = 'canceled' | 'failed'
+
+/** Badge prefix rendered on the bubble's first line. */
+export const PENDING_BADGE_LABELS: Record<PendingBadge, string> = {
+  queued: '⏳ queued',
+  steer: '↪ steer',
+}
+
+/** Prefix rendered on the first line of a terminal-state bubble. */
+export const PENDING_TERMINAL_LABELS: Record<PendingTerminal, string> = {
+  canceled: '✕ canceled',
+  failed: '✘ not delivered',
+}
+
+/** SGR strikethrough — the faded "undone" look of a canceled echo. */
+const STRIKE = '\x1b[9m'
+const STRIKE_OFF = '\x1b[29m'
+
+/** Everything needed to find one pending echo (id primary, text fallback). */
+export interface PendingEchoMatch {
+  /** The delivered message id (`message.id` of the routed prompt). */
+  readonly id?: unknown
+  /** The trimmed echo text — fallback when no id was recorded. */
+  readonly text?: string
+}
+
+/** One pending local echo awaiting its claim event or a terminal state. */
+interface PendingEcho {
+  /** Dedupe key — the trimmed echo text the session will echo back. */
+  key: string
+  /** The delivered message identity, when known (primary lookup). */
+  messageId?: unknown
+  /** Original echo text (untrimmed) — re-rendered on resolve. */
+  text: string
+  /** The live bubble component, restyled in place on claim/resolve. */
+  component: Text
+  /** The buffered replay op — mutated in place so rebuilds reflect the state. */
+  op: { kind: 'promptEcho'; text: string; sessionEcho?: string; marker?: string; badge?: PendingBadge; terminal?: PendingTerminal }
+}
 
 export class TranscriptRenderer {
   private readonly doc: Container
@@ -71,6 +136,12 @@ export class TranscriptRenderer {
    * Text of the prompt echoed locally on submit; the matching session event is deduped.
    */
   private lastEcho: string | undefined
+  /**
+   * Pending routed echoes (badge bubbles) awaiting the claim `user/message`
+   * event. Keyed lookup happens BEFORE the legacy `lastEcho` check so a
+   * claimed message restyles its bubble in place instead of being skipped.
+   */
+  private readonly pendingEchoes: PendingEcho[] = []
   /**
    * Append-only buffer of every applied operation (O(1) per event). The
    * render path never scans it; `setTheme` — an explicit user action — is
@@ -155,6 +226,156 @@ export class TranscriptRenderer {
     }
   }
 
+  /**
+   * Render a routed prompt echo with its pending badge (`⏳ queued` /
+   * `↪ steer`, design §三). The bubble registers as pending: when the agent's
+   * inbox claims the message (a matching `user/message` event arrives), the
+   * SAME component is restyled back to the ordinary bubble — no new line,
+   * and the buffered replay op loses its badge so theme rebuilds reflect the
+   * consumed state. `messageId` (the delivered message's id) makes every
+   * later resolution — claim, revoke, failure, rebadge — exact even when the
+   * echo text was folded or edited. The badge is display-only.
+   */
+  renderPendingEcho(text: string, badge: PendingBadge, messageId?: unknown): void {
+    const op: ReplayOp = { kind: 'promptEcho', text, badge }
+    if (messageId !== undefined) op.messageId = messageId
+    this.replay.push(op)
+    const component = new Text(
+      this.theme.chat.userMessageText(this.bubbleBody(text, badge)),
+      1,
+      0,
+      this.theme.chat.userMessageBg,
+    )
+    this.doc.addChild(component)
+    this.doc.addChild(new Spacer(1))
+    this.pendingEchoes.push({
+      key: text.trim(),
+      text,
+      ...(messageId !== undefined ? { messageId } : {}),
+      component,
+      op,
+    })
+    this.requestRender()
+  }
+
+  /**
+   * Flip a pending echo's route badge in place (review S3): a steer that
+   * degraded to a queued follow-up must not keep advertising `↪ steer` —
+   * the bubble and its replay op both become `⏳ queued`, so a later claim
+   * still consumes them normally. No-op (returns false) without a match.
+   */
+  rebadgePendingEcho(match: PendingEchoMatch, badge: PendingBadge): boolean {
+    const entry = this.findPendingEcho(match)
+    if (entry === undefined) return false
+    entry.op.badge = badge
+    entry.op.terminal = undefined
+    entry.component.setText(this.theme.chat.userMessageText(this.bubbleBody(entry.text, badge)))
+    this.requestRender()
+    return true
+  }
+
+  /**
+   * Retire a pending echo with an explicit terminal style (review B1):
+   * `'canceled'` after a user revoke (`d`), `'failed'` after a delivery that
+   * can no longer succeed. The SAME bubble restyles in place — faded struck-
+   * through for canceled, danger for failed — never a lingering ⏳/↪ ghost,
+   * and the replay op records the terminal state so theme rebuilds agree.
+   * @returns true when a pending echo was resolved.
+   */
+  resolvePendingEcho(match: PendingEchoMatch, terminal: PendingTerminal): boolean {
+    const index = this.pendingEchoes.findIndex(entry => this.matchesPending(entry, match))
+    if (index < 0) return false
+    const [entry] = this.pendingEchoes.splice(index, 1)
+    entry!.op.badge = undefined
+    entry!.op.terminal = terminal
+    entry!.component.setText(this.terminalBubbleBody(entry!.text, terminal))
+    this.requestRender()
+    return true
+  }
+
+  /**
+   * Resolve EVERY pending echo that is no longer alive (review B1, abort
+   * path): after a turn aborted/failed, badges whose messages vanished from
+   * the inbox become explicit canceled bubbles instead of ghosts; entries
+   * still queued stay pending. Entries without any known identity are
+   * treated as dead (they could never be claimed exactly).
+   * @returns the number of echoes resolved as canceled.
+   */
+  prunePendingEchoes(isAlive: (messageId: unknown, key: string) => boolean): number {
+    let pruned = 0
+    for (let i = this.pendingEchoes.length - 1; i >= 0; i--) {
+      const entry = this.pendingEchoes[i]!
+      if (entry.messageId !== undefined && isAlive(entry.messageId, entry.key)) continue
+      this.pendingEchoes.splice(i, 1)
+      entry.op.badge = undefined
+      entry.op.terminal = 'canceled'
+      entry.component.setText(this.terminalBubbleBody(entry.text, 'canceled'))
+      pruned++
+    }
+    if (pruned > 0) this.requestRender()
+    return pruned
+  }
+
+  /** Locate one pending echo: id equality first, trimmed-text fallback. */
+  private findPendingEcho(match: PendingEchoMatch): PendingEcho | undefined {
+    const index = this.pendingEchoes.findIndex(entry => this.matchesPending(entry, match))
+    return index < 0 ? undefined : this.pendingEchoes[index]
+  }
+
+  private matchesPending(entry: PendingEcho, match: PendingEchoMatch): boolean {
+    if (match.id !== undefined && entry.messageId !== undefined) {
+      return String(entry.messageId) === String(match.id)
+    }
+    return match.text !== undefined && entry.key === match.text.trim()
+  }
+
+  /**
+   * Consume the first pending echo whose identity matches a claimed message:
+   * restyle its bubble to the ordinary style in place and retire the entry.
+   * @returns true when a pending echo was consumed (caller skips rendering).
+   */
+  private consumePendingEcho(key: string, messageId?: unknown): boolean {
+    const match: PendingEchoMatch = { text: key, ...(messageId !== undefined ? { id: messageId } : {}) }
+    const index = this.pendingEchoes.findIndex(entry => this.matchesPending(entry, match))
+    if (index < 0) return false
+    const entry = this.pendingEchoes.splice(index, 1)[0]!
+    entry.op.badge = undefined
+    entry.component.setText(this.theme.chat.userMessageText(this.bubbleBody(entry.text)))
+    this.requestRender()
+    return true
+  }
+
+  /** Bubble body for an echo text, with the optional badge on the first line. */
+  private bubbleBody(text: string, badge?: PendingBadge): string {
+    const body = badge === undefined ? text : `${PENDING_BADGE_LABELS[badge]} · ${text}`
+    return body.split('\n').map(line => `▎ ${line}`).join('\n')
+  }
+
+  /**
+   * Bubble body of a terminal-state echo: the label rides the first line so
+   * multi-line drafts stay fully visible under it.
+   */
+  private terminalBubbleBody(text: string, terminal: PendingTerminal): string {
+    const lines = text.split('\n')
+    const head = `▎ ${PENDING_TERMINAL_LABELS[terminal]} · ${lines[0] ?? ''}`
+    const rest = lines.slice(1).map(line => `▎ ${line}`)
+    return [head, ...rest].join('\n')
+  }
+
+  /** Style + append a terminal-state bubble (faded strike vs danger). */
+  private renderTerminalEcho(text: string, terminal: PendingTerminal): void {
+    // Mirror the badge path's own push: the mutated replay op re-registers a
+    // plain terminal op so repeated rebuilds stay 1:1 (never duplicate).
+    this.replay.push({ kind: 'promptEcho', text, terminal })
+    const body = this.terminalBubbleBody(text, terminal)
+    const styled = terminal === 'canceled'
+      ? STRIKE + ansiFg(this.theme.palette.fgSubtle) + body + STRIKE_OFF + RESET
+      : ansiFg(this.theme.palette.danger) + body + RESET
+    this.doc.addChild(new Text(styled, 1, 0))
+    this.doc.addChild(new Spacer(1))
+    this.requestRender()
+  }
+
   /** Render one executed slash command line with its outcome. */
   renderCommandEcho(line: string, error?: string, text?: string): void {
     this.replay.push({ kind: 'commandEcho', line, error, text })
@@ -228,6 +449,7 @@ export class TranscriptRenderer {
   clear(): void {
     this.streaming = undefined
     this.lastEcho = undefined
+    this.pendingEchoes.length = 0
     this.replay.length = 0
     this.doc.clear()
   }
@@ -248,7 +470,13 @@ export class TranscriptRenderer {
         this.applyEvent(op.event)
         break
       case 'promptEcho':
-        this.renderPromptEcho(op.text, op.sessionEcho, op.marker)
+        // Mirror each render path's own push so repeated rebuilds stay 1:1:
+        // a pending echo re-registers its entry (fresh Text component) so a
+        // later claim/resolve still restyles it; a terminal echo renders its
+        // explicit end state without re-registering.
+        if (op.badge !== undefined) this.renderPendingEcho(op.text, op.badge, op.messageId)
+        else if (op.terminal !== undefined) this.renderTerminalEcho(op.text, op.terminal)
+        else this.renderPromptEcho(op.text, op.sessionEcho, op.marker)
         break
       case 'commandEcho':
         this.renderCommandEcho(op.line, op.error, op.text)
@@ -305,6 +533,12 @@ export class TranscriptRenderer {
     if (text === '') return
     const kind = message.source.kind
     if (kind === 'user') {
+      // A claimed pending echo restyles its badge bubble in place instead of
+      // rendering (design §三: claimed → back to the ordinary bubble). The
+      // event's message id is the primary key — the trimmed text only backs
+      // it up for echoes registered before ids were threaded through.
+      const claimedId = (message as { id?: unknown }).id
+      if (this.consumePendingEcho(text, claimedId)) return
       // Dedup the session echo of a prompt we already rendered locally on submit.
       if (this.lastEcho === text) {
         this.lastEcho = undefined
