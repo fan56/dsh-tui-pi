@@ -208,8 +208,9 @@ export class PowerlineFooter implements Component {
 
     // Context usage: the current occupancy estimate (latest request's billed
     // input + output + a CJK estimate of messages after it) vs. the model's
-    // window — NOT the cumulative inputTokens, which only grows. Percent is
-    // capped at 100 (the window is a hard ceiling; the estimate can overshoot
+    // window — NOT the inputTokens total, which only grows within a route
+    // segment (it resets on a provider/model change). Percent is capped at
+    // 100 (the window is a hard ceiling; the estimate can overshoot
     // while it prices pending messages that a compaction will drop).
     const window = this.source.getContextWindow()
     // Defensive `?? 0`: a stats source without the field (any object missing

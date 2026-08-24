@@ -39,6 +39,7 @@ export interface SessionPanelData {
   effort: string | undefined
   msgCount: number
   toolCallCount: number
+  /** Per-route-segment totals (reset when the provider/model route changes) — see the panel title note. */
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
@@ -98,8 +99,12 @@ export class SessionInfoPanel implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
+    // Scope note rides on the title line (no extra row: the panel must stay
+    // at 20 rows so the framed overlay keeps its bottom border on a 24-row
+    // terminal). The token totals are per provider/model route segment — they
+    // reset on a route change — while messages/events are session-wide.
     const fns = panelThemeFns(this.theme)
-    const lines: string[] = [fns.accent(BOLD + clipToWidth('ⓘ session', width) + RESET)]
+    const lines: string[] = [fns.accent(BOLD + clipToWidth('ⓘ session · tokens: current route', width) + RESET)]
     if (this.data.id === undefined) {
       lines.push('')
       lines.push(fns.muted(clipToWidth('no active session — send a prompt or /resume one', width)))

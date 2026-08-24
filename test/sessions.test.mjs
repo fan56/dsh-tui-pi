@@ -216,3 +216,19 @@ test('SessionInfoPanel at narrow width clips plain text before ANSI — no dangl
     }
   }
 })
+
+// Token scope note (review S2): the token totals are per provider/model route
+// segment (they reset on a route change), unlike messages/events which count
+// the whole session — the title line must say so, without costing a row (the
+// panel is height-budgeted for a 24-row terminal).
+test('SessionInfoPanel title annotates the per-route token scope', async () => {
+  const { SessionInfoPanel } = await import('../lib/sessions.js')
+  const { buildTheme } = await import('../lib/theme/index.js')
+  const { githubDark } = await import('../lib/theme/palette.js')
+  const theme = buildTheme(githubDark)
+  const panel = new SessionInfoPanel(theme, fullPanelData, () => {})
+  const lines = panel.render(80)
+  assert.match(lines[0], /tokens: current route/, 'title carries the token scope note')
+  // The note rides on the title line itself — no extra row was added.
+  assert.equal(lines.length, 20)
+})

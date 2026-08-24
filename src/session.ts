@@ -188,15 +188,16 @@ export interface BridgeStats {
   /** User + assistant surface messages observed. */
   msgCount: number
   toolCallCount: number
-  /** Whole-log cache-hit rate: cumulative cacheReadTokens ÷ billed input (input + cacheRead + cacheWrite), matching DSH web. */
+  /** Per-route cache-hit rate: cacheReadTokens ÷ billed input (input + cacheRead + cacheWrite) accumulated within the current provider/model segment; reset when the route changes. */
   cacheHitRate?: number
   /**
    * Current context occupancy estimate — the value the footer's Context
    * segment divides by the model window: the latest assistant/message's
    * billed input + output plus a CJK estimate of every message appended
-   * after it (they enter the next request). NOT the cumulative `inputTokens`
-   * — that total only grows, while this tracks the current context so the
-   * display follows the latest request and drops after a compaction.
+   * after it (they enter the next request). NOT the `inputTokens` total —
+   * that accumulator only grows within a route segment (it resets when the
+   * provider/model route changes), while this tracks the current context so
+   * the display follows the latest request and drops after a compaction.
    */
   contextTokens: number
 }
@@ -233,6 +234,15 @@ export class DshSessionBridge {
    * until the first assistant/message arrives.
    */
   private lastUsage: TokenUsage | undefined
+  /**
+   * Provider/model baseline from the latest `request/header` — the route the
+   * current CH accumulation belongs to. A VALUE change (either field)
+   * restarts the CH counters (see applyEvent); a same-value header (resume
+   * replays an identical header) keeps them. `undefined` until the first
+   * header arrives.
+   */
+  private headerProvider: string | undefined
+  private headerModel: string | undefined
   /**
    * CJK-estimated tokens of every message appended AFTER the latest
    * assistant/message (user prompts, tool results, streamed text deltas) —
@@ -595,6 +605,8 @@ export class DshSessionBridge {
     this.stats.contextTokens = 0
     this.lastUsage = undefined
     this.pendingTokens = 0
+    this.headerProvider = undefined
+    this.headerModel = undefined
     this.agentViews.clear()
     this.childSessions.clear()
     this.childLogs.clear()
@@ -689,6 +701,10 @@ export class DshSessionBridge {
     this.stats.contextTokens = 0
     this.lastUsage = undefined
     this.pendingTokens = 0
+    // Replay rebuilds the header baseline from the persisted log itself, so
+    // the route-change segmentation matches the live run exactly.
+    this.headerProvider = undefined
+    this.headerModel = undefined
     const sessionId = this.sessionId
     for (const event of events) {
       if (event.type === 'assistant/chunk') continue
@@ -758,6 +774,32 @@ export class DshSessionBridge {
         this.pendingTokens += estimateToolResultTokens(event.data)
         this.stats.contextTokens = this.contextTokens()
         break
+      case 'request/header': {
+        // A provider/model VALUE change restarts the cache-hit accounting:
+        // the new route owns a fresh prompt cache, so mixing its tokens into
+        // the previous route's totals would dilute both sides' rates. Only
+        // the CH accumulators reset — msgCount/toolCallCount/outputTokens/
+        // context occupancy are route-independent and keep running. A
+        // same-value header (a resume re-emits an identical header for the
+        // same content) must NOT reset; the first header (initial) only
+        // establishes the baseline. Replay feeds persisted header events
+        // through this same case, so a resumed session re-segments its CH
+        // history identically to the live run.
+        const { provider, model } = event.data.header.config
+        if (this.headerProvider === undefined || this.headerModel === undefined) {
+          this.headerProvider = provider
+          this.headerModel = model
+          break
+        }
+        if (provider === this.headerProvider && model === this.headerModel) break
+        this.headerProvider = provider
+        this.headerModel = model
+        this.stats.inputTokens = 0
+        this.stats.cacheReadTokens = 0
+        this.stats.cacheWriteTokens = 0
+        this.stats.cacheHitRate = undefined
+        break
+      }
       default:
         break
     }
