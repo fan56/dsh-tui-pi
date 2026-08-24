@@ -4,6 +4,31 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1] - 2026-08-24
+
+### Fixed
+
+- **Pending badges are pruned on EVERY turn end** (`src/index.ts`). The
+  transcript sweep for stranded routed-badge echoes (`⏳ queued` / `↪ steer`
+  ghosts) used to run only when a turn ended `aborted`/`error`. Two more
+  end reasons strand badges just as permanently: `blocked` (the pre-step
+  rejecter removes the claimed batch from the inbox without ever producing
+  a `user/message`) and an empty-enter `completed`. The sweep now runs on
+  all turn ends; it stays safe because its alive-check resolves only echo
+  message ids that are gone from BOTH inbox boundaries (next-step ∪
+  next-turn), so entries still queued for a later turn keep their pending
+  badge and remain claimable.
+- **Queue-panel refresh failures surface instead of going silent**
+  (`src/queue-panel.ts`, `src/messages.ts`, `src/index.ts`). The live
+  panel's tick swallowed every `readItems` error, so a persistent failure
+  left the panel silently showing stale data forever. Consecutive failures
+  are now counted: at the third (`QUEUE_REFRESH_FAIL_THRESHOLD`) one
+  warning is raised per streak — an in-panel "may be stale" notice line
+  plus a durable ⚠ warning in the buffered transcript via the new
+  `renderNotice(…, 'warning')` level — and any successful tick resets the
+  counter so a later outage can warn again. Transient single-tick blips
+  never warn and a persistent outage never spams.
+
 ## [0.20.0] - 2026-08-24
 
 ### Added
