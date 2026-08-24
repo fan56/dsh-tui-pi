@@ -6,7 +6,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { clipToWidth, lastNonBlankLine, visibleWidth } from '../lib/text.js'
+import { clipToWidth, lastNonBlankLine, visibleWidth, wrapText } from '../lib/text.js'
 
 test('lastNonBlankLine returns the newest non-blank line, ANSI-stripped and folded', () => {
   assert.equal(lastNonBlankLine('one\ntwo\n\n'), 'two', 'trailing blanks skipped')
@@ -57,4 +57,60 @@ test('clipToWidth never splits a surrogate pair', () => {
 test('clipToWidth honors a non-positive budget', () => {
   assert.equal(clipToWidth('anything', 0), '')
   assert.equal(clipToWidth('anything', -1), '')
+})
+
+// ------------------------------------------------------------------ wrapText --
+
+test('wrapText returns short text as a single line, unchanged', () => {
+  assert.deepEqual(wrapText('hello world', 20), ['hello world'])
+  assert.deepEqual(wrapText('', 10), [''], 'empty input still yields one (empty) line')
+})
+
+test('wrapText breaks between words when the budget is exceeded', () => {
+  const lines = wrapText('deploy to the staging cluster', 12)
+  assert.ok(lines.length >= 3, `wraps onto several lines: ${JSON.stringify(lines)}`)
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= 12, `line "${line}" stays within the budget`)
+  }
+  assert.equal(lines.join(' '), 'deploy to the staging cluster', 'no words lost or reordered')
+})
+
+test('wrapText hard-breaks a single word wider than the budget', () => {
+  const lines = wrapText('x'.repeat(25), 10)
+  assert.equal(lines.length, 3)
+  assert.deepEqual(lines.map(l => l.length), [10, 10, 5])
+})
+
+test('wrapText wraps CJK text without spaces at the column limit', () => {
+  // '你好世界' is 8 columns — no spaces, so wrapping must break by width.
+  const lines = wrapText('你好世界你好世界', 6)
+  assert.equal(lines.length, 3)
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= 6, `CJK line "${line}" stays within ${6} columns`)
+  }
+  assert.equal(lines.join(''), '你好世界你好世界', 'no characters lost')
+})
+
+test('wrapText never splits a surrogate pair while hard-breaking', () => {
+  // '👍' is one grapheme (2 columns); a 5-column budget fits two thumbs per line.
+  const lines = wrapText('👍👍👍👍', 4)
+  assert.equal(lines.length, 2)
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= 4)
+    assert.ok(!line.includes('\ud83d') || line.includes('👍'), 'no lone surrogate leaks')
+  }
+  assert.equal([...lines.join('')].filter(c => c === '👍').length, 4, 'all four emoji survive')
+})
+
+test('wrapText honors a non-positive budget by degrading to a single empty line', () => {
+  assert.deepEqual(wrapText('anything', 0), [''])
+  assert.deepEqual(wrapText('anything', -1), [''])
+})
+
+test('wrapText keeps an oversized grapheme whole without a ghost leading blank line', () => {
+  // Budget 1 vs a 2-column emoji: hard-breaking must NOT push the empty
+  // running line before the grapheme, and the cluster itself is never split.
+  const lines = wrapText('👍👍', 1)
+  assert.deepEqual(lines, ['👍', '👍'], `no ghost empty line, emoji intact: ${JSON.stringify(lines)}`)
+  assert.equal(lines[0], '👍')
 })

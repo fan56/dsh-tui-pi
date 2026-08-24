@@ -299,13 +299,13 @@ test('renderQuestionsView: title + table + scroll info + footer', () => {
   // Wide window (20 body lines) — every row fits; the capped-window behavior
   // has its own dedicated tests below.
   const lines = renderQuestionsView(theme, state, 60, 20)
-  // Title + 3 booktabs rows + 2 headers + 4 option rows + 2 sentinel + 1 confirm = 9 body lines
-  // + possible status line + footer.
+  // Title + 3 booktabs rows + 2 headers + 4 option rows + 2 sentinel + confirm
+  // group = body lines + possible status line + footer.
   const title = stripAnsi(lines[0])
   assert.equal(title, '● Questions (2)')
   // The booktabs header row + the body lines all live below the title.
   assert.ok(lines.find(line => stripAnsi(line).includes('SELECTION')))
-  assert.ok(lines.find(line => stripAnsi(line).includes('STATE')))
+  assert.equal(lines.find(line => stripAnsi(line).includes('STATE')), undefined, 'the dedicated State column is gone')
   // Question labels appear in the table.
   assert.ok(lines.some(line => stripAnsi(line).includes('Fruit') && stripAnsi(line).includes('Pick a fruit')))
   assert.ok(lines.some(line => stripAnsi(line).includes('apple')))
@@ -317,12 +317,29 @@ test('renderQuestionsView: title + table + scroll info + footer', () => {
   assert.ok(stripAnsi(footerLine).includes('navigate'))
 })
 
-test('renderQuestionsView: a selected option shows the [●] status pill (single) or [+] (multi)', () => {
+test('renderQuestionsView: selection state is marked INLINE before the option text (no State column)', () => {
   const state = toggleOption(initialState(singleQuestion()), 0, 'yes')
-  const lines = renderQuestionsView(theme, state, 50)
-  const selectedLine = lines.find(line => stripAnsi(line).includes('yes'))
+  const lines = renderQuestionsView(theme, state, 50, 20).map(stripAnsi)
+  const selectedLine = lines.find(line => line.includes('yes'))
   assert.ok(selectedLine !== undefined)
-  assert.ok(stripAnsi(selectedLine).includes('●'), 'single-select shows ●')
+  assert.ok(selectedLine.includes('● 1. yes'), `single-select shows ● inline before the text, got: ${selectedLine}`)
+  assert.ok(!selectedLine.includes('│'), 'no column separator — selection lives inside the label column')
+  const unselectedLine = lines.find(line => line.includes('no'))
+  assert.ok(unselectedLine !== undefined && unselectedLine.includes('○ 2. no'), 'unselected options carry the hollow ○ mark for alignment')
+})
+
+test('renderQuestionsView: the confirm row sits in its own block, separated from the questions by a blank line', () => {
+  const lines = renderQuestionsView(theme, initialState(baseQuestions()), 60, 20).map(stripAnsi)
+  const confirmIdx = lines.findIndex(l => l.includes('Confirm answers'))
+  assert.ok(confirmIdx > 0)
+  assert.equal(lines[confirmIdx - 1], '', 'a blank line separates the confirm row from the question blocks above')
+})
+
+test('renderQuestionsView: a completed overlay shows ✓ in the confirm row state slot', () => {
+  const state = toggleOption(toggleOption(initialState(baseQuestions()), 0, 'apple'), 1, 'car')
+  const lines = renderQuestionsView(theme, state, 60, 20).map(stripAnsi)
+  const confirmLine = lines.find(l => l.includes('Confirm answers'))
+  assert.ok(confirmLine !== undefined && confirmLine.includes('✓'), 'ready state marked inline on the confirm row')
 })
 
 test('renderQuestionsView: cancel hint appears after a single Esc', () => {
@@ -490,8 +507,8 @@ test('rowNumber / rowIndexForNumber: per-question numbering with sentinel contin
 test('renderQuestionsView: numbered prefixes + ▸ cursor marker on selectable rows', () => {
   const lines = renderQuestionsView(theme, initialState(singleQuestion()), 50, 20).map(stripAnsi)
   const cursor = lines.find(l => l.includes('▸'))
-  assert.ok(cursor !== undefined && cursor.startsWith('▸ 1. yes'), `selected row numbered under the marker, got: ${cursor}`)
-  assert.ok(lines.some(l => l.startsWith('  2. no')), 'unselected rows keep a blank marker slot before their number')
+  assert.ok(cursor !== undefined && cursor.startsWith('▸ ○ 1. yes'), `selected row numbered under the marker, got: ${cursor}`)
+  assert.ok(lines.some(l => l.startsWith('  ○ 2. no')), 'unselected rows keep a blank marker slot and hollow mark before their number')
   assert.ok(lines.some(l => l.includes('3. Type something.')), 'sentinel participates in per-question numbering')
 })
 
@@ -506,7 +523,7 @@ test('renderQuestionsView: a muted ─ divider separates each question from its 
 
 test('renderQuestionsView: option description renders as its own line below the label', () => {
   const lines = renderQuestionsView(theme, initialState(baseQuestions()), 60, 20).map(stripAnsi)
-  const appleIdx = lines.findIndex(l => l.includes('1. apple'))
+  const appleIdx = lines.findIndex(l => l.includes('○ 1. apple'))
   assert.ok(appleIdx >= 0)
   assert.ok(!lines[appleIdx].includes('red and round'), 'description no longer concatenated into the label cell')
   assert.ok(lines[appleIdx + 1]?.includes('red and round'), 'description gets its own indented muted line')
@@ -516,13 +533,13 @@ test('renderQuestionsView: labels fold newlines into spaces (single rendered lin
   const qs = [{ id: 'q1', question: 'Pick', header: 'H', options: [{ label: 'two\nlines' }] }]
   const lines = renderQuestionsView(theme, initialState(qs), 60, 20).map(stripAnsi)
   assert.equal(lines.filter(l => l.includes('two')).length, 1, 'no second rendered row from an embedded newline')
-  assert.ok(lines.some(l => l.includes('1. two lines')), 'newline folded to a space inside one cell')
+  assert.ok(lines.some(l => l.includes('○ 1. two lines')), 'newline folded to a space inside one cell')
 })
 
 test('renderQuestionsView: height-capped window clips the body but keeps the cursor visible', () => {
-  const state = initialState(baseQuestions()) // 13 rendered body lines at width 60
+  const state = initialState(baseQuestions()) // 14 rendered body lines at width 60 (incl. confirm blank separator)
   const lines = renderQuestionsView(theme, state, 60, 5).map(stripAnsi)
-  assert.ok(lines.some(l => l.includes('▸ 1. apple')), 'the cursor row is always inside the window')
+  assert.ok(lines.some(l => l.includes('▸') && l.includes('apple')), 'the cursor row is always inside the window')
   assert.equal(lines.some(l => l.includes('Confirm answers')), false, 'tail content beyond the window is clipped')
   // title + 3 table chrome rules + 5 body + bottom rule + blank + footer.
   assert.ok(lines.length <= 12, `output bounded by the window, got ${lines.length} lines`)
@@ -552,7 +569,51 @@ test('renderQuestionsView: scrolling follows the cursor and survives wrap-around
   assert.equal(lines.some(l => l.includes('A  Q1')), false, 'head content scrolled out of the window')
   stepDown() // wrap past the last row back to the first option
   lines = renderQuestionsView(theme, state, 60, 6).map(stripAnsi)
-  assert.ok(lines.some(l => l.includes('▸ 1. a1')), 'wrap-around lands back on a visible head row')
+  assert.ok(lines.some(l => l.includes('▸ ○ 1. a1')), 'wrap-around lands back on a visible head row')
+})
+
+test("renderQuestionsView: the scroll anchor is the cursor row's LAST rendered line, so wrapped continuations stay visible", () => {
+  // The third option's label word-wraps into several rendered lines; when the
+  // clamp slides the window, anchoring the FIRST line left every continuation
+  // below the cut (blind keypresses). Anchoring the last line keeps the whole
+  // logical block inside the window whenever it fits.
+  const qs = [{
+    id: 'q1', question: 'Pick one', header: 'Wrap',
+    options: [
+      { label: 'aa' },
+      { label: 'bb' },
+      { label: 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu' },
+    ],
+  }]
+  const state = { ...initialState(qs), cursorIndex: 3 } // the wrapping option row
+  const slice = renderQuestionsView(theme, state, 60, 5).map(stripAnsi)
+  const joined = slice.join('\n')
+  for (const word of ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota', 'kappa', 'lambda', 'mu']) {
+    assert.ok(joined.includes(word), `wrapped continuation "${word}" must stay inside the scroll window`)
+  }
+  assert.ok(slice.some(l => l.includes('▸') && l.includes('alpha')), 'the cursor row itself is still in the window')
+})
+
+test('renderQuestionsView: exact-fit boundary — body == visible shows every line with NO scroll readout', () => {
+  // Locks the boundary the confirm-blank-line separator shifted: when the body
+  // exactly fills the window, nothing may be clipped and the (n/m) footer
+  // readout must stay absent (overflow is strictly body.length > visible).
+  const full = renderQuestionsView(theme, initialState(baseQuestions()), 60, 500).map(stripAnsi)
+  // Single flex column → the table rules render as plain dash runs with no
+  // ┬/┼/┴ junctions; anchor on the SELECTION header block and the footer.
+  const bodyStart = full.findIndex(l => l.includes('SELECTION')) + 2
+  const bodyEnd = full.findIndex(l => l.includes('navigate')) - 2 // blank + footer below the bottom rule
+  const bodyCount = bodyEnd - bodyStart
+  assert.ok(bodyCount > 0, 'sanity: body lines found between the table rules')
+  const exact = renderQuestionsView(theme, initialState(baseQuestions()), 60, bodyCount).map(stripAnsi)
+  const exactStart = exact.findIndex(l => l.includes('SELECTION')) + 2
+  const exactEnd = exact.findIndex(l => l.includes('navigate')) - 2
+  assert.deepEqual(exact.slice(exactStart, exactEnd), full.slice(bodyStart, bodyEnd),
+    'an exactly-fitting window renders the complete body unclipped')
+  assert.ok(exact.slice(exactStart, exactEnd).some(l => l.includes('Confirm answers')),
+    'the confirm row is NOT pushed out of an exactly-fitting window')
+  const footer = exact.find(l => l.includes('navigate'))
+  assert.doesNotMatch(footer, /\(\d+\/\d+\)/, 'exact fit is not overflow — no position readout')
 })
 
 test('renderReviewView: capped window keeps the review cursor and submit row reachable', () => {
@@ -987,18 +1048,69 @@ test('renderReviewView: a multi-line custom answer folds too', () => {
   assert.ok(lines.some(l => l.includes('✎ line one line two')), 'custom text folded onto one cell line')
 })
 
-// --------------------------------------------------- header bold + clip order --
+// --------------------------------------------------- header bold + wrap order --
 
-test('renderQuestionsView: long header text is clipped BEFORE BOLD and fills the wrap exactly', () => {
+test('renderQuestionsView: long header text word-wraps to the pane width (never overflows)', () => {
   const longQuestion = 'x'.repeat(200)
   const qs = [{ id: 'q1', question: longQuestion, header: 'Fruit', options: [{ label: 'apple' }] }]
   const width = 40
   const wrap = width - 2
-  const lines = renderQuestionsView(theme, initialState(qs), width)
-  const headerLine = lines.find(l => stripAnsi(l).includes('Fruit') && stripAnsi(l).includes('xxx'))
-  assert.ok(headerLine !== undefined, 'header row rendered')
-  assert.ok(headerLine.includes('\x1b[1m'), 'header keeps its BOLD span after truncation')
-  const plain = stripAnsi(headerLine)
-  assert.equal(visibleWidth(plain), wrap, `clipped plain text fills the wrap (${wrap}) exactly`)
-  assert.ok(!plain.includes('\x1b['), 'no SGR fragment leaks into the visible text')
+  const lines = renderQuestionsView(theme, initialState(qs), width, 30)
+  const fruitLine = lines.find(l => stripAnsi(l).includes('Fruit'))
+  const xLines = lines.filter(l => /^x+$/.test(stripAnsi(l).trim()))
+  assert.ok(fruitLine !== undefined, 'the header prefix renders')
+  assert.ok(xLines.length >= 2, `the 200-char question wraps onto multiple lines, got ${xLines.length}`)
+  for (const headerLine of [fruitLine, ...xLines]) {
+    assert.ok(headerLine.includes('\x1b[1m'), 'each wrapped header line keeps its BOLD span')
+    const plain = stripAnsi(headerLine)
+    assert.ok(visibleWidth(plain.trim()) <= wrap, `wrapped line stays within the wrap width (${wrap})`)
+    assert.ok(!plain.includes('\x1b['), 'no SGR fragment leaks into the visible text')
+  }
+  // The whole question text survives — wrapping, not truncation.
+  const totalX = xLines.reduce((sum, l) => sum + (stripAnsi(l).match(/x/g)?.length ?? 0), 0)
+  assert.equal(totalX, 200, 'every character of the long question is rendered across the wrapped lines')
+})
+
+test('renderQuestionsView: a long option label wraps onto indented continuation lines', () => {
+  const longLabel = 'staging-cluster-with-a-very-long-descriptive-name-that-exceeds-the-pane'
+  const qs = [{ id: 'q1', question: 'Pick', header: 'H', options: [{ label: longLabel }, { label: 'short' }] }]
+  const width = 40
+  const lines = renderQuestionsView(theme, initialState(qs), width, 20).map(stripAnsi)
+  const rowIdx = lines.findIndex(l => l.includes('○ 1.') && l.includes(longLabel.slice(0, 10)))
+  assert.ok(rowIdx >= 0, 'the option row renders')
+  const nextIdx = lines.findIndex((l, i) => i > rowIdx && l.includes('○ 2. short'))
+  assert.ok(nextIdx > rowIdx, 'the sibling option still renders after the wrapped label')
+  const block = lines.slice(rowIdx, nextIdx)
+  assert.ok(block.length >= 3, `the label wraps onto several lines, got ${block.length}`)
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= width - 2, `every rendered line fits the pane (width ${visibleWidth(line)})`)
+  }
+  // No characters lost: the row block reassembles into the original label.
+  const reassembled = block
+    .map((l, k) => (k === 0 ? stripAnsi(l).trim().replace(/^[▸○ ]*1\. /, '') : stripAnsi(l).trim()))
+    .join('')
+  assert.equal(reassembled, longLabel)
+})
+
+test('renderQuestionsView: a long option description word-wraps instead of being clipped', () => {
+  const longDescription = 'Deploy to the staging cluster first, run the smoke suite, then promote to production.'
+  const qs = [{ id: 'q1', question: 'Pick', header: 'H', options: [{ label: 'staging', description: longDescription }] }]
+  const width = 40
+  const lines = renderQuestionsView(theme, initialState(qs), width, 20).map(stripAnsi)
+  // All lines between the option row and the next numbered row are the
+  // wrapped description block.
+  const startIdx = lines.findIndex(l => l.includes('○ 1. staging'))
+  assert.ok(startIdx >= 0, 'the option row renders')
+  const endIdx = lines.findIndex((l, i) => i > startIdx && l.includes('2. Type something.'))
+  assert.ok(endIdx > startIdx, 'the sentinel row follows')
+  const descriptionLines = lines.slice(startIdx + 1, endIdx)
+  assert.ok(descriptionLines.length >= 2, `a long description wraps onto several lines, got ${descriptionLines.length}`)
+  for (const line of lines) {
+    assert.ok(visibleWidth(line) <= width - 2, `every rendered line fits the pane (width ${visibleWidth(line)})`)
+  }
+  // No words lost: reassemble and compare folded.
+  const rejoined = descriptionLines.map(l => l.trim()).join(' ')
+  for (const word of longDescription.split(' ')) {
+    assert.ok(rejoined.includes(word), `wrapped description keeps the word "${word}"`)
+  }
 })

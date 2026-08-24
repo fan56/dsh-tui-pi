@@ -15,3 +15,12 @@ HANDOFF.md
 *.tgz
 dsh-tui-pi.png
 *.png
+
+# --- Showcase media (large local assets, never committed) ---
+*.gif
+*.mp4
+screenshots/
+
+# --- Showcase docs (local drafts and market submissions, never committed) ---
+docs/showcase-*.md
+docs/market-submissions.md

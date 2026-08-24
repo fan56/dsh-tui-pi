@@ -12,14 +12,16 @@
  * so the cursor row is always visible even when the overlay is height-capped):
  *
  *   ● Questions (2)
+ *     SELECTION
+ *     ─────────────────────────────        (table chrome)
  *     Fruit  Where should we deploy?      (header — not selectable)
  *     ─────────────────────────────        (divider)
- *     ▸ 1. staging                        (cursor marker + per-question number)
- *       2. production
+ *     ▸ ● 1. staging                      (cursor + inline selection mark)
+ *       ○ 2. production
  *          red and round                  (option description, own muted line)
- *       3. Type something.                (sentinel row — inline input)
- *     Vehicle  Pick a vehicle ···         (continues vertically)
- *     ⏎ Confirm answers                   (when ≥ 2 questions, or any multiSelect)
+ *         3. Type something.              (sentinel row — inline input)
+ *                                          (blank separator before confirm)
+ *         ⏎ Confirm answers               (when ≥ 2 questions, or any multiSelect)
  *
  * The body renders through a scroll window sized from the live terminal
  * height (`askUserMaxVisibleForRows`; falls back to `ASK_USER_MAX_VISIBLE`
@@ -74,7 +76,7 @@ import {
   type TableColumn,
 } from './panels.ts'
 import { wrapFramedOverlay } from './frame.ts'
-import { clipToWidth } from './text.ts'
+import { clipToWidth, wrapText } from './text.ts'
 
 // ----------------------------------------------------------------- constants --
 
@@ -513,28 +515,27 @@ export function nextUnansweredRow(
 
 // ------------------------------------------------- render: questions phase --
 
-/** Render width budgets for the questions phase (label flex column + status column). */
+/** Render width budget for the questions phase (single flex label column). */
 const QUESTIONS_COLUMNS = (): readonly TableColumn[] => [
   { key: 'label', title: 'Selection', flex: true },
-  { key: 'status', title: 'State', width: 14 },
 ]
 
-/** Status pill text for one row. */
-function rowStatusText(kind: FlatRow['kind'], state: AskUserState, row: FlatRow, isMulti: boolean): string {
-  if (kind === 'question-header') return ''
-  if (kind === 'option') {
-    const opt = state.questions[row.questionIndex]?.options?.[row.optionIndex ?? -1]
-    if (opt === undefined) return ''
-    const isSelected = state.perQuestion[row.questionIndex]?.selected.includes(opt.label) ?? false
-    if (!isSelected) return ''
-    return isMulti ? `[+]` : '[●]'
-  }
-  if (kind === 'sentinel') {
-    return (state.perQuestion[row.questionIndex]?.custom !== undefined
-      && state.perQuestion[row.questionIndex]?.custom !== '') ? '[✎]' : ''
-  }
-  if (kind === 'confirm') return allQuestionsAnswered(state) ? '[✓]' : '[—]'
-  return ''
+/** Inline marker shown before a selected option's number (unselected: `○`). */
+const OPTION_SELECTED_MARK = '●'
+/** Inline marker shown before an unselected option's number. */
+const OPTION_UNSELECTED_MARK = '○'
+
+/**
+ * Two-column-wide inline state slot rendered between the cursor marker and
+ * the per-question number: options carry their selection mark (`●`/`○`),
+ * the confirm pseudo-row carries its readiness mark (`✓` when every question
+ * is answered), and sentinel rows keep it blank (their committed custom text
+ * already carries the `✎` mark inside the label).
+ */
+function inlineStateSlot(row: FlatRow, isSelectedOption: boolean, allAnswered: boolean): string {
+  if (row.kind === 'option') return `${isSelectedOption ? OPTION_SELECTED_MARK : OPTION_UNSELECTED_MARK} `
+  if (row.kind === 'confirm') return allAnswered ? '✓ ' : '  '
+  return '  '
 }
 
 /** Render the questions pane as a flat table line list behind a scroll window. */
@@ -579,33 +580,49 @@ export function renderQuestionsView(
   const visible = Math.max(1, maxVisible)
   const body: string[] = []
   let cursorLine = -1
+  // Loop-invariant: readiness mark for the confirm row (pure state read).
+  const allAnswered = allQuestionsAnswered(state)
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     if (row === undefined) continue
 
     if (row.kind === 'question-header') {
-      // Header rows: full-width title, skip the table columns.
+      // Header rows: full-width title, skip the table columns. Word-wrapped
+      // to the pane width so a long question never overflows the terminal.
       const text = `${foldText(row.label)}  ${foldText(row.description ?? '')}`
-      // Clip the plain text FIRST, then wrap it in BOLD — clipToWidth counts
-      // SGR fragments as visible columns, so clipping an already-styled
-      // string can truncate mid-escape and leak raw ANSI.
-      const padded = BOLD + clipToWidth(text, wrap) + RESET
-      body.push(fns.accent(padded))
+      for (const seg of wrapText(text, wrap)) {
+        // Wrap plain text FIRST, then apply BOLD — width math on styled
+        // strings counts SGR fragments as visible columns.
+        body.push(fns.accent(BOLD + clipToWidth(seg, wrap) + RESET))
+      }
       // Upstream `detail` is supporting context (mandatory when the question
       // declares an intent) — render it muted below the header, never inside
       // option labels.
       if (row.detail !== undefined && row.detail !== '') {
-        body.push(fns.muted(clipToWidth(foldText(row.detail), wrap)))
+        for (const seg of wrapText(foldText(row.detail), wrap)) {
+          body.push(fns.muted(clipToWidth(seg, wrap)))
+        }
       }
       // Visual divider between a question's text and its option list.
       body.push(fns.muted(clipToWidth('─'.repeat(wrap), wrap)))
       continue
     }
 
-    const isMulti = row.questionIndex >= 0
-      ? state.questions[row.questionIndex]?.multiSelect === true
-      : false
+    // Blank separator: the confirm pseudo-row is an action zone, not part of
+    // any question block — give it its own visual group.
+    if (row.kind === 'confirm' && body.length > 0) {
+      body.push('')
+    }
+
+    const optionLabel = row.kind === 'option'
+      ? state.questions[row.questionIndex]?.options?.[row.optionIndex ?? -1]?.label
+      : undefined
+    const isSelectedOption = optionLabel !== undefined
+      && (state.perQuestion[row.questionIndex]?.selected.includes(optionLabel) ?? false)
+    const isCustomSentinel = row.kind === 'sentinel'
+      && state.perQuestion[row.questionIndex]?.custom !== undefined
+      && state.perQuestion[row.questionIndex]?.custom !== ''
     const selected = i === state.cursorIndex && state.customEditingFor === null
     // The actively edited sentinel anchors the scroll window even though the
     // ▸ marker leaves it while editing (selected requires customEditingFor
@@ -621,34 +638,38 @@ export function renderQuestionsView(
     // Per-question numbering on every numbered row: options 1..N, sentinel N+1;
     // the confirm pseudo-row keeps its fixed ⏎ symbol instead.
     const number = rowNumber(rows, i)
-    const prefix = number !== null ? `${number}. ` : ''
-    const status = rowStatusText(row.kind, state, row, isMulti)
-    const labelCell = padCell(clipToWidth(prefix + displayLabel, widths[0]), widths[0])
-    const statusCell = padCell(clipToWidth(status, widths[1]), widths[1])
-    const plain = `${rowMarker(selected)}${labelCell}${TABLE_SEP}${statusCell}`
-    const line = clipToWidth(plain, wrap)
-    if (selected || editingAnchor) {
-      cursorLine = body.length
-      body.push(fns.accent(BOLD + line + RESET))
-    } else if (row.kind === 'option'
-      && (state.perQuestion[row.questionIndex]?.selected.includes(
-        state.questions[row.questionIndex]?.options?.[row.optionIndex ?? -1]?.label ?? '',
-      ) ?? false)) {
-      body.push(fns.success(line))
-    } else if (row.kind === 'sentinel'
-      && (state.perQuestion[row.questionIndex]?.custom !== undefined
-        && state.perQuestion[row.questionIndex]?.custom !== '')) {
-      body.push(fns.success(line))
-    } else {
-      body.push(fns.muted(line))
+    const numberPrefix = number !== null ? `${number}. ` : ''
+    const slot = inlineStateSlot(row, isSelectedOption, allAnswered)
+    // Continuation indent aligns wrapped label lines under the first label
+    // column (past cursor marker, state slot and number).
+    const contentIndent = MARKER_W + slot.length + numberPrefix.length
+    const segments = wrapText(displayLabel, Math.max(1, widths[0] - contentIndent + MARKER_W))
+    const styleLine = selected || editingAnchor
+      ? (line: string): string => fns.accent(BOLD + line + RESET)
+      : isSelectedOption || isCustomSentinel ? fns.success : fns.muted
+    // First wrapped segment rides in the table row; the rest become indented
+    // continuation lines below it.
+    const labelCell = padCell(clipToWidth(slot + numberPrefix + (segments[0] ?? ''), widths[0]), widths[0])
+    const plain = `${rowMarker(selected)}${labelCell}`
+    body.push(styleLine(clipToWidth(plain, wrap)))
+    for (const seg of segments.slice(1)) {
+      body.push(styleLine(clipToWidth(`${' '.repeat(contentIndent)}${seg}`, wrap)))
     }
-    // Option descriptions get their own muted line under the label (two-line
-    // header/detail pattern) — no more concatenation + hard clipping.
+    if (selected || editingAnchor) {
+      // Anchor the scroll window at the cursor row's LAST rendered line: a
+      // wrapped label (or its description lines) renders as several body
+      // lines, and anchoring the first one left the continuations below the
+      // window when the clamp slid — blind keypresses on invisible rows.
+      cursorLine = body.length - 1
+    }
+    // Option descriptions get their own muted lines under the label
+    // (two-line header/detail pattern), word-wrapped like every other text.
     if (row.kind === 'option') {
       const description = state.questions[row.questionIndex]?.options?.[row.optionIndex ?? -1]?.description
       if (description !== undefined && description !== '') {
-        const indent = MARKER_W + `${number}. `.length
-        body.push(fns.muted(clipToWidth(`${' '.repeat(indent)}${foldText(description)}`, wrap)))
+        for (const seg of wrapText(foldText(description), Math.max(1, wrap - contentIndent))) {
+          body.push(fns.muted(clipToWidth(`${' '.repeat(contentIndent)}${seg}`, wrap)))
+        }
       }
     }
   }

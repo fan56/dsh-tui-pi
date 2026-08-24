@@ -157,7 +157,7 @@ Two caps (`/agents` → `l` to configure):
 dsh plugin --profile tui add @aiwayds/dsh-dcp
 ```
 
-Once mounted, DCP runs transparently in the background. The footer's **context** segment prices the current occupancy — the latest request's billed context plus a CJK estimate of messages after it — so after a compaction the next request lands smaller and the display follows it down (the percent is capped at 100, the window being a hard ceiling). The **cache-hit** segment reflects the session's cumulative cache reuse.
+Once mounted, DCP runs transparently in the background. The footer's **context** segment prices the current occupancy — the latest request's billed context plus a CJK estimate of messages after it — so after a compaction the next request lands smaller and the display follows it down (the percent is capped at 100, the window being a hard ceiling). The **cache-hit** segment reflects the current provider/model route's cache reuse — the rate is computed per route segment and restarts (hiding until the next billed message) when the provider or model changes.
 
 Inside a subagent, a committed compaction is visible too: DCP appends one `user/message` **notice** row per compaction on the child's own log, and the Ctrl+G transcript renders it with a `🧹` marker (distinct from the generic `ⓘ`), with the picker rows carrying the per-child compaction count (`🧹 N×` in the description). Both DCP's `roundInterval` and the TUI's `maxRounds` count the **same** thing — `assistant/message` events, one per LLM round-trip — but act differently: the TUI queues one wrap-up request once a child's count reaches `maxRounds`, while DCP compacts (prunes context) at the next idle boundary once a session's count reaches `roundInterval`. One triggers work, the other frees context.
 
@@ -390,7 +390,7 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (722 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (745 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -431,7 +431,7 @@ src/
   queue-panel.ts      Ctrl+O pending-message queue: d remove · s steer now,
                       live-refreshed overlay
   theme/              GitHub light/dark palettes + terminal detection
-test/*.test.mjs       unit tests (722 across 43 files)
+test/*.test.mjs       unit tests (728 across 44 files)
 ```
 
 ---
