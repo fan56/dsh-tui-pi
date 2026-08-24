@@ -12,7 +12,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Container } from '@earendil-works/pi-tui'
 import { TranscriptRenderer } from '../lib/messages.js'
-import { darkTheme, lightTheme } from '../lib/theme/index.js'
+import { ansiFg, darkTheme, lightTheme } from '../lib/theme/index.js'
 
 const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
 
@@ -218,4 +218,72 @@ test('resolve/rebadge return false without a matching pending echo (unknown id)'
   const renderer = new TranscriptRenderer(new Container(), lightTheme, () => {})
   assert.equal(renderer.resolvePendingEcho({ id: 'nope' }, 'canceled'), false)
   assert.equal(renderer.rebadgePendingEcho({ id: 'nope' }, 'queued'), false)
+})
+
+// --------------------------------------- v0.20.1: prune on EVERY turn/end --
+
+/**
+ * Mirror of the index.ts bridgeCallback turn/end branch under test: the
+ * alive set is exactly the agent inbox snapshot (getPendingPrompts =
+ * next-step ∪ next-turn message ids), whatever the end reason was.
+ */
+function pruneOnTurnEnd(renderer, inboxIds) {
+  const alive = new Set(inboxIds.map(String))
+  return renderer.prunePendingEchoes(messageId => alive.has(String(messageId)))
+}
+
+/** One test case per turn/end reason kind — all must sweep dead badges. */
+for (const reasonKind of ['blocked', 'completed', 'aborted', 'error']) {
+  test(`turn/end ${reasonKind}: stranded badge becomes canceled, no ghost remains`, () => {
+    const doc = new Container()
+    const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
+    renderer.renderPendingEcho('claimed then blocked', 'queued', 'm-claim')
+    // The pre-step rejecter scenario: the claimed batch left the inbox and
+    // never produced a user/message — nothing is alive anymore.
+    const pruned = pruneOnTurnEnd(renderer, [])
+    assert.equal(pruned, 1, `${reasonKind} end sweeps the stranded badge`)
+    const text = transcriptText(doc)
+    assert.ok(text.includes('✕ canceled · claimed then blocked'), `${reasonKind}: explicit canceled end state`)
+    assert.ok(!text.includes('⏳'), `${reasonKind}: no ⏳ ghost remains`)
+  })
+
+  test(`turn/end ${reasonKind}: an entry still in the inbox keeps its pending badge`, () => {
+    const doc = new Container()
+    const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
+    renderer.renderPendingEcho('still queued for next turn', 'queued', 'm-alive')
+    renderer.renderPendingEcho('vanished from the inbox', 'steer', 'm-dead')
+    const pruned = pruneOnTurnEnd(renderer, ['m-alive'])
+    assert.equal(pruned, 1, 'exactly the not-in-inbox entry resolved')
+    const text = transcriptText(doc)
+    assert.ok(text.includes('⏳ queued · still queued for next turn'), `${reasonKind}: queued entry untouched`)
+    assert.ok(!text.includes('↪ steer · vanished from the inbox'), `${reasonKind}: only the dead badge goes`)
+    assert.ok(text.includes('✕ canceled · vanished from the inbox'))
+    // The surviving entry must remain claimable by a later user/message.
+    const before = doc.children.length
+    renderer.applyEvent(claimEvent('still queued for next turn', 7))
+    assert.equal(doc.children.length, before, 'survivor consumes in place')
+    assert.ok(!transcriptText(doc).includes('⏳'), `${reasonKind}: survivor's badge consumed normally`)
+  })
+}
+
+test('steer entries still in nextStep survive a completed turn-end prune too', () => {
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
+  renderer.renderPendingEcho('waiting to steer', 'steer', 'm-steer')
+  pruneOnTurnEnd(renderer, ['m-steer'])
+  assert.ok(transcriptText(doc).includes('↪ steer · waiting to steer'), 'alive steer badge stays pending')
+})
+
+test('a warning notice renders with ⚠ + attention color and survives theme rebuilds', () => {
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
+  renderer.renderNotice('Queue status refresh failed', 'warning')
+  // Raw (non-stripped) render for the color assertions.
+  const raw = doc.children.map(child => child.render(200).join('\n')).join('\n')
+  assert.ok(stripAnsi(raw).includes('⚠ Queue status refresh failed'), 'warning prefix present')
+  assert.ok(raw.includes(ansiFg(lightTheme.palette.attention)), 'attention-colored')
+  assert.ok(!raw.includes(`✘`), 'not styled as an error')
+  renderer.setTheme(darkTheme)
+  const rebuilt = transcriptText(doc)
+  assert.ok(rebuilt.includes('⚠ Queue status refresh failed'), 'warning survives the replay rebuild')
 })

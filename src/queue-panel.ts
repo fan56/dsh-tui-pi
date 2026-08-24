@@ -26,6 +26,16 @@ import { clipToWidth } from './text.ts'
 /** Live-refresh interval while the panel is open (subagent viewer cadence). */
 const QUEUE_TICK_MS = 300
 
+/**
+ * Consecutive throwing ticks tolerated before ONE durable warning is raised
+ * (v0.20.1): a single failed read is noise, but a persistent one must never
+ * leave the panel silently showing stale data.
+ */
+export const QUEUE_REFRESH_FAIL_THRESHOLD = 3
+
+/** The warning text raised once per failure streak at the threshold. */
+export const QUEUE_REFRESH_FAILED_NOTICE = 'Queue status refresh failed — the list below may be stale.'
+
 /** Rows visible without scrolling; the overlay maxHeight slices the rest. */
 const QUEUE_MAX_VISIBLE = 12
 
@@ -51,6 +61,13 @@ export interface QueuePanelDeps {
    * also survive here (theme-switch rebuild included).
    */
   readonly onOutcome?: (result: QueueActionResult) => void
+  /**
+   * Durable mirror for a PERSISTENT tick failure (v0.20.1): raised once per
+   * failure streak when `QUEUE_REFRESH_FAIL_THRESHOLD` consecutive ticks
+   * threw, so the transcript records that the panel went stale. Absent =
+   * only the in-panel notice line.
+   */
+  readonly onRefreshError?: (message: string) => void
   /** Re-focus the CURRENT editor instance on close. */
   readonly restoreFocus: () => void
   /**
@@ -85,6 +102,10 @@ export class PendingQueuePanel implements Component {
   private notice: string | undefined
   private timer: ReturnType<typeof setInterval> | undefined
   private closed = false
+  /** Consecutive ticks whose refresh threw (reset on any success). */
+  private refreshFailures = 0
+  /** Whether this streak already raised its one durable warning. */
+  private refreshFailureReported = false
 
   constructor(theme: TuiTheme, deps: QueuePanelDeps, requestRender: () => void) {
     this.theme = theme
@@ -114,9 +135,23 @@ export class PendingQueuePanel implements Component {
           return
         }
         this.refresh()
+        // Success resets the failure streak — a transient blip never warns.
+        this.refreshFailures = 0
+        this.refreshFailureReported = false
         this.requestRenderFn()
       } catch {
-        // A throwing tick must never take the process down — skip the frame.
+        // A throwing tick must never take the process down. Count the
+        // streak; at the threshold raise ONE warning (in-panel line plus
+        // the durable onRefreshError mirror) instead of silently ticking on
+        // stale data — later failures in the same streak stay quiet so a
+        // persistent outage cannot spam the transcript.
+        this.refreshFailures++
+        if (this.refreshFailures >= QUEUE_REFRESH_FAIL_THRESHOLD && !this.refreshFailureReported) {
+          this.refreshFailureReported = true
+          this.notice = QUEUE_REFRESH_FAILED_NOTICE
+          this.deps.onRefreshError?.(QUEUE_REFRESH_FAILED_NOTICE)
+          this.requestRenderFn()
+        }
       }
     }, QUEUE_TICK_MS)
     this.timer.unref?.()

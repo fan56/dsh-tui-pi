@@ -9,7 +9,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { openPendingQueuePanel } from '../lib/queue-panel.js'
+import { openPendingQueuePanel, QUEUE_REFRESH_FAILED_NOTICE, QUEUE_REFRESH_FAIL_THRESHOLD } from '../lib/queue-panel.js'
 import { PanelHost } from '../lib/panels.js'
 import { darkTheme } from '../lib/theme/index.js'
 
@@ -117,4 +117,89 @@ test('S4: openPendingQueuePanel auto-closes when shouldStayOpen turns false (no 
   await promise
   assert.equal(focusRestored, true, 'auto-close restores focus')
   assert.equal(tui.overlays.length, 0, 'overlay removed — no orphaned panel')
+})
+
+// --------------------------- v0.20.1: persistent tick failures surface once --
+
+/** Base deps whose readItems can be switched between throwing and working.
+ *  Starts healthy: the CONSTRUCTOR also reads items (unguarded by design —
+ *  an inbox that fails before the panel even mounts must not open at all),
+ *  so these tests exercise the tick path only. */
+function failingDeps() {
+  const deps = {
+    fail: false,
+    stayOpen: true,
+    refreshErrors: [],
+    readItems: () => {
+      if (deps.fail) throw new Error('inbox read exploded')
+      return []
+    },
+    onRemove: () => ({ kind: 'not-found' }),
+    onPromote: () => ({ kind: 'not-found' }),
+    onRefreshError: message => deps.refreshErrors.push(message),
+    shouldStayOpen: () => deps.stayOpen,
+    restoreFocus: () => {},
+  }
+  return deps
+}
+
+test('tick failures: ONE warning at the threshold, no spam afterwards, reset on success', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const deps = failingDeps()
+  const tui = fakeTui()
+  const promise = openPendingQueuePanel(tui, darkTheme, deps)
+  assert.equal(tui.overlays.length, 1, 'panel mounted')
+  // Now the inbox reads start failing persistently (the v0.20.1 bug case).
+  deps.fail = true
+
+  // Fewer than the threshold → silent (transient blips never warn).
+  t.mock.timers.tick(300 * (QUEUE_REFRESH_FAIL_THRESHOLD - 1))
+  assert.deepEqual(deps.refreshErrors, [], 'below the threshold nothing surfaces')
+
+  // Reaching the threshold raises exactly one durable warning.
+  t.mock.timers.tick(300)
+  assert.deepEqual(deps.refreshErrors, [QUEUE_REFRESH_FAILED_NOTICE],
+    'one warning at the threshold')
+
+  // A persistent outage must NOT spam: further failing ticks stay quiet.
+  t.mock.timers.tick(300 * 10)
+  assert.deepEqual(deps.refreshErrors, [QUEUE_REFRESH_FAILED_NOTICE],
+    'still exactly one warning after many more failures')
+
+  // Recovery resets the streak — a later outage warns again.
+  deps.fail = false
+  t.mock.timers.tick(300)
+  deps.fail = true
+  t.mock.timers.tick(300 * QUEUE_REFRESH_FAIL_THRESHOLD)
+  assert.equal(deps.refreshErrors.length, 2,
+    'after a success the counter is zeroed and a new streak can warn')
+
+  // Clean up: close the panel so the promise settles and timers die.
+  deps.stayOpen = false
+  t.mock.timers.tick(300)
+  await promise
+  assert.equal(tui.overlays.length, 0)
+})
+
+test('tick failures also leave an in-panel notice line once reported', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const deps = failingDeps()
+  const tui = fakeTui()
+  const promise = openPendingQueuePanel(tui, darkTheme, deps)
+  const panel = tui.overlays[0].component
+
+  // The inbox reads start failing: no stale-data line below the threshold.
+  deps.fail = true
+  t.mock.timers.tick(300 * (QUEUE_REFRESH_FAIL_THRESHOLD - 1))
+  assert.equal(panel.render(80).some(line => line.includes('may be stale')), false)
+
+  t.mock.timers.tick(300)
+  assert.ok(panel.render(80).some(line => line.includes('may be stale')),
+    'the panel itself admits it may be stale')
+
+  // Clean up: auto-close so the promise settles and timers die.
+  deps.stayOpen = false
+  t.mock.timers.tick(300)
+  await promise
+  assert.equal(tui.overlays.length, 0)
 })

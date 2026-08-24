@@ -375,6 +375,9 @@ export function apply(ctx: Context): void {
                   renderer.renderNotice(result.error, 'error')
                 }
               },
+              // v0.20.1: a persistent refresh failure (threshold reached)
+              // surfaces once as a buffered warning — never silently stale.
+              onRefreshError: message => renderer.renderNotice(message, 'warning'),
               restoreFocus: refocusEditor,
               shouldStayOpen: () => bridge.getSessionId() !== undefined,
             })
@@ -536,12 +539,18 @@ export function apply(ctx: Context): void {
         if (event.type === 'todo/write') {
           liveWidgets.renderTodos(event.data.todos)
         }
-        if (event.type === 'turn/end' && (event.data.reason?.kind === 'aborted' || event.data.reason?.kind === 'error')) {
-          // Review B1, agent-abort path: an aborted/failed turn can strand
-          // routed badges whose messages never got claimed AND no longer
-          // exist in the inbox — resolve those echoes to explicit canceled
-          // bubbles instead of permanent ⏳/↪ ghosts. Entries still queued
-          // (keepInbox) or still steerable stay pending.
+        if (event.type === 'turn/end') {
+          // Review B1, widened in v0.20.1 to EVERY ended turn: any turn end
+          // can strand routed badges whose messages never got claimed AND no
+          // longer exist in the inbox — aborted/failed turns are the obvious
+          // case, but a `blocked` turn (pre-step rejecter) already removed
+          // the claimed batch from the inbox without ever producing a
+          // user/message, and an empty enter ends as `completed` while its
+          // echo badge stays behind. Both used to leave permanent ⏳/↪
+          // ghosts. Safe to run unconditionally: the alive-check below
+          // resolves only echoes whose message id is gone from BOTH inbox
+          // boundaries (getPendingPrompts = next-step ∪ next-turn), so
+          // entries still queued for a later turn stay pending.
           const alive = new Set(bridge.getPendingPrompts().map(prompt => String(prompt.message.id)))
           renderer.prunePendingEchoes(messageId => alive.has(String(messageId)))
         }

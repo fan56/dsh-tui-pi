@@ -69,7 +69,7 @@ type ReplayOp =
     messageId?: unknown
   }
   | { kind: 'commandEcho'; line: string; error?: string; text?: string }
-  | { kind: 'notice'; text: string; level: 'error' | 'info' }
+  | { kind: 'notice'; text: string; level: 'error' | 'info' | 'warning' }
 
 /**
  * Pending-route badge of a locally echoed prompt that was routed while the
@@ -391,13 +391,17 @@ export class TranscriptRenderer {
    * Append a transcript line that has no matching session event (a
    * transient status notice or the sole on-screen record of an error).
    * Buffered as a replay op like echoes, so a theme-switch rebuild keeps it.
-   * `error` lines get the ✘ danger treatment; `info` lines the attention
-   * color (the Ctrl+C cancel hint) without a prefix.
+   * `error` lines get the ✘ danger treatment; `warning` lines the ⚠
+   * attention treatment (degraded but not fatal, e.g. a stale queue panel);
+   * `info` lines the attention color (the Ctrl+C cancel hint) without a
+   * prefix.
    */
-  renderNotice(text: string, level: 'error' | 'info' = 'error'): void {
+  renderNotice(text: string, level: 'error' | 'info' | 'warning' = 'error'): void {
     this.replay.push({ kind: 'notice', text, level })
     if (level === 'error') {
       this.appendLine(ansiFg(this.theme.palette.danger) + `✘ ${text}` + RESET)
+    } else if (level === 'warning') {
+      this.appendLine(ansiFg(this.theme.palette.attention) + `⚠ ${text}` + RESET)
     } else {
       this.appendLine(ansiFg(this.theme.palette.attention) + text + RESET)
     }

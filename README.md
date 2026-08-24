@@ -390,7 +390,7 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (745 tests, pretest builds)
+pnpm test     # unit tests, node --test against lib/ (757 tests, pretest builds)
 ```
 
 Local type-checking symlinks `node_modules/@deepseek-ai/*` to the installed
@@ -431,7 +431,7 @@ src/
   queue-panel.ts      Ctrl+O pending-message queue: d remove · s steer now,
                       live-refreshed overlay
   theme/              GitHub light/dark palettes + terminal detection
-test/*.test.mjs       unit tests (728 across 44 files)
+test/*.test.mjs       unit tests (757 across 44 files)
 ```
 
 ---
