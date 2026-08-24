@@ -12,7 +12,7 @@ tmux 真机冒烟验证。
 
 ## 截图
 
-![dsh-tui-pi 演示](https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d)
+https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 
 真实会话的终端录制（MP4，1.5× 速度）——Todos、运行中的 subagent、思考/工具面板和 powerline footer 一览。（[asciinema 交互播放](https://asciinema.org/a/BE212ZO8x1zEZyZn)）
 

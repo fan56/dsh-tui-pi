@@ -13,7 +13,7 @@ tests plus a live tmux e2e smoke.
 
 ## Screenshot
 
-![dsh-tui-pi demo](https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d)
+https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 
 A live terminal recording of a session (MP4, 1.5× speed) — todos, running
 subagents, think/tool panels and the powerline footer in action.
