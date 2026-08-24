@@ -2,15 +2,19 @@
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) 的 pi 风格终端 UI 插件 —— 把 dsh 变成 pi 风格的编码代理体验。
 
-**兼容性**：支持 dsh `0.1.0-rc.7` 与 `0.1.0-rc.8`。斜杠命令执行在运行时自适应两个版本的 `dsh-commands` `execute()` 签名（rc.8 在 `signal` 前插入了 `images` 参数；TUI 探测参数个数后按对应形式调用）。rc.8 下经单元测试 + tmux 真机冒烟验证；rc.7 调用路径与升级前的直接调用完全一致。
+**兼容性**：针对 dsh `0.1.1-rc.2` 测试。斜杠命令执行经过 `executeCommand()`
+兼容 shim（`src/commands.ts`），在运行时探测 `dsh-commands` `execute()` 的参数
+个数——同时支持 rc.8 之前的 3 参形式 `(agent, line, signal)` 与当前的 4 参形式
+`(agent, line, images, signal)`（自 `0.1.0-rc.8` 起未再变化）。经单元测试 +
+tmux 真机冒烟验证。
 
 > English version: [README.md](README.md)
 
 ## 截图
 
-![dsh-tui-pi 演示](./dsh-tui-pi-demo.gif)
+![dsh-tui-pi 演示](https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d)
 
-真实会话的终端录制——Todos、运行中的 subagent、思考/工具面板和 powerline footer 一览。（[asciinema 交互播放](https://asciinema.org/a/BE212ZO8x1zEZyZn)）
+真实会话的终端录制（MP4，1.5× 速度）——Todos、运行中的 subagent、思考/工具面板和 powerline footer 一览。（[asciinema 交互播放](https://asciinema.org/a/BE212ZO8x1zEZyZn)）
 
 ### 布局总览
 

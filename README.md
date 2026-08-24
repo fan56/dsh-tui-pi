@@ -2,21 +2,22 @@
 
 pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a plugin suite that turns dsh into a pi-like coding agent experience.
 
-**Compatibility:** dsh `0.1.0-rc.7` and `0.1.0-rc.8`. Slash-command execution
-adapts to both `dsh-commands` `execute()` signatures at runtime (rc.8 added an
-`images` parameter before `signal`; the TUI detects the arity and calls either
-form). Verified under rc.8 by unit tests plus a live tmux e2e smoke; the rc.7
-call path is identical to the pre-rc.8 direct invocation.
+**Compatibility:** tested against dsh `0.1.1-rc.2`. Slash-command execution goes
+through an `executeCommand()` compat shim (`src/commands.ts`) that probes the
+arity of `dsh-commands`' `execute()` at runtime — supporting both the pre-rc.8
+3-arg form `(agent, line, signal)` and the current 4-arg form
+`(agent, line, images, signal)`, unchanged since `0.1.0-rc.8`. Verified by unit
+tests plus a live tmux e2e smoke.
 
 > 中文说明: [README.zh.md](README.zh.md)
 
 ## Screenshot
 
-![dsh-tui-pi demo](./dsh-tui-pi-demo.gif)
+![dsh-tui-pi demo](https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d)
 
-A live terminal recording of a session — todos, running subagents, think/tool
-panels and the powerline footer in action. ([Interactive playback on
-asciinema](https://asciinema.org/a/BE212ZO8x1zEZyZn))
+A live terminal recording of a session (MP4, 1.5× speed) — todos, running
+subagents, think/tool panels and the powerline footer in action.
+([Interactive playback on asciinema](https://asciinema.org/a/BE212ZO8x1zEZyZn))
 
 ### Layout overview
 
