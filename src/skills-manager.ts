@@ -8,7 +8,7 @@
  * surface is independent of the settings browser.
  */
 
-import { readdir, symlink, mkdir, unlink } from 'node:fs/promises'
+import { readdir, symlink, mkdir, unlink, lstat, realpath } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -61,6 +61,180 @@ const SKILL_PAGE_SIZE = 10
 /** Cap for a skill row's description line (columns; width-safe). */
 const SKILL_DESC_MAX = 60
 
+// --------------------------------------------------- symlink application --
+
+/** Result of applying one pending skill change. */
+export interface SkillApplyResult {
+  name: string
+  /** Failure reason; undefined when the change applied or already held. */
+  error: string | undefined
+}
+
+/**
+ * Resolve the (src, dest) symlink pair for a skill name: the flat
+ * `<name>.md` file first, then the `<name>/` directory bundle. Return
+ * undefined when neither source form exists.
+ */
+export function skillSymlinkPaths(
+  publicDir: string,
+  curatedDir: string,
+  name: string,
+): { src: string; dest: string } | undefined {
+  const srcMd = join(publicDir, `${name}.md`)
+  if (existsSync(srcMd)) {
+    return { src: srcMd, dest: join(curatedDir, `${name}.md`) }
+  }
+  const srcBundle = join(publicDir, name)
+  if (existsSync(srcBundle)) {
+    return { src: srcBundle, dest: join(curatedDir, name) }
+  }
+  return undefined
+}
+
+/**
+ * Create the `dest` symlink pointing at `src`, idempotently:
+ *
+ * - dest absent → plain symlink creation;
+ * - dest is a symlink whose realpath matches the source → no-op success
+ *   (re-installing an installed skill must not raise EEXIST);
+ * - dest is a symlink to a different source → error, never overwrite;
+ * - dest is a physical file or directory (user content) → error, never
+ *   overwrite or pierce it;
+ * - dest is a dangling symlink → unlink it and recreate (repairable).
+ */
+export async function installSkillSymlink(src: string, dest: string): Promise<void> {
+  const srcReal = await realpath(src).catch((error: unknown) => {
+    // Race window: the source vanished between the scan and the apply —
+    // surface a readable cause instead of a raw errno message.
+    const code = (error as NodeJS.ErrnoException).code
+    throw new Error(`skill source vanished: "${src}"${code === undefined ? '' : ` (${code})`}`)
+  })
+  const destStat = await lstat(dest).catch(() => undefined)
+  if (destStat === undefined) {
+    await symlink(src, dest)
+    return
+  }
+  if (!destStat.isSymbolicLink()) {
+    throw new Error(`refusing to overwrite "${dest}": not a symlink`)
+  }
+  const destReal = await realpath(dest).catch((error: unknown) => {
+    // Only a missing target (ENOENT) or a link loop (ELOOP) counts as a
+    // repairable dead link; any other failure (EACCES, EIO, …) is a real
+    // error and must not be silently paved over with a recreate.
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ELOOP') {
+      return undefined
+    }
+    throw error
+  })
+  if (destReal === undefined) {
+    // Dangling symlink: drop the dead link and recreate it.
+    await unlink(dest)
+    await symlink(src, dest)
+    return
+  }
+  if (destReal === srcReal) {
+    return
+  }
+  throw new Error(
+    `already installed from a different source: "${dest}" points to "${destReal}", expected "${srcReal}"`,
+  )
+}
+
+/**
+ * Apply one pending install/uninstall. Return an error message instead of
+ * throwing so a batch can continue past broken items.
+ */
+export async function applyOneSkillChange(
+  name: string,
+  targetState: boolean,
+  publicDir: string,
+  curatedDir: string,
+): Promise<string | undefined> {
+  if (targetState) {
+    const paths = skillSymlinkPaths(publicDir, curatedDir, name)
+    if (paths === undefined) {
+      return `cannot install: skill not found in "${publicDir}"`
+    }
+    try {
+      await installSkillSymlink(paths.src, paths.dest)
+      return undefined
+    } catch (error: unknown) {
+      return `cannot install: ${error instanceof Error ? error.message : String(error)}`
+    }
+  }
+  // Uninstall: mirror the install-side protection — only ever remove a
+  // symlink we own. A physical file or directory at dest is user content
+  // and must be refused, never silently deleted.
+  try {
+    const destMd = join(curatedDir, `${name}.md`)
+    const destBundle = join(curatedDir, name)
+    const mdStat = await lstat(destMd).catch(() => undefined)
+    if (mdStat !== undefined) {
+      if (!mdStat.isSymbolicLink()) {
+        throw new Error(`refusing to remove "${destMd}": not a symlink`)
+      }
+      await unlink(destMd)
+      return undefined
+    }
+    const bundleStat = await lstat(destBundle).catch(() => undefined)
+    if (bundleStat !== undefined) {
+      if (!bundleStat.isSymbolicLink()) {
+        throw new Error(`refusing to remove "${destBundle}": not a symlink`)
+      }
+      await unlink(destBundle)
+    }
+    return undefined
+  } catch (error: unknown) {
+    return `cannot uninstall: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
+/** Max items itemized per list (ok / failed) in the one-line summary; beyond that, "+N more". */
+const SKILL_SUMMARY_MAX_ITEMS = 3
+
+/**
+ * Collapse a per-item error into a short reason for the one-line summary.
+ * Full paths and raw errno details stay out of the clipped status line —
+ * they only bloat it past what the panel can show.
+ */
+export function skillApplyShortReason(error: string): string {
+  if (error.includes('not a symlink')) return 'not a symlink'
+  if (error.includes('different source')) return 'different source'
+  if (error.includes('skill not found') || error.includes('source vanished')) return 'source missing'
+  // No current producer emits "dest missing" — defensive mapping kept so a
+  // future dest-existence check still collapses to a short reason.
+  if (error.includes('dest missing')) return 'dest missing'
+  return 'failed'
+}
+
+/**
+ * Compose the one-line summary for a finished batch. Empty when everything
+ * applied (the rescan speaks for itself); otherwise name the successes and
+ * itemize failures as `name (short reason)`. Both lists are capped at
+ * SKILL_SUMMARY_MAX_ITEMS entries plus a `+N more` tail: a large ok list
+ * must never fill the line and let clipToWidth cut away the failed
+ * segment behind it — the failures are what the user needs to see.
+ */
+export function skillApplySummary(results: readonly SkillApplyResult[]): string {
+  const failures = results.filter(r => r.error !== undefined)
+  if (failures.length === 0) {
+    return ''
+  }
+  const okNames = results.filter(r => r.error === undefined).map(r => r.name)
+  const failed = failures
+    .slice(0, SKILL_SUMMARY_MAX_ITEMS)
+    .map(r => `${r.name} (${skillApplyShortReason(r.error ?? '')})`)
+    .join(', ')
+  const failedExtra = failures.length - SKILL_SUMMARY_MAX_ITEMS
+  const failedMore = failedExtra > 0 ? ` +${failedExtra} more` : ''
+  const okShown = okNames.slice(0, SKILL_SUMMARY_MAX_ITEMS).join(', ')
+  const okExtra = okNames.length - SKILL_SUMMARY_MAX_ITEMS
+  const okMore = okExtra > 0 ? ` +${okExtra} more` : ''
+  const okPart = okNames.length > 0 ? `ok: ${okShown}${okMore} · ` : ''
+  return `Applied ${okNames.length}/${results.length} — ${okPart}failed: ${failed}${failedMore}`
+}
+
 // ------------------------------------------------------- SkillsManagerPanel --
 
 /**
@@ -86,12 +260,19 @@ export class SkillsManagerPanel implements Component {
   private pendingChanges: Map<string, boolean> = new Map()
   /** Whether the ESC confirmation prompt is active. */
   private confirming = false
+  /**
+   * Whether a batch apply is in flight. Blocks Space/Enter while set so a
+   * concurrent apply cannot be kicked off and pending changes cannot be
+   * toggled mid-batch (they would be silently dropped by the apply loop).
+   */
+  private applying = false
 
   /**
    * The overlay renders at `maxHeight` of terminal rows; FramedOverlay adds
    * 4 chrome rows (top border + spacer + bottom spacer + border); the child
    * adds 8 rows around the skill list (title + top rule + header + mid rule
-   * above, bottom rule + description + spacer + footer below).
+   * above, bottom rule + description + spacer + footer below) plus one more
+   * when a batch summary notice rides above the table.
    */
   private static readonly FRAME_OVERHEAD = 4
   private static readonly TAIL_ROWS = 8
@@ -165,6 +346,11 @@ export class SkillsManagerPanel implements Component {
     const maxVisibleRows = this.maxVisibleRows()
     this.scrollToCursor(maxVisibleRows, filtered.length)
 
+    // A preserved batch summary (or other notice) rides above the table.
+    if (this.status !== undefined) {
+      lines.push(fns.muted(clipToWidth(this.status, wrap)))
+    }
+
     const visibleRows = filtered.slice(this.scrollOffset, this.scrollOffset + maxVisibleRows)
 
     // Column layout: On icon (●/○) | Skill name (flex)
@@ -207,8 +393,9 @@ export class SkillsManagerPanel implements Component {
 
   /** Rows that fit under the framed overlay on this terminal. */
   private maxVisibleRows(): number {
+    const tail = SkillsManagerPanel.TAIL_ROWS + (this.status !== undefined ? 1 : 0)
     return Math.max(1,
-      Math.floor(this.tui.terminal.rows * 0.8) - SkillsManagerPanel.FRAME_OVERHEAD - SkillsManagerPanel.TAIL_ROWS)
+      Math.floor(this.tui.terminal.rows * 0.8) - SkillsManagerPanel.FRAME_OVERHEAD - tail)
   }
 
   /** Scroll suffix ` (x/y)` — only when the list overflows the viewport. */
@@ -273,13 +460,16 @@ export class SkillsManagerPanel implements Component {
       this.move('end')
       return
     }
-    // Space — toggle pending state.
+    // Space — toggle pending state (blocked while a batch is applying).
     if (data === ' ') {
+      if (this.applying) return
       this.togglePending()
       return
     }
-    // Enter — apply pending changes if any, otherwise toggle current.
+    // Enter — apply pending changes if any, otherwise toggle current
+    // (blocked while a batch is applying).
     if (kb.matches(data, 'tui.select.confirm')) {
+      if (this.applying) return
       if (this.hasUnsavedChanges) {
         void this.applyPendingChanges()
       } else {
@@ -363,55 +553,45 @@ export class SkillsManagerPanel implements Component {
     return row.enabled
   }
 
-  /** Apply all pending changes (batch create/delete symlinks). */
+  /**
+   * Apply all pending changes (batch create/delete symlinks). Items run one
+   * by one; a failure is collected and reported in an end-of-batch summary
+   * instead of aborting the remaining items. The list is rescanned either
+   * way — a failed batch must not leave a dead panel: the rows come back
+   * with the failure summary riding above them, ready for retry.
+   */
   private async applyPendingChanges(): Promise<void> {
-    const curatedDir = SkillsManagerPanel.CURATED_SKILLS_DIR
+    this.applying = true
     try {
-      await mkdir(curatedDir, { recursive: true })
-    } catch {
-      // Directory exists or could not be created — proceed.
-    }
-    for (const [name, targetState] of this.pendingChanges) {
-      const srcMd = join(SkillsManagerPanel.PUBLIC_SKILLS_DIR, `${name}.md`)
-      const srcBundle = join(SkillsManagerPanel.PUBLIC_SKILLS_DIR, name)
-      const destMd = join(curatedDir, `${name}.md`)
-      const destBundle = join(curatedDir, name)
-      if (targetState) {
-        // Install
-        try {
-          if (existsSync(srcMd)) {
-            await symlink(srcMd, destMd)
-          } else if (existsSync(srcBundle)) {
-            await symlink(srcBundle, destBundle)
+      const curatedDir = SkillsManagerPanel.CURATED_SKILLS_DIR
+      try {
+        await mkdir(curatedDir, { recursive: true })
+      } catch {
+        // Directory exists or could not be created — proceed.
+      }
+      const results: SkillApplyResult[] = []
+      for (const [name, targetState] of this.pendingChanges) {
+        const error = await applyOneSkillChange(
+          name,
+          targetState,
+          SkillsManagerPanel.PUBLIC_SKILLS_DIR,
+          curatedDir,
+        )
+        results.push({ name, error })
+        if (error === undefined) {
+          const entry = this.availableEntries.find(e => e.name === name)
+          if (entry !== undefined) {
+            entry.installed = targetState
           }
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error)
-          this.setStatus(`Cannot install "${name}": ${message}`)
-          return
-        }
-      } else {
-        // Uninstall
-        try {
-          if (existsSync(destMd)) {
-            await unlink(destMd)
-          } else if (existsSync(destBundle)) {
-            await unlink(destBundle)
-          }
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error)
-          this.setStatus(`Cannot uninstall "${name}": ${message}`)
-          return
         }
       }
-      // Update the entry
-      const entry = this.availableEntries.find(e => e.name === name)
-      if (entry !== undefined) {
-        entry.installed = targetState
-      }
+      this.pendingChanges.clear()
+      this.confirming = false
+      const summary = skillApplySummary(results)
+      this.loadAvailableSkills(summary === '' ? undefined : summary)
+    } finally {
+      this.applying = false
     }
-    this.pendingChanges.clear()
-    this.confirming = false
-    this.loadAvailableSkills()
   }
 
   /** Discard pending changes without applying. */
@@ -421,9 +601,14 @@ export class SkillsManagerPanel implements Component {
     this.tui.requestRender()
   }
 
-  /** Load the available public skills from `~/.agents/skills/`. */
-  loadAvailableSkills(): void {
-    this.setStatus('Scanning public skills…')
+  /**
+   * Load the available public skills from `~/.agents/skills/`. An optional
+   * `notice` survives the rescan: it shows while scanning and is restored
+   * above the rebuilt rows (used to keep a batch failure summary visible
+   * after the list comes back).
+   */
+  loadAvailableSkills(notice?: string): void {
+    this.setStatus(notice ?? 'Scanning public skills…')
     void this.scanPublicSkills()
       .then(entries => {
         this.availableEntries = entries
@@ -435,6 +620,10 @@ export class SkillsManagerPanel implements Component {
             description: e.description,
             enabled: e.installed,
           })))
+          if (notice !== undefined) {
+            this.status = notice
+            this.tui.requestRender()
+          }
         }
       })
       .catch(() => {
@@ -497,48 +686,6 @@ export class SkillsManagerPanel implements Component {
       }
     }
     return undefined
-  }
-
-  /** Symlink a public skill into `~/.dsh/skills/`. */
-  private async installAvailableSkill(name: string): Promise<void> {
-    const curatedDir = SkillsManagerPanel.CURATED_SKILLS_DIR
-    // Ensure ~/.dsh/skills/ exists.
-    try {
-      await mkdir(curatedDir, { recursive: true })
-    } catch {
-      // Directory exists or could not be created — proceed.
-    }
-
-    // Try flat file first, then directory bundle.
-    const srcMd = join(SkillsManagerPanel.PUBLIC_SKILLS_DIR, `${name}.md`)
-    const srcBundle = join(SkillsManagerPanel.PUBLIC_SKILLS_DIR, name)
-    const destMd = join(curatedDir, `${name}.md`)
-    const destBundle = join(curatedDir, name)
-
-    try {
-      if (existsSync(srcMd)) {
-        await symlink(srcMd, destMd)
-      } else if (existsSync(srcBundle)) {
-        await symlink(srcBundle, destBundle)
-      } else {
-        this.setStatus(`Skill "${name}" not found in source.`)
-        return
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.setStatus(`Cannot install "${name}": ${message}`)
-      return
-    }
-    // Update the row in-place so the cursor stays where it is.
-    const row = this.rows.find(r => r.name === name)
-    if (row !== undefined) {
-      row.enabled = true
-    }
-    const entry = this.availableEntries.find(e => e.name === name)
-    if (entry !== undefined) {
-      entry.installed = true
-    }
-    this.tui.requestRender()
   }
 }
 
