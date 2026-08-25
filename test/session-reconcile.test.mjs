@@ -797,3 +797,91 @@ test('a dsh-tui-pi injection into a child marks the view (the ⚡ visibility con
   assert.equal(view.injectedAt, 42, 'a dsh-dcp notice is not a dsh-tui-pi injection')
   await bridge.dispose()
 })
+
+// ---------------------------------------------------------------------------
+// resumeTargetId lifecycle (retention's protected-set seam): `resume()` must
+// publish the target id synchronously — before the load's first await — so
+// `getResumingSessionId()` names a protected session for the WHOLE load
+// (retention polls it between the walk and every removal), clear it when the
+// load settles OR fails, and serialize concurrent callers onto the single
+// in-flight load without ever letting the getter name the loser's id.
+
+/** A harness whose `ctx.agents.resume` parks on a gate the test releases. */
+function makeResumeHarness(failWith) {
+  const handlers = new Map()
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const resumes = []
+  const ctx = {
+    on(evt, fn) { handlers.set(evt, fn); return () => handlers.delete(evt) },
+    get() { return undefined },
+    sessions: { get: () => undefined },
+    agents: {
+      async create() { return { agent: { session: { id: 'root-session' } }, async dispose() {} } },
+      async resume(options) {
+        resumes.push(options)
+        await gate
+        if (failWith !== undefined) throw failWith
+        return { agent: { session: { id: options.resumeSessionId } }, async dispose() {} }
+      },
+    },
+  }
+  return { ctx, handlers, resumes, release }
+}
+
+test('resume: the target id is visible before the load settles and cleared once it does', async () => {
+  const { ctx, release } = makeResumeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  // Not resumed yet: no target.
+  assert.equal(bridge.getResumingSessionId(), undefined, 'no target before any resume')
+  // The promise is left pending on purpose: the load is parked inside
+  // ctx.agents.resume, yet the target must ALREADY read as protected —
+  // it was published synchronously, before the task's first await.
+  const promise = bridge.resume('target-1')
+  assert.equal(bridge.getResumingSessionId(), 'target-1', 'target visible while the load is in flight')
+  release()
+  const handle = await promise
+  assert.equal(String(handle.agent.session.id), 'target-1')
+  assert.equal(bridge.getResumingSessionId(), undefined, 'target cleared once the load settles')
+  await bridge.dispose()
+})
+
+test('resume: a FAILED load clears the target too (finally, not only success)', async () => {
+  const { ctx, release } = makeResumeHarness(new Error('log unreadable'))
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const promise = bridge.resume('broken-target')
+  assert.equal(bridge.getResumingSessionId(), 'broken-target', 'target visible before the failure')
+  release()
+  await assert.rejects(promise, /log unreadable/)
+  // A target that stays "protected" forever after a failed load would
+  // permanently exempt a dead session from retention.
+  assert.equal(bridge.getResumingSessionId(), undefined, 'failure clears the target')
+  await bridge.dispose()
+})
+
+test('resume: a concurrent resume(other) shares the in-flight load and the getter keeps the FIRST id', async () => {
+  const { ctx, release, resumes } = makeResumeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const first = bridge.resume('target-1')
+  const second = bridge.resume('target-2')
+  // Serialized onto the single in-flight resume: exactly one underlying
+  // load runs, and the getter keeps naming the id that is ACTUALLY
+  // loading — never the concurrent loser's.
+  assert.equal(bridge.getResumingSessionId(), 'target-1', 'the getter names the first target, not the loser')
+  release()
+  const [a, b] = await Promise.all([first, second])
+  assert.equal(a, b, 'both callers receive the same resumed handle')
+  assert.equal(resumes.length, 1, 'exactly one underlying agents.resume ran')
+  assert.equal(resumes[0].resumeSessionId, 'target-1', 'the load targeted the first id')
+  assert.equal(bridge.getResumingSessionId(), undefined, 'cleared after the shared load settles')
+  await bridge.dispose()
+})

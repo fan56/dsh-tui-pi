@@ -209,6 +209,8 @@ export class DshSessionBridge {
   private handle: AgentHandle | undefined
   private creating: Promise<AgentHandle> | undefined
   private resuming: Promise<AgentHandle> | undefined
+  /** Target id of the in-flight resume — see `resume()`/`getResumingSessionId()`. */
+  private resumeTargetId: SessionId | undefined
   private readonly disposers: Array<() => void> = []
   private sessionId: SessionId | undefined
   /** Agent preset id to pass to `meta.agentPreset` on the next `createSession`. */
@@ -469,6 +471,18 @@ export class DshSessionBridge {
     return this.sessionId
   }
 
+  /**
+   * Session id a `resume()` is currently loading, when one is in flight;
+   * `undefined` once the resume settles (then `getSessionId()` reports it
+   * instead, or nothing on failure). Published synchronously before any
+   * await so pollers see it for the WHOLE load: the startup retention
+   * janitor unions this with the current id — deleting the target
+   * directory mid-load would destroy the log the resume is reading.
+   */
+  getResumingSessionId(): SessionId | undefined {
+    return this.resumeTargetId
+  }
+
   /** Sorted snapshot of every tracked child (running and settled). */
   getAgentViews(): readonly AgentView[] {
     return [...this.agentViews.values()].sort(
@@ -666,6 +680,13 @@ export class DshSessionBridge {
    */
   async resume(sessionId: SessionId): Promise<AgentHandle> {
     if (this.resuming !== undefined) return this.resuming
+    // Publish the target synchronously, before the task's first await:
+    // retention polls `getResumingSessionId()` between its walk and each
+    // removal, and the target directory must read as protected for the
+    // entire load — not only after the handle lands. A concurrent
+    // `resume(other)` returns the in-flight promise above WITHOUT
+    // touching this field, so it always names the id actually loading.
+    this.resumeTargetId = sessionId
     const task = (async () => {
       const handle = this.handle
       this.handle = undefined
@@ -710,6 +731,7 @@ export class DshSessionBridge {
       return await task
     } finally {
       this.resuming = undefined
+      this.resumeTargetId = undefined
     }
   }
 
