@@ -990,6 +990,12 @@ export interface AskUserPanelDeps {
   tui: TUI
   /** Live theme getter — re-read on every render so a mid-panel hot-swap applies (borders included). */
   theme: () => TuiTheme
+  /**
+   * The session this UI currently drives (ask-surface claim routing); the
+   * panel only claims questions asked by its own session. Absent = claim
+   * everything (single-UI fallback shape).
+   */
+  getSessionId?: () => string | undefined
   /** Re-focus the current editor on panel close. */
   restoreFocus: () => void
   /**
@@ -1347,7 +1353,24 @@ export function isDuplicateProviderError(error: unknown): boolean {
 /** Minimal structural view of the `ctx.userQuestions` seam we register against. */
 interface UserQuestionsSeam {
   registerProvider(provider: {
-    ask: (request: { questions: AskUserQuestionItem[]; signal?: AbortSignal }) => Promise<AskUserQuestionAnswer>
+    ask: (request: AskRequestShape) => Promise<AskUserQuestionAnswer>
+  }): () => void
+}
+
+/** The ask request fields the TUI side consumes (agent identifies the asker). */
+interface AskRequestShape {
+  questions: AskUserQuestionItem[]
+  agent?: { session?: { id?: unknown } }
+  signal?: AbortSignal
+}
+
+/** Minimal structural view of dsh-ask-router's surface registry. */
+interface AskSurfacesSeam {
+  register(surface: {
+    name: string
+    claim(request: AskRequestShape): boolean
+    ask(request: AskRequestShape): Promise<AskUserQuestionAnswer>
+    settled?(request: AskRequestShape, by: string): void
   }): () => void
 }
 
@@ -1366,6 +1389,36 @@ export function registerAskUserProvider(
   ctx: Context,
   deps: AskUserPanelDeps,
 ): () => void {
+  // dsh-ask-router present: register as ONE surface among several (claim by
+  // session, first answer wins across surfaces) instead of taking the single
+  // provider slot. Absent router keeps the standalone provider path below —
+  // zero behavior change without the router installed.
+  const router = (typeof ctx.get === 'function'
+    ? ctx.get('askSurfaces') as AskSurfacesSeam | undefined
+    : undefined)
+  if (router !== undefined && typeof router.register === 'function') {
+    const controllers = new WeakMap<object, AbortController>()
+    return router.register({
+      name: 'dsh-tui',
+      claim: request => {
+        const mine = deps.getSessionId?.()
+        if (mine === undefined) return true
+        const asking = request.agent?.session?.id
+        return asking === undefined ? true : String(asking) === mine
+      },
+      ask: request => {
+        const controller = new AbortController()
+        controllers.set(request, controller)
+        request.signal?.addEventListener('abort', () => controller.abort(), { once: true })
+        return openAskUserPanel(deps, request.questions, controller.signal)
+      },
+      settled: request => {
+        // Another surface answered first — close the panel through the
+        // existing abort path (identical to the owning turn aborting).
+        controllers.get(request)?.abort()
+      },
+    })
+  }
   const userQuestions = (ctx as { userQuestions?: UserQuestionsSeam }).userQuestions
   if (userQuestions === undefined || typeof userQuestions.registerProvider !== 'function') {
     // Through the shared notice bridge (src/notice-bridge.ts), never raw

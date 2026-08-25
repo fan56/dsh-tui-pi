@@ -1438,3 +1438,41 @@ test('openAskUserPanel: the docked panel renders in the Todos-panel box language
   const stripped = lines.map(l => stripAnsi(l))
   assert.ok(stripped.some(l => l.includes('Questions (1/2)')), 'title row inside the box')
 })
+
+// ------------------------------------------------ ask-surface routing --
+
+test('registerAskUserProvider: with dsh-ask-router present it registers as a surface, never touching the provider slot', async () => {
+  let surface
+  let providerTouched = 0
+  const ctx = {
+    get: key => key === 'askSurfaces' ? { register(s) { surface = s; return () => {} } } : undefined,
+    userQuestions: { registerProvider() { providerTouched += 1; return () => {} } },
+  }
+  const { deps } = makeHarness()
+  registerAskUserProvider(ctx, deps)
+  assert.ok(surface !== undefined, 'surface registered with the router')
+  assert.equal(surface.name, 'dsh-tui')
+  assert.equal(providerTouched, 0, 'the provider slot is left for the router')
+
+  // Claim routing: only questions from THIS bridge's session are ours.
+  deps.getSessionId = () => 'sess-a'
+  assert.equal(surface.claim({ questions: singleQuestion(), agent: { session: { id: 'sess-a' } } }), true)
+  assert.equal(surface.claim({ questions: singleQuestion(), agent: { session: { id: 'sess-b' } } }), false)
+  assert.equal(surface.claim({ questions: singleQuestion() }), true, 'bound + no agent info → claim (show beats drop)')
+})
+
+test('registerAskUserProvider: settled() aborts the surface ask signal (panel closes like a turn abort)', async () => {
+  let surface
+  const ctx = {
+    get: () => ({ register(s) { surface = s; return () => {} } }),
+    userQuestions: { registerProvider: () => () => {} },
+  }
+  const { deps } = makeHarness()
+  registerAskUserProvider(ctx, deps)
+  const request = { questions: singleQuestion() }
+  const result = surface.ask(request)
+  const tracked = trackResolution(result)
+  surface.settled(request, 'feishu') // another surface answered first
+  await result
+  assert.deepEqual(tracked.value, buildDeclinedEnvelope(singleQuestion()), 'panel closed via the abort path')
+})

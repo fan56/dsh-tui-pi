@@ -669,6 +669,9 @@ export function apply(ctx: Context): void {
     ctx.effect(() => registerAskUserProvider(ctx, {
       tui: ui.tui,
       theme: () => ui.theme,
+      // Ask-surface claim routing: the panel answers questions asked by the
+      // session this bridge drives (dsh-ask-router fans out, first answer wins).
+      getSessionId: () => bridge.getSessionId(),
       restoreFocus: refocusEditor,
       mount: component => {
         ui.askUser.addChild(component)
