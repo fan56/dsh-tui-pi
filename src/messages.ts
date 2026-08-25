@@ -38,6 +38,7 @@ import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { stopIcon } from './icons.ts'
 import { clipToWidth } from './text.ts'
 import { buildWelcomeBanner } from './welcome.ts'
+import { formatStartupInfoLines, type StartupSummary } from './startup-info.ts'
 import { formatDailyQuote, pickDailyQuote } from './quotes.ts'
 
 interface StreamingState {
@@ -154,15 +155,24 @@ export class TranscriptRenderer {
    * session rolls a new one (see quotes.ts).
    */
   private readonly dailyQuote: string = pickDailyQuote()
+  /**
+   * The startup configuration summary (mcp/skills/plugins readout, see
+   * startup-info.ts) rendered between the banner and the quote — a snapshot
+   * of the TUI run, held for the whole life so every rebuild (theme switch,
+   * resize relayout) re-renders the same lines at the current width.
+   */
+  private readonly startupInfo: StartupSummary | undefined
 
   constructor(
     doc: Container,
     theme: TuiTheme,
     requestRender: () => void,
+    startupInfo?: StartupSummary,
   ) {
     this.doc = doc
     this.theme = theme
     this.requestRender = requestRender
+    this.startupInfo = startupInfo
     // The welcome banner is the first operation: render it now (replacing the
     // startup placeholder line startTui added — the banner is the new startup
     // screen) and buffer it as the first replay op, so relayout/setTheme
@@ -495,27 +505,37 @@ export class TranscriptRenderer {
 
   /**
    * The startup welcome banner (whale pixel art + pixel-letter wordmark)
-   * with the daily quote caption beneath it, as the doc's first content:
-   * a leading spacer, the banner Text, a spacer, the quote Text, then the
-   * trailing spacer that matches the message-block rhythm. The leading
-   * spacer keeps the banner from pressing against the top of the transcript
-   * (the startup placeholder line it replaces sat flush at row 0). The
-   * whale and the letters keep their brand blue across themes — the banner
-   * is theme-independent (gaps stay transparent over the terminal default
-   * background — see welcome.ts); the quote is the one theme-tinted line
-   * (fgSubtle, rebuilt with the live theme by the replay). The banner is
-   * built at the current terminal width: below 96 columns it degrades to
-   * the whale alone, and every rebuild (relayout/setTheme replay) reads the
-   * width afresh, so narrowing drops the wordmark and widening restores it.
-   * The quote line — whale-prefixed (`🐳 「…」`, the same 🐳 icon that
-   * speaks inline for the assistant in chat) — is clipped to the terminal
-   * width before styling (the repo rule — ANSI never goes through the
-   * clipper), so it never wraps.
+   * with the configuration summary and the daily quote caption beneath it,
+   * as the doc's first content: a leading spacer, the banner Text, a
+   * spacer, the summary lines, a spacer, the quote Text, then the trailing
+   * spacer that matches the message-block rhythm. The leading spacer keeps
+   * the banner from pressing against the top of the transcript (the startup
+   * placeholder line it replaces sat flush at row 0). The whale and the
+   * letters keep their brand blue across themes — the banner is
+   * theme-independent (gaps stay transparent over the terminal default
+   * background — see welcome.ts); the summary and the quote are the
+   * theme-tinted lines (fgSubtle, rebuilt with the live theme by the
+   * replay). The banner and the summary are built at the current terminal
+   * width: below 96 columns the banner degrades to the whale alone, every
+   * line clips instead of wrapping, and every rebuild (relayout/setTheme
+   * replay) reads the width afresh. The quote line — whale-prefixed
+   * (`🐳 「…」`, the same 🐳 icon that speaks inline for the assistant in
+   * chat) — is clipped to the terminal width before styling (the repo rule
+   * — ANSI never goes through the clipper), so it never wraps.
    */
   private renderWelcome(): void {
     this.doc.addChild(new Spacer(1))
     this.doc.addChild(new Text(buildWelcomeBanner(process.stdout.columns), 1, 0))
     this.doc.addChild(new Spacer(1))
+    // The config summary (mcp/skills/plugins) when the startup snapshot
+    // resolved: same fgSubtle treatment and width budget as the quote below
+    // — plain text clipped BEFORE styling (formatStartupInfoLines clips).
+    if (this.startupInfo !== undefined) {
+      for (const line of formatStartupInfoLines(this.startupInfo, process.stdout.columns)) {
+        this.doc.addChild(new Text(ansiFg(this.theme.palette.fgSubtle) + line + RESET, 1, 0))
+      }
+      this.doc.addChild(new Spacer(1))
+    }
     // (columns ?? Infinity): non-TTY contexts (tests) get the full line.
     // 🐳 「…」: whale-prefix the caption (same icon that speaks inline in
     // chat) before clipping so the clip is width-safe over the full plain

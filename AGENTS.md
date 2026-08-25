@@ -51,6 +51,11 @@ custom-provider.ts /login "Custom provider…" entry: pure field parsers +
                   the chained EditField form composing a hand-declared
                   llm-pi-ai route (id/name/protocol/baseURL/models/key)
 selectors.ts      /model (2-stage), /think, /theme pickers
+startup-info.ts   startup config readout under the welcome banner (mcp
+                  count, skills installed/total, collapsed plugin tree) +
+                  the exit-hint pure helpers (--profile/--resume parsing,
+                  resume-command formatting); collectStartupSummary is a
+                  best-effort loader+filesystem snapshot
 model-list.ts     /model pure logic: row assembly (favorites pinned top, dim
                   Hidden section), filter matcher, toggle/hide-guard helpers —
                   data-in/data-out, unit-tested without a terminal
@@ -155,10 +160,11 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **866 tests** across 47 files (ask-user 85 +
-  skills 36 + skills-manager 24 +
-  live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
-  retention 35 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
+- `pnpm test` must stay green: **(updated after merge — run `pnpm test` and recount)**
+  tests across all files under `test/`. Current baseline (post-merge) below — verify after any new logic is added and update if the per-file numbers move.
+  - ask-user 85 + skills 36 + skills-manager 24 + startup-info 19 +
+  - live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
+  - retention 35 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
   custom-provider 12 +
   messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 26 +

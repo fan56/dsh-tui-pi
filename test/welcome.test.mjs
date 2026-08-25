@@ -221,7 +221,7 @@ test('the banner carries no theme colors — whale and letters are brand blue on
 test('the banner is the doc first content at construction (spacer + Text + spacer + quote + spacer)', () => {
   const doc = new Container()
   // Fixed wide width: renderWelcome builds the banner at process.stdout.columns.
-  withColumns(200, () => new TranscriptRenderer(doc, lightTheme, () => {}, '5'))
+  withColumns(200, () => new TranscriptRenderer(doc, lightTheme, () => {}))
   assert.equal(doc.children.length, 5, 'leading spacer, banner Text, spacer, daily-quote Text, trailing spacer')
   assert.ok(doc.children[0] instanceof Spacer, 'first child is the leading spacer — the banner does not press against the transcript top')
   assert.ok(doc.children[1] instanceof Text, 'second child is the banner Text')
@@ -259,7 +259,7 @@ test('narrow terminals render the whale-only banner as 10 rows; the 30-column fl
   // 96 columns: the full banner (94 + 1-column Text padding each side) fits.
   const full = withColumns(96, () => {
     const doc = new Container()
-    new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+    new TranscriptRenderer(doc, lightTheme, () => {})
     return doc.children[1]
   })
   assert.equal(full.render(96).length, 10, '96 columns: full banner renders as exactly 10 rows')
@@ -269,7 +269,7 @@ test('narrow terminals render the whale-only banner as 10 rows; the 30-column fl
   // 95 columns: the banner is built whale-only — still 10 rows, no letters.
   const whaleOnly = withColumns(95, () => {
     const doc = new Container()
-    new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+    new TranscriptRenderer(doc, lightTheme, () => {})
     return doc.children[1]
   })
   assert.equal(whaleOnly.render(200).length, 10, '95 columns: whale-only banner, 10 rows')
@@ -283,7 +283,7 @@ test('narrow terminals render the whale-only banner as 10 rows; the 30-column fl
 
 test('clear() (/new) removes the banner — it is a startup screen, not transcript chrome', () => {
   const doc = new Container()
-  const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+  const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
   renderer.applyEvent({ type: 'user/message', data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }, ts: 0, seq: 1 })
   assert.equal(doc.children.length > 3, true, 'banner block + message components before /new')
   renderer.clear()
@@ -303,7 +303,7 @@ test('assets/whale-gen.mjs regenerates WHALE_ART character-for-character', async
 
 test('the event flow appends after the banner and never touches it', () => {
   const doc = new Container()
-  const renderer = new TranscriptRenderer(doc, darkTheme, () => {}, '5')
+  const renderer = new TranscriptRenderer(doc, darkTheme, () => {})
   const before = doc.children[1].render(200).join('\n')
   renderer.applyEvent({ type: 'user/message', data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }, ts: 0, seq: 1 })
   assert.equal(doc.children[1].render(200).join('\n'), before, 'banner bytes unchanged by events')
@@ -314,7 +314,7 @@ test('the event flow appends after the banner and never touches it', () => {
 test('relayout rebuilds the banner first, unchanged in rows and position', () => {
   const doc = new Container()
   const renderer = withColumns(200, () => {
-    const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+    const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
     renderer.applyEvent({ type: 'user/message', data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }, ts: 0, seq: 1 })
     // relayout re-reads the width — keep it under the same wide stub.
     renderer.relayout()
@@ -332,7 +332,7 @@ test('relayout rebuilds the banner first, unchanged in rows and position', () =>
 test('every relayout rebuilds the banner at the current width (welcome op survives repeated rebuilds)', () => {
   const doc = new Container()
   const renderer = withColumns(130, () => {
-    const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+    const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
     renderer.applyEvent({ type: 'user/message', data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }, ts: 0, seq: 1 })
     // Shrink: the banner degrades to the whale only.
     withColumns(60, () => renderer.relayout())
@@ -357,7 +357,7 @@ test('setTheme repaints the banner identically — whale and letters are theme-i
   // Fixed wide width: the construction banner and the setTheme rebuild both
   // read process.stdout.columns.
   const renderer = withColumns(200, () => {
-    const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+    const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
     renderer.applyEvent({ type: 'user/message', data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }, ts: 0, seq: 1 })
     renderer.setTheme(darkTheme)
     return renderer

@@ -13,7 +13,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { Loader } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { FooterHint, PowerlineFooter, type FooterDataSource, type FooterHints } from './footer.ts'
@@ -45,6 +45,13 @@ import { openSkillsManagerPanel } from './skills-manager.ts'
 import { openLoginFlow, openLogoutFlow } from './login.ts'
 import { reloadPlugin } from './reload.ts'
 import { runSessionRetentionOnce } from './retention.ts'
+import {
+  collectStartupSummary,
+  formatResumeCommand,
+  parseResumeArg,
+  resolveProfileName,
+  type StartupSummary,
+} from './startup-info.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
@@ -213,9 +220,19 @@ export function apply(ctx: Context): void {
     const nerdfontAvailable = await detectNerdFontAvailable()
     applyIconSet(resolveIconSet(iconSetPreference, nerdfontAvailable))
     const presetRoster = await fetchPresetRoster()
+    // Startup configuration snapshot (mcp/skills/plugins readout under the
+    // welcome banner): best-effort by contract — no loader service or a
+    // throwing entry walk degrades to undefined and the banner renders
+    // alone. Sync and bounded (one readdir per skills dir, one entry walk).
+    const startupInfo = collectStartupSummary(ctx)
+    // The launcher's inner arguments (`dsh --profile tui --resume <id>`):
+    // provided by the launcher before the tree mounts, so the boot-intent
+    // resume is readable here. Absent on embedding hosts without a command
+    // line — undefined then, and the TUI starts fresh as before.
+    const cmdlineArgs = (ctx.get('cmdlineArgs') as { get(): readonly string[] } | undefined)?.get()
     let disposer: (() => void) | undefined
     try {
-      disposer = runTui(themePreference, panelHeight, footerHints, nerdfontAvailable, presetRoster)
+      disposer = runTui(themePreference, panelHeight, footerHints, nerdfontAvailable, presetRoster, startupInfo, cmdlineArgs)
     } catch (error) {
       // An async-effect failure after startTui would otherwise orphan the
       // terminal in raw mode — the disposer never registers, so nothing ever
@@ -236,7 +253,7 @@ export function apply(ctx: Context): void {
    * reaches cordis. Returns the effect disposer handed back to cordis on
    * teardown.
    */
-  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, nerdfontAvailable: boolean, presetRoster: import('./preset.ts').PresetEntry[]): () => void {
+  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, nerdfontAvailable: boolean, presetRoster: import('./preset.ts').PresetEntry[], startupInfo: StartupSummary | undefined, cmdlineArgs: readonly string[] | undefined): () => void {
     // User keybindings (`~/.dsh/keybindings.json`): a partial map of the app
     // keys, read once per TUI start — `/reload` re-runs apply() and re-reads
     // it. Broken entries surface as notices instead of breaking startup.
@@ -499,7 +516,7 @@ export function apply(ctx: Context): void {
       applyTheme(resolveTheme(process.env, pref))
     }
 
-    const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender())
+    const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender(), startupInfo)
     // Startup notices for a broken/misleading keybindings file — the TUI keeps
     // running with defaults; the panel shows the same warnings via /hotkeys.
     for (const warning of keyBindings.warnings) {
@@ -1019,6 +1036,32 @@ export function apply(ctx: Context): void {
           bridge.replay(session.events.filter(event => event.seq < session.firstLiveSeq))
           ui.requestRender()
         } catch { /* best-effort: fall back to lazy session creation */ }
+      })()
+    }
+
+    // Boot-intent resume: `dsh --profile <name> --resume <id>` — the flag
+    // family the exit hint prints. Only when no reload stash claimed the
+    // fiber: the stash is the NEWER intent (the session live when the user
+    // hit /reload), while the boot flag describes a launch long past.
+    // Mirrors the /resume flow's validate-first contract: a bad id or a
+    // corrupt log surfaces as a buffered notice and the TUI continues as a
+    // fresh session instead of failing the boot.
+    const bootResumeId = parseResumeArg(cmdlineArgs ?? [])
+    if (stashedSessionId === undefined && bootResumeId !== undefined) {
+      void (async () => {
+        try {
+          await inspectPersistedSession(ctx, SessionId(bootResumeId))
+          const resumed = await bridge.resume(SessionId(bootResumeId))
+          refreshPermissionPreset()
+          renderer.clear()
+          liveWidgets.clear()
+          const session = resumed.agent.session
+          bridge.replay(session.events.filter(event => event.seq < session.firstLiveSeq))
+          ui.requestRender()
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error)
+          renderer.renderNotice(`--resume ${clipToWidth(bootResumeId, 8)}: ${message} — starting fresh.`, 'error')
+        }
       })()
     }
 
@@ -1559,9 +1602,22 @@ export function apply(ctx: Context): void {
         clearInterval(clockTimer)
         clearInterval(liveTimer)
         git.dispose()
+        // Capture the session id BEFORE the bridge clears it on dispose —
+        // the exit hint below prints it once the terminal is back.
+        const exitSessionId = bridge.getSessionId()
         try { await bridge.dispose() } catch { /* contained */ }
         ui.dispose()
         try { await ctx.root.fiber.dispose() } catch { /* contained */ }
+        // pi-style exit hint: the terminal is released (alt-screen exited,
+        // cooked mode restored), nothing else prints after the tree's
+        // teardown, so the one-line resume recipe is the last thing on
+        // screen. Skipped when no session was ever created (nothing to
+        // resume) — mirroring pi.
+        if (exitSessionId !== undefined) {
+          // DIM SGR (not a theme color): the hint prints after the TUI's
+          // theme machinery is gone; dim is universally supported.
+          process.stdout.write(`\n\x1b[2mTo resume this session: ${formatResumeCommand(resolveProfileName(ctx), String(exitSessionId))}\x1b[0m\n`)
+        }
         process.exit(code)
       })()
       return exitTask

@@ -64,7 +64,7 @@ test('pickDailyQuote rolls a pool member; rand is injectable edge-to-edge', () =
 
 test('the quote renders as a muted caption Text right under the banner', () => {
   const doc = new Container()
-  withColumns(200, () => new TranscriptRenderer(doc, lightTheme, () => {}, '5'))
+  withColumns(200, () => new TranscriptRenderer(doc, lightTheme, () => {}))
   assert.equal(doc.children.length, 5, 'spacer, banner, spacer, quote, spacer')
   assert.ok(doc.children[0] instanceof Spacer, 'leading spacer')
   assert.ok(doc.children[1] instanceof Text, 'banner Text')
@@ -89,7 +89,7 @@ test('the quote renders as a muted caption Text right under the banner', () => {
 test('one pick per session: relayout and theme switches keep the same quote', () => {
   const doc = new Container()
   const renderer = withColumns(200, () => {
-    const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+    const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
     renderer.relayout()
     return renderer
   })
@@ -105,7 +105,7 @@ test('one pick per session: relayout and theme switches keep the same quote', ()
 
 test('the quote line is clipped to the terminal width before styling', () => {
   const doc = new Container()
-  withColumns(40, () => new TranscriptRenderer(doc, lightTheme, () => {}, '5'))
+  withColumns(40, () => new TranscriptRenderer(doc, lightTheme, () => {}))
   // "Never wraps" is the contract, proven at the widest pool line: the max
   // formatted quote is 35 columns (`「…」` brackets +4), so with the 🐳
   // (2 cols) + space prefix the longest line is exactly 38 columns — the
@@ -121,7 +121,7 @@ test('the quote line is clipped to the terminal width before styling', () => {
   // max, so the emoji-clip guard is really exercised. Clip is width-safe and
   // never splits a grapheme; 🐳 (2) + space + 「 (2) ⇒ 5 cols, kept.
   const doc2 = new Container()
-  withColumns(30, () => new TranscriptRenderer(doc2, lightTheme, () => {}, '5'))
+  withColumns(30, () => new TranscriptRenderer(doc2, lightTheme, () => {}))
   const clippedRows = doc2.children[3].render(30)
   assert.equal(clippedRows.length, 1, 'even clipped, the caption is exactly one physical row (never wraps)')
   const clippedContent = stripAnsi(clippedRows[0]).trimEnd().trimStart()
@@ -131,7 +131,7 @@ test('the quote line is clipped to the terminal width before styling', () => {
 
 test('clear() (/new) removes the quote with the rest of the startup screen', () => {
   const doc = new Container()
-  const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+  const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
   renderer.clear()
   assert.equal(doc.children.length, 0, 'doc emptied — quote gone with the banner')
   renderer.setTheme(darkTheme)

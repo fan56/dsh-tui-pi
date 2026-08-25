@@ -210,7 +210,7 @@ test('tool calls and reasoning render nothing in the transcript (the fixed panel
 
 test('the whale 🐳 prefixes the assistant\'s formal answer inline, once per message', () => {
   const doc = new Container()
-  const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, '5')
+  const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
   renderer.applyEvent({
     type: 'assistant/message',
     data: { turn: 0, step: 0, message: { content: [
