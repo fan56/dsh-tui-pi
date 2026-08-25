@@ -8,12 +8,22 @@
  * namespace is marked `applies: 'live'`: a committed change (the /theme
  * picker, the /settings browser, an external edit) is pushed through the
  * watch hook, so the running TUI repaints without a restart.
+ *
+ * The session-management sections (`retention`, `resume`) ride the same
+ * namespace but are read from the descriptor's USER layer
+ * (`readSessionManagementExplicit`), not the resolved value: only a field
+ * the user explicitly wrote to settings.yaml is an override — the resolved
+ * value's baked-in defaults must not shadow the DSH_TUI_RETENTION_* /
+ * DSH_TUI_RESUME_* environment variables (precedence: settings explicit >
+ * env > default; the janitor consumes its values at next startup, the
+ * /resume filter at every picker open).
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import {
   SettingsConflictError,
   settingsNamespace,
+  type SettingsDescriptor,
   type SettingsNamespace,
   type SettingsPathOp,
   type SettingsProvider,
@@ -23,6 +33,8 @@ import { DEFAULT_FOOTER_HINTS, type FooterHints } from './footer.ts'
 import { DEFAULT_PANEL_HEIGHT, isPanelHeight, type PanelHeight } from './activity.ts'
 import { narrowStringList } from './model-list.ts'
 import type { IconSet } from './icons.ts'
+import { RETENTION_MAX_AGE_DAYS, RETENTION_MAX_COUNT, RETENTION_MIN_IDLE_HOURS } from './retention.ts'
+import { RESUME_MAX_AGE_DAYS, RESUME_MIN_BYTES } from './sessions.ts'
 import type { ThemePreference } from './theme/index.ts'
 
 /** Settings namespace carrying the persisted dsh-tui preferences. */
@@ -123,6 +135,62 @@ const THEME_SETTINGS_SCHEMA = z.object({
     .array(z.string())
     .default([])
     .description('Hidden models (provider/id keys) moved to the Hidden section of the /model picker'),
+  // Plain z.number() (not z.natural()) on purpose: the settings service
+  // validates the stored section against this schema at registration and
+  // fails LOUD, so a range-constrained schema would let one hand-edited
+  // out-of-range number take the whole dsh-tui namespace (theme, panel
+  // height, everything) down with it. The per-field range check happens in
+  // the readers (resolveRetentionConfig / resolveResumeConfig), which fall
+  // back to env/defaults with one stderr line instead.
+  retention: z
+    .object({
+      maxCount: z
+        .number()
+        .default(RETENTION_MAX_COUNT)
+        .description(
+          'Session log retention: keep at most this many sessions (<= 0 disables the janitor); '
+          + 'outranks DSH_TUI_RETENTION_MAX_COUNT; applies at next startup',
+        ),
+      maxAgeDays: z
+        .number()
+        .default(RETENTION_MAX_AGE_DAYS)
+        .description(
+          'Session log retention: delete logs untouched for more than this many days (> 0); '
+          + 'outranks DSH_TUI_RETENTION_MAX_AGE_DAYS; applies at next startup',
+        ),
+      minIdleHours: z
+        .number()
+        .default(RETENTION_MIN_IDLE_HOURS)
+        .description(
+          'Session log retention: count-rule-only idle guard in hours (>= 0); '
+          + 'outranks DSH_TUI_RETENTION_MIN_IDLE_HOURS; applies at next startup',
+        ),
+    })
+    .default({
+      maxCount: RETENTION_MAX_COUNT,
+      maxAgeDays: RETENTION_MAX_AGE_DAYS,
+      minIdleHours: RETENTION_MIN_IDLE_HOURS,
+    })
+    .description('Startup session-log janitor for ~/.dsh/sessions (explicit values here outrank the DSH_TUI_RETENTION_* env vars)'),
+  resume: z
+    .object({
+      maxAgeDays: z
+        .number()
+        .default(RESUME_MAX_AGE_DAYS)
+        .description(
+          'Resume picker: only sessions with log activity inside this window get a row (> 0); '
+          + 'outranks DSH_TUI_RESUME_MAX_AGE_DAYS',
+        ),
+      minBytes: z
+        .number()
+        .default(RESUME_MIN_BYTES)
+        .description(
+          'Resume picker: minimum compressed log size for a row (>= 0); '
+          + 'outranks DSH_TUI_RESUME_MIN_BYTES',
+        ),
+    })
+    .default({ maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES })
+    .description('Resume picker display filter (explicit values here outrank the DSH_TUI_RESUME_* env vars)'),
 })
 
 /** Composition entry below the user layer: fall back to the defaults. */
@@ -136,6 +204,8 @@ const THEME_SETTINGS_ENTRY: {
   iconSet: IconSet
   favoriteModels: string[]
   hiddenModels: string[]
+  retention: { maxCount: number; maxAgeDays: number; minIdleHours: number }
+  resume: { maxAgeDays: number; minBytes: number }
 } = {
   theme: 'auto',
   panelHeight: DEFAULT_PANEL_HEIGHT,
@@ -146,6 +216,12 @@ const THEME_SETTINGS_ENTRY: {
   iconSet: 'auto',
   favoriteModels: [],
   hiddenModels: [],
+  retention: {
+    maxCount: RETENTION_MAX_COUNT,
+    maxAgeDays: RETENTION_MAX_AGE_DAYS,
+    minIdleHours: RETENTION_MIN_IDLE_HOURS,
+  },
+  resume: { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES },
 }
 
 /**
@@ -244,8 +320,8 @@ function narrowIconSet(value: unknown): IconSet {
 }
 
 /**
- * The resolved `dsh-tui` section as read from the settings provider, after
- * waiting for the in-flight registration.
+ * The `dsh-tui` namespace descriptor, after waiting for the in-flight
+ * registration — the shared plumbing of every async reader below.
  *
  * The registration is delivered through the settings injection fiber, so the
  * value may not be visible synchronously right after `registerThemeSettings`:
@@ -254,6 +330,26 @@ function narrowIconSet(value: unknown): IconSet {
  * profile. Wait for the registration to land before describing — bounded, so
  * a settings-less deployment degrades to the defaults instead of hanging TUI
  * startup. Without a registration request there is nothing to wait for.
+ *
+ * @returns the descriptor, or `undefined` when no registration is in
+ * flight, the settings service is absent, or the namespace has not landed.
+ */
+async function registeredDescriptor(ctx: Context): Promise<SettingsDescriptor | undefined> {
+  if (registrationPromise === undefined) return undefined
+  let fallback: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    registrationPromise,
+    new Promise<void>(resolve => { fallback = setTimeout(resolve, 2000) }),
+  ])
+  if (fallback !== undefined) clearTimeout(fallback)
+  const settings = ctx.get('settings') as SettingsProvider | undefined
+  if (settings === undefined) return undefined
+  return settings.describe().find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)
+}
+
+/**
+ * The resolved `dsh-tui` section as read from the settings provider, after
+ * waiting for the in-flight registration (see `registeredDescriptor`).
  *
  * @returns the resolved section, or `undefined` when no registration is in
  * flight, the settings service is absent, or the namespace has not landed.
@@ -266,21 +362,10 @@ async function readResolvedSection(ctx: Context): Promise<{
   favoriteModels?: unknown
   hiddenModels?: unknown
 } | undefined> {
-  if (registrationPromise === undefined) return undefined
-  let fallback: ReturnType<typeof setTimeout> | undefined
-  await Promise.race([
-    registrationPromise,
-    new Promise<void>(resolve => { fallback = setTimeout(resolve, 2000) }),
-  ])
-  if (fallback !== undefined) clearTimeout(fallback)
-  const settings = ctx.get('settings') as SettingsProvider | undefined
-  if (settings === undefined) return undefined
   // The descriptor's `value` is the whole resolved section
   // (`{ theme: ..., panelHeight: ..., footerHints: {...}, iconSet: ... }`), not
   // the field itself — narrow the unknown to the observed fields.
-  return settings
-    .describe()
-    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
+  return (await registeredDescriptor(ctx))?.value as
     | {
         theme?: unknown
         panelHeight?: unknown
@@ -338,6 +423,58 @@ export async function readFooterHintsPreference(ctx: Context): Promise<FooterHin
  */
 export async function readIconSetPreference(ctx: Context): Promise<IconSet> {
   return narrowIconSet((await readResolvedSection(ctx))?.iconSet)
+}
+
+/**
+ * Explicit session-management overrides as the user wrote them in
+ * settings.yaml — the raw `user` layer of the descriptor, NOT the resolved
+ * value. This distinction is the precedence seam: the resolved value bakes
+ * the schema defaults in (a missing `retention.maxCount` resolves to 100),
+ * so reading it would make the defaults outrank the DSH_TUI_RETENTION and
+ * DSH_TUI_RESUME environment variables; only a
+ * field PRESENT in the user layer is an explicit override
+ * (`settings.yaml explicit > env > default`, honored by
+ * `resolveRetentionConfig` / `resolveResumeConfig`). Fields stay `unknown`
+ * — a hand-edited document can carry anything, and the resolvers narrow
+ * per field with one stderr line on garbage.
+ */
+export interface SessionManagementExplicit {
+  retention?: { maxCount?: unknown; maxAgeDays?: unknown; minIdleHours?: unknown }
+  resume?: { maxAgeDays?: unknown; minBytes?: unknown }
+}
+
+/**
+ * Read the explicit `dsh-tui.retention` / `dsh-tui.resume` sections from
+ * the settings document's user layer (see `SessionManagementExplicit`).
+ * Awaits the namespace registration bounded (same plumbing as the theme
+ * readers), so the startup retention pass can call it without hanging a
+ * settings-less deployment.
+ *
+ * @returns ALWAYS the two-key shape — a section absent from the user
+ * layer (or the whole service/namespace missing) reads as
+ * `{ retention: undefined, resume: undefined }`, never a bare
+ * `undefined`, so callers destructure one stable shape. "Nothing
+ * explicitly configured" (env/defaults govern) and "nothing to read at
+ * all" are the same outcome for every consumer.
+ */
+export async function readSessionManagementExplicit(
+  ctx: Context,
+): Promise<SessionManagementExplicit> {
+  const user = (await registeredDescriptor(ctx))?.user
+  if (user === null || typeof user !== 'object') {
+    return { retention: undefined, resume: undefined }
+  }
+  const section = user as { retention?: unknown; resume?: unknown }
+  const retention = section.retention
+  const resume = section.resume
+  return {
+    retention: retention !== null && typeof retention === 'object' && retention !== undefined
+      ? retention as SessionManagementExplicit['retention']
+      : undefined,
+    resume: resume !== null && typeof resume === 'object' && resume !== undefined
+      ? resume as SessionManagementExplicit['resume']
+      : undefined,
+  }
 }
 
 /**

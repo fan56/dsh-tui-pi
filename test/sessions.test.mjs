@@ -9,7 +9,19 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadSessionLastUpdates, normalizePreview, previewOfEvents, isResumableSessionHeader, sessionInfoRows, sortSessionsByLastUpdate } from '../lib/sessions.js'
+import {
+  RESUME_MAX_AGE_DAYS,
+  RESUME_MIN_BYTES,
+  filterSessionsByLastActivity,
+  loadSessionLastUpdates,
+  normalizePreview,
+  pickPersistedSession,
+  previewOfEvents,
+  isResumableSessionHeader,
+  resolveResumeConfig,
+  sessionInfoRows,
+  sortSessionsByLastUpdate,
+} from '../lib/sessions.js'
 import { stashSessionIdForReload, takeStashedSessionId } from '../lib/session.js'
 
 const userMsg = (text, sourceKind = 'user', extra = {}) => ({
@@ -248,9 +260,10 @@ test('sortSessionsByLastUpdate: mtime wins over createdAt, newest first', () => 
   const fresh = headerOf('created-newer', 9_000)
   const stale = headerOf('created-older', 5_000)
   const updates = new Map([
-    ['old-but-fresh', 99_000], // created earliest, touched latest → first
-    ['created-older', 50_000],
-    // 'created-newer' has no mtime → falls back to createdAt 9_000 → last
+    // created earliest, touched latest → first
+    ['old-but-fresh', { mtimeMs: 99_000, size: 4096 }],
+    ['created-older', { mtimeMs: 50_000, size: 4096 }],
+    // 'created-newer' has no stat → falls back to createdAt 9_000 → last
   ])
   const ordered = sortSessionsByLastUpdate([old, fresh, stale], updates)
   assert.deepEqual(ordered.map(h => h.sessionId), ['old-but-fresh', 'created-older', 'created-newer'])
@@ -268,19 +281,20 @@ test('loadSessionLastUpdates walks <root>/<project>/<session>/session.jsonl mtim
   try {
     const when = (ms) => new Date(ms)
     await mkdir(join(dir, 'proj-a', 'sess-1'), { recursive: true })
-    await writeFile(join(dir, 'proj-a', 'sess-1', 'session.jsonl'), '{}\n', 'utf8')
+    await writeFile(join(dir, 'proj-a', 'sess-1', 'session.jsonl'), 'x'.repeat(2048), 'utf8')
     await utimes(join(dir, 'proj-a', 'sess-1', 'session.jsonl'), when(111), when(111))
-    // zstd-compressed sibling naming
+    // zstd-compressed sibling naming (raw magic bytes — 4 bytes on disk)
     await mkdir(join(dir, 'proj-b', 'sess-2'), { recursive: true })
-    await writeFile(join(dir, 'proj-b', 'sess-2', 'session.jsonl.zstd'), '\x28\xb5\x2f\xfd', 'utf8')
+    await writeFile(join(dir, 'proj-b', 'sess-2', 'session.jsonl.zstd'), Buffer.from([0x28, 0xb5, 0x2f, 0xfd]))
     await utimes(join(dir, 'proj-b', 'sess-2', 'session.jsonl.zstd'), when(222), when(222))
     // Empty project dir and a plain file must not break the walk.
     await mkdir(join(dir, 'proj-empty'), { recursive: true })
     await writeFile(join(dir, 'stray.txt'), 'x', 'utf8')
 
     const updates = await loadSessionLastUpdates(dir)
-    assert.equal(updates.get('sess-1'), 111)
-    assert.equal(updates.get('sess-2'), 222)
+    // One stat per log: mtime AND the compressed on-disk size (byte-exact).
+    assert.deepEqual(updates.get('sess-1'), { mtimeMs: 111, size: 2048 })
+    assert.deepEqual(updates.get('sess-2'), { mtimeMs: 222, size: 4 })
     assert.equal(updates.size, 2)
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -290,4 +304,426 @@ test('loadSessionLastUpdates walks <root>/<project>/<session>/session.jsonl mtim
 test('loadSessionLastUpdates resolves an empty map for a missing root', async () => {
   const updates = await loadSessionLastUpdates(join(tmpdir(), 'dsh-tui-nope-' + Date.now()))
   assert.equal(updates.size, 0)
+})
+
+test('loadSessionLastUpdates: raw + zstd coexist → the NEWEST mtime wins and carries its own size', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-dual-'))
+  try {
+    const when = (ms) => new Date(ms)
+    const session = join(dir, 'proj', 'sess-dual')
+    await mkdir(session, { recursive: true })
+    await writeFile(join(session, 'session.jsonl'), 'x'.repeat(4096), 'utf8')
+    await utimes(join(session, 'session.jsonl'), when(100), when(100))
+    await writeFile(join(session, 'session.jsonl.zstd'), 'y'.repeat(64), 'utf8')
+    await utimes(join(session, 'session.jsonl.zstd'), when(300), when(300))
+    const updates = await loadSessionLastUpdates(dir)
+    // The compressed sibling is the NEWER log: its mtime AND its size win
+    // (same last-activity vocabulary as retention's walk). Break-on-first
+    // would have kept the stale raw mtime and hidden the session behind
+    // its old sibling.
+    assert.deepEqual(updates.get('sess-dual'), { mtimeMs: 300, size: 64 })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('filter + walk: an active zstd sibling rescues a session whose raw log went stale', async () => {
+  // The review's failure shape: raw (8 days idle) + fresh zstd (1 day)
+  // coexist — break-on-first keyed the STALE raw mtime and the age filter
+  // dropped an actively-written session from /resume. The max-across-both
+  // walk keeps it visible.
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-rescue-'))
+  try {
+    const when = (ms) => new Date(ms)
+    const NOW2 = 2_000_000_000_000
+    const session = join(dir, 'proj', 'rescued')
+    await mkdir(session, { recursive: true })
+    await writeFile(join(session, 'session.jsonl'), 'x'.repeat(20 * 1024), 'utf8')
+    await utimes(join(session, 'session.jsonl'), when(NOW2 - 8 * DAY), when(NOW2 - 8 * DAY))
+    await writeFile(join(session, 'session.jsonl.zstd'), 'z'.repeat(20 * 1024), 'utf8')
+    await utimes(join(session, 'session.jsonl.zstd'), when(NOW2 - DAY), when(NOW2 - DAY))
+    const stats = await loadSessionLastUpdates(dir)
+    assert.deepEqual(stats.get('rescued'), { mtimeMs: NOW2 - DAY, size: 20 * 1024 })
+    const kept = filterSessionsByLastActivity(
+      [headerOf('rescued', 0)],
+      stats,
+      { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW2 },
+    )
+    assert.deepEqual(kept.map(h => h.sessionId), ['rescued'])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ------------------------------------------------ resume knob resolution --
+// `resolveResumeConfig` is the precedence chain behind the display filter
+// above: settings.yaml `dsh-tui.resume.*` (explicit, user layer) > the
+// DSH_TUI_RESUME_* environment variables > the defaults. Same chain and
+// same warn contract as retention (test/retention.test.mjs).
+
+test('resolveResumeConfig: defaults when the environment is silent', () => {
+  assert.deepEqual(resolveResumeConfig({}), { maxAgeDays: 7, minBytes: 20 * 1024 })
+  // An empty settings section is not an override either.
+  assert.deepEqual(resolveResumeConfig({}, {}), {
+    maxAgeDays: RESUME_MAX_AGE_DAYS,
+    minBytes: RESUME_MIN_BYTES,
+  })
+})
+
+test('resolveResumeConfig: valid env overrides apply; a 0-byte floor legitimately lifts the size gate', () => {
+  assert.deepEqual(
+    resolveResumeConfig({
+      DSH_TUI_RESUME_MAX_AGE_DAYS: '30',
+      DSH_TUI_RESUME_MIN_BYTES: '4096',
+    }),
+    { maxAgeDays: 30, minBytes: 4096 },
+  )
+  // minBytes 0 is a legal explicit choice: every walked session passes the
+  // size gate (stubs and false starts included).
+  assert.deepEqual(resolveResumeConfig({ DSH_TUI_RESUME_MIN_BYTES: '0' }), {
+    maxAgeDays: RESUME_MAX_AGE_DAYS,
+    minBytes: 0,
+  })
+})
+
+test('resolveResumeConfig: invalid env values fall back SILENTLY to the defaults', () => {
+  // Non-numeric, empty, fractional bytes, or out of range (age must be
+  // > 0 — 0 would empty the picker; bytes must be an integer >= 0). A
+  // typo must never silently empty or gut the picker, and env fallbacks
+  // never warn (only settings do).
+  const bad = [
+    { DSH_TUI_RESUME_MAX_AGE_DAYS: 'abc' },
+    { DSH_TUI_RESUME_MAX_AGE_DAYS: '' },
+    { DSH_TUI_RESUME_MAX_AGE_DAYS: '0' },
+    { DSH_TUI_RESUME_MAX_AGE_DAYS: '-7' },
+    { DSH_TUI_RESUME_MAX_AGE_DAYS: 'one week' },
+    { DSH_TUI_RESUME_MIN_BYTES: 'small' },
+    { DSH_TUI_RESUME_MIN_BYTES: '-1' },
+    { DSH_TUI_RESUME_MIN_BYTES: '' },
+    { DSH_TUI_RESUME_MIN_BYTES: '20480.5' },
+    { DSH_TUI_RESUME_MIN_BYTES: '-0.5' },
+  ]
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = line => { warnings.push(line) }
+  try {
+    for (const env of bad) {
+      assert.deepEqual(
+        resolveResumeConfig(env),
+        { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES },
+        JSON.stringify(env),
+      )
+    }
+    assert.deepEqual(warnings, [], 'env-level fallbacks are silent')
+  } finally {
+    console.warn = originalWarn
+  }
+})
+
+test('resolveResumeConfig: explicit settings outrank env; env outranks defaults', () => {
+  // Settings is what the user deliberately persisted — it wins on every
+  // knob over the ambient environment.
+  assert.deepEqual(
+    resolveResumeConfig(
+      {
+        DSH_TUI_RESUME_MAX_AGE_DAYS: '90',
+        DSH_TUI_RESUME_MIN_BYTES: '65536',
+      },
+      { maxAgeDays: 14, minBytes: 1024 },
+    ),
+    { maxAgeDays: 14, minBytes: 1024 },
+    'settings wins on every knob',
+  )
+  // No settings section: the env layer governs.
+  assert.deepEqual(
+    resolveResumeConfig({ DSH_TUI_RESUME_MAX_AGE_DAYS: '90' }, undefined),
+    { maxAgeDays: 90, minBytes: RESUME_MIN_BYTES },
+  )
+  // A partial settings section overrides only the PRESENT fields; the
+  // absent one keeps flowing through env → default.
+  assert.deepEqual(
+    resolveResumeConfig(
+      { DSH_TUI_RESUME_MAX_AGE_DAYS: '90', DSH_TUI_RESUME_MIN_BYTES: '65536' },
+      { maxAgeDays: 3 },
+    ),
+    { maxAgeDays: 3, minBytes: 65536 },
+  )
+})
+
+test('resolveResumeConfig: invalid settings values warn exactly one line each and fall to the next level', () => {
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = line => { warnings.push(line) }
+  try {
+    // Type error and negative byte floor: each present-but-invalid field
+    // is rejected with exactly one stderr line, and the chain continues
+    // at the env layer.
+    const config = resolveResumeConfig(
+      {
+        DSH_TUI_RESUME_MAX_AGE_DAYS: '21',
+        DSH_TUI_RESUME_MIN_BYTES: '8192',
+      },
+      { maxAgeDays: 'week', minBytes: -1 },
+    )
+    assert.deepEqual(
+      config,
+      { maxAgeDays: 21, minBytes: 8192 },
+      'invalid settings fell through to env on every knob',
+    )
+    assert.equal(warnings.length, 2, 'one line per invalid field')
+    assert.match(warnings[0], /^\[dsh-tui-pi\] settings dsh-tui\.resume\.maxAgeDays: invalid value "week" — falling back to environment\/default$/)
+    assert.match(warnings[1], /dsh-tui\.resume\.minBytes: invalid value -1 —/)
+
+    // Invalid settings with no env either → the defaults (still one line
+    // per field).
+    warnings.length = 0
+    assert.deepEqual(
+      resolveResumeConfig({}, { maxAgeDays: Number.NaN, minBytes: 'later' }),
+      { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES },
+    )
+    assert.equal(warnings.length, 2)
+
+    // Absent fields never warn; valid values never warn.
+    warnings.length = 0
+    resolveResumeConfig({}, { maxAgeDays: 3, minBytes: undefined })
+    assert.deepEqual(warnings, [])
+  } finally {
+    console.warn = originalWarn
+  }
+})
+
+test('resolveResumeConfig: boundaries — fractional age is a window, byte floor must be an integer >= 0', () => {
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = line => { warnings.push(line) }
+  try {
+    // The age window only needs to be a finite number > 0: 0.5 days is a
+    // legitimate (aggressive) window.
+    assert.deepEqual(resolveResumeConfig({}, { maxAgeDays: 0.5 }), {
+      maxAgeDays: 0.5,
+      minBytes: RESUME_MIN_BYTES,
+    })
+    // maxAgeDays 0 would empty the picker — invalid, one warn, default.
+    assert.deepEqual(resolveResumeConfig({}, { maxAgeDays: 0 }), {
+      maxAgeDays: RESUME_MAX_AGE_DAYS,
+      minBytes: RESUME_MIN_BYTES,
+    })
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /dsh-tui\.resume\.maxAgeDays: invalid value 0 —/)
+    warnings.length = 0
+    // A fractional byte floor is garbage even though positive (a
+    // stat().size is integral) — rejected, one warn, default.
+    assert.deepEqual(resolveResumeConfig({}, { minBytes: 20480.5 }), {
+      maxAgeDays: RESUME_MAX_AGE_DAYS,
+      minBytes: RESUME_MIN_BYTES,
+    })
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /dsh-tui\.resume\.minBytes: invalid value 20480\.5 —/)
+    warnings.length = 0
+    // Integer 0 is the documented "show every walked session" choice —
+    // valid, no warn.
+    assert.deepEqual(resolveResumeConfig({}, { minBytes: 0 }), {
+      maxAgeDays: RESUME_MAX_AGE_DAYS,
+      minBytes: 0,
+    })
+    assert.deepEqual(warnings, [])
+  } finally {
+    console.warn = originalWarn
+  }
+})
+
+test('resolveResumeConfig: a fractional env MIN_BYTES is invalid env — the floor stays the default boundary', () => {
+  // The env-layer twin of the settings case above: 20480.5 parses finite
+  // and positive, so the old env layer accepted it — and because
+  // `stat().size` is integral, exactly-20480-byte logs silently failed
+  // the floor (20480 < 20480.5). A fractional byte floor is invalid env:
+  // silent fall to the default, and the boundary stays inclusive.
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = line => { warnings.push(line) }
+  try {
+    const config = resolveResumeConfig({ DSH_TUI_RESUME_MIN_BYTES: '20480.5' })
+    assert.deepEqual(config, {
+      maxAgeDays: RESUME_MAX_AGE_DAYS,
+      minBytes: RESUME_MIN_BYTES,
+    }, 'fractional env floor falls to the default 20480')
+    assert.deepEqual(warnings, [], 'env-level fallbacks are silent')
+    // The resolved default floor keeps its inclusive boundary: exactly
+    // 20480B passes, 20479B does not (had 20480.5 won, 'at-min' would
+    // have been dropped — the silent bar-raise symptom).
+    const now = 2_000_000_000_000
+    const headers = [headerOf('at-min', now), headerOf('one-short', now)]
+    const stats = new Map([
+      ['at-min', { mtimeMs: now, size: 20 * 1024 }],
+      ['one-short', { mtimeMs: now, size: 20 * 1024 - 1 }],
+    ])
+    const kept = filterSessionsByLastActivity(headers, stats, {
+      maxAgeDays: config.maxAgeDays,
+      minBytes: config.minBytes,
+      now,
+    })
+    assert.deepEqual(kept.map(h => h.sessionId), ['at-min'], 'exactly-20480B logs still pass the default floor')
+  } finally {
+    console.warn = originalWarn
+  }
+})
+
+// --------------------------------------------------- /resume display filter --
+
+const DAY = 24 * 60 * 60 * 1000
+const NOW = 1_700_000_000_000
+const BIG = { mtimeMs: NOW, size: 100 * 1024 }
+
+test('filterSessionsByLastActivity: age boundary — 6d23h kept, exactly 7d kept, 7d+1s dropped', () => {
+  const headers = [
+    headerOf('almost-7d', NOW),
+    headerOf('exactly-7d', NOW),
+    headerOf('past-7d', NOW),
+  ]
+  const stats = new Map([
+    ['almost-7d', { ...BIG, mtimeMs: NOW - 7 * DAY + 60 * 60 * 1000 }], // 6d23h
+    ['exactly-7d', { ...BIG, mtimeMs: NOW - 7 * DAY }], // boundary survives
+    ['past-7d', { ...BIG, mtimeMs: NOW - 7 * DAY - 1000 }], // strictly older
+  ])
+  const kept = filterSessionsByLastActivity(headers, stats, { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW })
+  assert.deepEqual(kept.map(h => h.sessionId), ['almost-7d', 'exactly-7d'])
+})
+
+test('filterSessionsByLastActivity: size boundary — exactly 20480B kept, 20479B dropped', () => {
+  const headers = [headerOf('at-min', NOW), headerOf('one-short', NOW)]
+  const stats = new Map([
+    ['at-min', { mtimeMs: NOW, size: 20 * 1024 }],
+    ['one-short', { mtimeMs: NOW, size: 20 * 1024 - 1 }],
+  ])
+  const kept = filterSessionsByLastActivity(headers, stats, { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW })
+  assert.deepEqual(kept.map(h => h.sessionId), ['at-min'])
+})
+
+test('filterSessionsByLastActivity: missing stat fails open on size, ages by createdAt', () => {
+  const headers = [
+    headerOf('unwalked-fresh', NOW - DAY), // no stat, recent createdAt → kept
+    headerOf('unwalked-stale', NOW - 30 * DAY), // no stat, old createdAt → dropped
+  ]
+  const kept = filterSessionsByLastActivity(headers, new Map(), { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW })
+  assert.deepEqual(kept.map(h => h.sessionId), ['unwalked-fresh'])
+})
+
+test('filter + walk integration: sizes and mtimes come from the same stat on disk', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-resume-'))
+  try {
+    const when = (ms) => new Date(ms)
+    const NOW2 = 2_000_000_000_000
+    const cases = [
+      // [id, mtime, bytes, survives]
+      ['fresh-big', NOW2 - DAY, 20 * 1024, true], // boundary size + fresh age
+      ['fresh-small', NOW2 - DAY, 20 * 1024 - 1, false], // one byte short
+      ['stale-big', NOW2 - 8 * DAY, 20 * 1024, false], // past the age window
+      ['edge-age', NOW2 - 7 * DAY, 21 * 1024, true], // exactly 7d survives
+    ]
+    for (const [id, mtime, bytes] of cases) {
+      await mkdir(join(dir, 'proj', id), { recursive: true })
+      await writeFile(join(dir, 'proj', id, 'session.jsonl'), 'x'.repeat(bytes), 'utf8')
+      await utimes(join(dir, 'proj', id, 'session.jsonl'), when(mtime), when(mtime))
+    }
+    const stats = await loadSessionLastUpdates(dir)
+    assert.equal(stats.size, cases.length)
+    const headers = cases.map(([id]) => headerOf(id, 0))
+    const kept = filterSessionsByLastActivity(headers, stats, { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW2 })
+    assert.deepEqual(
+      kept.map(h => h.sessionId),
+      cases.filter(c => c[3] === true).map(c => c[0]),
+    )
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ------------------------------------------- picker empty-branch differentiation --
+// `pickPersistedSession` must tell the caller WHY the list is empty: a
+// store with no other resumable session resolves `empty`, while a store
+// the age/size display filter emptied resolves `empty-filtered` with the
+// effective knobs — the caller's reply names the window and the
+// `dsh-tui.resume.*` knobs instead of "nothing to resume" (src/index.ts).
+// Both branches return BEFORE any TUI surface is touched, so the tui and
+// theme arguments are dummies here.
+
+/** Minimal ctx fake exposing one fixed `sessionPersistence.list() result. */
+function pickerContext(headers) {
+  return {
+    get(name) {
+      return name === 'sessionPersistence'
+        ? { list: async () => headers, inspect: async () => { throw new Error('not reached') } }
+        : undefined
+    },
+  }
+}
+
+/** Pin $DSH_SESSION_ROOT at a temp store for one picker test body. */
+async function withSessionRoot(fn) {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-pick-'))
+  const prev = process.env.DSH_SESSION_ROOT
+  process.env.DSH_SESSION_ROOT = dir
+  try {
+    await fn(dir)
+  } finally {
+    if (prev === undefined) delete process.env.DSH_SESSION_ROOT
+    else process.env.DSH_SESSION_ROOT = prev
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+test('pickPersistedSession: an empty store resolves plain empty — nothing filtered, no TUI touched', async () => {
+  await withSessionRoot(async () => {
+    // No persisted session at all.
+    assert.deepEqual(
+      await pickPersistedSession(pickerContext([]), null, null, undefined, () => {}),
+      { kind: 'empty' },
+      'no other session → plain empty',
+    )
+    // The only persisted session IS the current one (excluded upstream of
+    // the filter): still a plain empty, not a filtered one.
+    assert.deepEqual(
+      await pickPersistedSession(pickerContext([headerOf('current', 1)]), null, null, 'current', () => {}),
+      { kind: 'empty' },
+      'only the excluded current session → plain empty',
+    )
+  })
+})
+
+test('pickPersistedSession: candidates hidden by the filter resolve empty-filtered with the effective knobs', async () => {
+  await withSessionRoot(async (dir) => {
+    // One resumable session whose log is 100 days idle and comfortably
+    // above the byte floor: inside the store, outside every window tried
+    // below — the branch is genuinely the display filter's.
+    const when = ms => new Date(ms)
+    const session = join(dir, 'proj', 'stale')
+    await mkdir(session, { recursive: true })
+    await writeFile(join(session, 'session.jsonl'), 'x'.repeat(50 * 1024), 'utf8')
+    const old = Date.now() - 100 * DAY
+    await utimes(join(session, 'session.jsonl'), when(old), when(old))
+
+    // Default knobs (7d / 20KB): the age window hid the only candidate.
+    assert.deepEqual(
+      await pickPersistedSession(pickerContext([headerOf('stale', 0)]), null, null, undefined, () => {}),
+      {
+        kind: 'empty-filtered',
+        hidden: 1,
+        maxAgeDays: RESUME_MAX_AGE_DAYS,
+        minBytes: RESUME_MIN_BYTES,
+      },
+      'the age window hid the only candidate — knobs ride along',
+    )
+
+    // Explicit settings knobs are the ones reported (still filtered:
+    // 100d idle > the 90d window) — the caller's reply names the window
+    // that is actually in force.
+    assert.deepEqual(
+      await pickPersistedSession(
+        pickerContext([headerOf('stale', 0)]), null, null, undefined, () => {},
+        { maxAgeDays: 90 },
+      ),
+      { kind: 'empty-filtered', hidden: 1, maxAgeDays: 90, minBytes: RESUME_MIN_BYTES },
+      'explicit settings knobs are the ones reported',
+    )
+  })
 })

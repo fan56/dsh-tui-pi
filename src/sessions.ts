@@ -13,6 +13,7 @@ import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui
 import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
+import { SESSION_LOG_FILE_NAMES } from './retention.ts'
 import { wrapFramedOverlay } from './frame.ts'
 import {
   autoColumns,
@@ -216,6 +217,125 @@ const PREVIEW_SESSION_CAP = 30
  */
 const RESUME_DIR_CAP = 32
 
+/**
+ * Only sessions with log activity inside this window appear in `/resume`
+ * (mtime semantics, same as the Updated column and the sort). The DEFAULT of
+ * the resume-filter precedence chain (settings.yaml `dsh-tui.resume.maxAgeDays`
+ * > `DSH_TUI_RESUME_MAX_AGE_DAYS` > this constant), deliberately coupled in
+ * VALUE with its retention twin `RETENTION_MAX_AGE_DAYS` (src/retention.ts):
+ * the two 7s are one product decision ("a week is the working set") but
+ * serve different masters (this one HIDES picker rows, retention DELETES
+ * logs), so they are separate constants — change them together.
+ * Boundary semantics match retention: the boundary case survives in both
+ * (retention deletes strictly-older-than, the picker keeps
+ * not-older-than).
+ */
+export const RESUME_MAX_AGE_DAYS = 7
+
+/**
+ * Minimum on-disk log size for a session to appear in `/resume` — the
+ * DEFAULT of the same precedence chain (`dsh-tui.resume.minBytes` >
+ * `DSH_TUI_RESUME_MIN_BYTES` > this constant). This is the COMPRESSED size
+ * — `stat().size` of `session.jsonl` or `session.jsonl.zstd`, whichever
+ * exists — read from the same stat the mtime walk already does (zero extra
+ * IO, no decompression). A session below 20KB is a stub or a false start,
+ * not worth a picker row.
+ */
+export const RESUME_MIN_BYTES = 20 * 1024
+
+/**
+ * Explicit `dsh-tui.resume` overrides from settings.yaml — the USER layer
+ * of the settings document (theme-settings.ts hands the raw section
+ * through), so every field is `unknown`: a hand-edited file can carry
+ * anything. Absent fields are simply not overridden; present-but-invalid
+ * ones are rejected by `resolveResumeConfig` with one stderr line.
+ */
+export interface ResumeSettingsInput {
+  maxAgeDays?: unknown
+  minBytes?: unknown
+}
+
+/** The `/resume` display-filter knobs after settings/env resolution. */
+export interface ResumeConfig {
+  /** Keep sessions with activity no older than this many days. */
+  maxAgeDays: number
+  /** Keep sessions whose compressed on-disk log is at least this many bytes. */
+  minBytes: number
+}
+
+/**
+ * One env slot parsed: a finite number passing `accept`, or undefined when
+ * absent/garbage (an `accept` rejection is garbage too — it falls to the
+ * default silently, same contract as src/retention.ts).
+ */
+function finiteEnv(
+  raw: string | undefined,
+  accept: (value: number) => boolean = () => true,
+): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) && accept(value) ? value : undefined
+}
+
+/**
+ * Narrow one explicit settings field: a finite number passing `accept`, or
+ * undefined (absent, or present-but-invalid). An invalid value warns once
+ * on stderr naming the field and its raw value, so a hand-edited
+ * settings.yaml is debuggable; the caller falls to the next level.
+ */
+function explicitSetting(
+  section: ResumeSettingsInput | undefined,
+  key: keyof ResumeSettingsInput,
+  accept: (value: number) => boolean,
+): number | undefined {
+  const raw = section?.[key]
+  if (raw === undefined) return undefined
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || !accept(raw)) {
+    // stderr on purpose, never console.log: the TUI owns stdout for the
+    // alt-screen render.
+    console.warn(
+      `[dsh-tui-pi] settings dsh-tui.resume.${key}: invalid value `
+      + `${JSON.stringify(raw)} — falling back to environment/default`,
+    )
+    return undefined
+  }
+  return raw
+}
+
+/**
+ * Resolve the `/resume` display-filter knobs through the same precedence
+ * chain as retention (src/retention.ts): an explicit settings.yaml value
+ * (`dsh-tui.resume.*`) outranks the environment variables
+ * (`DSH_TUI_RESUME_MAX_AGE_DAYS` / `DSH_TUI_RESUME_MIN_BYTES`), which
+ * outrank the defaults — settings is what the user deliberately persisted.
+ * An invalid settings value warns once (stderr) and falls to the next
+ * level; an invalid env value falls back silently to the default. Validity:
+ * the age window must be > 0 (0 would empty the picker), the byte floor
+ * must be an integer >= 0 (0 legitimately lifts the floor for stubs) — at
+ * BOTH layers. A fractional byte floor like 20480.5 is garbage even though
+ * it parses finite and positive: `stat().size` is integral, so a
+ * fractional floor would silently bar exactly-at-the-boundary logs
+ * (20480 < 20480.5) without the user ever seeing why.
+ * Pure; `process.env` and the settings section are passed explicitly so
+ * tests can pin them.
+ */
+export function resolveResumeConfig(
+  env: Record<string, string | undefined> = process.env,
+  settings?: ResumeSettingsInput,
+): ResumeConfig {
+  const sMaxAgeDays = explicitSetting(settings, 'maxAgeDays', value => value > 0)
+  const sMinBytes = explicitSetting(settings, 'minBytes', value => Number.isInteger(value) && value >= 0)
+  const maxAgeDays = sMaxAgeDays ?? finiteEnv(env.DSH_TUI_RESUME_MAX_AGE_DAYS)
+  const minBytes = sMinBytes ?? finiteEnv(
+    env.DSH_TUI_RESUME_MIN_BYTES,
+    value => Number.isInteger(value) && value >= 0,
+  )
+  return {
+    maxAgeDays: maxAgeDays !== undefined && maxAgeDays > 0 ? maxAgeDays : RESUME_MAX_AGE_DAYS,
+    minBytes: minBytes ?? RESUME_MIN_BYTES,
+  }
+}
+
 /** Concurrent `inspect` calls while enriching previews. */
 const PREVIEW_CONCURRENCY = 6
 
@@ -224,6 +344,11 @@ const PREVIEW_CONCURRENCY = 6
  * `$DSH_HOME/sessions`, else `~/.dsh/sessions` — the dsh CLI convention. Only
  * used for the mtime-based last-update enrichment; a mismatched root simply
  * leaves the picker sorted by `createdAt` (the pre-existing behavior).
+ * Deliberate contrast with retention's `sessionStoreRoot()`
+ * (src/retention.ts), which ignores `$DSH_SESSION_ROOT`: that walk aims
+ * `fs.rm` and must resolve exactly the tree the core writer appends to,
+ * while this one only enriches/filters picker rows — a wrong root here
+ * degrades display, it never deletes anything.
  */
 function sessionLogRoot(): string {
   if (process.env.DSH_SESSION_ROOT !== undefined && process.env.DSH_SESSION_ROOT !== '') {
@@ -233,19 +358,31 @@ function sessionLogRoot(): string {
   return join(home, 'sessions')
 }
 
-/** Physical log file names the jsonl backend writes (`logSuffix`). */
-const LOG_FILE_NAMES = ['session.jsonl', 'session.jsonl.zstd'] as const
+/** How many ms one day holds — same vocabulary as src/retention.ts. */
+const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
- * Best-effort session-id → last-write time map from the jsonl store's file
- * mtimes: one walk of `<root>/<project>/<session>/session.jsonl[.zstd]`, stat
- * per log. Session directory names are the path-encoded session ids — UUID
- * ids encode to themselves, so the common case matches by name; an encoded
- * mismatch just misses the map and falls back to `createdAt`. Any failure
- * resolves an empty map (the picker degrades to creation-order sorting).
+ * One session log's stat snapshot from the walk: last write plus the
+ * COMPRESSED on-disk size (both from the same `stat` call).
  */
-export async function loadSessionLastUpdates(root: string = sessionLogRoot()): Promise<Map<string, number>> {
-  const updates = new Map<string, number>()
+export interface SessionLogStat {
+  mtimeMs: number
+  size: number
+}
+
+/**
+ * Best-effort session-id → log-stat map from the jsonl store's files: one
+ * walk of `<root>/<project>/<session>/session.jsonl[.zstd]`, one stat per
+ * existing log name (mtime + compressed size, zero extra IO; when both
+ * names exist the NEWEST mtime wins and carries its own size — retention's
+ * walk vocabulary). Session directory names are
+ * the path-encoded session ids — UUID ids encode to themselves, so the
+ * common case matches by name; an encoded mismatch just misses the map and
+ * falls back to `createdAt`. Any failure resolves an empty map (the picker
+ * degrades to creation-order sorting and the activity filter fails open).
+ */
+export async function loadSessionLastUpdates(root: string = sessionLogRoot()): Promise<Map<string, SessionLogStat>> {
+  const updates = new Map<string, SessionLogStat>()
   let projects: string[]
   try {
     projects = (await readdir(root, { withFileTypes: true }))
@@ -264,15 +401,26 @@ export async function loadSessionLastUpdates(root: string = sessionLogRoot()): P
       continue
     }
     for (const dir of sessionDirs) {
-      for (const name of LOG_FILE_NAMES) {
+      // Same last-activity vocabulary as retention's walk: a session's
+      // activity is the NEWEST mtime across BOTH log names — the raw and
+      // the compressed file may coexist (mid-compression, or a kept raw
+      // copy), and breaking on the first existing suffix would hide an
+      // active session behind its stale sibling and drop it from /resume
+      // via the age filter. The size rides the SAME stat as the winning
+      // mtime, so the minBytes filter judges the file that proves the
+      // activity.
+      let newest: SessionLogStat | undefined
+      for (const name of SESSION_LOG_FILE_NAMES) {
         try {
           const info = await stat(join(root, project, dir, name))
-          if (info.mtimeMs > 0) updates.set(dir, info.mtimeMs)
-          break
+          if (newest === undefined || info.mtimeMs > newest.mtimeMs) {
+            newest = { mtimeMs: info.mtimeMs, size: info.size }
+          }
         } catch {
           // Not this suffix — try the next one.
         }
       }
+      if (newest !== undefined && newest.mtimeMs > 0) updates.set(dir, newest)
     }
   }
   return updates
@@ -286,14 +434,50 @@ export async function loadSessionLastUpdates(root: string = sessionLogRoot()): P
  */
 export function sortSessionsByLastUpdate(
   headers: readonly SessionHeader[],
-  lastUpdates: ReadonlyMap<string, number>,
+  logStats: ReadonlyMap<string, SessionLogStat>,
 ): SessionHeader[] {
   return headers.slice().sort((a, b) => {
-    const at = lastUpdates.get(String(a.id)) ?? a.createdAt
-    const bt = lastUpdates.get(String(b.id)) ?? b.createdAt
+    const at = logStats.get(String(a.id))?.mtimeMs ?? a.createdAt
+    const bt = logStats.get(String(b.id))?.mtimeMs ?? b.createdAt
     if (bt !== at) return bt - at
     if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt
     return String(b.id).localeCompare(String(a.id))
+  })
+}
+
+/** Knobs of the `/resume` display filter; `now` is injected so it is testable. */
+export interface ResumeActivityPolicy {
+  /** Keep sessions with activity no older than this many days. */
+  maxAgeDays: number
+  /** Keep sessions whose compressed on-disk log is at least this many bytes. */
+  minBytes: number
+  /** Reference time, ms since the epoch. */
+  now: number
+}
+
+/**
+ * The `/resume` display filter: only sessions with RECENT activity and a
+ * real log body get a picker row. Age follows the same value the Updated
+ * column and the sort show — the walked mtime when known, else the header's
+ * `createdAt` — with retention's boundary semantics (exactly `maxAgeDays`
+ * old survives; only strictly older is dropped). Size is the compressed
+ * on-disk `stat().size`, inclusive at `minBytes` (20480 passes, 20479 does
+ * not). A session MISSING from the stat map fails OPEN on size: the walk is
+ * best-effort (unknown root, path-encoded id mismatch) and must never empty
+ * the picker by itself — but its age still applies through `createdAt`.
+ * Pure; the exclusion of the current session and subagent children happens
+ * upstream in `pickPersistedSession` and is untouched by this filter.
+ */
+export function filterSessionsByLastActivity(
+  headers: readonly SessionHeader[],
+  logStats: ReadonlyMap<string, SessionLogStat>,
+  policy: ResumeActivityPolicy,
+): SessionHeader[] {
+  const ageCutoff = policy.now - policy.maxAgeDays * DAY_MS
+  return headers.filter(header => {
+    const stat = logStats.get(String(header.id))
+    if (stat === undefined) return header.createdAt >= ageCutoff
+    return stat.mtimeMs >= ageCutoff && stat.size >= policy.minBytes
   })
 }
 
@@ -392,7 +576,17 @@ export async function inspectPersistedSession(
 
 /** Outcome of the `/resume` picker, so the caller can phrase its reply. */
 export type PickSessionResult =
+  /** The store holds no other resumable session at all. */
   | { kind: 'empty' }
+  /**
+   * Resumable sessions exist, but the display filter (age window / byte
+   * floor) hid every one of them. The effective knobs ride along so the
+   * caller can name the window that emptied the list and point at the
+   * `dsh-tui.resume.*` knobs that widen it, instead of reporting "no
+   * sessions" over a store full of filtered-out ones. `hidden` counts the
+   * candidates the filter dropped.
+   */
+  | { kind: 'empty-filtered'; hidden: number; maxAgeDays: number; minBytes: number }
   | { kind: 'cancelled' }
   | { kind: 'picked'; id: SessionId; header: SessionHeader }
 
@@ -416,9 +610,16 @@ export function isResumableSessionHeader(header: SessionHeader): boolean {
 
 /**
  * Open the persisted-session picker. Resolves with the picked session,
- * `cancelled` when dismissed, or `empty` when no other session exists.
- * Throws when the profile has no persistence backend. Focus returns to
- * `restoreFocus` on close.
+ * `cancelled` when dismissed, `empty` when no other resumable session
+ * exists, or `empty-filtered` when resumable sessions exist but the
+ * display filter (age/size) hid them all — the two empties read
+ * differently to the user (nothing stored vs. adjust the window). Throws
+ * when the profile has no persistence backend. Focus returns to
+ * `restoreFocus` on close. `resumeSettings` is the explicit
+ * `dsh-tui.resume` section from settings.yaml (the user layer, read by the
+ * caller through `readSessionManagementExplicit`) — the picker resolves it
+ * against the environment and the defaults per open, so a committed
+ * settings change applies to the next /resume without a restart.
  */
 export async function pickPersistedSession(
   ctx: Context,
@@ -426,6 +627,7 @@ export async function pickPersistedSession(
   theme: TuiTheme,
   excludeSessionId: string | undefined,
   restoreFocus: () => void,
+  resumeSettings?: ResumeSettingsInput,
 ): Promise<PickSessionResult> {
   const persistence = ctx.get('sessionPersistence') as SessionPersistence | undefined
   if (persistence === undefined) {
@@ -446,8 +648,30 @@ export async function pickPersistedSession(
   // above newer-created stale ones. The mtime walk is best-effort: an
   // unknown root keeps the previous createdAt ordering.
   const lastUpdates = await loadSessionLastUpdates()
-  const ordered = sortSessionsByLastUpdate(candidates, lastUpdates)
-  if (ordered.length === 0) return { kind: 'empty' }
+  // Display filter: only sessions active within the age window AND with a
+  // log of at least `minBytes` (compressed) get a row — knobs resolved per
+  // open through the precedence chain (settings explicit > env > default,
+  // `resolveResumeConfig`). Applied between the walk and the sort so both
+  // consume the same stats; a list this empties resolves one of the two
+  // empties below, so the user can tell "nothing stored" apart from
+  // "the window hid them".
+  const resumeConfig = resolveResumeConfig(process.env, resumeSettings)
+  const visible = filterSessionsByLastActivity(candidates, lastUpdates, {
+    maxAgeDays: resumeConfig.maxAgeDays,
+    minBytes: resumeConfig.minBytes,
+    now: Date.now(),
+  })
+  const ordered = sortSessionsByLastUpdate(visible, lastUpdates)
+  if (ordered.length === 0) {
+    return candidates.length === 0
+      ? { kind: 'empty' }
+      : {
+          kind: 'empty-filtered',
+          hidden: candidates.length,
+          maxAgeDays: resumeConfig.maxAgeDays,
+          minBytes: resumeConfig.minBytes,
+        }
+  }
 
   // Enrich the most recent candidates with their first-message preview so the
   // rows are distinguishable at a glance; older ones fall back to the header
@@ -457,7 +681,7 @@ export async function pickPersistedSession(
   const rows = ordered.map(header => {
     const id = String(header.id)
     const preview = previews.get(id)
-    const updated = lastUpdates.get(id) ?? header.createdAt
+    const updated = lastUpdates.get(id)?.mtimeMs ?? header.createdAt
     return {
       value: id,
       header,

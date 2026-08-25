@@ -31,6 +31,7 @@ import {
   readFooterHintsPreference,
   readIconSetPreference,
   readPanelHeightPreference,
+  readSessionManagementExplicit,
   readSubagentLimits,
   readThemePreference,
   registerThemeSettings,
@@ -879,10 +880,15 @@ export function apply(ctx: Context): void {
       let picked: Awaited<ReturnType<typeof pickPersistedSession>>
       try {
         const currentId = bridge.getSessionId()
+        // Explicit dsh-tui.resume overrides from settings.yaml (the user
+        // layer): the picker resolves them against env/defaults per open,
+        // so a committed settings change applies to the next /resume.
+        const resumeSettings = (await readSessionManagementExplicit(ctx))?.resume
         picked = await pickPersistedSession(
           ctx, ui.tui, ui.theme,
           currentId === undefined ? undefined : String(currentId),
           refocusEditor,
+          resumeSettings,
         )
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
@@ -890,6 +896,18 @@ export function apply(ctx: Context): void {
       }
       if (picked.kind === 'empty') {
         return { kind: 'error' as const, text: 'No other persisted sessions to resume.' }
+      }
+      if (picked.kind === 'empty-filtered') {
+        // Sessions exist but the display window hid them all — name the
+        // window and the knobs so the user knows what to adjust instead of
+        // reading "nothing to resume" over a store full of old sessions.
+        const floor = picked.minBytes >= 1024
+          ? `${Math.round(picked.minBytes / 1024)}KB`
+          : `${picked.minBytes}B`
+        return {
+          kind: 'error' as const,
+          text: `No sessions within the resume window (${picked.maxAgeDays}d, ≥${floor}) — adjust dsh-tui.resume.* to see more.`,
+        }
       }
       if (picked.kind === 'cancelled') return { kind: 'success' as const, text: 'Resume cancelled.' }
 

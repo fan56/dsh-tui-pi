@@ -5,7 +5,8 @@
  * applyPanelHeightRef in src/index.ts). The settings service is faked with a
  * real cordis Context (stub style, cf. reload.test.mjs); the provider surface
  * used by theme-settings.ts is describe/register/mutate + the registered
- * scope's watch.
+ * scope's watch, with `register` validating the stored section through the
+ * REAL schema (fail-loud) exactly like @deepseek-ai/dsh-settings does.
  * Runs against the built lib/ (pnpm build && pnpm test).
  */
 
@@ -17,6 +18,7 @@ import {
   THEME_SETTINGS_NAMESPACE,
   readFooterHintsPreference,
   readPanelHeightPreference,
+  readSessionManagementExplicit,
   readSubagentLimits,
   readThemePreference,
   registerThemeSettings,
@@ -24,27 +26,48 @@ import {
   writeThemePreference,
 } from '../lib/theme-settings.js'
 import { DEFAULT_FOOTER_HINTS } from '../lib/footer.js'
+import { RETENTION_MAX_AGE_DAYS, resolveRetentionConfig } from '../lib/retention.js'
 
 /**
  * Minimal fake of the settings-provider surface theme-settings.ts touches:
  * describe()/register()/mutate(), plus watcher delivery on commit so the
- * live-apply chain (write → watch → sink) can be exercised.
+ * live-apply chain (write → watch → sink) can be exercised. Each
+ * descriptor carries the namespace's USER layer through a getter — the
+ * real provider re-reads settings.yaml per describe(), so a test can flip
+ * `service.user` after registration and the next read sees it (the seam
+ * `readSessionManagementExplicit` consumes).
  */
 function makeSettings() {
   const descriptors = []
   const watchers = new Map()
   let revision = 0
-  return {
+  const service = {
+    /** User-layer section for the registered namespaces (undefined = none). */
+    user: undefined,
     describe() {
       return descriptors
     },
     register(ns, schema, options) {
+      // Mirror the REAL provider's fail-loud registration
+      // (@deepseek-ai/dsh-settings): register resolves the stored section
+      // once through `schema(mergeLayers(base, user))`, and a stored
+      // section that fails the schema REJECTS the registration itself —
+      // no descriptor lands, exactly like a non-object section. Deliberate
+      // divergence: `mutate` below stays permissive — write-time
+      // validation is a different seam, and the watch-narrowing tests
+      // push schema-invalid values through mutate on purpose to lock the
+      // narrowing (the real provider would refuse those writes instead).
+      if (service.user !== undefined && !isPlainObject(service.user)) {
+        throw new TypeError(`settings section "${ns}" must be an object of keys`)
+      }
+      schema(mergeLayers(options?.base, service.user))
       descriptors.push({
         ns,
         schema,
         revision,
         value: options?.base ?? {},
         applies: options?.applies,
+        get user() { return service.user },
       })
       const list = []
       watchers.set(ns, list)
@@ -68,6 +91,25 @@ function makeSettings() {
       return undefined
     },
   }
+  return service
+}
+
+/** `value === null || typeof value !== 'object' || Array.isArray(value)`. */
+const isPlainObject = value =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+
+/**
+ * The real provider's layering, verbatim semantics: plain objects merge
+ * recursively, every other value replaces the lower layer wholesale.
+ */
+function mergeLayers(under, over) {
+  if (over === undefined) return under
+  if (!isPlainObject(under) || !isPlainObject(over)) return over
+  const merged = { ...under }
+  for (const [key, value] of Object.entries(over)) {
+    merged[key] = key in merged ? mergeLayers(merged[key], value) : value
+  }
+  return merged
 }
 
 /** One tick: the registration rides the inject fiber. */
@@ -338,4 +380,171 @@ test('committed footerHints changes flow register → watch → sink with per-ke
 
   // The live value is readable back through the startup reader.
   assert.deepEqual(await readFooterHintsPreference(ctx), { ...DEFAULT_FOOTER_HINTS }, 'live value read back')
+})
+
+// ------------------------------------------------- session-management user layer --
+// `readSessionManagementExplicit` is the precedence seam for the retention
+// and resume knobs: ONLY a field present in the settings document's USER
+// layer is an explicit override. The resolved value bakes the schema
+// defaults in (a missing retention.maxCount resolves to 100), so reading it
+// would make the defaults outrank the DSH_TUI_RETENTION_* / DSH_TUI_RESUME_*
+// env vars. Fields stay raw/unknown — narrowing is the resolvers' job.
+// Garbage reaches that narrowing through exactly ONE path: an external
+// settings.yaml edit AFTER registration (the provider keeps the last good
+// resolved value and warns, but describe() still reports the raw user
+// section). Garbage present AT registration fails the whole namespace
+// registration instead — locked by the last test of this section.
+
+test('readSessionManagementExplicit returns the raw user-layer retention/resume fields', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  registerThemeSettings(ctx)
+  await settle()
+
+  // UNIT-LEVEL narrowing only: the user layer is flipped AFTER
+  // registration — the one path where the real provider still exposes it
+  // raw (an external edit that fails the schema keeps the last good
+  // resolved value but describe() reports the raw section anyway). The
+  // values pass through UNNARROWED; one stderr line per field happens
+  // later, inside resolveRetentionConfig / resolveResumeConfig. The same
+  // garbage sitting in settings.yaml at startup would instead fail the
+  // registration outright (see the registration-failure test below).
+  settings.user = {
+    retention: { maxCount: 42, maxAgeDays: 'later' },
+    resume: { minBytes: 4096, maxAgeDays: null },
+  }
+  assert.deepEqual(await readSessionManagementExplicit(ctx), {
+    retention: { maxCount: 42, maxAgeDays: 'later' },
+    resume: { minBytes: 4096, maxAgeDays: null },
+  }, 'raw fields through, nothing narrowed')
+
+  // A later external edit of settings.yaml is visible on the next read
+  // (the descriptor's user layer is re-read per describe, not snapshotted).
+  settings.user = { resume: { minBytes: 8192 } }
+  assert.deepEqual(await readSessionManagementExplicit(ctx), {
+    retention: undefined,
+    resume: { minBytes: 8192 },
+  }, 'fresh user layer read back')
+})
+
+test('readSessionManagementExplicit ignores the resolved section — schema defaults are not overrides', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  registerThemeSettings(ctx)
+  await settle()
+
+  // Sanity: the RESOLVED descriptor value carries the baked-in defaults
+  // (base entry: retention 100/7d/24h, resume 7d/20KB).
+  const descriptor = settings.describe().find(d => d.ns === THEME_SETTINGS_NAMESPACE)
+  assert.ok(descriptor.value.retention !== undefined, 'resolved section has the retention defaults')
+  assert.ok(descriptor.value.resume !== undefined, 'resolved section has the resume defaults')
+  // But no user layer exists: nothing is explicit — the stable empty
+  // shape, and env/defaults stay in charge.
+  const absent = { retention: undefined, resume: undefined }
+  settings.user = undefined
+  assert.deepEqual(await readSessionManagementExplicit(ctx), absent, 'no user layer = nothing explicit')
+  // A null user layer (an empty document) is the same "nothing explicit".
+  settings.user = null
+  assert.deepEqual(await readSessionManagementExplicit(ctx), absent, 'null user layer = nothing explicit')
+})
+
+test('readSessionManagementExplicit: non-object sections read as absent, never throw', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  registerThemeSettings(ctx)
+  await settle()
+
+  // User layer without any session-management section: both keys absent.
+  settings.user = { theme: 'dark', maxAgents: 2 }
+  assert.deepEqual(
+    await readSessionManagementExplicit(ctx),
+    { retention: undefined, resume: undefined },
+    'no session sections → both undefined',
+  )
+  // Hand-edited scalars where sections belong: not objects, not overrides.
+  settings.user = { retention: 'nope', resume: 7 }
+  assert.deepEqual(
+    await readSessionManagementExplicit(ctx),
+    { retention: undefined, resume: undefined },
+    'scalar sections narrow to undefined',
+  )
+  // Array-shaped sections are objects typeof-wise but pass through raw —
+  // reachable ONLY via the post-registration external-edit path (the
+  // registration itself would reject them: z.object refuses a non-object
+  // member). Harmless downstream: the resolvers' per-field narrowing
+  // finds no fields on an array, so nothing overrides.
+  settings.user = { resume: ['not', 'a', 'section'] }
+  const explicit = await readSessionManagementExplicit(ctx)
+  assert.ok(Array.isArray(explicit.resume), 'object-typed section passes through raw')
+})
+
+test('readSessionManagementExplicit degrades to the empty shape without a service or the namespace', async () => {
+  // No settings service at all (settings-less deployment): the stable
+  // empty shape, never a throw — the retention janitor and the /resume
+  // picker proceed on env/defaults.
+  const bare = new Context()
+  assert.deepEqual(
+    await readSessionManagementExplicit(bare),
+    { retention: undefined, resume: undefined },
+  )
+
+  // A settings service that never registered the dsh-tui namespace
+  // (fresh provider): no descriptor → the same empty shape.
+  const stranger = new Context()
+  const strangerSettings = makeSettings()
+  stranger.provide('settings', strangerSettings)
+  assert.deepEqual(
+    await readSessionManagementExplicit(stranger),
+    { retention: undefined, resume: undefined },
+  )
+})
+
+test('a schema-invalid stored section fails the registration — retention/resume fall to env', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  // Garbage already in settings.yaml when the namespace registers: the
+  // provider (real and fake alike) resolves schema(base ∪ user) once at
+  // register time, the string maxAgeDays fails z.number(), and the whole
+  // dsh-tui registration fails loud — theme, panelHeight and the session
+  // knobs go down together. This blast radius is the documented reason
+  // the schema keeps plain z.number() fields and pushes range checks to
+  // the resolvers (theme-settings.ts schema comment).
+  settings.user = { retention: { maxAgeDays: 'later' } }
+  ctx.provide('settings', settings)
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = line => { warnings.push(line) }
+  try {
+    registerThemeSettings(ctx)
+    await settle()
+    // registerThemeSettings degrades instead of throwing: one operator
+    // trace on stderr, and NO descriptor ever lands.
+    assert.equal(
+      settings.describe().find(d => d.ns === THEME_SETTINGS_NAMESPACE),
+      undefined,
+      'the failed registration left no descriptor',
+    )
+    assert.equal(warnings.length, 1, 'exactly one registration-failure trace')
+    assert.match(warnings[0], /^\[dsh-tui-pi\] settings namespace registration failed/)
+    // The explicit reader therefore reports nothing configured, and the
+    // janitor's knobs resolve from the environment alone — the rejected
+    // section (and its schema defaults) never reach the resolvers.
+    const explicit = await readSessionManagementExplicit(ctx)
+    assert.deepEqual(explicit, { retention: undefined, resume: undefined })
+    assert.deepEqual(
+      resolveRetentionConfig({ DSH_TUI_RETENTION_MAX_COUNT: '7' }, explicit),
+      {
+        maxCount: 7,
+        maxAgeDays: RETENTION_MAX_AGE_DAYS,
+        minIdleMs: 24 * 60 * 60 * 1000,
+        enabled: true,
+      },
+      'retention knobs come from env, not from the rejected section',
+    )
+  } finally {
+    console.warn = originalWarn
+  }
 })
