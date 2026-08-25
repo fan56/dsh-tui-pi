@@ -160,8 +160,13 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **(updated after merge — run `pnpm test` and recount)**
-  tests across all files under `test/`. Current baseline (post-merge) below — verify after any new logic is added and update if the per-file numbers move.
+- `pnpm test` must stay green: **885 tests** across 48 files (the
+  post-merge baseline — verified by `node --test test/*.test.mjs` on
+  2026-08-25 after the retention+startup-info merge). Per-file totals
+  below; verify after any new logic is added and update if numbers
+  move. New pure logic → new test file under `test/` against built
+  `lib/` (`node --test`, pretest builds). Update the totals in
+  HANDOFF.md.
   - ask-user 85 + skills 36 + skills-manager 24 + startup-info 19 +
   - live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
   - retention 35 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
@@ -173,9 +178,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   theme-settings 15 + commands 9 + text 15 + font-detect 8 + quotes 7 +
   icons 7 + reload 6 + append-system 9 + install-font 6 + tokens 6 +
   queue-panel 6 + schema-model 3 + usage 26 + preset 12 + dev-upgrade 8 +
-  model-list 21 + plugin-inject 2). New
-  pure logic → new test file under `test/` against built `lib/` (`node --test`,
-  pretest builds). Update the totals in HANDOFF.md.
+  model-list 21 + plugin-inject 2.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
   `dsh --profile tui`, drive keys, `capture-pane` for assertions (see HANDOFF
   "验证命令速查"). Keep the 24-row terminal case in the matrix — overlay

@@ -4,6 +4,64 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-08-25
+
+### Added
+
+- **Startup session-log retention janitor** (`src/retention.ts`). On
+  startup the plugin walks the session store and removes stale session
+  logs before they grow unbounded: the age rule deletes logs older than
+  the window and always keeps newer ones, while the count rule trims the
+  oldest beyond a keep-limit behind a 24h idle guard; the current session
+  and an in-flight /resume target are exempt and never occupy slots.
+  Thresholds are dual-layer configurable — settings.yaml `dsh-tui.retention.*`
+  explicit values take precedence over `DSH_TUI_RETENTION_MAX_COUNT` /
+  `_MAX_AGE_DAYS` / `_MIN_IDLE_HOURS` env over defaults — and setting
+  `DSH_TUI_RETENTION_MAX_COUNT=0` (or its settings counterpart) at the
+  winning layer disables the janitor entirely, the escape hatch for
+  long-lived read-attach processes. The result line goes to stderr only,
+  and the pass is fire-and-forget behind a per-process one-shot.
+- **Startup config summary + exit resume hint** (`src/startup-info.ts`).
+  The welcome banner gains a best-effort readout line (mcp count, skills
+  installed/total, collapsed plugin tree) plus the profile root row, so
+  the effective configuration is visible at a glance; on clean exit the
+  TUI prints a pi-style hint naming the exact `/resume` command to pick
+  the session back up in the next shell.
+- **DeepSeek brand icon asset** (`assets/deepseek-icon.svg`). The official
+  DeepSeek whale logo (brand blue #4D6BFE) is added to the repo for future
+  branding/README use; it is not referenced by code yet. Source: DeepSeek
+  (deepseek.com) brand asset; © DeepSeek.
+
+### Changed
+
+- **The /resume picker filters what it displays** (`src/sessions.ts`).
+  Rows for sessions that have been inactive beyond `maxAgeDays` or whose
+  logs are smaller than `minBytes` are hidden from the picker, keeping it
+  focused on live work instead of stubs and archaeology. The knobs share
+  retention's dual-layer chain — settings.yaml `dsh-tui.resume.*`
+  explicit > `DSH_TUI_RESUME_MAX_AGE_DAYS` / `_MIN_BYTES` env > defaults
+  (7 days / 20KB) — resolved each time the picker opens.
+- **/resume column layout: DIR capped, SESSION flexes**
+  (`src/sessions.ts`). The DIR column is capped at 32 columns instead of
+  swallowing wide store paths, and the SESSION column takes the freed
+  space as its flexible tail, so long titles survive narrow terminals.
+- e2e hardening around the new startup surface: the autocomplete
+  assertion now matches the completion-row shape (bracketed kind badge +
+  slash value) rather than bare command-name substrings, which the
+  startup summary's `skills` token used to hit permanently;
+  `esc_until_gone` relaxes to six rounds of Esc + 1.5s with a stuck-pane
+  dump on failure; a new `66-retention-resume` scenario covers the
+  janitor and the display filter end-to-end against zstd-frame fixtures.
+
+### Fixed
+
+- **Skill installation is idempotent** (`src/skills-manager.ts`).
+  Re-applying an unchanged skill symlink is now a no-op (including
+  relative-target equivalence), different-source or physical-destination
+  installs are refused instead of clobbered, dangling-link repair is
+  gated to ENOENT/ELOOP, and one failing item no longer aborts the
+  remaining pending changes in the batch.
+
 ## [0.21.0] - 2026-08-25
 
 ### Added

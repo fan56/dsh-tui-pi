@@ -18,10 +18,15 @@ ensure_editor_ready 'editor clean before command traffic' || true
 # Keep the leading '/' on the line while swapping the filter text — the
 # popup only triggers on a '/' prefix.
 send '/'
-# The popup window shows only the first rows of the command list — assert
-# on names proven to sit inside that window (not e.g. models-sync).
-wait_pane 'autocomplete popup opens on /' 10 'think|skill|logout'
-esc_until_gone 'autocomplete popup closes on Esc' 'think|skill|logout'
+# Assert on the completion-row SHAPE (bracketed kind badge + slash value,
+# src/skills.ts COMPLETION_BADGES) rather than bare command-name substrings:
+# the popup window's visible slice shifts with frequency sorting, and loose
+# substrings like 'skill' also match the persistent startup-info line
+# ("mcp N · skills X/Y · plugins N", src/startup-info.ts) that lands
+# asynchronously under the welcome banner — which made "popup closes on Esc"
+# unmatched-able (the marker never leaves the pane) once that line rendered.
+wait_pane 'autocomplete popup opens on /' 10 '\[[cs]\] /[a-z]'
+esc_until_gone 'autocomplete popup closes on Esc' '\[[cs]\] /[a-z]'
 send 'set'
 sleep 2
 assert_contains 'autocomplete filter "set" shows /settings' 'settings' "$(capture)"

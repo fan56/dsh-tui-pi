@@ -31,6 +31,7 @@
 | `40-theme` | `/theme` 选择器三行（auto/light/dark）；切 light → 画布 SGR `48;2;252;253;252`、切回 dark → `48;2;13;17;23`；选择通知文案；偏好写入容器内 `settings.yaml`；**重启后偏好持久**（无 env 时以持久化值为准） |
 | `50-resize-exit` | 80×24：TUI 存活、鲸鱼仍渲染（transcript 视口可能裁掉顶部行）、**字标按设计降级消失**；24 行下 overlay 适配；还原 140 列字标恢复；`Ctrl+C ×2` 干净退出（150–500ms 双击窗口）+ 回退 `Ctrl+D`；退出后 shell 提示符 + `pane_current_command=bash` + exit dump 渲染；退出后再完整启动一次 |
 | `65-ux-batch` | 0.21 批次：`/login` → **Custom provider…** 六字段链式表单（步骤推进/内联报错/提交后 settings.yaml 落 hand-declared profile + 派生 key ref、密钥不进 settings.yaml；Esc 放弃整个流程）；启动播种的 `APPEND_SYSTEM.md` 含 registered-subagents 铁律 |
+| `66-retention-resume` | fixtures 全部为 zstd-frame 容器（两帧：header + 事件批次），由 `@deepseek-ai/dsh-session-persistence-jsonl` 的 `encodeMaterialization` 经 `Object.create(JsonlSessionPersistence.prototype)` 剥离实例真实产出，落盘为 `session.jsonl.zstd`——`persistence.list()` 的 `parseHeaderMeta` 直接读首帧；填充行轮询四个真实事件类型（`permission/preset` / `sandbox/mode` / `approval/policy` / `turn/start`，皆 `KNOWN_SESSION_EVENT_TYPES` 成员），随机 hex `pad` 撑大 zstd，按 on-disk 字节数判定循环终止；retention janitor：`MAX_AGE_DAYS=2` 清理超龄目录（fresh/flat file/empty dir 留存）、`MAX_COUNT=0` 显式关闭；`/resume` 展示过滤：默认 minBytes 地板过滤小 stub、大 session 展示 preview 文本与 `Updated` / `Dir` 列头；`minBytes=999999999` 触发 empty-filtered 提示（含 `adjust dsh-tui.resume.*` 指引，不退化为 plain empty-store 文案）；启动横幅下 `mcp N · skills X/Y · plugins N` 计数行 + profile root 行 `tui` |
 | `70-steer-injection` | **仅宿主机**（需真实 API key，容器内自跳过）：真实派一个 subagent 跑 sleep 循环任务，Ctrl+G → viewer footer `Enter steer` → Enter 弹多行输入框 → 发送后 `Steer message sent` notice 且注入消息出现在 child transcript；负路径：Esc 取消零投递、settled child 显示 ended notice 且不开输入框。宿主机运行时按 AGENTS.md「Config safety」对 `~/.dsh/settings.yaml` / `.credentials.yaml` 做字节级快照 + cmp 还原 |
 
 ## 实测发现（写断言时踩过的坑）
@@ -53,6 +54,15 @@
 - **无凭证也有内置 provider**：fresh profile 下 footer 就显示
   `deepseek-official / deepseek-v4-flash`，`/model` 能列出模型——但没有
   API key，发送消息的真实链路不在本套件覆盖内。
+
+- **seeded 的 user/message 必须过 `inspect()` 的 seed 边界校验**：`persistence.list()`
+  只读首帧 header（不校验事件），而 `/resume` 行的 preview 走
+  `persistence.inspect()` → `Session.fromRestore` 重放，两个缺口都会在那里炸、
+  被 `loadSessionPreviews` 吞掉后行回退成 `app · <短id>` 标签：
+  ① user/message 是 surface-eligible 类型，信封必须带 `surfaceOp: "append"`
+  （否则 "session event \"user/message\" is surface-eligible and requires a
+  surfaceOp marker"）；② 其 data 本身就是 identified message，必须有非空字符串
+  `id`（否则 "session event at seq 0 lacks an identified message"）。
 
 ## 当前不覆盖（需要 API key / 人工）
 

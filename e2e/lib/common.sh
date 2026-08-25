@@ -162,15 +162,21 @@ wait_gone() {
 
 esc_until_gone() {
   local label="$1" ere="$2" attempt
-  for attempt in 1 2 3 4 5; do
+  # Gentler loop: up to 6 rounds of {send Escape; sleep 1.5} checking after
+  # each. The longer per-press gap absorbs cold paths (overlay teardown +
+  # frame redraw after the first Esc can take 1-2s on busy terminal state)
+  # without weakening the loop's semantics: every round still has to
+  # observe the marker gone before we declare success.
+  for attempt in 1 2 3 4 5 6; do
     send Escape
-    sleep 1
+    sleep 1.5
     if ! capture | grep -qE -- "$ere"; then
       ok "$label"
       return 0
     fi
   done
-  bad "$label (still up after 5 Esc presses)"
+  bad "$label (still up after 6 Esc presses); stuck pane:"
+  capture | sed 's/^/    STUCK| /'
   return 1
 }
 
