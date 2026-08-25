@@ -20,12 +20,14 @@ import { DshSessionBridge } from '../lib/session.js'
 function makeHarness() {
   const handlers = new Map()
   const childEvents = []
+  const sessions = {
+    get(id) { return String(id) === 'child-1' ? { events: childEvents } : undefined },
+  }
   const ctx = {
     on(evt, fn) { handlers.set(evt, fn); return () => handlers.delete(evt) },
-    get() { return undefined },
-    sessions: {
-      get(id) { return String(id) === 'child-1' ? { events: childEvents } : undefined },
-    },
+    // Real cordis shape: services surface through ctx.get (property access
+    // throws for non-injected names).
+    get(key) { return key === 'sessions' ? sessions : undefined },
     agents: {
       async create() { return { agent: { session: { id: 'root-session' } }, async dispose() {} } },
     },
@@ -161,9 +163,9 @@ test('reconcileChildRounds never double-counts against the event-driven path', a
 
 test('reconcileChildRounds is a no-op when the sessions service is absent', async () => {
   const { ctx, handlers } = makeHarness()
-  delete ctx.sessions // simulate an environment without ctx.sessions
+  const noSessions = { ...ctx, get: () => undefined } // simulate no sessions service
   const fired = []
-  const bridge = new DshSessionBridge(ctx, {
+  const bridge = new DshSessionBridge(noSessions, {
     onRoundCount: (c, n) => fired.push([c, n]),
     onLive: () => {}, onStatus: () => {}, onEvent: () => {},
   })

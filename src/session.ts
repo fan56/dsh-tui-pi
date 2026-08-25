@@ -422,7 +422,13 @@ export class DshSessionBridge {
    * newly-appended events per child.
    */
   private reconcileChildRounds(): void {
-    const sessions = (this.ctx as Context & { sessions?: { get(id: SessionId): Session | undefined } }).sessions
+    // ctx.get (NOT property access): `sessions` is not in this plugin's
+    // inject list, and a cordis Context property access for a non-injected
+    // service throws "cannot get property ... without inject" — the property
+    // form silently killed every reconcile tick behind the interval's catch.
+    const sessions = this.ctx.get('sessions') as
+      | { get(id: SessionId): Session | undefined }
+      | undefined
     if (sessions === undefined) return
     for (const childId of this.childSessions) {
       const session = sessions.get(SessionId(childId))
