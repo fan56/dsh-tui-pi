@@ -45,6 +45,7 @@ import { openSkillsManagerPanel } from './skills-manager.ts'
 import { openLoginFlow, openLogoutFlow } from './login.ts'
 import { reloadPlugin } from './reload.ts'
 import { runSessionRetentionOnce } from './retention.ts'
+import { setNoticeSink } from './notice-bridge.ts'
 import {
   collectStartupSummary,
   formatResumeCommand,
@@ -187,9 +188,11 @@ export function apply(ctx: Context): void {
     // (settings.yaml explicit > env > default), and reading settings means
     // waiting for the namespace registration that just left; the bounded
     // wait rides INSIDE the fire-and-forget pass (readSettings below), so
-    // the first frame is never blocked. Silent and non-fatal;
-    // process-global one-shot so a /reload re-running apply does not start
-    // a second pass (src/retention.ts).
+    // the first frame is never blocked. Silent and non-fatal; the pass
+    // reports its result through the shared notice bridge (deferred to the
+    // TUI's sink, see setNoticeSink below); process-global one-shot so a
+    // /reload re-running apply does not start a second pass
+    // (src/retention.ts).
     void runSessionRetentionOnce({
       getSessionId: () => {
         const id = bridgeRef?.getSessionId()
@@ -522,6 +525,17 @@ export function apply(ctx: Context): void {
     for (const warning of keyBindings.warnings) {
       renderer.renderNotice(`keybindings: ${warning}`, 'error')
     }
+    // Arm the shared notice sink now that the TUI is up. Every operator
+    // trace that fired before this point — the settings-namespace
+    // registration failure, invalid dsh-tui.retention/resume values, a
+    // missing userQuestions service, the janitor's result line — has been
+    // queueing on the bridge (src/notice-bridge.ts); registering here
+    // drains that batch as stacked transient notices above the footer
+    // instead of raw stderr lines (which would scribble over the
+    // alt-screen frame). Later emissions deliver directly. If the TUI
+    // never gets here (headless), everything stays pending and is
+    // silently dropped.
+    setNoticeSink(message => ui.showNotice(message))
     // Live widgets, pinned around the chat window: the Todos panel plus the
     // fixed think/tool status panels ABOVE the input (one of each, refreshed
     // in place, hidden while empty), and the running-agent activity merged
@@ -1607,6 +1621,7 @@ export function apply(ctx: Context): void {
         const exitSessionId = bridge.getSessionId()
         try { await bridge.dispose() } catch { /* contained */ }
         ui.dispose()
+        setNoticeSink(undefined)
         try { await ctx.root.fiber.dispose() } catch { /* contained */ }
         // pi-style exit hint: the terminal is released (alt-screen exited,
         // cooked mode restored), nothing else prints after the tree's
@@ -1633,6 +1648,11 @@ export function apply(ctx: Context): void {
       applyThemeRef = undefined
       applyPanelHeightRef = undefined
       applyFooterHintsRef = undefined
+      // Detach the shared notice sink with this TUI: a producer finishing
+      // during teardown must not write into a dead surface (anything it
+      // emits afterwards queues for the next registration — a failed
+      // /reload rollback re-registers and consumes it once).
+      setNoticeSink(undefined)
       // Stop the TUI FIRST, before the (possibly slow) agent teardown: the
       // terminal must be released while the fiber is still alone with it.
       // Deferring tui.stop() until after `await bridge.dispose()` lets any

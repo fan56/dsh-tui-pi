@@ -10,7 +10,10 @@ session history and current state in [HANDOFF.md](HANDOFF.md).
 index.ts          cordis plugin entry (apply + effect) — all wiring: commands,
                   footer, git, clock, bridge, theme hot-swap sink, shutdown
 tui.ts            UI shell: alt-screen, transcript ScrollView, dock, editor
-                  rebuild on theme swap (themeRef mutable binding)
+                  rebuild on theme swap (themeRef mutable binding) +
+                  transient footer notice slot (showNotice: stacked muted
+                  lines above the footer, each auto-dismisses after 8s,
+                  capped at 8; fed by the shared notice bridge)
 messages.ts       TranscriptRenderer: session events → components; ReplayOp
                   buffer + setTheme rebuild; chat-clean transcript (think/
                   tool/todo render in the live widgets, never here)
@@ -40,6 +43,19 @@ append-system.ts  APPEND_SYSTEM.md support (pi convention, dsh side
                   there (idempotent marker, atomic) and migrated out of the
                   legacy ~/.dsh/AGENTS.md
 commands.ts       CommandService: parse + dual-channel dispatch + autocomplete
+notice-bridge.ts  shared notice bridge — the ONLY channel for operator
+                  traces (invalid dsh-tui.retention/resume settings values,
+                  the settings-namespace registration failure, a missing
+                  userQuestions service, the retention result): emitNotice
+                  delivers straight to the TUI's sink once registered, else
+                  queues bounded pending (FIFO, cap 16) drained in order on
+                  registration; never registered (headless) → silently
+                  dropped — deliberately no flush timer / stderr fallback
+                  (a timer firing into a slow-starting TUI would write raw
+                  bytes over the alt-screen). /reload-safe by module-cache
+                  eviction + per-producer one-shot guards; a failed reload
+                  rolls back with module state intact → still-pending is
+                  consumed once by the restarted TUI (≤ 1 batch)
 frame.ts          FramedOverlay: shared top/bottom ─ border for every popup
 ask-user.ts       Ask User Question: pure state reducers (answer/declined
                   envelopes, double-Esc machine, flat-row layout) + the
@@ -94,12 +110,13 @@ retention.ts      startup session-log janitor: pure selector (keep 100 /
                   readSessionManagementExplicit — theme-settings.ts —
                   > DSH_TUI_RETENTION_MAX_COUNT/_MAX_AGE_DAYS/
                   _MIN_IDLE_HOURS env > defaults; precedence
-                  settings > env > default, invalid settings warn one
-                  stderr line each and fall to the next level, invalid env
-                  falls back silently; MAX_COUNT<=0 at the winning layer
-                  disables — the escape hatch for long-lived read-attach
-                  processes); result line
-                  on stderr (console.warn), never stdout (alt-screen);
+                  settings > env > default, invalid settings emit one
+                  notice each via the shared bridge and fall to the next
+                  level, invalid env falls back silently; MAX_COUNT<=0 at
+                  the winning layer disables — the escape hatch for
+                  long-lived read-attach processes); result surfaces once
+                  as a transient notice above the footer via the shared
+                  notice bridge (emitNotice — src/notice-bridge.ts);
                   fire-and-forget in apply() behind a globalThis one-shot
                   (per process, /reload-safe); root resolved by the CORE
                   convention ($DSH_HOME/sessions); exports
@@ -160,16 +177,16 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **885 tests** across 48 files (the
-  post-merge baseline — verified by `node --test test/*.test.mjs` on
-  2026-08-25 after the retention+startup-info merge). Per-file totals
+- `pnpm test` must stay green: **897 tests** across 49 files (verified by
+  `node --test test/*.test.mjs` after the shared notice-bridge
+  generalization — new notice-bridge 8). Per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals in
   HANDOFF.md.
   - ask-user 85 + skills 36 + skills-manager 24 + startup-info 19 +
   - live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
-  - retention 35 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
+  - retention 39 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
   custom-provider 12 +
   messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 26 +
@@ -178,7 +195,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   theme-settings 15 + commands 9 + text 15 + font-detect 8 + quotes 7 +
   icons 7 + reload 6 + append-system 9 + install-font 6 + tokens 6 +
   queue-panel 6 + schema-model 3 + usage 26 + preset 12 + dev-upgrade 8 +
-  model-list 21 + plugin-inject 2.
+  model-list 21 + notice-bridge 8 + plugin-inject 2.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
   `dsh --profile tui`, drive keys, `capture-pane` for assertions (see HANDOFF
   "验证命令速查"). Keep the 24-row terminal case in the matrix — overlay

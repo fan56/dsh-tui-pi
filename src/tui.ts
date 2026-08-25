@@ -11,6 +11,9 @@
  *   │ editor                               │  │ sized to its content
  *   │ lastRequestContainer                 │  │  ← also hosts the merged
  *   │   (last-request + activity lines)    │  │    running-agent activity
+ *   │ noticesContainer                     │  │  ← transient notice slot:
+ *   │   (stacked muted lines,              │  │    zero rows while empty
+ *   │    each auto-dismisses)              │  │
  *   │ footerContainer                      │  ┘
  *   └──────────────────────────────────────┘
  *
@@ -35,6 +38,7 @@ import { CanvasTerminal } from './canvas-terminal.ts'
 import { CwdBorderEditor } from './editor.ts'
 import { mergeKeyBindings, resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
 import { ansiBg, ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
+import { clipToWidth } from './text.ts'
 
 export interface StartTuiOptions {
   /** Submit handler for the editor. Defaults to a local echo (smoke-test mode). */
@@ -69,6 +73,15 @@ export interface StartTuiOptions {
 export interface TuiHandle {
   /** Stop the render loop and leave raw mode. */
   dispose(): void
+  /**
+   * Show a transient notice line pinned directly above the footer —
+   * shell-level diagnostics (the shared notice bridge's messages: config
+   * warnings, registration failures, the session-retention report) that
+   * must neither write raw bytes to the terminal nor persist as transcript
+   * content. Lines stack (a startup batch arrives as several calls) and
+   * each auto-dismisses after a short timeout; feedback, not state.
+   */
+  showNotice(text: string): void
   /** The underlying pi-tui instance (for Loader/overlay construction). */
   readonly tui: TUI
   /** The scrollable transcript document container. */
@@ -179,6 +192,13 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // compact agent lines it hosts. It collapses to zero rows when both the
   // last-request line is cleared and no subagent runs.
   const lastRequest = new Container()
+  // Transient notice slot, pinned directly ABOVE the footer: zero rows while
+  // empty; `showNotice` stacks one Text per live notice here until each
+  // auto-dismisses. A dedicated slot (not a footer child) keeps it immune to
+  // the caller's `footer.clear()` during footer wiring. Under dock squeeze
+  // pi-tui clips this slot from the bottom, so the newest line is the
+  // visually lost one — accepted.
+  const notices = new Container()
   const footer = new Container()
 
   const dock = new VStack([
@@ -187,6 +207,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     { component: askUser, shrink: 1, minSize: 0 },
     { component: editor, shrink: 1, minSize: 3 },
     { component: lastRequest, shrink: 1, minSize: 0 },
+    { component: notices, shrink: 1, minSize: 0 },
     { component: footer, shrink: 1, minSize: 1 },
   ])
 
@@ -254,15 +275,73 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     dock.addChild(askUser, { shrink: 1, minSize: 0 })
     dock.addChild(next, { shrink: 1, minSize: 3 })
     dock.addChild(lastRequest, { shrink: 1, minSize: 0 })
+    dock.addChild(notices, { shrink: 1, minSize: 0 })
     dock.addChild(footer, { shrink: 1, minSize: 1 })
     editor = next
     if (hadFocus) tui.setFocus(editor)
   }
 
   // ---------------------------------------------------------- lifecycle handle --
+  // Transient shell notice state (see showNotice below). Retirement is
+  // timer-driven only — deliberately NOT "next keypress" like the subagent
+  // viewer's notice. The color-scheme replies (OSC 11, CSI ?997;1|2n) are
+  // NOT the hazard: pi-tui consumes a pure reply BEFORE inputListeners, so
+  // it never reaches a key hook. The real hazards are the cell-size reply
+  // (to the CSI 16 t query pi-tui always sends at startup on images-capable
+  // terminals), which is consumed only AFTER the listeners — its bytes flow
+  // through any key hook — and a reply sharing a stdin chunk with a real
+  // keypress: the pure-reply matchers are whole-chunk anchored, so the
+  // entire mixed chunk passes through. A key hook would retire the notice
+  // before a human ever touches the keyboard.
+  //
+  // Lines STACK instead of replacing each other: the notice bridge drains
+  // its startup batch (config warnings that fired before the first frame)
+  // as several showNotice calls back-to-back, and replace-on-arrival would
+  // leave only the last line visible. Each line retires independently
+  // after its own window, and the stack is capped so a pathological burst
+  // cannot eat the dock on a 24-row terminal (the OLDEST line drops — the
+  // freshest diagnostics keep their full window). Under dock squeeze pi-tui
+  // clips this slot from the bottom, so the newest line is the visually
+  // lost one — accepted.
+  const NOTICE_AUTO_DISMISS_MS = 8000
+  const NOTICE_MAX_LINES = 8
+  type ShellNotice = { line: Text; timer: ReturnType<typeof setTimeout>; retired: boolean }
+  const shellNotices: ShellNotice[] = []
+  const retireNotice = (notice: ShellNotice): void => {
+    if (notice.retired) return
+    notice.retired = true
+    clearTimeout(notice.timer)
+    const index = shellNotices.indexOf(notice)
+    if (index >= 0) shellNotices.splice(index, 1)
+    notices.removeChild(notice.line)
+    tui.requestRender()
+  }
+
   const handle: TuiHandle = {
     dispose() {
+      for (const notice of [...shellNotices]) retireNotice(notice)
       tui.stop()
+    },
+    showNotice(text: string): void {
+      while (shellNotices.length >= NOTICE_MAX_LINES) {
+        const oldest = shellNotices[0]
+        if (oldest === undefined) break
+        retireNotice(oldest)
+      }
+      // Clip plain text BEFORE applying ANSI (iron rule 3). paddingX=1 on
+      // both sides (Text(..., 1, 0)) leaves columns-2 of content width.
+      const clipped = clipToWidth(text, Math.max(20, (process.stdout.columns ?? 80) - 2))
+      const notice: ShellNotice = {
+        line: new Text(ansiFg(themeRef.palette.fgMuted) + clipped + RESET, 1, 0),
+        timer: setTimeout(() => retireNotice(notice), NOTICE_AUTO_DISMISS_MS),
+        retired: false,
+      }
+      notice.timer.unref?.()
+      shellNotices.push(notice)
+      notices.addChild(notice.line)
+      // The baked fgMuted color survives an ~8s theme hot-swap at worst;
+      // not worth a re-tint hook for such short-lived lines.
+      tui.requestRender()
     },
     tui,
     transcript,

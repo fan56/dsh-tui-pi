@@ -6,7 +6,12 @@
  * the precedence chain (settings.yaml explicit > env > default, invalid
  * fallbacks, MAX_COUNT<=0 disable) plus fs integration: a real temp store
  * tree, real removals, bucket and stray-file safety, rm-failure
- * isolation, symlink skipping. Runs against the built lib/ (pretest).
+ * isolation, symlink skipping. Also the notice-bridge integration: the
+ * pass and its settings warnings never write raw stderr; their messages
+ * are held pending until a TUI registers its notice sink, delivered once,
+ * dropped when none does (the bridge's own unit tests live in
+ * test/notice-bridge.test.mjs).
+ * Runs against the built lib/ (pretest).
  */
 
 import test from 'node:test'
@@ -25,12 +30,39 @@ import {
   selectRetentionDeletions,
   sessionStoreRoot,
 } from '../lib/retention.js'
+import {
+  resetNoticeBridge,
+  setNoticeSink,
+  takePendingNotices,
+} from '../lib/notice-bridge.js'
 
 const DAY = 24 * 60 * 60 * 1000
 const NOW = 1_800_000_000_000
 const policy = (over = {}) => ({ maxCount: 3, maxAgeDays: 7, minIdleMs: RETENTION_MIN_IDLE_MS, now: NOW, ...over })
 
 const cand = (id, mtimeMs, dir = `/store/p/${id}`) => ({ id, dir, mtimeMs })
+
+/**
+ * Run fn with BOTH terminal-output channels captured — console.warn AND the
+ * raw process.stderr.write it funnels into (a regression could bypass
+ * console and write to the stream directly) — and return every captured
+ * chunk. Nothing reaches the terminal while captured: the point is to
+ * prove the alt-screen stays clean even before any sink exists.
+ */
+async function captureTerminalOutput(fn) {
+  const chunks = []
+  const originalWrite = process.stderr.write
+  const originalWarn = console.warn
+  process.stderr.write = chunk => { chunks.push(String(chunk)); return true }
+  console.warn = (...args) => { chunks.push(args.join(' ') + '\n') }
+  try {
+    await fn()
+  } finally {
+    process.stderr.write = originalWrite
+    console.warn = originalWarn
+  }
+  return chunks
+}
 
 // ------------------------------------------------------------- pure: age --
 
@@ -211,20 +243,22 @@ test('resolveRetentionConfig: invalid values fall back to the defaults', () => {
   }
 })
 
-test('resolveRetentionConfig: a fractional env MAX_COUNT is invalid env — the count rule stays armed at the default', () => {
+test('resolveRetentionConfig: a fractional env MAX_COUNT is invalid env — the count rule stays armed at the default', async () => {
   // The regression shape: 100.5 parses finite and positive, so the old
   // env layer accepted it — but `ranked[100.5]` is undefined forever and
   // the count loop never collected anything (the rule died silently). A
   // non-integer env count is invalid env: silent fall to the default,
-  // same as any other garbage (only the settings layer warns).
-  const warnings = []
-  const originalWarn = console.warn
-  console.warn = line => { warnings.push(line) }
+  // same as any other garbage (only the settings layer notices).
+  resetNoticeBridge()
+  let config
+  const chunks = await captureTerminalOutput(() => {
+    config = resolveRetentionConfig({ DSH_TUI_RETENTION_MAX_COUNT: '100.5' })
+  })
   try {
-    const config = resolveRetentionConfig({ DSH_TUI_RETENTION_MAX_COUNT: '100.5' })
     assert.equal(config.maxCount, RETENTION_MAX_COUNT, 'fractional count falls to the default 100')
     assert.equal(config.enabled, true)
-    assert.deepEqual(warnings, [], 'env-level fallbacks are silent')
+    assert.deepEqual(chunks, [], 'env-level fallbacks are silent on every channel')
+    assert.deepEqual(takePendingNotices(), [], 'and they emit no notice either')
     // And the count rule genuinely fires at the resolved cap: 105 idle
     // sessions, the 5 ranked beyond 100 are collected (had 100.5 won,
     // this selection would return [] — the silent-death symptom).
@@ -236,7 +270,7 @@ test('resolveRetentionConfig: a fractional env MAX_COUNT is invalid env — the 
       'the count rule collects beyond the default cap',
     )
   } finally {
-    console.warn = originalWarn
+    resetNoticeBridge()
   }
 })
 
@@ -293,14 +327,15 @@ test('resolveRetentionConfig: settings maxCount <= 0 disables retention (the doc
   assert.equal(resolveRetentionConfig({ DSH_TUI_RETENTION_MAX_COUNT: '0' }, { maxCount: 12 }).enabled, true)
 })
 
-test('resolveRetentionConfig: invalid settings values warn one line each and fall to the next level', () => {
-  const warnings = []
-  const originalWarn = console.warn
-  console.warn = line => { warnings.push(line) }
+test('resolveRetentionConfig: invalid settings values emit one notice each and fall to the next level', () => {
+  resetNoticeBridge()
+  const notices = []
+  setNoticeSink(message => { notices.push(message) })
   try {
     // Type error, non-integer count, non-positive age, negative idle: each
-    // present-but-invalid field is rejected with exactly one stderr line,
-    // and the chain continues at the env layer.
+    // present-but-invalid field is rejected with exactly one notice (the
+    // shared bridge — the sink is registered, so delivery is direct), and
+    // the chain continues at the env layer.
     const config = resolveRetentionConfig(
       {
         DSH_TUI_RETENTION_MAX_COUNT: '5',
@@ -314,25 +349,25 @@ test('resolveRetentionConfig: invalid settings values warn one line each and fal
       { maxCount: 5, maxAgeDays: 14, minIdleMs: 2 * 60 * 60 * 1000, enabled: true },
       'invalid settings fell through to env on every knob',
     )
-    assert.equal(warnings.length, 3, 'one line per invalid field')
-    assert.match(warnings[0], /^\[dsh-tui-pi\] settings dsh-tui\.retention\.maxCount: invalid value "many" — falling back to environment\/default$/)
-    assert.match(warnings[1], /dsh-tui\.retention\.maxAgeDays: invalid value 0 —/)
-    assert.match(warnings[2], /dsh-tui\.retention\.minIdleHours: invalid value -1\.5 —/)
+    assert.equal(notices.length, 3, 'one notice per invalid field')
+    assert.match(notices[0], /^settings dsh-tui\.retention\.maxCount: invalid value "many" — falling back to environment\/default$/)
+    assert.match(notices[1], /dsh-tui\.retention\.maxAgeDays: invalid value 0 —/)
+    assert.match(notices[2], /dsh-tui\.retention\.minIdleHours: invalid value -1\.5 —/)
 
-    // Invalid settings with no env either → the defaults (still one line).
-    warnings.length = 0
+    // Invalid settings with no env either → the defaults (still one notice).
+    notices.length = 0
     assert.deepEqual(
       resolveRetentionConfig({}, { maxCount: 42.5, maxAgeDays: Number.NaN, minIdleHours: 'later' }),
       { maxCount: RETENTION_MAX_COUNT, maxAgeDays: RETENTION_MAX_AGE_DAYS, minIdleMs: RETENTION_MIN_IDLE_MS, enabled: true },
     )
-    assert.equal(warnings.length, 3)
+    assert.equal(notices.length, 3)
 
-    // Absent fields never warn; valid values never warn.
-    warnings.length = 0
+    // Absent fields never notice; valid values never notice.
+    notices.length = 0
     resolveRetentionConfig({}, { maxCount: 7, maxAgeDays: undefined, minIdleHours: 0 })
-    assert.deepEqual(warnings, [])
+    assert.deepEqual(notices, [])
   } finally {
-    console.warn = originalWarn
+    resetNoticeBridge()
   }
 })
 
@@ -680,6 +715,95 @@ test('a session-level symlink to a directory is skipped by the walk (lstat seman
     const candidates = await collectRetentionCandidates(dir)
     assert.deepEqual(candidates.map(c => c.id), ['real-session'])
   } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ------------------------------------------------------- notice bridge --
+
+test('runSessionRetention holds the result as a pending notice when no sink is registered (never stderr)', async () => {
+  resetNoticeBridge()
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-note-'))
+  try {
+    const now = Date.now()
+    await makeSession(dir, 'proj', 'ancient', now - 9 * DAY)
+    let result
+    const chunks = await captureTerminalOutput(() =>
+      runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now }).then(r => { result = r }))
+    assert.deepEqual(result, { removed: 1, failed: 0 })
+    // The old raw stderr line is gone entirely — a TUI-less run must not
+    // write anything to the terminal, on EITHER channel (console.warn or
+    // a direct process.stderr.write).
+    assert.deepEqual(chunks, [], 'no raw stderr output on any channel')
+    assert.deepEqual(takePendingNotices(), ['Session retention: removed 1'])
+    assert.deepEqual(takePendingNotices(), [], 'pending consumed exactly once')
+  } finally {
+    resetNoticeBridge()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a sink registered before the pass receives the result directly; a later sink never replays it', async () => {
+  resetNoticeBridge()
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-note2-'))
+  try {
+    const now = Date.now()
+    await makeSession(dir, 'proj', 'ancient-a', now - 9 * DAY)
+    await makeSession(dir, 'proj', 'ancient-b', now - 10 * DAY)
+    const seen = []
+    setNoticeSink(message => { seen.push(message) })
+    const result = await runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    assert.deepEqual(result, { removed: 2, failed: 0 })
+    assert.deepEqual(seen, ['Session retention: removed 2'])
+    assert.deepEqual(takePendingNotices(), [], 'nothing held pending')
+    // One-shot semantics: registering another sink (e.g. after /reload)
+    // must not redeliver the already-consumed result.
+    const late = []
+    setNoticeSink(message => { late.push(message) })
+    assert.deepEqual(late, [])
+  } finally {
+    resetNoticeBridge()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a pass that removes nothing emits no notice (neither sink nor pending)', async () => {
+  resetNoticeBridge()
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-note3-'))
+  try {
+    const now = Date.now()
+    await makeSession(dir, 'proj', 'fresh', now - 1000)
+    const seen = []
+    setNoticeSink(message => { seen.push(message) })
+    const result = await runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    assert.deepEqual(result, { removed: 0, failed: 0 })
+    assert.deepEqual(seen, [])
+    setNoticeSink(undefined)
+    assert.deepEqual(takePendingNotices(), [])
+  } finally {
+    resetNoticeBridge()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('the notice names failed removals alongside removed ones', async () => {
+  resetNoticeBridge()
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-note4-'))
+  try {
+    const now = Date.now()
+    await makeSession(dir, 'locked-proj', 'ancient-locked', now - 9 * DAY)
+    await makeSession(dir, 'open-proj', 'ancient-open', now - 9 * DAY)
+    // Same EACCES shape as the rm-isolation test above: removing a child
+    // needs WRITE on the parent bucket.
+    await chmod(join(dir, 'locked-proj'), 0o555)
+    let message
+    setNoticeSink(m => { message = m })
+    const result = await runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    assert.deepEqual(result, { removed: 1, failed: 1 })
+    assert.equal(message, 'Session retention: removed 1, failed 1')
+  } finally {
+    resetNoticeBridge()
+    await chmod(join(dir, 'locked-proj'), 0o755).catch(() => {})
     await rm(dir, { recursive: true, force: true })
   }
 })

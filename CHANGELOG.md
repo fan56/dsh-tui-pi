@@ -4,6 +4,36 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **No operator trace writes raw stderr into the TUI frame anymore — all
+  five traces ride one shared notice bridge** (`src/notice-bridge.ts`,
+  new; `src/retention.ts`, `src/sessions.ts`, `src/theme-settings.ts`,
+  `src/ask-user.ts`, `src/tui.ts`, `src/index.ts`). The plugin runs
+  in-process with the TUI, which owns the terminal for the alt-screen
+  render, so every bare `console.warn` was pasting raw stderr bytes onto
+  the frame and scribbling over the session body. The five converted
+  call sites: the session-retention result line, invalid
+  `dsh-tui.retention.*` settings values (one per field), invalid
+  `dsh-tui.resume.*` settings values, the `dsh-tui` settings-namespace
+  registration failure, and the missing `ctx.userQuestions` service
+  warning. Each now goes through `emitNotice`: delivered immediately as a
+  transient muted notice stacked above the footer when the TUI's sink is
+  registered, held pending (bounded FIFO, order-preserving) until the
+  sink registers after the first frame — a startup batch of config
+  warnings surfaces as stacked lines instead of one replace-on-arrival
+  line — and silently dropped when no sink ever registers (headless).
+  There is deliberately NO flush timer and NO stderr fallback: a timer
+  firing after a slow-starting TUI entered the alt-screen would write raw
+  bytes over the frame — the exact failure this fixes. `/reload` safety
+  comes from ESM module-cache eviction plus each producer's own one-shot
+  guard; a reload that fails and rolls back leaves still-pending messages
+  to be consumed exactly once (≤ 1 batch) by the restarted TUI. Message
+  text keeps its readable body but drops the `[dsh-tui-pi]` bracket
+  prefix — a muted in-TUI notice does not need the log-source tag.
+
 ## [0.22.0] - 2026-08-25
 
 ### Added

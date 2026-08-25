@@ -14,6 +14,7 @@ import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { SESSION_LOG_FILE_NAMES } from './retention.ts'
+import { emitNotice } from './notice-bridge.ts'
 import { wrapFramedOverlay } from './frame.ts'
 import {
   autoColumns,
@@ -248,7 +249,7 @@ export const RESUME_MIN_BYTES = 20 * 1024
  * of the settings document (theme-settings.ts hands the raw section
  * through), so every field is `unknown`: a hand-edited file can carry
  * anything. Absent fields are simply not overridden; present-but-invalid
- * ones are rejected by `resolveResumeConfig` with one stderr line.
+ * ones are rejected by `resolveResumeConfig` with one notice each.
  */
 export interface ResumeSettingsInput {
   maxAgeDays?: unknown
@@ -279,9 +280,11 @@ function finiteEnv(
 
 /**
  * Narrow one explicit settings field: a finite number passing `accept`, or
- * undefined (absent, or present-but-invalid). An invalid value warns once
- * on stderr naming the field and its raw value, so a hand-edited
- * settings.yaml is debuggable; the caller falls to the next level.
+ * undefined (absent, or present-but-invalid). An invalid value emits one
+ * notice through the shared bridge (src/notice-bridge.ts) naming the
+ * field and its raw value, so a hand-edited settings.yaml is debuggable;
+ * the caller falls to the next level. The picker is opened with the TUI
+ * long up, so these typically deliver straight to the sink.
  */
 function explicitSetting(
   section: ResumeSettingsInput | undefined,
@@ -291,10 +294,8 @@ function explicitSetting(
   const raw = section?.[key]
   if (raw === undefined) return undefined
   if (typeof raw !== 'number' || !Number.isFinite(raw) || !accept(raw)) {
-    // stderr on purpose, never console.log: the TUI owns stdout for the
-    // alt-screen render.
-    console.warn(
-      `[dsh-tui-pi] settings dsh-tui.resume.${key}: invalid value `
+    emitNotice(
+      `settings dsh-tui.resume.${key}: invalid value `
       + `${JSON.stringify(raw)} — falling back to environment/default`,
     )
     return undefined
@@ -308,8 +309,9 @@ function explicitSetting(
  * (`dsh-tui.resume.*`) outranks the environment variables
  * (`DSH_TUI_RESUME_MAX_AGE_DAYS` / `DSH_TUI_RESUME_MIN_BYTES`), which
  * outrank the defaults — settings is what the user deliberately persisted.
- * An invalid settings value warns once (stderr) and falls to the next
- * level; an invalid env value falls back silently to the default. Validity:
+ * An invalid settings value emits one notice (shared bridge) and falls to
+ * the next level; an invalid env value falls back silently to the
+ * default. Validity:
  * the age window must be > 0 (0 would empty the picker), the byte floor
  * must be an integer >= 0 (0 legitimately lifts the floor for stubs) — at
  * BOTH layers. A fractional byte floor like 20480.5 is garbage even though

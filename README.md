@@ -304,8 +304,9 @@ Precedence per field: an explicit value in settings.yaml > the
 `DSH_TUI_RETENTION_MAX_COUNT` / `DSH_TUI_RETENTION_MAX_AGE_DAYS` /
 `DSH_TUI_RETENTION_MIN_IDLE_HOURS` and `DSH_TUI_RESUME_MAX_AGE_DAYS` /
 `DSH_TUI_RESUME_MIN_BYTES` environment variables > the defaults above.
-An invalid settings value warns once on stderr and falls to the next
-level; an invalid env value falls back silently to the default — a typo
+An invalid settings value surfaces a transient notice via the shared
+notice bridge (silently dropped when no TUI sink is registered — headless
+runs never print it) and falls to the next level; an invalid env value — a typo
 never widens or guts the policy. `maxCount` and `minBytes` must be
 integers at every layer (a fractional cap or byte floor is garbage, not a
 window).

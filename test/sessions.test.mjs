@@ -23,6 +23,27 @@ import {
   sortSessionsByLastUpdate,
 } from '../lib/sessions.js'
 import { stashSessionIdForReload, takeStashedSessionId } from '../lib/session.js'
+import { resetNoticeBridge, setNoticeSink, takePendingNotices } from '../lib/notice-bridge.js'
+
+/**
+ * Run fn with BOTH terminal-output channels captured — console.warn AND the
+ * raw process.stderr.write it funnels into — and return every captured
+ * chunk. Nothing reaches the terminal while captured.
+ */
+async function captureTerminalOutput(fn) {
+  const chunks = []
+  const originalWrite = process.stderr.write
+  const originalWarn = console.warn
+  process.stderr.write = chunk => { chunks.push(String(chunk)); return true }
+  console.warn = (...args) => { chunks.push(args.join(' ') + '\n') }
+  try {
+    await fn()
+  } finally {
+    process.stderr.write = originalWrite
+    console.warn = originalWarn
+  }
+  return chunks
+}
 
 const userMsg = (text, sourceKind = 'user', extra = {}) => ({
   type: 'user/message',
@@ -386,11 +407,11 @@ test('resolveResumeConfig: valid env overrides apply; a 0-byte floor legitimatel
   })
 })
 
-test('resolveResumeConfig: invalid env values fall back SILENTLY to the defaults', () => {
+test('resolveResumeConfig: invalid env values fall back SILENTLY to the defaults', async () => {
   // Non-numeric, empty, fractional bytes, or out of range (age must be
   // > 0 — 0 would empty the picker; bytes must be an integer >= 0). A
   // typo must never silently empty or gut the picker, and env fallbacks
-  // never warn (only settings do).
+  // never emit anything (only settings do).
   const bad = [
     { DSH_TUI_RESUME_MAX_AGE_DAYS: 'abc' },
     { DSH_TUI_RESUME_MAX_AGE_DAYS: '' },
@@ -403,20 +424,21 @@ test('resolveResumeConfig: invalid env values fall back SILENTLY to the defaults
     { DSH_TUI_RESUME_MIN_BYTES: '20480.5' },
     { DSH_TUI_RESUME_MIN_BYTES: '-0.5' },
   ]
-  const warnings = []
-  const originalWarn = console.warn
-  console.warn = line => { warnings.push(line) }
+  resetNoticeBridge()
   try {
-    for (const env of bad) {
-      assert.deepEqual(
-        resolveResumeConfig(env),
-        { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES },
-        JSON.stringify(env),
-      )
-    }
-    assert.deepEqual(warnings, [], 'env-level fallbacks are silent')
+    const chunks = await captureTerminalOutput(() => {
+      for (const env of bad) {
+        assert.deepEqual(
+          resolveResumeConfig(env),
+          { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES },
+          JSON.stringify(env),
+        )
+      }
+    })
+    assert.deepEqual(chunks, [], 'env-level fallbacks are silent on every channel')
+    assert.deepEqual(takePendingNotices(), [], 'and they emit no notice either')
   } finally {
-    console.warn = originalWarn
+    resetNoticeBridge()
   }
 })
 
@@ -450,14 +472,15 @@ test('resolveResumeConfig: explicit settings outrank env; env outranks defaults'
   )
 })
 
-test('resolveResumeConfig: invalid settings values warn exactly one line each and fall to the next level', () => {
-  const warnings = []
-  const originalWarn = console.warn
-  console.warn = line => { warnings.push(line) }
+test('resolveResumeConfig: invalid settings values emit exactly one notice each and fall to the next level', () => {
+  resetNoticeBridge()
+  const notices = []
+  setNoticeSink(message => { notices.push(message) })
   try {
     // Type error and negative byte floor: each present-but-invalid field
-    // is rejected with exactly one stderr line, and the chain continues
-    // at the env layer.
+    // is rejected with exactly one notice (shared bridge; the sink is
+    // registered so delivery is direct), and the chain continues at the
+    // env layer.
     const config = resolveResumeConfig(
       {
         DSH_TUI_RESUME_MAX_AGE_DAYS: '21',
@@ -470,32 +493,32 @@ test('resolveResumeConfig: invalid settings values warn exactly one line each an
       { maxAgeDays: 21, minBytes: 8192 },
       'invalid settings fell through to env on every knob',
     )
-    assert.equal(warnings.length, 2, 'one line per invalid field')
-    assert.match(warnings[0], /^\[dsh-tui-pi\] settings dsh-tui\.resume\.maxAgeDays: invalid value "week" — falling back to environment\/default$/)
-    assert.match(warnings[1], /dsh-tui\.resume\.minBytes: invalid value -1 —/)
+    assert.equal(notices.length, 2, 'one notice per invalid field')
+    assert.match(notices[0], /^settings dsh-tui\.resume\.maxAgeDays: invalid value "week" — falling back to environment\/default$/)
+    assert.match(notices[1], /dsh-tui\.resume\.minBytes: invalid value -1 —/)
 
-    // Invalid settings with no env either → the defaults (still one line
-    // per field).
-    warnings.length = 0
+    // Invalid settings with no env either → the defaults (still one
+    // notice per field).
+    notices.length = 0
     assert.deepEqual(
       resolveResumeConfig({}, { maxAgeDays: Number.NaN, minBytes: 'later' }),
       { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES },
     )
-    assert.equal(warnings.length, 2)
+    assert.equal(notices.length, 2)
 
-    // Absent fields never warn; valid values never warn.
-    warnings.length = 0
+    // Absent fields never notice; valid values never notice.
+    notices.length = 0
     resolveResumeConfig({}, { maxAgeDays: 3, minBytes: undefined })
-    assert.deepEqual(warnings, [])
+    assert.deepEqual(notices, [])
   } finally {
-    console.warn = originalWarn
+    resetNoticeBridge()
   }
 })
 
 test('resolveResumeConfig: boundaries — fractional age is a window, byte floor must be an integer >= 0', () => {
-  const warnings = []
-  const originalWarn = console.warn
-  console.warn = line => { warnings.push(line) }
+  resetNoticeBridge()
+  const notices = []
+  setNoticeSink(message => { notices.push(message) })
   try {
     // The age window only needs to be a finite number > 0: 0.5 days is a
     // legitimate (aggressive) window.
@@ -503,51 +526,53 @@ test('resolveResumeConfig: boundaries — fractional age is a window, byte floor
       maxAgeDays: 0.5,
       minBytes: RESUME_MIN_BYTES,
     })
-    // maxAgeDays 0 would empty the picker — invalid, one warn, default.
+    // maxAgeDays 0 would empty the picker — invalid, one notice, default.
     assert.deepEqual(resolveResumeConfig({}, { maxAgeDays: 0 }), {
       maxAgeDays: RESUME_MAX_AGE_DAYS,
       minBytes: RESUME_MIN_BYTES,
     })
-    assert.equal(warnings.length, 1)
-    assert.match(warnings[0], /dsh-tui\.resume\.maxAgeDays: invalid value 0 —/)
-    warnings.length = 0
+    assert.equal(notices.length, 1)
+    assert.match(notices[0], /dsh-tui\.resume\.maxAgeDays: invalid value 0 —/)
+    notices.length = 0
     // A fractional byte floor is garbage even though positive (a
-    // stat().size is integral) — rejected, one warn, default.
+    // stat().size is integral) — rejected, one notice, default.
     assert.deepEqual(resolveResumeConfig({}, { minBytes: 20480.5 }), {
       maxAgeDays: RESUME_MAX_AGE_DAYS,
       minBytes: RESUME_MIN_BYTES,
     })
-    assert.equal(warnings.length, 1)
-    assert.match(warnings[0], /dsh-tui\.resume\.minBytes: invalid value 20480\.5 —/)
-    warnings.length = 0
+    assert.equal(notices.length, 1)
+    assert.match(notices[0], /dsh-tui\.resume\.minBytes: invalid value 20480\.5 —/)
+    notices.length = 0
     // Integer 0 is the documented "show every walked session" choice —
-    // valid, no warn.
+    // valid, no notice.
     assert.deepEqual(resolveResumeConfig({}, { minBytes: 0 }), {
       maxAgeDays: RESUME_MAX_AGE_DAYS,
       minBytes: 0,
     })
-    assert.deepEqual(warnings, [])
+    assert.deepEqual(notices, [])
   } finally {
-    console.warn = originalWarn
+    resetNoticeBridge()
   }
 })
 
-test('resolveResumeConfig: a fractional env MIN_BYTES is invalid env — the floor stays the default boundary', () => {
+test('resolveResumeConfig: a fractional env MIN_BYTES is invalid env — the floor stays the default boundary', async () => {
   // The env-layer twin of the settings case above: 20480.5 parses finite
   // and positive, so the old env layer accepted it — and because
   // `stat().size` is integral, exactly-20480-byte logs silently failed
   // the floor (20480 < 20480.5). A fractional byte floor is invalid env:
   // silent fall to the default, and the boundary stays inclusive.
-  const warnings = []
-  const originalWarn = console.warn
-  console.warn = line => { warnings.push(line) }
+  resetNoticeBridge()
   try {
-    const config = resolveResumeConfig({ DSH_TUI_RESUME_MIN_BYTES: '20480.5' })
+    let config
+    const chunks = await captureTerminalOutput(() => {
+      config = resolveResumeConfig({ DSH_TUI_RESUME_MIN_BYTES: '20480.5' })
+    })
     assert.deepEqual(config, {
       maxAgeDays: RESUME_MAX_AGE_DAYS,
       minBytes: RESUME_MIN_BYTES,
     }, 'fractional env floor falls to the default 20480')
-    assert.deepEqual(warnings, [], 'env-level fallbacks are silent')
+    assert.deepEqual(chunks, [], 'env-level fallbacks are silent on every channel')
+    assert.deepEqual(takePendingNotices(), [], 'and they emit no notice either')
     // The resolved default floor keeps its inclusive boundary: exactly
     // 20480B passes, 20479B does not (had 20480.5 won, 'at-min' would
     // have been dropped — the silent bar-raise symptom).
@@ -564,7 +589,7 @@ test('resolveResumeConfig: a fractional env MIN_BYTES is invalid env — the flo
     })
     assert.deepEqual(kept.map(h => h.sessionId), ['at-min'], 'exactly-20480B logs still pass the default floor')
   } finally {
-    console.warn = originalWarn
+    resetNoticeBridge()
   }
 })
 

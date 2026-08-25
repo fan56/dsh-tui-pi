@@ -23,13 +23,14 @@
  * `dsh-tui.retention` value in settings.yaml > the
  * `DSH_TUI_RETENTION_*` environment variables > the defaults — settings
  * is what the user deliberately persisted, so it outranks the ambient
- * environment. Invalid values at the settings level warn once (stderr)
- * and fall to the next level.
+ * environment. Invalid values at the settings level surface once as a
+ * notice (src/notice-bridge.ts) and fall to the next level.
  */
 
 import { readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { dshHome } from './append-system.ts'
+import { emitNotice } from './notice-bridge.ts'
 
 /**
  * One session directory discovered by the walk. `id` is the directory
@@ -124,7 +125,7 @@ function finiteEnv(
  * layer of the settings document (theme-settings.ts hands the raw section
  * through), so every field is `unknown`: a hand-edited file can carry
  * anything. Absent fields are simply not overridden; present-but-invalid
- * ones are rejected by `resolveRetentionConfig` with one stderr line.
+ * ones are rejected by `resolveRetentionConfig` with one notice each.
  */
 export interface RetentionSettingsInput {
   maxCount?: unknown
@@ -134,8 +135,8 @@ export interface RetentionSettingsInput {
 
 /**
  * Narrow one explicit settings field: a finite number passing `accept`, or
- * undefined (absent, or present-but-invalid). An invalid value warns once
- * on stderr — the repo's `[dsh-tui-pi]` operator-trace style — naming the
+ * undefined (absent, or present-but-invalid). An invalid value emits one
+ * notice through the shared bridge (src/notice-bridge.ts) naming the
  * field and its raw value so a hand-edited settings.yaml is debuggable;
  * the caller then falls to the next precedence level.
  */
@@ -147,10 +148,8 @@ function explicitSetting(
   const raw = section?.[key]
   if (raw === undefined) return undefined
   if (typeof raw !== 'number' || !Number.isFinite(raw) || !accept(raw)) {
-    // stderr on purpose, never console.log: the TUI owns stdout for the
-    // alt-screen render.
-    console.warn(
-      `[dsh-tui-pi] settings dsh-tui.retention.${key}: invalid value `
+    emitNotice(
+      `settings dsh-tui.retention.${key}: invalid value `
       + `${JSON.stringify(raw)} — falling back to environment/default`,
     )
     return undefined
@@ -175,8 +174,9 @@ function explicitSetting(
  *   dsh-tui.retention.minIdleHours  / DSH_TUI_RETENTION_MIN_IDLE_HOURS
  *     count-rule idle guard; must be >= 0
  *
- * Invalid settings values warn once (stderr) and fall to the next level;
- * invalid env values fall back silently to the defaults — a typo must
+ * Invalid settings values emit one notice each (notice bridge) and fall
+ * to the next level; invalid env values fall back silently to the
+ * defaults — a typo must
  * never silently widen or gut the policy. The env maxCount must
  * additionally be an INTEGER (the settings layer already demands one):
  * a fractional cap like 100.5 is finite and non-positive-checkable, but
@@ -370,8 +370,12 @@ export interface SessionRetentionDeps {
  * re-polled right before each removal so a session created or resumed
  * while the walk was running is never collected. The pass is a no-op when
  * retention is disabled via env, silent and non-fatal otherwise — it must
- * never block or crash startup — but leaves one stderr line with the
- * result when it deleted anything (the repo's `[dsh-tui-pi]` log style).
+ * never block or crash startup. When it deleted anything, the result
+ * surfaces exactly once through the shared notice bridge
+ * (`emitNotice`, src/notice-bridge.ts): delivered immediately if a TUI
+ * has registered its sink, held pending until one does, silently dropped
+ * if none ever does (headless). It is never written to the terminal
+ * directly — raw bytes would scribble over the alt-screen frame.
  */
 export async function runSessionRetention(deps: SessionRetentionDeps = {}): Promise<RetentionResult> {
   const result: RetentionResult = { removed: 0, failed: 0 }
@@ -423,16 +427,27 @@ export async function runSessionRetention(deps: SessionRetentionDeps = {}): Prom
       }
     }
     if (result.removed + result.failed > 0) {
-      // stderr on purpose, never console.log: the TUI owns stdout for the
-      // alt-screen render, and a stray stdout line would corrupt the
-      // frame. Same channel and `[dsh-tui-pi]` prefix style as the other
-      // operator traces (theme-settings, ask-user).
-      console.warn(`[dsh-tui-pi] session retention: removed ${result.removed}, failed ${result.failed}`)
+      reportRetentionResult(result)
     }
   } catch {
     // Silent by contract — never block startup.
   }
   return result
+}
+
+// ------------------------------------------------------------ reporting --
+// The result rides the SHARED notice bridge (src/notice-bridge.ts): the
+// TUI registers its sink once it is ready, and the pass delivers the
+// message immediately if the sink already exists, holds it pending until
+// one registers, or lets it die silently when none ever does (headless /
+// a failed startup). The sink/pending/at-most-once machinery lives in the
+// bridge module — this only keeps the retention-specific message format.
+
+/** Format and deliver one result line through the notice bridge. */
+function reportRetentionResult(result: RetentionResult): void {
+  emitNotice(result.failed > 0
+    ? `Session retention: removed ${result.removed}, failed ${result.failed}`
+    : `Session retention: removed ${result.removed}`)
 }
 
 // One-shot per PROCESS, not per plugin load: `/reload` re-runs apply() in

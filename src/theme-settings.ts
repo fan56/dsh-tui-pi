@@ -35,6 +35,7 @@ import { narrowStringList } from './model-list.ts'
 import type { IconSet } from './icons.ts'
 import { RETENTION_MAX_AGE_DAYS, RETENTION_MAX_COUNT, RETENTION_MIN_IDLE_HOURS } from './retention.ts'
 import { RESUME_MAX_AGE_DAYS, RESUME_MIN_BYTES } from './sessions.ts'
+import { emitNotice } from './notice-bridge.ts'
 import type { ThemePreference } from './theme/index.ts'
 
 /** Settings namespace carrying the persisted dsh-tui preferences. */
@@ -293,9 +294,13 @@ export function registerThemeSettings(
       } catch (error) {
         // TUI startup awaits `registrationPromise` — it must settle no matter
         // what, so a failed registration degrades to 'auto' instead of
-        // hanging. Leave a trace for operators.
-        console.warn(
-          `[dsh-tui-pi] settings namespace registration failed: ${error instanceof Error ? error.message : String(error)}`,
+        // hanging. Leave a trace for the operator: this fires during
+        // apply(), before the TUI's notice sink exists, so the message goes
+        // through the shared bridge and surfaces above the footer once the
+        // first frame lands (never raw stderr — the alt-screen owns the
+        // terminal by then).
+        emitNotice(
+          `settings namespace registration failed: ${error instanceof Error ? error.message : String(error)}`,
         )
       }
       resolve()

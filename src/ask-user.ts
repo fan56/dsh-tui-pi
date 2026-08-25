@@ -93,6 +93,7 @@ import {
   type TableColumn,
 } from './panels.ts'
 import { clipToWidth, wrapText } from './text.ts'
+import { emitNotice } from './notice-bridge.ts'
 
 // ----------------------------------------------------------------- constants --
 
@@ -1104,7 +1105,7 @@ interface UserQuestionsSeam {
  * Wires the provider into `ctx.userQuestions`. Call from inside `ctx.effect`.
  *
  * Failure semantics are deliberate (review round BM):
- * - missing service → warn + no-op disposer. The tool stays mounted by the
+ * - missing service → one notice + no-op disposer. The tool stays mounted by the
  *   bundle patch; without a provider its calls fail with the upstream
  *   NO_PROVIDER error, which is better than crashing the whole TUI plugin.
  * - DUPLICATE_PROVIDER → silent no-op disposer (a prior UI owns the slot).
@@ -1117,7 +1118,10 @@ export function registerAskUserProvider(
 ): () => void {
   const userQuestions = (ctx as { userQuestions?: UserQuestionsSeam }).userQuestions
   if (userQuestions === undefined || typeof userQuestions.registerProvider !== 'function') {
-    console.warn('[dsh-tui-pi] ctx.userQuestions not mounted — ask_user_question calls will fail with NO_PROVIDER')
+    // Through the shared notice bridge (src/notice-bridge.ts), never raw
+    // stderr: the TUI owns the terminal, and this registers during
+    // startup — possibly before the first frame.
+    emitNotice('ctx.userQuestions not mounted — ask_user_question calls will fail with NO_PROVIDER')
     return () => { /* no-op */ }
   }
   try {

@@ -3,7 +3,8 @@
 # summary. Four phases, each a fresh TUI launch then quit_tui:
 #
 #   A. retention age rule (MAX_AGE_DAYS=2) + startup summary line
-#      (mcp/skills/plugins + a profile-root `tui` line under the banner).
+#      (mcp/skills/plugins + a profile-root `tui` line under the banner)
+#      + the janitor's result surfacing as a transient footer notice.
 #   B. disable hatch — MAX_COUNT=0 (the explicit "off" knob) leaves an
 #      already-aged session alive (janitor is fully disabled, not just
 #      a partial no-op).
@@ -245,6 +246,17 @@ if [[ -d "$HOME/.dsh/sessions/$PROJ/empty-dir" ]]; then
 else
   bad 'empty subdir was wrongly removed'
 fi
+
+# --- retention result notice: transient line above the footer -----------------
+# The janitor no longer writes raw stderr; its result surfaces once as a
+# muted notice above the footer that auto-dismisses after 8s
+# (NOTICE_AUTO_DISMISS_MS in src/tui.ts). The pass settled during the sleep
+# above, so capture NOW — inside the 8s window — before asserting.
+PANE="$(capture)"
+assert_contains 'retention result surfaces as a footer notice' \
+  'Session retention: removed' "$PANE"
+assert_not_contains 'old raw-stderr retention prefix never reaches the pane' \
+  'dsh-tui-pi] session retention' "$PANE"
 
 # --- startup summary line: mcp N · skills X/Y · plugins N, plus a `tui` row --
 PANE="$(capture)"

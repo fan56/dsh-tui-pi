@@ -27,6 +27,7 @@ import {
 } from '../lib/theme-settings.js'
 import { DEFAULT_FOOTER_HINTS } from '../lib/footer.js'
 import { RETENTION_MAX_AGE_DAYS, resolveRetentionConfig } from '../lib/retention.js'
+import { resetNoticeBridge, setNoticeSink } from '../lib/notice-bridge.js'
 
 /**
  * Minimal fake of the settings-provider surface theme-settings.ts touches:
@@ -406,9 +407,9 @@ test('readSessionManagementExplicit returns the raw user-layer retention/resume 
   // registration — the one path where the real provider still exposes it
   // raw (an external edit that fails the schema keeps the last good
   // resolved value but describe() reports the raw section anyway). The
-  // values pass through UNNARROWED; one stderr line per field happens
-  // later, inside resolveRetentionConfig / resolveResumeConfig. The same
-  // garbage sitting in settings.yaml at startup would instead fail the
+  // values pass through UNNARROWED; one notice per field happens later,
+  // inside resolveRetentionConfig / resolveResumeConfig. The same garbage
+  // sitting in settings.yaml at startup would instead fail the
   // registration outright (see the registration-failure test below).
   settings.user = {
     retention: { maxCount: 42, maxAgeDays: 'later' },
@@ -514,21 +515,21 @@ test('a schema-invalid stored section fails the registration — retention/resum
   // the resolvers (theme-settings.ts schema comment).
   settings.user = { retention: { maxAgeDays: 'later' } }
   ctx.provide('settings', settings)
-  const warnings = []
-  const originalWarn = console.warn
-  console.warn = line => { warnings.push(line) }
+  const notices = []
+  resetNoticeBridge()
+  setNoticeSink(message => { notices.push(message) })
   try {
     registerThemeSettings(ctx)
     await settle()
     // registerThemeSettings degrades instead of throwing: one operator
-    // trace on stderr, and NO descriptor ever lands.
+    // trace through the notice bridge, and NO descriptor ever lands.
     assert.equal(
       settings.describe().find(d => d.ns === THEME_SETTINGS_NAMESPACE),
       undefined,
       'the failed registration left no descriptor',
     )
-    assert.equal(warnings.length, 1, 'exactly one registration-failure trace')
-    assert.match(warnings[0], /^\[dsh-tui-pi\] settings namespace registration failed/)
+    assert.equal(notices.length, 1, 'exactly one registration-failure notice')
+    assert.match(notices[0], /^settings namespace registration failed/)
     // The explicit reader therefore reports nothing configured, and the
     // janitor's knobs resolve from the environment alone — the rejected
     // section (and its schema defaults) never reach the resolvers.
@@ -545,6 +546,6 @@ test('a schema-invalid stored section fails the registration — retention/resum
       'retention knobs come from env, not from the rejected section',
     )
   } finally {
-    console.warn = originalWarn
+    resetNoticeBridge()
   }
 })

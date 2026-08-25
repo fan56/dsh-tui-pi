@@ -46,6 +46,7 @@ import {
 } from '../lib/ask-user.js'
 import { githubLight } from '../lib/theme/palette.js'
 import { visibleWidth } from '../lib/text.js'
+import { resetNoticeBridge, setNoticeSink } from '../lib/notice-bridge.js'
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
 
 const theme = { palette: githubLight }
@@ -929,12 +930,12 @@ test('registerAskUserProvider: happy path registers, forwards ask(), and passes 
 
 test('registerAskUserProvider: DUPLICATE_PROVIDER yields ownership silently (no-op disposer)', () => {
   const ctx = { userQuestions: { registerProvider() { throw new UserQuestionError('a user-questions provider is already registered', 'DUPLICATE_PROVIDER') } } }
-  const warnings = captureWarnings(() => {
+  const notices = captureNotices(() => {
     const disposer = registerAskUserProvider(ctx, makeHarness().deps)
     assert.equal(typeof disposer, 'function')
     disposer() // must be safe to call
   })
-  assert.deepEqual(warnings, [])
+  assert.deepEqual(notices, [])
 })
 
 test('registerAskUserProvider: unexpected registration failures are NOT swallowed', () => {
@@ -942,26 +943,31 @@ test('registerAskUserProvider: unexpected registration failures are NOT swallowe
   assert.throws(() => registerAskUserProvider(ctx, makeHarness().deps), /boom/)
 })
 
-test('registerAskUserProvider: missing userQuestions service warns and degrades instead of crashing', () => {
-  const warnings = captureWarnings(() => {
+test('registerAskUserProvider: missing userQuestions service emits one notice and degrades instead of crashing', () => {
+  const notices = captureNotices(() => {
     const disposer = registerAskUserProvider({}, makeHarness().deps)
     assert.equal(typeof disposer, 'function')
     disposer()
   })
-  assert.equal(warnings.length, 1)
-  assert.match(warnings[0], /userQuestions/)
+  assert.equal(notices.length, 1)
+  assert.match(notices[0], /userQuestions/)
 })
 
-function captureWarnings(fn) {
-  const warnings = []
-  const original = console.warn
-  console.warn = (...args) => { warnings.push(args.join(' ')) }
+/**
+ * Run fn with a notice sink registered and collect what it receives: the
+ * provider's missing-service trace rides the shared notice bridge, never
+ * raw stderr (src/notice-bridge.ts).
+ */
+function captureNotices(fn) {
+  const notices = []
+  resetNoticeBridge()
+  setNoticeSink(message => { notices.push(message) })
   try {
     fn()
   } finally {
-    console.warn = original
+    resetNoticeBridge()
   }
-  return warnings
+  return notices
 }
 
 // ------------------------------------------- duplicate-error classifier (pure) --
