@@ -4,6 +4,22 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.1] - 2026-08-26
+
+### Fixed
+
+- **Child-session round-count reconcile actually runs again** (`src/session.ts`).
+  `reconcileChildRounds` read the sessions service via property access
+  (`ctx.sessions`), which throws "cannot get property without inject" on a
+  real cordis Context — the name is not in this plugin's inject list. The
+  throw was swallowed by the interval's catch, so every reconcile tick
+  failed silently and the round-count recovery for child sessions never
+  executed: agents resumed behind the scenes kept showing stale round
+  counts instead of being corrected from the session log. The service is
+  now read via `ctx.get('sessions')`, which returns `undefined` for an
+  absent service — the graceful no-op path. The test harness now shapes
+  the fake ctx the real way (services through `ctx.get`).
+
 ## [0.24.0] - 2026-08-26
 
 ### Changed
