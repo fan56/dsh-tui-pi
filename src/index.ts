@@ -45,10 +45,9 @@ import { openLoginFlow, openLogoutFlow } from './login.ts'
 import { reloadPlugin } from './reload.ts'
 import {
   collectStartupSummary,
-  detectProfileFlag,
   formatResumeCommand,
   parseResumeArg,
-  profileFromBaseUrl,
+  resolveProfileName,
   type StartupSummary,
 } from './startup-info.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
@@ -1560,11 +1559,9 @@ export function apply(ctx: Context): void {
         // screen. Skipped when no session was ever created (nothing to
         // resume) — mirroring pi.
         if (exitSessionId !== undefined) {
-          const profile = detectProfileFlag(process.argv)
-            ?? profileFromBaseUrl((ctx.root as { baseUrl?: string }).baseUrl)
           // DIM SGR (not a theme color): the hint prints after the TUI's
           // theme machinery is gone; dim is universally supported.
-          process.stdout.write(`\n\x1b[2mTo resume this session: ${formatResumeCommand(profile, String(exitSessionId))}\x1b[0m\n`)
+          process.stdout.write(`\n\x1b[2mTo resume this session: ${formatResumeCommand(resolveProfileName(ctx), String(exitSessionId))}\x1b[0m\n`)
         }
         process.exit(code)
       })()

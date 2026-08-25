@@ -63,13 +63,15 @@ export interface McpServer {
 
 /** The startup snapshot rendered under the welcome banner. */
 export interface StartupSummary {
+  /** The booted profile's name (the tree root); undefined when unresolvable. */
+  readonly profile: string | undefined
   /** MCP servers currently enabled, in loader order. */
   readonly mcp: readonly McpServer[]
   /** Installed/total skills (see the module note). */
   readonly skills: SkillsCount
   /** Display rows for non-base plugins, in loader order. */
   readonly userPlugins: readonly string[]
-  /** Count of `@deepseek-ai/*` entries (the collapsed base line). */
+  /** Count of `@deepseek-ai/*` / `cordis:` entries (the collapsed base line). */
   readonly baseCount: number
   /** Every non-group loader entry, enabled or not. */
   readonly pluginTotal: number
@@ -136,26 +138,36 @@ export function classifyPluginEntries(entries: readonly PluginEntryView[]): Pick
 }
 
 /**
- * Render the summary as transcript lines: one header with the three counts,
- * then the collapsed plugin tree — every user plugin one `├─` row, the base
- * as the final `└─` row. Each line is clipped to the usable width (the
- * caller's Text padding handled outside, mirroring the quote line's budget).
- * A tree with nothing to show (no plugins at all) renders the header alone.
+ * Render the summary as transcript lines: the profile name as the tree
+ * root, the plugin tree below it (every user plugin one `├─` row, the
+ * harness base collapsed into the final `└─` row), then the counts line
+ * — `plugins` counts ONLY the profile's own additions (the tree's user
+ * rows; the mcp instances are counted by their own segment, the harness
+ * base not at all). Each line is clipped to the usable width (the
+ * caller's Text padding handled outside, mirroring the quote line's
+ * budget). No plugins at all renders the counts line alone; an
+ * unresolvable profile name omits the root line and the tree starts at
+ * its first `├─` row.
  */
 export function formatStartupInfoLines(summary: StartupSummary, columns: number | undefined): readonly string[] {
   const budget = (columns ?? Infinity) - 2
-  const enabledMcp = summary.mcp.filter(server => !server.disabled)
-  const mcpNames = enabledMcp.map(server => server.name).join(', ')
-  const header = clipToWidth(
-    `mcp ${enabledMcp.length}${mcpNames === '' ? '' : ` (${mcpNames})`} · skills ${summary.skills.installed}/${summary.skills.total} · plugins ${summary.pluginTotal}`,
-    budget,
-  )
-  const lines = [header]
-  if (summary.pluginTotal > 0) {
-    const rows = [...summary.userPlugins.map(name => `├─ ${name}`)]
-    rows.push(`└─ dsh-base (${summary.baseCount})`)
-    for (const row of rows) lines.push(clipToWidth(row, budget))
+  const lines: string[] = []
+  if (summary.profile !== undefined && summary.profile !== '') {
+    lines.push(clipToWidth(summary.profile, budget))
   }
+  const rows = summary.userPlugins.map(name => `├─ ${name}`)
+  if (summary.baseCount > 0) {
+    rows.push(`└─ dsh-base (${summary.baseCount})`)
+  } else if (rows.length > 0) {
+    // No base row to close the tree — the last user row takes the corner.
+    rows[rows.length - 1] = `└─ ${summary.userPlugins[summary.userPlugins.length - 1]}`
+  }
+  for (const row of rows) lines.push(clipToWidth(row, budget))
+  const enabledMcp = summary.mcp.filter(server => !server.disabled).length
+  lines.push(clipToWidth(
+    `mcp ${enabledMcp} · skills ${summary.skills.installed}/${summary.skills.total} · plugins ${summary.userPlugins.length}`,
+    budget,
+  ))
   return lines
 }
 
@@ -211,6 +223,18 @@ export function profileFromBaseUrl(baseUrl: string | undefined): string | undefi
   // marker is the profile directory (nested subtrees would only follow it).
   const name = baseUrl.slice(idx + marker.length).split('/')[0]
   return name === '' ? undefined : name
+}
+
+/**
+ * Resolve the booted profile's name: the launcher's own `--profile` flag
+ * first (the plugin runs in-process with it), the loader base URL's
+ * `/profiles/<name>/` segment as fallback. Shared by the startup summary's
+ * tree root and the exit-time resume hint.
+ */
+export function resolveProfileName(ctx: Context): string | undefined {
+  const fromArgv = detectProfileFlag(process.argv)
+  if (fromArgv !== undefined && fromArgv !== '') return fromArgv
+  return profileFromBaseUrl((ctx.root as { baseUrl?: string }).baseUrl)
 }
 
 /**
@@ -275,5 +299,5 @@ export function collectStartupSummary(ctx: Context): StartupSummary | undefined 
     readDirNames(resolve(agentsHome, 'skills')),
     readDirNames(resolve(dshHome(), 'skills')),
   )
-  return { ...classified, skills }
+  return { profile: resolveProfileName(ctx), ...classified, skills }
 }

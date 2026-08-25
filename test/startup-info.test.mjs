@@ -25,6 +25,7 @@ import {
   formatStartupInfoLines,
   parseResumeArg,
   profileFromBaseUrl,
+  resolveProfileName,
   skillNamesFromListing,
 } from '../lib/startup-info.js'
 
@@ -99,50 +100,72 @@ test('an mcp entry without serverName falls back to its entry id', () => {
 
 // ---------------------------------------------------------- formatting ----
 
-test('formatStartupInfoLines renders the header and the collapsed plugin tree', () => {
+test('formatStartupInfoLines renders the profile root, the tree, then the counts line', () => {
   const lines = formatStartupInfoLines({
+    profile: 'tui',
     mcp: [{ name: 'anysearch', disabled: false }, { name: 'off', disabled: true }],
     skills: { installed: 96, total: 105 },
     userPlugins: ['@aiwayds/dsh-dcp', '@aiwayds/dsh-feishu (disabled)'],
     baseCount: 86,
     pluginTotal: 89,
   }, undefined)
-  assert.equal(lines[0], 'mcp 1 (anysearch) · skills 96/105 · plugins 89')
-  assert.deepEqual(lines.slice(1), [
+  assert.deepEqual(lines, [
+    'tui',
     '├─ @aiwayds/dsh-dcp',
     '├─ @aiwayds/dsh-feishu (disabled)',
     '└─ dsh-base (86)',
+    // plugins counts ONLY the profile's own additions (the tree's user rows)
+    // — the mcp instances have their own segment, the base none at all.
+    'mcp 1 · skills 96/105 · plugins 2',
   ])
 })
 
-test('the header names every enabled mcp server', () => {
+test('an unresolvable profile name omits the root line', () => {
   const lines = formatStartupInfoLines({
-    mcp: [{ name: 'anysearch', disabled: false }, { name: 'dify', disabled: false }],
-    skills: { installed: 0, total: 0 },
-    userPlugins: [],
-    baseCount: 5,
-    pluginTotal: 7,
+    profile: undefined,
+    mcp: [], skills: { installed: 0, total: 0 },
+    userPlugins: ['@aiwayds/dsh-dcp'], baseCount: 5, pluginTotal: 6,
   }, undefined)
-  assert.equal(lines[0], 'mcp 2 (anysearch, dify) · skills 0/0 · plugins 7')
+  assert.equal(lines[0], '├─ @aiwayds/dsh-dcp')
+  assert.equal(lines[lines.length - 1], 'mcp 0 · skills 0/0 · plugins 1')
 })
 
-test('a zero-mcp header still states the count', () => {
+test('without a base row the last user row takes the tree corner', () => {
   const lines = formatStartupInfoLines({
-    mcp: [], skills: { installed: 3, total: 9 }, userPlugins: [], baseCount: 9, pluginTotal: 9,
+    profile: 'tui',
+    mcp: [], skills: { installed: 0, total: 0 },
+    userPlugins: ['@aiwayds/dsh-dcp', '@aiwayds/dsh-tui-pi'],
+    baseCount: 0,
+    pluginTotal: 2,
   }, undefined)
-  assert.equal(lines[0], 'mcp 0 · skills 3/9 · plugins 9')
+  assert.deepEqual(lines, [
+    'tui',
+    '├─ @aiwayds/dsh-dcp',
+    '└─ @aiwayds/dsh-tui-pi',
+    'mcp 0 · skills 0/0 · plugins 2',
+  ])
 })
 
-test('an empty plugin tree renders the header alone', () => {
+test('a summary with no plugins renders the counts line alone', () => {
   const lines = formatStartupInfoLines({
-    mcp: [], skills: { installed: 0, total: 0 }, userPlugins: [], baseCount: 0, pluginTotal: 0,
+    profile: 'tui',
+    mcp: [], skills: { installed: 3, total: 9 }, userPlugins: [], baseCount: 0, pluginTotal: 0,
   }, undefined)
-  assert.equal(lines.length, 1)
-  assert.equal(lines[0], 'mcp 0 · skills 0/0 · plugins 0')
+  assert.deepEqual(lines, ['tui', 'mcp 0 · skills 3/9 · plugins 0'])
+})
+
+test('the counts line excludes disabled mcp servers', () => {
+  const lines = formatStartupInfoLines({
+    profile: 'tui',
+    mcp: [{ name: 'anysearch', disabled: false }, { name: 'off', disabled: true }],
+    skills: { installed: 0, total: 0 }, userPlugins: [], baseCount: 5, pluginTotal: 8,
+  }, undefined)
+  assert.equal(lines[lines.length - 1], 'mcp 1 · skills 0/0 · plugins 0')
 })
 
 test('every line clips to the usable width instead of wrapping', () => {
   const lines = formatStartupInfoLines({
+    profile: 'an-extremely-long-profile-name-that-keeps-going-and-going',
     mcp: [{ name: 'a-very-long-server-name', disabled: false }],
     skills: { installed: 96, total: 105 },
     userPlugins: ['@aiwayds/an-extremely-long-plugin-name-that-keeps-going'],
@@ -178,6 +201,13 @@ test('profileFromBaseUrl names only real profile directories', () => {
   assert.equal(profileFromBaseUrl('file:///home/me/project/'), undefined)
   assert.equal(profileFromBaseUrl(undefined), undefined)
   assert.equal(profileFromBaseUrl(''), undefined)
+})
+
+test('resolveProfileName falls back to the loader base URL when argv has no --profile', () => {
+  // The test runner's argv carries no --profile, so the fallback path runs.
+  const ctx = { root: { baseUrl: 'file:///root/.dsh/profiles/tui/' } }
+  assert.equal(resolveProfileName(ctx), 'tui')
+  assert.equal(resolveProfileName({ root: { baseUrl: 'file:///home/me/project/' } }), undefined)
 })
 
 test('formatResumeCommand reproduces the launcher invocation, or the bare flag family', () => {
@@ -218,8 +248,12 @@ test('collectStartupSummary snapshots loader entries and both skill dirs', () =>
         yield { id: 'dcp', disabled: false, options: { name: '@aiwayds/dsh-dcp' } }
       },
     }
-    const ctx = { get: name => (name === 'loader' ? fakeLoader : undefined) }
+    const ctx = {
+      get: name => (name === 'loader' ? fakeLoader : undefined),
+      root: { baseUrl: 'file:///root/.dsh/profiles/tui/' },
+    }
     const summary = collectStartupSummary(ctx)
+    assert.equal(summary.profile, 'tui')
     assert.deepEqual(summary.mcp, [{ name: 'anysearch', disabled: false }])
     assert.deepEqual(summary.skills, { installed: 1, total: 2 })
     assert.deepEqual(summary.userPlugins, ['@aiwayds/dsh-dcp'])
@@ -244,23 +278,26 @@ test('collectStartupSummary snapshots loader entries and both skill dirs', () =>
 test('the welcome banner renders the summary lines between banner and quote, rebuilt with the theme', () => {
   const doc = new Container()
   const renderer = new TranscriptRenderer(doc, lightTheme, () => {}, {
+    profile: 'tui',
     mcp: [{ name: 'anysearch', disabled: false }],
     skills: { installed: 96, total: 105 },
     userPlugins: ['@aiwayds/dsh-dcp'],
     baseCount: 86,
     pluginTotal: 88,
   })
-  // spacer, banner, spacer, header, tree ×2, spacer, quote, spacer
-  assert.equal(doc.children.length, 9, 'summary block slots in before the quote')
+  // spacer, banner, spacer, profile, tree ×2, counts, spacer, quote, spacer
+  assert.equal(doc.children.length, 10, 'summary block slots in before the quote')
   const plain = stripAnsi(doc.children.map(c => c.render(200).join('\n')).join('\n'))
-  assert.ok(plain.includes('mcp 1 (anysearch) · skills 96/105 · plugins 88'))
+  // The profile name is the tree root (first summary line, before the rows).
+  assert.equal(stripAnsi(doc.children[3].render(200).join('\n')).trim(), 'tui')
   assert.ok(plain.includes('├─ @aiwayds/dsh-dcp'))
   assert.ok(plain.includes('└─ dsh-base (86)'))
+  assert.ok(plain.includes('mcp 1 · skills 96/105 · plugins 1'))
   // The summary survives a theme rebuild: the welcome replay op re-renders
   // the stored snapshot with the new palette at the same width.
   renderer.setTheme(darkTheme)
   const rebuilt = stripAnsi(doc.children.map(c => c.render(200).join('\n')).join('\n'))
-  assert.ok(rebuilt.includes('mcp 1 (anysearch) · skills 96/105 · plugins 88'))
+  assert.ok(rebuilt.includes('mcp 1 · skills 96/105 · plugins 1'))
   assert.ok(rebuilt.includes('└─ dsh-base (86)'))
 })
 
