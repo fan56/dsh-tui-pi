@@ -35,6 +35,19 @@ set -u
 . "$(dirname "$0")/../lib/common.sh"
 scenario 'ask-user: one question at a time + tab strip + Ctrl+T fold'
 
+# --- host guard -------------------------------------------------------------
+# This scenario permanently mutates dsh config: /model persists mock-chat as
+# the DEFAULT model (persistDefaultModel) and /login commits the mock-llm
+# route (http://127.0.0.1:8642) into settings.yaml. Run on the host that
+# would poison the live ~/.dsh with a dead route — so it must only run
+# inside the e2e container, whose ~/.dsh is throwaway. Same detection as
+# 70-steer-injection.sh, inverted: skip (warn, not fail) when NOT in it.
+if [ ! -d /e2e/scenarios ]; then
+  warn 'host environment detected — skipping (persists mock model/route into ~/.dsh; container only)'
+  summary
+  exit 0
+fi
+
 if ! tui_alive; then
   info 'TUI not running — starting fresh'
   start_tui 'DSH_TUI_THEME=dark'
