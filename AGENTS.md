@@ -57,8 +57,48 @@ model-list.ts     /model pure logic: row assembly (favorites pinned top, dim
 settings.ts       /settings browser: categories, schema walk, write chain,
                   add-provider flow (uses provider-catalog.ts)
 sessions.ts       /session panel + /resume picker (ordered by last update:
-                  jsonl log mtimes via loadSessionLastUpdates, best-effort
-                  fallback to createdAt)
+                  jsonl log mtimes via loadSessionLastUpdates — newest
+                  mtime/size across BOTH log suffixes, retention's
+                  vocabulary, best-effort fallback to createdAt; display
+                  filter: active within maxAgeDays and log size >=
+                  minBytes — knobs dual-layer configurable, same chain as
+                  retention: settings.yaml `dsh-tui.resume.*` explicit
+                  (USER layer via readSessionManagementExplicit) >
+                  DSH_TUI_RESUME_MAX_AGE_DAYS/_MIN_BYTES env > defaults
+                  7d/20KB, resolved per picker open by resolveResumeConfig)
+skills-manager.ts /skills panel (standalone skill browser): ~/.agents/skills
+                  → ~/.dsh/skills symlinks via an idempotent install chain
+                  (skillSymlinkPaths + installSkillSymlink: same-source
+                  no-op incl. relative-target equivalence, different-source
+                  / physical-dest refusal, dangling repair gated to
+                  ENOENT/ELOOP) + per-item applyOneSkillChange (uninstall
+                  is symmetric: only symlinks are removed, physical
+                  file/dir refused) with an end-of-batch skillApplySummary
+                  (short reasons, 3-item cap + "+N more"); a failing item
+                  never aborts the remaining pending changes, the panel
+                  rescans either way with the summary riding above the
+                  rows, and an applying gate blocks Space/Enter mid-batch
+retention.ts      startup session-log janitor: pure selector (keep 100 /
+                  7 days, 24h idle guard on the count rule, protected set
+                  = current session ∪ in-flight /resume target, both exempt
+                  and slot-free) + store walk (skips symlinks, lstat
+                  semantics) + one-by-one fs.rm runner (rm failure → failed
+                  count, never aborts the pass); thresholds dual-layer
+                  configurable (settings.yaml `dsh-tui.retention.*`
+                  explicit, read from the descriptor USER layer via
+                  readSessionManagementExplicit — theme-settings.ts —
+                  > DSH_TUI_RETENTION_MAX_COUNT/_MAX_AGE_DAYS/
+                  _MIN_IDLE_HOURS env > defaults; precedence
+                  settings > env > default, invalid settings warn one
+                  stderr line each and fall to the next level, invalid env
+                  falls back silently; MAX_COUNT<=0 at the winning layer
+                  disables — the escape hatch for long-lived read-attach
+                  processes); result line
+                  on stderr (console.warn), never stdout (alt-screen);
+                  fire-and-forget in apply() behind a globalThis one-shot
+                  (per process, /reload-safe); root resolved by the CORE
+                  convention ($DSH_HOME/sessions); exports
+                  SESSION_LOG_FILE_NAMES shared with the /resume walk
 reload.ts         /reload hot-reload (cordis-plugin-hmr style)
 hotkeys.ts        /hotkeys — keybindings.json contract + validation + the
                   select-panel manager (FieldPanel + EditField, /agents style)
@@ -115,18 +155,19 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **784 tests** across 45 files (ask-user 85 +
-  skills 36 +
-  live 35 + keymap 28 + login 25 + panels 24 + session-reconcile 27 +
+- `pnpm test` must stay green: **866 tests** across 47 files (ask-user 85 +
+  skills 36 + skills-manager 24 +
+  live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
+  retention 35 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
   custom-provider 12 +
   messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 26 +
   subagent-viewer 37 + history 13 + agent-manager 13 +
-  sessions 20 + theme-switch 11 + frame 11 + footer-hints 10 + permission 9 +
-  theme-settings 10 + commands 9 + text 15 + font-detect 8 + quotes 7 +
+  sessions 35 + theme-switch 11 + frame 11 + footer-hints 10 + permission 9 +
+  theme-settings 15 + commands 9 + text 15 + font-detect 8 + quotes 7 +
   icons 7 + reload 6 + append-system 9 + install-font 6 + tokens 6 +
-  schema-model 3 + usage 26 + preset 12 + dev-upgrade 8 + model-list 21 +
-  plugin-inject 2). New
+  queue-panel 6 + schema-model 3 + usage 26 + preset 12 + dev-upgrade 8 +
+  model-list 21 + plugin-inject 2). New
   pure logic → new test file under `test/` against built `lib/` (`node --test`,
   pretest builds). Update the totals in HANDOFF.md.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch

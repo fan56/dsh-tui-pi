@@ -277,6 +277,57 @@ theme color via BCE, no patched dependencies.
 
 ---
 
+## Session management
+
+Two knobs clusters govern the session store, both living under the
+`dsh-tui` settings namespace (`~/.dsh/settings.yaml`) with an environment
+escape hatch each:
+
+```yaml
+dsh-tui:
+  # Startup janitor for ~/.dsh/sessions — DELETES whole session log
+  # directories outside the window. Runs once per process at startup.
+  retention:
+    maxCount: 100      # keep at most this many sessions; <= 0 DISABLES the janitor
+    maxAgeDays: 7      # delete logs untouched for more than this many days (> 0)
+    minIdleHours: 24   # count-rule-only idle guard in hours (>= 0)
+
+  # /resume display filter — only HIDES picker rows, never deletes.
+  # Resolved fresh at every picker open (a settings change applies to
+  # the next /resume, no restart).
+  resume:
+    maxAgeDays: 7      # only sessions with log activity inside this window (> 0)
+    minBytes: 20480    # minimum compressed on-disk log size for a row (>= 0)
+```
+
+Precedence per field: an explicit value in settings.yaml > the
+`DSH_TUI_RETENTION_MAX_COUNT` / `DSH_TUI_RETENTION_MAX_AGE_DAYS` /
+`DSH_TUI_RETENTION_MIN_IDLE_HOURS` and `DSH_TUI_RESUME_MAX_AGE_DAYS` /
+`DSH_TUI_RESUME_MIN_BYTES` environment variables > the defaults above.
+An invalid settings value warns once on stderr and falls to the next
+level; an invalid env value falls back silently to the default — a typo
+never widens or guts the policy. `maxCount` and `minBytes` must be
+integers at every layer (a fractional cap or byte floor is garbage, not a
+window).
+
+**Disabling retention entirely** — for a long-lived process (a remote
+bridge, a headless cron run) that read-attaches old sessions the default
+window would prune:
+
+```yaml
+dsh-tui:
+  retention:
+    maxCount: 0    # or: DSH_TUI_RETENTION_MAX_COUNT=0
+```
+
+Timing: **retention runs once at startup** (never mid-session; a
+`/reload` does not re-run it — the next cold start does), while the
+**resume filter applies at every `/resume` open**. The two `7`s default
+to the same "one week is the working set" decision but serve different
+masters — retention deletes logs, the resume filter only hides rows.
+
+---
+
 ## Fonts
 
 The TUI's only Private-Use-Area glyph is the powerline segment separator
