@@ -51,6 +51,11 @@ custom-provider.ts /login "Custom provider…" entry: pure field parsers +
                   the chained EditField form composing a hand-declared
                   llm-pi-ai route (id/name/protocol/baseURL/models/key)
 selectors.ts      /model (2-stage), /think, /theme pickers
+startup-info.ts   startup config readout under the welcome banner (mcp
+                  count, skills installed/total, collapsed plugin tree) +
+                  the exit-hint pure helpers (--profile/--resume parsing,
+                  resume-command formatting); collectStartupSummary is a
+                  best-effort loader+filesystem snapshot
 model-list.ts     /model pure logic: row assembly (favorites pinned top, dim
                   Hidden section), filter matcher, toggle/hide-guard helpers —
                   data-in/data-out, unit-tested without a terminal
@@ -115,8 +120,8 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **784 tests** across 45 files (ask-user 85 +
-  skills 36 +
+- `pnpm test` must stay green: **801 tests** across 46 files (ask-user 85 +
+  skills 36 + startup-info 17 +
   live 35 + keymap 28 + login 25 + panels 24 + session-reconcile 27 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
   custom-provider 12 +
