@@ -201,12 +201,13 @@ There's no slash command to toggle the feature — it's always on, controlled by
 
 While the model is mid-turn it can pause and ask you structured questions via the `ask_user_question` tool (`@deepseek-ai/dsh-tool-ask-user`, mounted by this profile's bundle patch). The TUI hosts the answering side: a bordered panel pins itself directly above the chat input (the Todos-panel slot — no floating popup), takes the keyboard while open, the tool call stays pending until you answer, and your answers flow back to the model as a normal tool result.
 
-- **One panel, all questions flattened** — every question renders as a header row followed by its supporting `detail` text (when the model supplies any), option rows, plus a `Type something.` sentinel row for free text. Single-select replaces on Enter; multi-select toggles (`[+]` marks).
+- **One question at a time, tabs for the rest** — with several questions the panel shows exactly ONE question block (header row + supporting `detail` text, option rows, plus a `Type something.` sentinel row for free text); a tab strip under the title (`[1] · 2✓ · 3` — brackets mark the focused tab, ✓ an answered one) folds the other questions away. `←`/`→` (and Tab/Shift-Tab) switch tabs; answering a single-select tab auto-advances to the next unanswered one (or onto the Confirm row once everything is answered). Single-select replaces on Enter; multi-select toggles (`●`/`○` marks) and never auto-advances.
+- **Ctrl+T folds the panel to a 3-line strip** — the questions panel can block the transcript it stacks on while you think; Ctrl+T collapses it to borders + one summary line (phase, tab position, answered count, how to expand) and the same key unfolds it. While folded only the toggle and the Esc chain act; folding mid-edit commits the buffer like the ↑↓ arrow-exit does.
 - **Single-question fast path** — a lone single-select question submits immediately on Enter: picking an option or committing typed free text both submit right away (a question without options is answered by typing alone). A lone multiSelect question instead gets a `⏎ Confirm answers` row so you can pick several options before submitting.
-- **Multi-question review page** — with ≥ 2 questions a `⏎ Confirm answers` row hops to a review listing every answer, each row editable in place; `Submit answers` commits (Enter on it while an answer is missing flashes a hint instead of failing silently). After committing free text on one question the cursor hops to the next unanswered one.
+- **Multi-question review page** — with ≥ 2 questions a `⏎ Confirm answers` row hops to a review listing every answer, each row editable in place (jumping back re-focuses that question's tab); `Submit answers` commits (Enter on it while an answer is missing flashes a hint instead of failing silently).
 - **Double-Esc declines** — two Esc presses within 200 ms return a declined envelope (the model reads it as a normal reply that no answer was given); holding Esc does not accidentally fire (key auto-repeat below a minimum gap is ignored), and the tool call being aborted settles as declined too. While the panel is open it owns the keyboard exactly like an open overlay: Esc never arms the running-task stop, and app keys (Ctrl+L/G/O, Tab) yield to the panel.
 - **Conservative-use guidance** — a system-prompt section nudges the model to ask only when it genuinely needs you (1–3 questions, 2–4 options each), so the TUI doesn't turn into a questionnaire.
-- **Keyboard** — `↑↓` navigate · `Enter` select/toggle/confirm · type into the sentinel for free text · `Esc` twice to decline.
+- **Keyboard** — `←→` switch question tabs · `↑↓` navigate · `Enter` select/toggle/confirm · type into the sentinel for free text · `Ctrl+T` fold/unfold the panel · `Esc` twice to decline.
 
 Inspired by [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-ask-user-question).
 
@@ -501,7 +502,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 - [Ask User Question](#ask-user-question) is inspired by
   [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-ask-user-question) —
-  the interaction design (flattened option list with a free-text sentinel,
-  multi-question review page, decline gesture) was adapted to this TUI's
-  framed-overlay and dsh `userQuestions` provider architecture. All code here
-  is original.
+  the interaction design (numbered option list with a free-text sentinel,
+  multi-question review page, decline gesture; since reworked into a
+  one-question-at-a-time tab view with a fold-away strip) was adapted to this
+  TUI's docked-panel and dsh `userQuestions` provider architecture. All code
+  here is original.

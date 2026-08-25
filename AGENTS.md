@@ -177,14 +177,14 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **897 tests** across 49 files (verified by
-  `node --test test/*.test.mjs` after the shared notice-bridge
-  generalization — new notice-bridge 8). Per-file totals
+- `pnpm test` must stay green: **912 tests** across 49 files (verified by
+  `node --test test/*.test.mjs` after the notice-bridge generalization
+  (+8) and the ask-user tabs/fold rework (85 → 100)). Per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals in
   HANDOFF.md.
-  - ask-user 85 + skills 36 + skills-manager 24 + startup-info 19 +
+  - ask-user 100 + notice-bridge 8 + skills 36 + skills-manager 24 + startup-info 19 +
   - live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
   - retention 39 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +

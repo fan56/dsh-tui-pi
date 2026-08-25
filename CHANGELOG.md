@@ -4,6 +4,31 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Ask-user panel: one question at a time with tabs** (`src/ask-user.ts`).
+  Multi-question overlays no longer flatten every question into one table;
+  the panel shows exactly one question block at a time, with a tab strip
+  under the title (`[1] · 2✓ · 3` — brackets mark the focused tab, ✓ an
+  answered one). `←`/`→` (and Tab/Shift-Tab) switch tabs; revisiting an
+  answered tab lands the cursor on its answer. Answering a single-select
+  tab (option or committed free text) auto-advances the focus to the next
+  unanswered tab, or onto the `⏎ Confirm answers` row once everything is
+  answered — multiSelect tabs never auto-advance. The review page is
+  unchanged, and its jump-back now re-focuses the reviewed question's tab.
+
+### Added
+
+- **Ask-user panel: Ctrl+T fold-to-strip**. The questions panel can block
+  the transcript it stacks on while the user thinks; Ctrl+T collapses it
+  to a 3-line strip (borders + one summary line carrying the phase, tab
+  position and answered count) and the same key unfolds it. While folded
+  only the toggle and the Esc chain act (double-Esc still declines, and an
+  armed decline takes over the strip so the 200 ms window is visible);
+  folding mid-edit commits the sentinel buffer like the ↑↓ arrow-exit.
+
 ## [0.22.1] - 2026-08-25
 
 ### Fixed
