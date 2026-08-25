@@ -32,6 +32,7 @@
 | `50-resize-exit` | 80×24：TUI 存活、鲸鱼仍渲染（transcript 视口可能裁掉顶部行）、**字标按设计降级消失**；24 行下 overlay 适配；还原 140 列字标恢复；`Ctrl+C ×2` 干净退出（150–500ms 双击窗口）+ 回退 `Ctrl+D`；退出后 shell 提示符 + `pane_current_command=bash` + exit dump 渲染；退出后再完整启动一次 |
 | `65-ux-batch` | 0.21 批次：`/login` → **Custom provider…** 六字段链式表单（步骤推进/内联报错/提交后 settings.yaml 落 hand-declared profile + 派生 key ref、密钥不进 settings.yaml；Esc 放弃整个流程）；启动播种的 `APPEND_SYSTEM.md` 含 registered-subagents 铁律 |
 | `66-retention-resume` | fixtures 全部为 zstd-frame 容器（两帧：header + 事件批次），由 `@deepseek-ai/dsh-session-persistence-jsonl` 的 `encodeMaterialization` 经 `Object.create(JsonlSessionPersistence.prototype)` 剥离实例真实产出，落盘为 `session.jsonl.zstd`——`persistence.list()` 的 `parseHeaderMeta` 直接读首帧；填充行轮询四个真实事件类型（`permission/preset` / `sandbox/mode` / `approval/policy` / `turn/start`，皆 `KNOWN_SESSION_EVENT_TYPES` 成员），随机 hex `pad` 撑大 zstd，按 on-disk 字节数判定循环终止；retention janitor：`MAX_AGE_DAYS=2` 清理超龄目录（fresh/flat file/empty dir 留存）、`MAX_COUNT=0` 显式关闭；`/resume` 展示过滤：默认 minBytes 地板过滤小 stub、大 session 展示 preview 文本与 `Updated` / `Dir` 列头；`minBytes=999999999` 触发 empty-filtered 提示（含 `adjust dsh-tui.resume.*` 指引，不退化为 plain empty-store 文案）；启动横幅下 `mcp N · skills X/Y · plugins N` 计数行 + profile root 行 `tui` |
+| `68-ask-user` | v0.23.0 ask-user 一次一问 UI（40a03df）：容器内起本地 OpenAI 兼容 mock（`lib/mock-llm.mjs`，纯 node stdlib，SSE 流式 `chat.completion.chunk`），`/login` Custom provider 表单声明 `mock-llm` 路由 + `/model` 过滤选中 `mock-chat`，trigger 提示词让 agent 真实走完 用户消息 → LLM → `ask_user_question` 工具调用 → docked 面板 全链路（mock 按请求体内容分相：首次带 `E2E_ASK_TRIGGER` 回 tool call，工具结果回来后回固定收尾文本）。断言：同一时刻只渲染当前一题（`(1/3)` 标题 + `[1] · 2 · 3` tab strip，后题 header 不可见）；单选作答自动前进（`(2/3)`、`1✓`、前题不再活动）；←/→ 切 tab；Ctrl+T 折叠成 3 行 strip（`(2/3 · 1 answered)` + `Ctrl+T expand`，题行/表格 chrome 全隐），折叠态导航/作答键惰性，再按展开；multiSelect tab 永不自动前进（`● 1. lint` 选中标记）；Confirm 行 → review 页（三题答案 + `✓ ready`）→ 提交后面板关闭、工具结果回流、mock 收尾文本 `E2E-ASK-FLOW-COMPLETE` 上屏 |
 | `70-steer-injection` | **仅宿主机**（需真实 API key，容器内自跳过）：真实派一个 subagent 跑 sleep 循环任务，Ctrl+G → viewer footer `Enter steer` → Enter 弹多行输入框 → 发送后 `Steer message sent` notice 且注入消息出现在 child transcript；负路径：Esc 取消零投递、settled child 显示 ended notice 且不开输入框。宿主机运行时按 AGENTS.md「Config safety」对 `~/.dsh/settings.yaml` / `.credentials.yaml` 做字节级快照 + cmp 还原 |
 
 ## 实测发现（写断言时踩过的坑）
@@ -66,8 +67,11 @@
 
 ## 当前不覆盖（需要 API key / 人工）
 
-- 真实消息收发与流式渲染、think/tool 面板的有内容行为
-- `/login` → 添加 provider → `/model` 选中切换全链路（需真实 key）
+- 真实 provider 的消息收发与流式渲染、think/tool 面板的有内容行为
+  （`68-ask-user` 用本地 mock LLM 覆盖了「用户消息 → LLM → 工具调用 →
+  面板 → 工具结果 → 收尾回复」的完整链路，但不是真实模型/网关）
+- `/login` → 添加 provider → `/model` 选中切换全链路的**真实 key 版本**
+  （`68-ask-user` 已覆盖 mock key 版本）
 - npm 已发布包的安装（`@aiwayds/dsh-tui-pi@latest`）——本套件固定测
   本源码树构建产物；要测发布包可 `podman run` 后手动 `dsh plugin add`
 
