@@ -1,9 +1,10 @@
 /**
  * Ask-user-question: the pure-logic layer (state, envelope, decline,
- * double-Esc state machine with key-repeat guard, row layout) AND the
- * interaction layer (`openAskUserPanel` driven through a fake TUI +
- * `handleInput`, abort-signal wiring, provider registration failure
- * semantics) of `src/ask-user.ts`.
+ * double-Esc state machine with key-repeat guard, single-question tab row
+ * layout, tab-focus + fold reducers) AND the interaction layer
+ * (`openAskUserPanel` driven through a fake TUI + `handleInput`,
+ * abort-signal wiring, provider registration failure semantics) of
+ * `src/ask-user.ts`.
  *
  * Pure functions run against the built lib/ (pretest builds); the interaction
  * layer injects a fake `tui.showOverlay` handle, an injectable clock, and
@@ -13,6 +14,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  advanceAfterAnswer,
   advanceDoubleEsc,
   allQuestionsAnswered,
   askUserMaxVisibleForRows,
@@ -27,21 +29,25 @@ import {
   enterCustomEdit,
   ESC_REPEAT_GUARD_MS,
   exitCustomEdit,
+  focusCursor,
   INCOMPLETE_HINT,
   initialState,
   isDuplicateProviderError,
   needsConfirmRow,
   nextSelectableIndex,
-  nextUnansweredRow,
+  nextUnansweredQuestion,
   openAskUserPanel,
   patchCustomInput,
   registerAskUserProvider,
+  renderCollapsedLine,
   renderQuestionsView,
   renderReviewView,
   rowIndexForNumber,
   rowNumber,
   setCustomAnswer,
   SENTINEL_LABEL,
+  switchFocus,
+  toggleCollapse,
   toggleOption,
 } from '../lib/ask-user.js'
 import { githubLight } from '../lib/theme/palette.js'
@@ -61,14 +67,16 @@ const singleQuestion = () => [
 
 // ---------------------------------------------------------- initial state --
 
-test('initialState: cursor on first option, defaults to the questions phase', () => {
+test('initialState: cursor on first option, focused on tab 0, expanded', () => {
   const state = initialState(baseQuestions())
   assert.equal(state.phase, 'questions')
   // Snapped onto the first SELECTABLE row (index 0 is the unselectable header),
   // so the ▸ marker is visible before any keypress.
   assert.equal(state.cursorIndex, 1)
-  const rows = buildRowList(baseQuestions(), state.perQuestion)
+  const rows = buildRowList(baseQuestions(), state.perQuestion, state.focusQuestion)
   assert.equal(rows[state.cursorIndex]?.selectable, true)
+  assert.equal(state.focusQuestion, 0, 'the first question tab is focused')
+  assert.equal(state.collapsed, false, 'the panel starts expanded')
   assert.deepEqual(state.perQuestion, [{ selected: [] }, { selected: [] }])
   assert.equal(state.customEditingFor, null)
   assert.equal(state.cancelHint, false)
@@ -225,25 +233,34 @@ test('buildDeclinedEnvelope: accepts an alternate decline message', () => {
 
 // ------------------------------------------------------------- row list --
 
-test('buildRowList: lays out Q header + options + sentinel + confirm (multi)', () => {
-  const rows = buildRowList(baseQuestions(), initialState(baseQuestions()).perQuestion)
-  // Q0: header(1) + 2 options + sentinel(1) = 4 rows.
-  // Q1: same = 4 rows.
-  // Multi: confirm(1).
-  assert.equal(rows.length, 4 + 4 + 1)
+test('buildRowList: lays out the FOCUSED question block + the panel-wide confirm (multi)', () => {
+  const qs = baseQuestions()
+  const perQuestion = initialState(qs).perQuestion
+  const rows = buildRowList(qs, perQuestion, 0)
+  // Q0 block: header(1) + 2 options + sentinel(1) = 4 rows + confirm(1).
+  assert.equal(rows.length, 5)
   assert.equal(rows[0].kind, 'question-header')
   assert.equal(rows[0].questionIndex, 0)
   assert.equal(rows[0].selectable, false)
   assert.equal(rows[1].kind, 'option')
+  assert.equal(rows[1].optionIndex, 0)
   assert.equal(rows[2].kind, 'option')
   assert.equal(rows[3].kind, 'sentinel')
-  // Last row is the confirm row.
-  assert.equal(rows[8].kind, 'confirm')
-  assert.equal(rows[9], undefined, 'confirm is the last row of a 2-question overlay')
+  // The confirm pseudo-row closes every tab's list.
+  assert.equal(rows[4].kind, 'confirm')
+  assert.equal(rows[4].questionIndex, -1)
+  assert.equal(rows[5], undefined)
+  // Focus=1 renders ONLY Q1's block; questionIndex keeps the GLOBAL index.
+  const rows1 = buildRowList(qs, perQuestion, 1)
+  assert.equal(rows1.length, 5)
+  assert.equal(rows1[0].questionIndex, 1)
+  assert.equal(rows1[0].label, 'Vehicle')
+  assert.equal(rows1[1].label, 'car')
+  assert.equal(rows1[4].kind, 'confirm')
 })
 
 test('buildRowList: single-question has NO confirm row', () => {
-  const rows = buildRowList(singleQuestion(), initialState(singleQuestion()).perQuestion)
+  const rows = buildRowList(singleQuestion(), initialState(singleQuestion()).perQuestion, 0)
   // header(1) + 2 options + sentinel = 4 rows — no confirm.
   assert.equal(rows.length, 4)
   assert.equal(rows.find(row => row.kind === 'confirm'), undefined)
@@ -251,29 +268,29 @@ test('buildRowList: single-question has NO confirm row', () => {
 
 test('buildRowList: a confirmed custom answer marks the sentinel with ✎', () => {
   const s0 = setCustomAnswer(initialState(singleQuestion()), 0, 'maybe')
-  const rows = buildRowList(singleQuestion(), s0.perQuestion)
+  const rows = buildRowList(singleQuestion(), s0.perQuestion, 0)
   const sentinel = rows.find(row => row.kind === 'sentinel' && row.questionIndex === 0)
   assert.ok(sentinel?.label.startsWith('✎ '))
   assert.ok(sentinel?.label.includes('maybe'))
 })
 
 test('buildRowList: the default sentinel label reads "Type something."', () => {
-  const rows = buildRowList(singleQuestion(), initialState(singleQuestion()).perQuestion)
+  const rows = buildRowList(singleQuestion(), initialState(singleQuestion()).perQuestion, 0)
   const sentinel = rows.find(row => row.kind === 'sentinel' && row.questionIndex === 0)
   assert.equal(sentinel?.label, SENTINEL_LABEL)
 })
 
-test('nextSelectableIndex: skips the unselectable header rows', () => {
-  const rows = buildRowList(baseQuestions(), initialState(baseQuestions()).perQuestion)
-  // 0 = Q0 header (unselectable)
+test('nextSelectableIndex: skips the unselectable header, wraps within the focused block', () => {
+  const qs = baseQuestions()
+  const rows = buildRowList(qs, initialState(qs).perQuestion, 0)
+  // [0 header · 1 apple · 2 banana · 3 sentinel · 4 confirm]
   assert.equal(nextSelectableIndex(rows, 0, 1), 1)
-  // start on Q0 option-1, jump down → Q0 sentinel
-  assert.equal(nextSelectableIndex(rows, 2, 1), 3)
-  // start on Q0 sentinel, jump down → Q1 option-0
-  assert.equal(nextSelectableIndex(rows, 3, 1), 5, 'crosses into Q1 options')
-  // start on Q0 option-0, jump up — the unselectable Q0 header above blocks
-  // the forward scan, so the implementation wraps to the LAST selectable row.
-  assert.equal(nextSelectableIndex(rows, 1, -1), 8, 'wraps to the last selectable row (Q1 sentinel or confirm)')
+  assert.equal(nextSelectableIndex(rows, 2, 1), 3, 'banana → sentinel')
+  assert.equal(nextSelectableIndex(rows, 3, 1), 4, 'sentinel → confirm')
+  // Up from the first option: the unselectable header above blocks the
+  // forward scan, so the implementation wraps to the LAST selectable row.
+  assert.equal(nextSelectableIndex(rows, 1, -1), 4, 'wraps to the confirm row')
+  assert.equal(nextSelectableIndex(rows, 4, 1), 1, 'wraps down to the first option')
 })
 
 test('allQuestionsAnswered: false when any question is empty', () => {
@@ -294,27 +311,48 @@ test('allQuestionsAnswered: a custom answer satisfies the question', () => {
 
 // ---------------------------------------------- render: questions view --
 
-test('renderQuestionsView: title + table + scroll info + footer', () => {
+test('renderQuestionsView: title + tab strip show ONE question at a time', () => {
   const state = initialState(baseQuestions())
-  // Wide window (20 body lines) — every row fits; the capped-window behavior
-  // has its own dedicated tests below.
-  const lines = renderQuestionsView(theme, state, 60, 20)
-  // Title + 3 booktabs rows + 2 headers + 4 option rows + 2 sentinel + confirm
-  // group = body lines + possible status line + footer.
-  const title = stripAnsi(lines[0])
-  assert.equal(title, '● Questions (2)')
-  // The booktabs header row + the body lines all live below the title.
-  assert.ok(lines.find(line => stripAnsi(line).includes('SELECTION')))
-  assert.equal(lines.find(line => stripAnsi(line).includes('STATE')), undefined, 'the dedicated State column is gone')
-  // Question labels appear in the table.
-  assert.ok(lines.some(line => stripAnsi(line).includes('Fruit') && stripAnsi(line).includes('Pick a fruit')))
-  assert.ok(lines.some(line => stripAnsi(line).includes('apple')))
-  // The confirm pseudo-row appears at the bottom.
-  const confirmLine = lines.find(line => stripAnsi(line).includes('Confirm answers'))
-  assert.ok(confirmLine !== undefined, 'multi-question overlay exposes a confirm row')
-  // Footer mention: arrow-keys hint.
+  const lines = renderQuestionsView(theme, state, 80, 20).map(stripAnsi)
+  assert.equal(lines[0], '● Questions (1/2)')
+  assert.equal(lines[1], '[1] · 2', 'tab strip: focused tab bracketed, open tab plain')
+  // The focused question's content renders...
+  assert.ok(lines.some(line => line.includes('Fruit') && line.includes('Pick a fruit')))
+  assert.ok(lines.some(line => line.includes('apple')))
+  // ...and ONLY that question's content — Q2 stays folded into its tab.
+  assert.equal(lines.some(line => line.includes('Vehicle')), false)
+  assert.equal(lines.some(line => line.includes('car')), false)
+  // The confirm pseudo-row closes the focused tab.
+  assert.ok(lines.some(line => line.includes('Confirm answers')))
   const footerLine = lines[lines.length - 1]
-  assert.ok(stripAnsi(footerLine).includes('navigate'))
+  assert.ok(footerLine.includes('←→ tabs'), 'footer hints the tab keys')
+  assert.ok(footerLine.includes('Ctrl+T fold'), 'footer hints the fold key')
+})
+
+test('renderQuestionsView: switching the tab swaps the visible question block', () => {
+  const state = { ...initialState(baseQuestions()), focusQuestion: 1 }
+  const lines = renderQuestionsView(theme, state, 80, 20).map(stripAnsi)
+  assert.equal(lines[0], '● Questions (2/2)')
+  assert.equal(lines[1], '1 · [2]')
+  assert.ok(lines.some(line => line.includes('Vehicle')), 'the focused question header renders')
+  assert.ok(lines.some(line => line.includes('car')), 'its options render')
+  assert.equal(lines.some(line => line.includes('Fruit')), false)
+  assert.equal(lines.some(line => line.includes('apple')), false)
+})
+
+test('renderQuestionsView: an answered tab carries ✓ in the strip', () => {
+  const state = toggleOption(initialState(baseQuestions()), 0, 'apple')
+  const lines = renderQuestionsView(theme, state, 60, 20).map(stripAnsi)
+  assert.equal(lines[1], '[1✓] · 2')
+})
+
+test('renderQuestionsView: single question — plain title, NO tab strip, no ←→ hint', () => {
+  const lines = renderQuestionsView(theme, initialState(singleQuestion()), 80, 20).map(stripAnsi)
+  assert.equal(lines[0], '● Question')
+  assert.equal(lines.some(line => /^\[\d/.test(line)), false, 'no tab strip for a lone question')
+  const footer = lines[lines.length - 1]
+  assert.ok(!footer.includes('←→'), 'no tab hint without tabs')
+  assert.ok(footer.includes('Ctrl+T fold'), 'the fold hint stays')
 })
 
 test('renderQuestionsView: selection state is marked INLINE before the option text (no State column)', () => {
@@ -328,11 +366,11 @@ test('renderQuestionsView: selection state is marked INLINE before the option te
   assert.ok(unselectedLine !== undefined && unselectedLine.includes('○ 2. no'), 'unselected options carry the hollow ○ mark for alignment')
 })
 
-test('renderQuestionsView: the confirm row sits in its own block, separated from the questions by a blank line', () => {
+test('renderQuestionsView: the confirm row sits in its own block, separated from the question by a blank line', () => {
   const lines = renderQuestionsView(theme, initialState(baseQuestions()), 60, 20).map(stripAnsi)
   const confirmIdx = lines.findIndex(l => l.includes('Confirm answers'))
   assert.ok(confirmIdx > 0)
-  assert.equal(lines[confirmIdx - 1], '', 'a blank line separates the confirm row from the question blocks above')
+  assert.equal(lines[confirmIdx - 1], '', 'a blank line separates the confirm row from the question block above')
 })
 
 test('renderQuestionsView: a completed overlay shows ✓ in the confirm row state slot', () => {
@@ -434,25 +472,93 @@ test('needsConfirmRow: multi questions and any multiSelect question need one', (
 
 test('buildRowList: a lone multiSelect question gets a confirm row (submit path)', () => {
   const multi = [{ id: 'q1', question: 'Tags?', options: [{ label: 'a' }, { label: 'b' }], multiSelect: true }]
-  const rows = buildRowList(multi, initialState(multi).perQuestion)
+  const rows = buildRowList(multi, initialState(multi).perQuestion, 0)
   assert.equal(rows[rows.length - 1]?.kind, 'confirm', 'confirm row exists so multiSelect can submit')
 })
 
-// ------------------------------------------------------- cursor hop helper --
+// ------------------------------------------------ tab focus + advance helpers --
 
-test('nextUnansweredRow: hops to the first selectable row of the next unanswered question', () => {
-  const qs = baseQuestions()
-  const rows = buildRowList(qs, initialState(qs).perQuestion)
-  // After answering Q0, first selectable row belonging to an unanswered later question = Q1 option-0 (index 5).
-  assert.equal(nextUnansweredRow(rows, initialState(qs).perQuestion, 0), 5)
+test('nextUnansweredQuestion: nearest LATER unanswered question, -1 when none', () => {
+  const qs = [
+    { id: 'q1', question: 'A', options: [{ label: 'a1' }] },
+    { id: 'q2', question: 'B', options: [{ label: 'b1' }] },
+    { id: 'q3', question: 'C', options: [{ label: 'c1' }] },
+  ]
+  const s0 = initialState(qs)
+  assert.equal(nextUnansweredQuestion(qs, s0.perQuestion, 0), 1)
+  assert.equal(nextUnansweredQuestion(qs, s0.perQuestion, 1), 2)
+  assert.equal(nextUnansweredQuestion(qs, s0.perQuestion, 2), -1, 'nothing after the last question')
+  const s1 = toggleOption(s0, 0, 'a1')
+  const s2 = toggleOption(s1, 2, 'c1')
+  assert.equal(nextUnansweredQuestion(qs, s2.perQuestion, 0), 1, 'skips the answered tail question')
+  const all = toggleOption(toggleOption(s1, 1, 'b1'), 2, 'c1')
+  assert.equal(nextUnansweredQuestion(qs, all.perQuestion, 0), -1)
 })
 
-test('nextUnansweredRow: returns -1 when every later question is already answered', () => {
+test('focusCursor: lands on the tab answer, else its custom sentinel, else the first option', () => {
   const qs = baseQuestions()
-  const perQuestion = toggleOption(toggleOption(initialState(qs), 0, 'apple'), 1, 'car').perQuestion
-  const rows = buildRowList(qs, perQuestion)
-  assert.equal(nextUnansweredRow(rows, perQuestion, 0), -1)
-  assert.equal(nextUnansweredRow(rows, perQuestion, 1), -1)
+  const s0 = initialState(qs)
+  // Fresh tab → first selectable row.
+  assert.equal(focusCursor(buildRowList(qs, s0.perQuestion, 0), s0.perQuestion, 0), 1)
+  // Selected option wins.
+  const sApple = toggleOption(s0, 0, 'banana')
+  assert.equal(focusCursor(buildRowList(qs, sApple.perQuestion, 0), sApple.perQuestion, 0), 2)
+  // Custom answer → the sentinel row.
+  const sCustom = setCustomAnswer(s0, 0, 'granny smith')
+  assert.equal(focusCursor(buildRowList(qs, sCustom.perQuestion, 0), sCustom.perQuestion, 0), 3)
+  // Same rules on a later tab.
+  const s1 = toggleOption(s0, 1, 'bike')
+  assert.equal(focusCursor(buildRowList(qs, s1.perQuestion, 1), s1.perQuestion, 1), 2)
+})
+
+test('switchFocus: moves the tab, lands the cursor on the target tab answer, clamps at the ends', () => {
+  const s0 = initialState(baseQuestions())
+  const s1 = switchFocus(s0, 1)
+  assert.equal(s1.focusQuestion, 1)
+  assert.equal(s1.cursorIndex, 1, 'fresh Q1 tab → first option (car)')
+  assert.equal(s1.cancelHint, false)
+  // Answered Q0 → coming back lands on the answer, not option 1.
+  const sApple = toggleOption(s0, 0, 'apple')
+  const hop = switchFocus(switchFocus(sApple, 1), -1)
+  assert.equal(hop.focusQuestion, 0)
+  assert.equal(hop.cursorIndex, 1, 'lands on the selected apple row')
+  const hopCustom = switchFocus(switchFocus(setCustomAnswer(s0, 0, 'fig'), 1), -1)
+  assert.equal(hopCustom.cursorIndex, 3, 'lands on the custom sentinel row')
+  // Clamp: no wrap-around at either end.
+  assert.equal(switchFocus(s0, -1).focusQuestion, 0)
+  assert.equal(switchFocus(s1, 1).focusQuestion, 1)
+})
+
+test('toggleCollapse: flips the fold, commits an engaged edit, keeps the Esc clock', () => {
+  const s0 = { ...initialState(singleQuestion()), lastEscAt: 1000, cancelHint: true, attentionHint: 'x' }
+  const folded = toggleCollapse(s0)
+  assert.equal(folded.collapsed, true)
+  assert.equal(folded.attentionHint, null)
+  assert.equal(folded.lastEscAt, 1000, 'the armed decline clock survives the fold')
+  const unfolded = toggleCollapse(folded)
+  assert.equal(unfolded.collapsed, false)
+  // Folding mid-edit commits the buffer (the ↑↓ arrow-exit semantics).
+  const editing = patchCustomInput(enterCustomEdit(initialState(singleQuestion()), 0), 0, () => 'hi')
+  const foldedEdit = toggleCollapse(editing)
+  assert.equal(foldedEdit.collapsed, true)
+  assert.equal(foldedEdit.customEditingFor, null)
+  assert.equal(foldedEdit.perQuestion[0].custom, 'hi')
+})
+
+test('advanceAfterAnswer: hops to the next unanswered tab; all answered → the confirm row', () => {
+  const qs = baseQuestions()
+  const sApple = toggleOption(initialState(qs), 0, 'apple')
+  const next = advanceAfterAnswer(sApple, 0)
+  assert.equal(next.focusQuestion, 1)
+  assert.equal(next.cursorIndex, 1, 'cursor on Q1 option-0 (car)')
+  const sBoth = toggleOption(sApple, 1, 'car')
+  const done = advanceAfterAnswer(sBoth, 1)
+  assert.equal(done.focusQuestion, 0, 'focus stays on the current tab')
+  const rows = buildRowList(qs, done.perQuestion, 0)
+  assert.equal(done.cursorIndex, rows.findIndex(r => r.kind === 'confirm'), 'cursor parks on the Confirm row')
+  // No confirm row (lone single-select) → state untouched (the fast path submits instead).
+  const single = toggleOption(initialState(singleQuestion()), 0, 'yes')
+  assert.equal(advanceAfterAnswer(single, 0), single)
 })
 
 // ------------------------------------------------------ upstream detail field --
@@ -477,6 +583,24 @@ test('renderQuestionsView / renderReviewView surface the transient attention hin
   assert.ok(renderReviewView(theme, rState, 60).some(l => stripAnsi(l).includes(INCOMPLETE_HINT)))
 })
 
+// -------------------------------------------------- render: collapsed strip --
+
+test('renderCollapsedLine: summarizes phase + progress with the expand hint', () => {
+  const multi = initialState(baseQuestions())
+  const multiLine = stripAnsi(renderCollapsedLine(theme, multi, 60))
+  assert.ok(multiLine.includes('● Questions (1/2 · 0 answered)'), `multi summary, got: ${multiLine}`)
+  assert.ok(multiLine.includes('Ctrl+T expand'))
+  const progressed = { ...toggleOption(multi, 0, 'apple'), focusQuestion: 1 }
+  assert.ok(stripAnsi(renderCollapsedLine(theme, progressed, 60)).includes('(2/2 · 1 answered)'))
+  const single = stripAnsi(renderCollapsedLine(theme, initialState(singleQuestion()), 60))
+  assert.ok(single.includes('● Question pending'), `single summary, got: ${single}`)
+  const review = stripAnsi(renderCollapsedLine(theme, { ...initialState(singleQuestion()), phase: 'review' }, 60))
+  assert.ok(review.includes('● Review answers pending'))
+  // An armed decline takes over the strip so the 200 ms window is visible.
+  const armed = { ...initialState(singleQuestion()), cancelHint: true }
+  assert.ok(stripAnsi(renderCollapsedLine(theme, armed, 60)).includes('Press Esc again to decline'))
+})
+
 // --------------------------------------------- scroll window + numbering --
 
 test('clampScrollWindow: keeps the cursor inside the window and slides minimally', () => {
@@ -490,18 +614,16 @@ test('clampScrollWindow: keeps the cursor inside the window and slides minimally
 
 test('rowNumber / rowIndexForNumber: per-question numbering with sentinel continuation', () => {
   const qs = baseQuestions()
-  const rows = buildRowList(qs, initialState(qs).perQuestion)
-  // rows: 0 header Q0 · 1 apple · 2 banana · 3 sentinel Q0 · 4 header Q1
-  //       5 car · 6 bike · 7 sentinel Q1 · 8 confirm
+  // Focused Q1 block: 0 header · 1 car · 2 bike · 3 sentinel · 4 confirm.
+  const rows = buildRowList(qs, initialState(qs).perQuestion, 1)
   assert.equal(rowNumber(rows, 0), null, 'header rows are unnumbered')
   assert.equal(rowNumber(rows, 1), 1)
   assert.equal(rowNumber(rows, 2), 2)
   assert.equal(rowNumber(rows, 3), 3, 'sentinel continues after its question\'s options')
-  assert.equal(rowNumber(rows, 5), 1, 'numbering restarts per question')
-  assert.equal(rowNumber(rows, 8), null, 'confirm keeps its fixed ⏎ symbol instead of a number')
-  assert.equal(rowIndexForNumber(rows, 0, 3), 3, 'digit 3 targets the sentinel')
-  assert.equal(rowIndexForNumber(rows, 0, 4), -1, 'out-of-range digits map to nothing')
-  assert.equal(rowIndexForNumber(rows, 1, 2), 6, 'targets stay inside their question')
+  assert.equal(rowNumber(rows, 4), null, 'confirm keeps its fixed ⏎ symbol instead of a number')
+  assert.equal(rowIndexForNumber(rows, 1, 3), 3, 'digit 3 targets the sentinel')
+  assert.equal(rowIndexForNumber(rows, 1, 4), -1, 'out-of-range digits map to nothing')
+  assert.equal(rowIndexForNumber(rows, 0, 1), -1, 'targets stay inside their question')
 })
 
 test('renderQuestionsView: numbered prefixes + ▸ cursor marker on selectable rows', () => {
@@ -512,9 +634,9 @@ test('renderQuestionsView: numbered prefixes + ▸ cursor marker on selectable r
   assert.ok(lines.some(l => l.includes('3. Type something.')), 'sentinel participates in per-question numbering')
 })
 
-test('renderQuestionsView: a muted ─ divider separates each question from its options', () => {
+test('renderQuestionsView: a muted ─ divider separates the focused question from its options', () => {
   const lines = renderQuestionsView(theme, initialState(baseQuestions()), 60, 20).map(stripAnsi)
-  assert.ok(lines.filter(l => /^─+$/.test(l)).length >= 2, 'one divider per question block')
+  assert.ok(lines.filter(l => /^─+$/.test(l)).length === 1, 'exactly one divider — the focused question block only')
   const headerIdx = lines.findIndex(l => l.includes('Fruit'))
   const dividerIdx = lines.findIndex(l => /^─+$/.test(l))
   const optionIdx = lines.findIndex(l => l.includes('apple'))
@@ -537,18 +659,18 @@ test('renderQuestionsView: labels fold newlines into spaces (single rendered lin
 })
 
 test('renderQuestionsView: height-capped window clips the body but keeps the cursor visible', () => {
-  const state = initialState(baseQuestions()) // 14 rendered body lines at width 60 (incl. confirm blank separator)
+  const state = initialState(baseQuestions()) // focused Q0 body: header + divider + 2 options (each +description) + sentinel + blank + confirm = 9 lines
   const lines = renderQuestionsView(theme, state, 60, 5).map(stripAnsi)
   assert.ok(lines.some(l => l.includes('▸') && l.includes('apple')), 'the cursor row is always inside the window')
   assert.equal(lines.some(l => l.includes('Confirm answers')), false, 'tail content beyond the window is clipped')
-  // title + 3 table chrome rules + 5 body + bottom rule + blank + footer.
-  assert.ok(lines.length <= 12, `output bounded by the window, got ${lines.length} lines`)
-  assert.match(lines[lines.length - 1], /\(1\/7\)/, 'footer gains the (n/m) readout over selectable rows while overflowing')
+  // title + strip + 3 table chrome rules + 5 body + bottom rule + blank + footer.
+  assert.ok(lines.length <= 13, `output bounded by the window, got ${lines.length} lines`)
+  assert.match(lines[lines.length - 1], /\(1\/4\)/, 'readout counts the focused tab\'s selectable rows (2 options + sentinel + confirm)')
 })
 
 test('renderQuestionsView: no overflow → footer carries no (n/m) readout', () => {
   const lines = renderQuestionsView(theme, initialState(singleQuestion()), 60, 20).map(stripAnsi)
-  const footer = lines.find(l => l.includes('navigate'))
+  const footer = lines.find(l => l.includes('move'))
   assert.ok(footer !== undefined, 'sanity: footer line present')
   assert.doesNotMatch(footer, /\(\d+\/\d+\)/, 'the position readout only appears while the body overflows')
 })
@@ -559,17 +681,19 @@ test('renderQuestionsView: scrolling follows the cursor and survives wrap-around
     { id: 'q2', question: 'Q2', header: 'B', options: [{ label: 'b1' }, { label: 'b2' }, { label: 'b3' }] },
     { id: 'q3', question: 'Q3', header: 'C', options: [{ label: 'c1' }, { label: 'c2' }, { label: 'c3' }] },
   ]
-  let state = initialState(qs) // 13 selectable rows (12 numbered + confirm), 19 body lines
+  // Focused Q0 body: header + divider + 3 options + sentinel + blank + confirm = 8 lines.
+  let state = initialState(qs)
   const stepDown = () => {
-    state = { ...state, cursorIndex: nextSelectableIndex(buildRowList(state.questions, state.perQuestion), state.cursorIndex, 1) }
+    state = { ...state, cursorIndex: nextSelectableIndex(buildRowList(state.questions, state.perQuestion, state.focusQuestion), state.cursorIndex, 1) }
   }
-  for (let i = 0; i < 12; i++) stepDown() // first selectable → last selectable (confirm)
+  for (let i = 0; i < 4; i++) stepDown() // a1 → confirm (5 selectable rows)
   let lines = renderQuestionsView(theme, state, 60, 6).map(stripAnsi)
   assert.ok(lines.some(l => l.includes('▸') && l.includes('Confirm answers')), 'window follows the cursor to the tail')
   assert.equal(lines.some(l => l.includes('A  Q1')), false, 'head content scrolled out of the window')
-  stepDown() // wrap past the last row back to the first option
+  stepDown() // wrap past the confirm row back to the first option
   lines = renderQuestionsView(theme, state, 60, 6).map(stripAnsi)
   assert.ok(lines.some(l => l.includes('▸ ○ 1. a1')), 'wrap-around lands back on a visible head row')
+  assert.match(lines[lines.length - 1], /\(1\/5\)/, 'readout counts the focused tab only')
 })
 
 test("renderQuestionsView: the scroll anchor is the cursor row's LAST rendered line, so wrapped continuations stay visible", () => {
@@ -602,17 +726,17 @@ test('renderQuestionsView: exact-fit boundary — body == visible shows every li
   // Single flex column → the table rules render as plain dash runs with no
   // ┬/┼/┴ junctions; anchor on the SELECTION header block and the footer.
   const bodyStart = full.findIndex(l => l.includes('SELECTION')) + 2
-  const bodyEnd = full.findIndex(l => l.includes('navigate')) - 2 // blank + footer below the bottom rule
+  const bodyEnd = full.findIndex(l => l.includes('move')) - 2 // blank + footer below the bottom rule
   const bodyCount = bodyEnd - bodyStart
   assert.ok(bodyCount > 0, 'sanity: body lines found between the table rules')
   const exact = renderQuestionsView(theme, initialState(baseQuestions()), 60, bodyCount).map(stripAnsi)
   const exactStart = exact.findIndex(l => l.includes('SELECTION')) + 2
-  const exactEnd = exact.findIndex(l => l.includes('navigate')) - 2
+  const exactEnd = exact.findIndex(l => l.includes('move')) - 2
   assert.deepEqual(exact.slice(exactStart, exactEnd), full.slice(bodyStart, bodyEnd),
     'an exactly-fitting window renders the complete body unclipped')
   assert.ok(exact.slice(exactStart, exactEnd).some(l => l.includes('Confirm answers')),
     'the confirm row is NOT pushed out of an exactly-fitting window')
-  const footer = exact.find(l => l.includes('navigate'))
+  const footer = exact.find(l => l.includes('move'))
   assert.doesNotMatch(footer, /\(\d+\/\d+\)/, 'exact fit is not overflow — no position readout')
 })
 
@@ -667,6 +791,11 @@ function cursorLine(handle) {
   return lines.find(l => l.includes('▸'))
 }
 
+/** All rendered lines (ANSI stripped) of the mounted panel. */
+function panelLines(handle) {
+  return handle.component.render(80).map(l => stripAnsi(l))
+}
+
 /** Press `key` until the marked row's label contains `label` (the two-pass nav scan wraps/skips rows). */
 function pressUntil(handle, label, key = '\x1b[B', maxSteps = 16) {
   for (let i = 0; i < maxSteps; i++) {
@@ -675,20 +804,6 @@ function pressUntil(handle, label, key = '\x1b[B', maxSteps = 16) {
     handle.component.handleInput(key)
   }
   throw new Error(`cursor never reached ${JSON.stringify(label)}`)
-}
-
-/** Same, but targets the `nth` row whose label matches (sentinel labels repeat per question). */
-function pressUntilNth(handle, label, nth, key = '\x1b[B', maxSteps = 16) {
-  let seen = 0
-  for (let i = 0; i < maxSteps; i++) {
-    const line = cursorLine(handle)
-    if (line !== undefined && line.includes(label)) {
-      seen += 1
-      if (seen === nth) return
-    }
-    handle.component.handleInput(key)
-  }
-  throw new Error(`cursor never reached ${JSON.stringify(label)} #${nth}`)
 }
 
 test('openAskUserPanel: single-question option Enter fast-path submits the answer envelope', async () => {
@@ -741,20 +856,89 @@ test('openAskUserPanel: single question answered ONLY by typed custom text submi
   assert.equal(calls.restoreFocus, 1)
 })
 
-test('openAskUserPanel: committing a sentinel edit in a multi-question layout hops to the next unanswered question', async () => {
+test('openAskUserPanel: ←/→ and Tab/Shift-Tab switch question tabs; ends clamp', () => {
+  const { deps, calls } = makeHarness()
+  openAskUserPanel(deps, baseQuestions())
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  let lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('Fruit')), 'starts on tab 1')
+  assert.equal(lines.some(l => l.includes('Vehicle')), false)
+  input('\x1b[C') // → : next tab
+  lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('Vehicle')), 'right arrow reveals the tab-2 header')
+  assert.ok(lines.some(l => l.includes('car')), 'and its options')
+  assert.equal(lines.some(l => l.includes('Fruit')), false)
+  assert.ok(lines[1].includes('(2/2)'), 'title tracks the focused tab')
+  input('\x1b[D') // ← : back to tab 1
+  assert.ok(panelLines(handle).some(l => l.includes('Fruit')))
+  input('\t') // Tab also hops forward
+  assert.ok(panelLines(handle).some(l => l.includes('Vehicle')))
+  input('\t') // Tab at the last tab clamps (no wrap)
+  assert.ok(panelLines(handle).some(l => l.includes('Vehicle')), 'stays on the last tab')
+  input('\x1b[Z') // Shift-Tab hops back
+  assert.ok(panelLines(handle).some(l => l.includes('Fruit')))
+  input('\x1b[Z') // Shift-Tab at the first tab clamps
+  assert.ok(panelLines(handle).some(l => l.includes('Fruit')), 'stays on the first tab')
+})
+
+test('openAskUserPanel: answering a single-select tab auto-advances to the next unanswered tab', async () => {
   const { deps, calls } = makeHarness()
   const result = openAskUserPanel(deps, baseQuestions())
   const tracked = trackResolution(result)
   const handle = calls.overlays[0]
   const input = handle.component.handleInput.bind(handle.component)
-  pressUntilNth(handle, SENTINEL_LABEL, 1) // Q0's sentinel (navigation steps one row at a time)
+  assert.ok(cursorLine(handle).includes('apple'), 'cursor starts on Q1 option-0')
+  input('\r') // select 'apple' → focus hops to the Q2 tab
+  let lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('Vehicle')), 'focus advanced to tab 2')
+  assert.ok(cursorLine(handle).includes('car'), 'cursor on Q2 option-0')
+  assert.ok(lines.some(l => l.includes('1✓ · [2]')), `answered tab carries ✓, got: ${lines[2]}`)
+  assert.equal(tracked.resolved, false, 'multi-question waits for the review step')
+  input('\r') // select 'car' → everything answered → cursor parks on Confirm
+  assert.ok(cursorLine(handle).includes('Confirm answers'), 'cursor parks on the Confirm row')
+  input('\r') // confirm → review
+  for (let i = 0; i < 8 && !(cursorLine(handle)?.includes('Submit answers')); i++) input('\x1b[B')
+  input('\r') // Submit answers
+  await result
+  assert.deepEqual(tracked.value.answers, [
+    { id: 'q1', selected: ['apple'] },
+    { id: 'q2', selected: ['car'] },
+  ])
+})
+
+test('openAskUserPanel: a multiSelect tab never auto-advances — toggles stay put', () => {
+  const mixed = [
+    { id: 'q1', question: 'Deploy?', options: [{ label: 'staging' }, { label: 'prod' }] },
+    { id: 'q2', question: 'Tags?', options: [{ label: 'red' }, { label: 'blue' }], multiSelect: true },
+  ]
+  const { deps, calls } = makeHarness()
+  openAskUserPanel(deps, mixed)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  input('\r') // 'staging' → auto-advance to the multiSelect tab
+  assert.ok(panelLines(handle).some(l => l.includes('Tags')), 'advanced to tab 2')
+  input('\r') // toggle 'red' — multiSelect must NOT advance
+  let lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('Tags')), 'stays on the multiSelect tab')
+  assert.ok(cursorLine(handle).includes('red'), 'cursor stays on the toggled option')
+})
+
+test('openAskUserPanel: committing a sentinel edit in a multi-question layout hops to the next unanswered tab', async () => {
+  const { deps, calls } = makeHarness()
+  const result = openAskUserPanel(deps, baseQuestions())
+  const tracked = trackResolution(result)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL) // the focused tab's sentinel
   input('\r') // inline edit
   for (const ch of 'fruit') input(ch)
-  input('\r') // commit → cursor hops to the next unanswered question (Q1 option-0)
-  assert.ok(cursorLine(handle).includes('car'), `expected cursor on Q1 option-0, got: ${cursorLine(handle)}`)
-  input('\r') // select 'car'
-  assert.equal(tracked.resolved, false, 'multi-question waits for the review step')
-  pressUntil(handle, 'Confirm answers', '\x1b[A'); input('\r') // confirm → review
+  input('\r') // commit → focus hops to the next unanswered tab (Q2 option-0)
+  assert.ok(panelLines(handle).some(l => l.includes('Vehicle')), 'commit advanced the focus to tab 2')
+  assert.ok(cursorLine(handle).includes('car'), `expected cursor on Q2 option-0, got: ${cursorLine(handle)}`)
+  input('\r') // select 'car' → all answered → Confirm
+  assert.ok(cursorLine(handle).includes('Confirm answers'))
+  input('\r') // confirm → review
   for (let i = 0; i < 8 && !(cursorLine(handle)?.includes('Submit answers')); i++) input('\x1b[B')
   input('\r') // Submit answers
   await result
@@ -762,6 +946,27 @@ test('openAskUserPanel: committing a sentinel edit in a multi-question layout ho
     { id: 'q1', selected: [], custom: 'fruit' },
     { id: 'q2', selected: ['car'] },
   ])
+})
+
+test('openAskUserPanel: review jump-back re-focuses the reviewed question\'s tab', async () => {
+  const { deps, calls } = makeHarness([1000, 1050])
+  const result = openAskUserPanel(deps, baseQuestions())
+  const tracked = trackResolution(result)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  input('\r') // apple → advance to Q2
+  input('\r') // car → Confirm
+  input('\r') // → review (reviewIndex 0 = the Fruit row)
+  assert.ok(panelLines(handle).some(l => l.includes('Review answers')), 'sanity: on the review page')
+  input('\r') // Enter on the Fruit row → back to the questions pane ON tab 1
+  const lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('Fruit')), 'jump-back re-focused tab 1')
+  assert.ok(lines.some(l => l.includes('apple')), 'the tab-1 options render again')
+  assert.ok(cursorLine(handle).includes('apple'), 'cursor on the existing answer')
+  // Clean up: decline via double-Esc.
+  input('\x1b'); input('\x1b')
+  await result
+  assert.equal(tracked.resolved, true)
 })
 
 test('openAskUserPanel: digit quick-pick selects the numbered option directly', async () => {
@@ -780,17 +985,17 @@ test('openAskUserPanel: ↑↓ while editing exits the editor (committing) and t
   openAskUserPanel(deps, baseQuestions())
   const handle = calls.overlays[0]
   const input = handle.component.handleInput.bind(handle.component)
-  pressUntilNth(handle, SENTINEL_LABEL, 1) // Q0 sentinel
+  pressUntil(handle, SENTINEL_LABEL) // Q1 tab's sentinel
   input('\r') // inline edit
   input('h'); input('i')
   input('\x1b[B') // ↓ must NOT be swallowed: exit edit (commit 'hi'), then move
-  assert.ok(cursorLine(handle).includes('car'), 'cursor moved off the sentinel')
-  const lines = handle.component.render(80).map(stripAnsi)
+  assert.ok(cursorLine(handle).includes('Confirm answers'), 'cursor moved off the sentinel (within the tab)')
+  const lines = panelLines(handle)
   assert.ok(lines.some(l => l.includes('✎ hi')), 'buffer committed on arrow-exit')
   assert.ok(!lines.some(l => l.includes('_')), 'no editing cursor left behind')
 })
 
-test('openAskUserPanel: down-navigation wraps and the window follows with scroll info', () => {
+test('openAskUserPanel: down-navigation wraps within the focused tab and the window follows', () => {
   const qs = [
     { id: 'q1', question: 'Q1', header: 'A', options: [{ label: 'a1' }, { label: 'a2' }, { label: 'a3' }] },
     { id: 'q2', question: 'Q2', header: 'B', options: [{ label: 'b1' }, { label: 'b2' }, { label: 'b3' }] },
@@ -799,20 +1004,23 @@ test('openAskUserPanel: down-navigation wraps and the window follows with scroll
   const { deps, calls } = makeHarness()
   openAskUserPanel(deps, qs)
   const handle = calls.overlays[0]
-  pressUntil(handle, 'Confirm answers') // walk to the last selectable row
-  const tailLines = handle.component.render(80).map(stripAnsi)
+  pressUntil(handle, 'Confirm answers') // walk to the last selectable row of tab 1
+  const tailLines = panelLines(handle)
   assert.ok(tailLines.some(l => l.includes('▸') && l.includes('Confirm answers')))
-  handle.component.handleInput('\x1b[B') // wrap past the end
+  handle.component.handleInput('\x1b[B') // wrap past the end — back to the first option of the SAME tab
   assert.ok(cursorLine(handle)?.includes('a1'), 'wrapped cursor lands back on a visible head row')
+  // The tab strip lives outside the scroll window — it always names the
+  // focused tab, so it is the wrap-never-crosses-tabs witness.
+  assert.ok(panelLines(handle).some(l => l.includes('[1] · 2 · 3')), 'still on tab 1 — wrap never crosses tabs')
   // The framed overlay wraps the panel, so the footer is found by content,
   // not position.
-  const footer = handle.component.render(80).map(stripAnsi).find(l => l.includes('navigate'))
-  assert.match(footer ?? '', /\(1\/13\)/, '(n/m) readout counts selectable rows only (12 numbered + confirm; headers excluded)')
+  const footer = panelLines(handle).find(l => l.includes('move'))
+  assert.match(footer ?? '', /\(1\/5\)/, '(n/m) readout counts the focused tab\'s selectable rows only (3 options + sentinel + confirm)')
 })
 
 test('openAskUserPanel: digit jump onto an out-of-window sentinel keeps the edit line visible (M1)', async () => {
   // 8 options → body = header text + divider + 8 options + sentinel = 11 lines,
-  // over the default 9-line window; the sentinel starts below the fold.
+  // over the default window; the sentinel starts below the fold.
   const many = [{
     id: 'q1', question: 'Pick one', header: 'Big',
     options: Array.from({ length: 8 }, (_, i) => ({ label: `opt${i + 1}` })),
@@ -822,18 +1030,18 @@ test('openAskUserPanel: digit jump onto an out-of-window sentinel keeps the edit
   const handle = calls.overlays[0]
   const input = handle.component.handleInput.bind(handle.component)
   assert.equal(
-    handle.component.render(80).map(stripAnsi).some(l => l.includes('_')),
+    panelLines(handle).some(l => l.includes('_')),
     false,
     'sanity: no inline-edit line before the jump',
   )
   input('9') // quick-pick the sentinel (numbered N+1 = 9 after the 8 options)
-  const lines = handle.component.render(80).map(stripAnsi)
+  const lines = panelLines(handle)
   assert.ok(lines.some(l => l.includes('_')), 'the inline-edit line is rendered inside the window')
   // Footer readout agrees with the viewport: the edited sentinel is the 9th
   // selectable row of 9 (headers never counted).
-  const footer = lines.find(l => l.includes('abandon edit'))
+  const footer = lines.find(l => l.includes('abandon'))
   assert.ok(footer !== undefined, 'editing footer present')
-  assert.match(footer, /\(9\/9\)/, 'readout ranks the edited sentinel among global selectable rows')
+  assert.match(footer, /\(9\/9\)/, 'readout ranks the edited sentinel among the tab\'s selectable rows')
 })
 
 test('openAskUserPanel: digit presses are a no-op in the review phase', async () => {
@@ -842,16 +1050,78 @@ test('openAskUserPanel: digit presses are a no-op in the review phase', async ()
   const tracked = trackResolution(result)
   const handle = calls.overlays[0]
   const input = handle.component.handleInput.bind(handle.component)
-  input('1') // quick-pick Q0 option 1 (apple)
-  pressUntil(handle, 'car') // walk into Q1
-  input('1') // quick-pick Q1 option 1 (car)
-  pressUntil(handle, 'Confirm answers')
+  input('1') // quick-pick 'apple' on tab 1 → auto-advance to tab 2
+  input('1') // quick-pick 'car' on tab 2 → cursor parks on Confirm
+  assert.ok(cursorLine(handle).includes('Confirm answers'), 'sanity: both answers in, cursor on Confirm')
   input('\r') // → review phase
-  const before = handle.component.render(80).map(stripAnsi)
+  const before = panelLines(handle)
   assert.ok(before.some(l => l.includes('Review answers')), 'sanity: reached the review page')
   input('2') // digit while reviewing must do nothing
-  assert.deepEqual(handle.component.render(80).map(stripAnsi), before, 'review view unchanged by a digit press')
+  assert.deepEqual(panelLines(handle), before, 'review view unchanged by a digit press')
   assert.equal(tracked.resolved, false, 'no accidental submit or phase flip')
+})
+
+test('openAskUserPanel: Ctrl+T folds to a 3-line strip; answering keys are inert while folded', () => {
+  const { deps, calls } = makeHarness()
+  openAskUserPanel(deps, baseQuestions())
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  const expanded = panelLines(handle)
+  assert.ok(expanded.length > 3, 'sanity: expanded panel is taller than the strip')
+  input('\x14') // Ctrl+T → fold
+  let lines = panelLines(handle)
+  assert.equal(lines.length, 3, 'folded strip = top border + one line + bottom border')
+  assert.ok(lines[0].includes('┌') && lines[2].includes('└'), 'box borders kept')
+  assert.ok(lines[1].includes('Questions (1/2'), 'strip carries the tab position')
+  assert.ok(lines[1].includes('Ctrl+T expand'), 'strip explains how to unfold')
+  // Navigation and digits are inert while folded.
+  input('\x1b[B')
+  input('1')
+  input('\x1b[C') // tab switch must not fire either
+  assert.deepEqual(panelLines(handle), lines, 'folded strip ignores answering keys')
+  input('\x14') // unfold
+  lines = panelLines(handle)
+  assert.ok(lines.length > 3, 'panel is back to full height')
+  assert.ok(lines.some(l => l.includes('Fruit')), 'same tab, same state')
+  assert.ok(lines.some(l => l.includes('apple')))
+  // The folded digit press did NOT pick an option: Enter now selects 'apple'
+  // and auto-advances — proving the state was untouched while folded.
+  input('\r')
+  assert.ok(panelLines(handle).some(l => l.includes('Vehicle')), 'Enter after unfold works normally')
+})
+
+test('openAskUserPanel: folding during a sentinel edit commits the buffer', () => {
+  const { deps, calls } = makeHarness()
+  openAskUserPanel(deps, singleQuestion())
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r') // inline edit
+  input('h'); input('i')
+  input('\x14') // fold — commits like the ↑↓ arrow-exit
+  const folded = panelLines(handle)
+  assert.equal(folded.length, 3)
+  input('\x14') // unfold
+  const lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('✎ hi')), 'the buffer was committed on fold')
+  assert.ok(!lines.some(l => l.includes('_')), 'no editing cursor left behind')
+})
+
+test('openAskUserPanel: double-Esc declines while folded (the strip shows the armed state)', async () => {
+  const { deps, calls } = makeHarness([1000, 1050])
+  const result = openAskUserPanel(deps, baseQuestions())
+  const tracked = trackResolution(result)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  input('\x14') // fold
+  assert.ok(panelLines(handle)[1].includes('Questions (1/2'), 'folded summary first')
+  input('\x1b') // arm — the strip swaps to the decline hint
+  assert.ok(panelLines(handle)[1].includes('Press Esc again to decline'), 'armed decline visible on the strip')
+  input('\x1b') // fire
+  await result
+  assert.equal(tracked.resolved, true)
+  assert.deepEqual(tracked.value, buildDeclinedEnvelope(baseQuestions()))
+  assert.equal(calls.restoreFocus, 1)
 })
 
 test('openAskUserPanel: double-Esc decline fires; a late extra unmount afterwards is idempotent', async () => {
@@ -984,6 +1254,13 @@ test('askUserMaxVisibleForRows: the dock budget subtracts editor/footer/transcri
   assert.equal(askUserMaxVisibleForRows(100), 82, 'big terminals grow proportionally')
 })
 
+test('askUserMaxVisibleForRows: the multi-question tab strip claims one more line', () => {
+  assert.equal(askUserMaxVisibleForRows(24, 1), 5)
+  assert.equal(askUserMaxVisibleForRows(40, 1), 21)
+  assert.equal(askUserMaxVisibleForRows(undefined, 1), 6, 'unknown height still falls back to the constant')
+  assert.equal(askUserMaxVisibleForRows(40, -3), 22, 'negative extras are clamped away')
+})
+
 test('askUserMaxVisibleForRows: unknown terminal height falls back to ASK_USER_MAX_VISIBLE', () => {
   assert.equal(askUserMaxVisibleForRows(undefined), 6)
   assert.equal(askUserMaxVisibleForRows(Number.NaN), 6)
@@ -997,7 +1274,7 @@ test('renderQuestionsView: a larger maxVisible reveals body lines the default wi
     options: Array.from({ length: 8 }, (_, i) => ({ label: `opt${i + 1}` })),
   }]
   const state = initialState(many)
-  const capped = renderQuestionsView(theme, state, 80).map(stripAnsi) // default 9-line window
+  const capped = renderQuestionsView(theme, state, 80).map(stripAnsi) // default 6-line window
   const grown = renderQuestionsView(theme, state, 80, 20).map(stripAnsi)
   assert.equal(capped.some(l => l.includes('Type something.')), false, 'default window clips the tail sentinel')
   assert.equal(grown.some(l => l.includes('Type something.')), true, 'larger window shows the tail sentinel')
@@ -1153,5 +1430,5 @@ test('openAskUserPanel: the docked panel renders in the Todos-panel box language
   assert.ok(lines[lines.length - 1].includes('└') && lines[lines.length - 1].includes('┘'), 'bottom box border')
   assert.ok(lines.some(l => l.includes('│')), 'side borders on body rows')
   const stripped = lines.map(l => stripAnsi(l))
-  assert.ok(stripped.some(l => l.includes('Questions (2)')), 'title row inside the box')
+  assert.ok(stripped.some(l => l.includes('Questions (1/2)')), 'title row inside the box')
 })

@@ -160,14 +160,15 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **885 tests** across 48 files (the
+- `pnpm test` must stay green: **900 tests** across 48 files (the
   post-merge baseline — verified by `node --test test/*.test.mjs` on
-  2026-08-25 after the retention+startup-info merge). Per-file totals
+  2026-08-25 after the retention+startup-info merge; ask-user tabs/fold
+  rework added 15). Per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals in
   HANDOFF.md.
-  - ask-user 85 + skills 36 + skills-manager 24 + startup-info 19 +
+  - ask-user 100 + skills 36 + skills-manager 24 + startup-info 19 +
   - live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
   - retention 35 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +

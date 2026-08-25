@@ -8,12 +8,17 @@
  * `AskUserQuestionAnswer` envelope back to `dsh-tool-ask-user` as a normal
  * tool result.
  *
- * Layout — one bordered dock panel, all questions flattened (numbered rows, a
- * divider between each question block and its options, and a scroll window
- * so the cursor row is always visible even when the dock is height-capped):
+ * Layout — one bordered dock panel showing EXACTLY ONE question at a time
+ * (numbered rows, a divider between the question block and its options, and
+ * a scroll window so the cursor row is always visible even when the dock is
+ * height-capped). With ≥ 2 questions a tab strip under the title carries one
+ * tab per question (`[1] · 2✓ · 3` — brackets mark the focused tab, ✓ an
+ * answered one); ←/→ (and Tab/Shift-Tab) switch tabs so a question batch
+ * never floods the dock:
  *
  *   ┌────────────────────────────────────┐
- *   │ ● Questions (2)                    │
+ *   │ ● Questions (1/2)                  │
+ *   │ [1] · 2                            │   (tab strip, ≥ 2 questions only)
  *   │ SELECTION                          │
  *   │ ─────────────────────────────      │   (table chrome)
  *   │ Fruit  Where should we deploy?     │   (header — not selectable)
@@ -25,6 +30,11 @@
  *   │                                    │   (blank separator before confirm)
  *   │     ⏎ Confirm answers              │   (when ≥ 2 questions, or any multiSelect)
  *   └────────────────────────────────────┘
+ *
+ * Ctrl+T folds the whole panel into a 3-line strip (borders + one summary
+ * line) so the transcript stays readable while the question pends; the same
+ * key unfolds it. While folded only the toggle and the Esc chain do
+ * anything — answering keys are inert until the panel is back.
  *
  * While the panel is open it owns the keyboard: it is mounted into the dock
  * slot between the live widgets and the editor, takes focus through
@@ -45,7 +55,9 @@
  * Single-question single-select panel: Enter on an option (or committing a
  * filled sentinel) submits immediately. A multiSelect question — even a lone
  * one — gets a Confirm row instead of auto-submitting, so the user can pick
- * several options first. Multi-question panel: Enter on the Confirm row hops
+ * several options first. Multi-question panel: answering a single-select tab
+ * auto-advances the focus to the next unanswered tab (or onto the Confirm
+ * row once everything is answered). Enter on the Confirm row hops
  * to the review page (all answers listed, each editable in place). Esc
  * double-press within 200 ms declines — but terminal key auto-repeat (holding
  * Esc) is ignored below `ESC_REPEAT_GUARD_MS`, so a long press cannot
@@ -66,7 +78,7 @@
  * (https://github.com/juicesharp/rpiv-ask-user-question).
  */
 
-import { getKeybindings, matchesKey, type Component, type TUI } from '@earendil-works/pi-tui'
+import { getKeybindings, matchesKey, type Component, type KeyId, type TUI } from '@earendil-works/pi-tui'
 import type { AskUserQuestionAnswer, AskUserQuestionAnswerItem, AskUserQuestionItem, AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
 import type { Context } from '@deepseek-ai/cordis'
 import {
@@ -110,6 +122,14 @@ export const ESC_REPEAT_GUARD_MS = 50
 /** Sentinel row label appended to every question's option list. */
 export const SENTINEL_LABEL = 'Type something.'
 
+/**
+ * Key that folds the whole panel into a 3-line strip (and unfolds it again).
+ * A control key on purpose: it must never read as free-text input while the
+ * sentinel editor is engaged (folding commits the buffer, exactly like the
+ * ↑↓ arrow-exit path does).
+ */
+export const ASK_COLLAPSE_KEY: KeyId = 'ctrl+t'
+
 /** Decline message embedded into the answer envelope when the user bails. */
 export const DECLINE_MESSAGE = 'User declined to answer questions.'
 
@@ -149,11 +169,13 @@ const ASK_DOCK_RESERVED_ROWS = 8
  * panel budget is the terminal height minus the reserved dock rows, minus
  * the panel's own chrome. At the 24-row e2e floor this yields exactly
  * ASK_USER_MAX_VISIBLE (6); larger terminals scale up. Without a usable row
- * count it degrades to ASK_USER_MAX_VISIBLE.
+ * count it degrades to ASK_USER_MAX_VISIBLE. `extraChromeLines` covers
+ * optional interior lines the default budget does not count (the tab strip
+ * of a multi-question panel).
  */
-export function askUserMaxVisibleForRows(termRows: number | undefined): number {
+export function askUserMaxVisibleForRows(termRows: number | undefined, extraChromeLines = 0): number {
   if (termRows === undefined || !Number.isFinite(termRows) || termRows <= 0) return ASK_USER_MAX_VISIBLE
-  return Math.max(1, Math.floor(termRows) - ASK_DOCK_RESERVED_ROWS - ASK_USER_VIEW_OVERHEAD)
+  return Math.max(1, Math.floor(termRows) - ASK_DOCK_RESERVED_ROWS - ASK_USER_VIEW_OVERHEAD - Math.max(0, extraChromeLines))
 }
 
 // ------------------------------------------------------- pure types --
@@ -191,8 +213,15 @@ export interface AskUserState {
   questions: readonly AskUserQuestionItem[]
   /** Per-question pending answer. */
   perQuestion: PendingAnswer[]
-  /** Cursor position in the flat row list (see `buildRowList`). */
+  /** Cursor position in the focused question's row list (see `buildRowList`). */
   cursorIndex: number
+  /**
+   * Which question tab the questions pane shows. The pane renders exactly
+   * one question at a time; ←/→ (and Tab/Shift-Tab) move this index.
+   */
+  focusQuestion: number
+  /** Panel folded to the 3-line strip (Ctrl+T). While folded only the toggle key and the Esc chain act. */
+  collapsed: boolean
   /** Live inline-edit text per question; non-null when the sentinel is engaged for that question. */
   customInputs: (string | null)[]
   /** Live inline edit owner (question index); null when not editing. */
@@ -220,11 +249,14 @@ export function initialState(questions: readonly AskUserQuestionItem[]): AskUser
   // Snap the starting cursor onto the first SELECTABLE row: index 0 is the
   // question header (unselectable), and a cursor parked there would render
   // no ▸ marker at all and ignore Enter/digits.
-  const rows = buildRowList(questions, questions.map(() => ({ selected: [] })))
+  const perQuestion = questions.map(() => ({ selected: [] }))
+  const rows = buildRowList(questions, perQuestion, 0)
   return {
     questions,
-    perQuestion: questions.map(() => ({ selected: [] })),
+    perQuestion,
     cursorIndex: nextSelectableIndex(rows, 0, 1),
+    focusQuestion: 0,
+    collapsed: false,
     customInputs: questions.map(() => null),
     customEditingFor: null,
     phase: 'questions',
@@ -350,14 +382,24 @@ export function buildDeclinedEnvelope(questions: readonly AskUserQuestionItem[],
   }
 }
 
-/** Build the ordered, flat list of rows for the questions pane. */
-export function buildRowList(questions: readonly AskUserQuestionItem[], perQuestion: readonly PendingAnswer[]): FlatRow[] {
+/**
+ * Build the ordered row list for the questions pane: the FOCUSED question's
+ * block only (header + options + sentinel), followed by the panel-wide
+ * Confirm pseudo-row when `needsConfirmRow` says so — the pane shows one
+ * question at a time; ←/→ swaps `focusQuestion` and rebuilds this list.
+ */
+export function buildRowList(
+  questions: readonly AskUserQuestionItem[],
+  perQuestion: readonly PendingAnswer[],
+  focusQuestion = 0,
+): FlatRow[] {
   const rows: FlatRow[] = []
-  questions.forEach((question, qi) => {
+  const question = questions[focusQuestion]
+  if (question !== undefined) {
     rows.push({
       kind: 'question-header',
-      questionIndex: qi,
-      label: question.header ?? `Question ${qi + 1}`,
+      questionIndex: focusQuestion,
+      label: question.header ?? `Question ${focusQuestion + 1}`,
       description: question.question,
       ...(question.detail !== undefined ? { detail: question.detail } : {}),
       selectable: false,
@@ -366,21 +408,21 @@ export function buildRowList(questions: readonly AskUserQuestionItem[], perQuest
     options.forEach((opt, oi) => {
       rows.push({
         kind: 'option',
-        questionIndex: qi,
+        questionIndex: focusQuestion,
         optionIndex: oi,
         label: opt.label,
         ...(opt.description !== undefined ? { description: opt.description } : {}),
         selectable: true,
       })
     })
-    const customAnswer = perQuestion[qi]?.custom ?? ''
+    const customAnswer = perQuestion[focusQuestion]?.custom ?? ''
     rows.push({
       kind: 'sentinel',
-      questionIndex: qi,
+      questionIndex: focusQuestion,
       label: customAnswer !== '' ? `${CUSTOM_MARK}${customAnswer.trim()}` : SENTINEL_LABEL,
       selectable: true,
     })
-  })
+  }
   if (needsConfirmRow(questions)) {
     rows.push({ kind: 'confirm', questionIndex: -1, label: '⏎ Confirm answers', selectable: true })
   }
@@ -488,12 +530,39 @@ export function canAutoSubmit(state: AskUserState): boolean {
 }
 
 /**
- * Row index to land on after answering question `answeredQi`: the first
- * selectable row of the nearest LATER unanswered question, or -1 when every
- * later question is already answered (caller keeps the current cursor).
+ * Row index to land on after a single-select answer on question `answeredQi`
+ * (option toggle or committed custom text): advance the tab focus to the
+ * nearest LATER unanswered question (cursor on its answer), or — once every
+ * question is answered — park the cursor on the Confirm row of the current
+ * tab so submission is one Enter away. Returns the state unchanged when no
+ * Confirm row exists (the lone single-select fast path submits instead).
  */
-export function nextUnansweredRow(
-  rows: readonly FlatRow[],
+export function advanceAfterAnswer(state: AskUserState, answeredQi: number): AskUserState {
+  if (!needsConfirmRow(state.questions)) return state
+  const next = nextUnansweredQuestion(state.questions, state.perQuestion, answeredQi)
+  if (next >= 0) {
+    const rows = buildRowList(state.questions, state.perQuestion, next)
+    return {
+      ...state,
+      focusQuestion: next,
+      cursorIndex: focusCursor(rows, state.perQuestion, next),
+      // The scroll window is tab-local in effect: a stale offset from the
+      // previous tab would scroll the new tab's header out of view. The
+      // render clamp re-centers onto the cursor from a clean top.
+      questionsScroll: 0,
+      cancelHint: false,
+      attentionHint: null,
+    }
+  }
+  const rows = buildRowList(state.questions, state.perQuestion, state.focusQuestion)
+  const confirmIndex = rows.findIndex(row => row.kind === 'confirm')
+  if (confirmIndex < 0) return state
+  return { ...state, cursorIndex: confirmIndex, cancelHint: false, attentionHint: null }
+}
+
+/** Index of the nearest question AFTER `answeredQi` with no answer yet, or -1. */
+export function nextUnansweredQuestion(
+  questions: readonly AskUserQuestionItem[],
   perQuestion: readonly PendingAnswer[],
   answeredQi: number,
 ): number {
@@ -502,13 +571,74 @@ export function nextUnansweredRow(
     return answer !== undefined
       && (answer.selected.length > 0 || (answer.custom !== undefined && answer.custom.trim() !== ''))
   }
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]
-    if (row === undefined || !row.selectable) continue
-    if (row.questionIndex <= answeredQi) continue
-    if (!answered(row.questionIndex)) return i
+  for (let qi = answeredQi + 1; qi < questions.length; qi++) {
+    if (!answered(qi)) return qi
   }
   return -1
+}
+
+/**
+ * Cursor position for a freshly focused question tab: its first selected
+ * option when one exists, else the sentinel when a custom answer exists,
+ * else the first selectable row — so revisiting an answered tab lands on
+ * the answer, not on option 1.
+ */
+export function focusCursor(
+  rows: readonly FlatRow[],
+  perQuestion: readonly PendingAnswer[],
+  questionIndex: number,
+): number {
+  const answer = perQuestion[questionIndex]
+  const selected = answer?.selected ?? []
+  if (selected.length > 0) {
+    const bySelection = rows.findIndex(row => row.kind === 'option' && selected.includes(row.label))
+    if (bySelection >= 0) return bySelection
+  }
+  if (answer?.custom !== undefined && answer.custom.trim() !== '') {
+    const sentinel = rows.findIndex(row => row.kind === 'sentinel' && row.questionIndex === questionIndex)
+    if (sentinel >= 0) return sentinel
+  }
+  return nextSelectableIndex(rows, 0, 1)
+}
+
+/**
+ * Move the tab focus by `direction` (clamped at the ends — no wrap-around:
+ * predictable ends beat flourish mid-questionnaire) and land the cursor on
+ * the tab's answer per `focusCursor`. Clears the transient hints like any
+ * navigation. The component must exit an engaged sentinel edit BEFORE
+ * switching (committing the buffer), same as the ↑↓ arrow-exit path.
+ */
+export function switchFocus(state: AskUserState, direction: 1 | -1): AskUserState {
+  const next = Math.max(0, Math.min(state.questions.length - 1, state.focusQuestion + direction))
+  if (next === state.focusQuestion) {
+    return { ...state, cancelHint: false, attentionHint: null }
+  }
+  const rows = buildRowList(state.questions, state.perQuestion, next)
+  return {
+    ...state,
+    focusQuestion: next,
+    cursorIndex: focusCursor(rows, state.perQuestion, next),
+    // Fresh window for the fresh tab (a stale offset scrolls the new tab's
+    // header out of view); the render clamp re-centers onto the cursor.
+    questionsScroll: 0,
+    cancelHint: false,
+    attentionHint: null,
+  }
+}
+
+/**
+ * Flip the Ctrl+T fold. Folding while a sentinel edit is engaged first
+ * commits the buffer (the arrow-exit semantics — the text stays visible on
+ * the sentinel's ✎ mark), then collapses; transient hints clear on both
+ * directions. The double-Esc clock is deliberately untouched so an armed
+ * decline keeps its hint when the panel unfolds.
+ */
+export function toggleCollapse(state: AskUserState): AskUserState {
+  let next = state
+  if (!state.collapsed && state.customEditingFor !== null) {
+    next = exitCustomEdit(state, true)
+  }
+  return { ...next, collapsed: !next.collapsed, attentionHint: null }
 }
 
 // ------------------------------------------------- render: questions phase --
@@ -536,7 +666,37 @@ function inlineStateSlot(row: FlatRow, isSelectedOption: boolean, allAnswered: b
   return '  '
 }
 
-/** Render the questions pane as a flat table line list behind a scroll window. */
+/**
+ * One muted line under the title summarizing every question tab:
+ * `[1] · 2✓ · 3` — the focused tab renders bracketed (accent + bold; the
+ * brackets distinguish it from the row cursor's ▸ marker), an answered tab
+ * carries ✓ (success color), the rest stay plain numbers. Clip-only (no
+ * wrap): a too-narrow terminal drops trailing tabs, and the (n/N) in the
+ * title keeps the full count readable regardless.
+ */
+function renderTabStrip(
+  fns: ReturnType<typeof panelThemeFns>,
+  wrap: number,
+  state: AskUserState,
+): string {
+  const parts: string[] = []
+  state.questions.forEach((question, qi) => {
+    const answer = state.perQuestion[qi]
+    const answered = answer !== undefined
+      && (answer.selected.length > 0 || (answer.custom !== undefined && answer.custom.trim() !== ''))
+    const label = `${qi + 1}${answered ? '✓' : ''}`
+    if (qi === state.focusQuestion) {
+      parts.push(fns.accent(BOLD + `[${label}]` + RESET))
+    } else if (answered) {
+      parts.push(fns.success(label))
+    } else {
+      parts.push(fns.muted(label))
+    }
+  })
+  return fns.muted(clipToWidth(parts.join(' · '), wrap))
+}
+
+/** Render the questions pane (one focused question tab) as a flat table line list behind a scroll window. */
 export function renderQuestionsView(
   theme: TuiTheme,
   state: AskUserState,
@@ -547,9 +707,12 @@ export function renderQuestionsView(
   const wrap = Math.max(2, width - 2)
   const title = state.questions.length === 1
     ? '● Question'
-    : `● Questions (${state.questions.length})`
+    : `● Questions (${state.focusQuestion + 1}/${state.questions.length})`
   const lines: string[] = [fns.accent(BOLD + clipToWidth(title, wrap) + RESET)]
-  const rows = buildRowList(state.questions, state.perQuestion)
+  if (state.questions.length >= 2) {
+    lines.push(renderTabStrip(fns, wrap, state))
+  }
+  const rows = buildRowList(state.questions, state.perQuestion, state.focusQuestion)
   if (rows.length === 0) {
     lines.push(fns.muted(clipToWidth('(no questions)', wrap)))
     return finalizeQuestionsView(fns, wrap, lines, state)
@@ -706,9 +869,14 @@ function finalizeQuestionsView(
     lines.push(fns.attention(clipToWidth('Press Esc again to decline', wrap)))
   }
   lines.push('')
+  const multiTab = state.questions.length >= 2
+  // Compact on purpose: at the common 80-column terminal the panel's inner
+  // wrap is 74 columns, so every hint (fold key included) must fit; the
+  // scroll readout rides FIRST so narrow terminals clip the tail hints,
+  // never the position.
   const footer = state.customEditingFor !== null
-    ? 'Type free text · Enter keep · ↑↓ move · Esc abandon edit'
-    : `↑↓ navigate · Enter ${needsConfirmRow(state.questions) ? 'toggle / confirm' : 'select'} · 1-9 pick · Esc decline`
+    ? 'Type free text · Enter keep · ↑↓ move · Ctrl+T fold · Esc abandon'
+    : `${multiTab ? '←→ tabs · ' : ''}↑↓ move · Enter ${needsConfirmRow(state.questions) ? 'toggle' : 'select'} · 1-9 pick · Ctrl+T fold · Esc decline`
   // The (n/m) readout goes FIRST so narrow terminals clip the hint, never
   // the scroll info.
   lines.push(fns.subtle(clipToWidth(scrollInfo + footer, wrap)))
@@ -772,7 +940,7 @@ export function renderReviewView(
     lines.push(fns.attention(clipToWidth(state.attentionHint, wrap)))
   }
   lines.push('')
-  const footer = '↑↓ select · Enter return to edit / submit'
+  const footer = '↑↓ select · Enter return to edit / submit · Ctrl+T fold'
   const scrollInfo = body.length > visible ? ` (${state.reviewIndex + 1}/${body.length})` : ''
   lines.push(fns.subtle(clipToWidth(scrollInfo + footer, wrap)))
   return lines
@@ -785,6 +953,33 @@ function formatAnswerForReview(answer: PendingAnswer | undefined): string {
   if (answer.custom !== undefined && answer.custom !== '') return foldText(`${CUSTOM_MARK}${answer.custom}`)
   if (answer.selected.length === 0) return '(no answer)'
   return foldText(answer.selected.join(', '))
+}
+
+// ------------------------------------------------- render: folded strip --
+
+/**
+ * The ONE interior line of the folded (Ctrl+T) panel. The panel is a hard
+ * modal that owns the keyboard while it pends, so the strip keeps the
+ * state machine discoverable: which phase, how far along, how to unfold —
+ * and an armed decline replaces the summary so the 200 ms window is not
+ * silently ticking off-screen.
+ */
+export function renderCollapsedLine(theme: TuiTheme, state: AskUserState, width: number): string {
+  const fns = panelThemeFns(theme)
+  const wrap = Math.max(2, width - 2)
+  if (state.cancelHint) {
+    return fns.attention(clipToWidth('Press Esc again to decline · Ctrl+T expand', wrap))
+  }
+  if (state.phase === 'review') {
+    return fns.accent(BOLD + clipToWidth('● Review answers pending · Ctrl+T expand', wrap) + RESET)
+  }
+  const answered = state.perQuestion.filter(answer =>
+    answer.selected.length > 0 || (answer.custom !== undefined && answer.custom.trim() !== ''),
+  ).length
+  const label = state.questions.length === 1
+    ? '● Question pending'
+    : `● Questions (${state.focusQuestion + 1}/${state.questions.length} · ${answered} answered)`
+  return fns.accent(BOLD + clipToWidth(`${label} · Ctrl+T expand`, wrap) + RESET)
 }
 
 // ------------------------------------------------------------ panel --
@@ -866,18 +1061,29 @@ export function openAskUserPanel(
       invalidate() { /* frames are re-rendered on demand */ },
       render(width: number): string[] {
         const theme = deps.theme()
-        // Terminal-height-adaptive scroll window: the dock stacks with the
-        // editor/footer/transcript, so the budget subtracts the reserved rows
-        // (see askUserMaxVisibleForRows). Fake TUIs without a `terminal`
-        // degrade to ASK_USER_MAX_VISIBLE.
-        const maxVisible = askUserMaxVisibleForRows(
-          (deps.tui as { terminal?: { rows?: number } }).terminal?.rows,
-        )
         // Todos-panel box language: full-width bordered panel pinned above
         // the chat input. The inner views clip to the box's inner budget.
         const boxWidth = panelBoxWidth(width)
         const borderFg = ansiFg(theme.palette.borderDefault)
         const innerWidth = Math.max(2, boxWidth - 4)
+        // Folded strip (Ctrl+T): borders + ONE interior line — the transcript
+        // below stays readable while the question pends.
+        if (state.collapsed) {
+          return [
+            panelTopBorder(boxWidth, borderFg),
+            borderedRow(boxWidth, borderFg, renderCollapsedLine(theme, state, innerWidth)),
+            panelBottomBorder(boxWidth, borderFg),
+          ]
+        }
+        // Terminal-height-adaptive scroll window: the dock stacks with the
+        // editor/footer/transcript, so the budget subtracts the reserved rows
+        // (see askUserMaxVisibleForRows); the tab strip of a multi-question
+        // panel claims one extra interior line. Fake TUIs without a
+        // `terminal` degrade to ASK_USER_MAX_VISIBLE.
+        const maxVisible = askUserMaxVisibleForRows(
+          (deps.tui as { terminal?: { rows?: number } }).terminal?.rows,
+          state.phase === 'questions' && state.questions.length >= 2 ? 1 : 0,
+        )
         const inner = state.phase === 'review'
           ? renderReviewView(theme, state, innerWidth, maxVisible)
           : renderQuestionsView(theme, state, innerWidth, maxVisible)
@@ -889,11 +1095,38 @@ export function openAskUserPanel(
       },
       handleInput(data: string) {
         if (settled) return
+        const kb = getKeybindings()
+        // The fold toggle outranks everything — including the sentinel edit:
+        // folding commits the buffer first (the ↑↓ arrow-exit semantics), so
+        // a control key never types into the free-text buffer.
+        if (matchesKey(data, ASK_COLLAPSE_KEY)) {
+          Object.assign(state, toggleCollapse(state))
+          return
+        }
+        // While folded the panel is a passive strip: only the Esc chain stays
+        // live, so the user can still decline while reading the transcript.
+        if (state.collapsed) {
+          if (kb.matches(data, 'tui.select.cancel')) {
+            runCancelChain()
+          }
+          return
+        }
         if (state.customEditingFor !== null) {
           handleCustomInput(state, data)
           return
         }
-        const kb = getKeybindings()
+        // Question tabs (questions phase, multi-question only): ←/→ and
+        // Tab/Shift-Tab hop between the per-question tabs.
+        if (state.phase === 'questions' && state.questions.length >= 2) {
+          if (matchesKey(data, 'right') || matchesKey(data, 'tab')) {
+            Object.assign(state, switchFocus(state, 1))
+            return
+          }
+          if (matchesKey(data, 'left') || matchesKey(data, 'shift+tab')) {
+            Object.assign(state, switchFocus(state, -1))
+            return
+          }
+        }
         if (kb.matches(data, 'tui.select.up')) { moveCursor(state, -1); return }
         if (kb.matches(data, 'tui.select.down')) { moveCursor(state, 1); return }
         if (kb.matches(data, 'tui.select.confirm')) { handleConfirm(state); return }
@@ -905,14 +1138,7 @@ export function openAskUserPanel(
           return
         }
         if (kb.matches(data, 'tui.select.cancel')) {
-          const now = clock()
-          const prevState: AskUserState = { ...state }
-          const after = advanceDoubleEsc(state, now)
-          Object.assign(state, after)
-          if (didDoubleEscFire(prevState, state, now)) {
-            settle(buildDeclinedEnvelope(questions))
-            close()
-          }
+          runCancelChain()
           return
         }
       },
@@ -931,6 +1157,17 @@ export function openAskUserPanel(
 
     // Local mutator helpers — these write into the closed-over state via
     // Object.assign so the keyboard handler can use the immutable reducers.
+    function runCancelChain(): void {
+      const now = clock()
+      const prevState: AskUserState = { ...state }
+      const after = advanceDoubleEsc(state, now)
+      Object.assign(state, after)
+      if (didDoubleEscFire(prevState, state, now)) {
+        settle(buildDeclinedEnvelope(questions))
+        close()
+      }
+    }
+
     function moveCursor(s: AskUserState, direction: 1 | -1): void {
       if (s.phase === 'review') {
         const max = s.questions.length // last row is the submit pseudo-row
@@ -938,7 +1175,7 @@ export function openAskUserPanel(
         Object.assign(s, { cancelHint: false, attentionHint: null })
         return
       }
-      const rows = buildRowList(s.questions, s.perQuestion)
+      const rows = buildRowList(s.questions, s.perQuestion, s.focusQuestion)
       // nextSelectableIndex scans from `from + direction`, so it must receive
       // the raw cursor — passing cursor+direction double-stepped every press
       // (masked for years by the initial cursor parking on the header row).
@@ -957,7 +1194,7 @@ export function openAskUserPanel(
       // review phase they must be a no-op instead of relying on incidental
       // cursor invariants.
       if (s.phase !== 'questions') return
-      const rows = buildRowList(s.questions, s.perQuestion)
+      const rows = buildRowList(s.questions, s.perQuestion, s.focusQuestion)
       const anchor = rows[s.cursorIndex]
       if (anchor === undefined || anchor.kind === 'confirm' || anchor.questionIndex < 0) return
       const target = rowIndexForNumber(rows, anchor.questionIndex, digit)
@@ -969,11 +1206,14 @@ export function openAskUserPanel(
     function handleConfirm(s: AskUserState): void {
       if (s.phase === 'review') {
         if (s.reviewIndex < s.questions.length) {
-          const rows = buildRowList(s.questions, s.perQuestion)
+          // Jump back into the questions pane ON the reviewed question's tab.
+          const rows = buildRowList(s.questions, s.perQuestion, s.reviewIndex)
           const first = rows.findIndex(r => r.kind !== 'question-header' && r.questionIndex === s.reviewIndex)
           Object.assign(s, {
             phase: 'questions',
+            focusQuestion: s.reviewIndex,
             cursorIndex: first >= 0 ? first : s.cursorIndex,
+            questionsScroll: 0,
             cancelHint: false,
             attentionHint: null,
           })
@@ -988,7 +1228,7 @@ export function openAskUserPanel(
         return
       }
       // questions phase
-      const rows = buildRowList(s.questions, s.perQuestion)
+      const rows = buildRowList(s.questions, s.perQuestion, s.focusQuestion)
       const row = rows[s.cursorIndex]
       if (row === undefined) return
       if (row.kind === 'option' && row.optionIndex !== undefined) {
@@ -1002,6 +1242,18 @@ export function openAskUserPanel(
         if (canAutoSubmit(next)) {
           settle(buildAnswerEnvelope(s))
           close()
+        } else {
+          // Answering a single-select tab hops the focus to the next
+          // unanswered tab (or onto the Confirm row when everything is
+          // answered). multiSelect stays put for further toggles, and a
+          // deselect (toggle off) leaves the question unanswered, so it
+          // stays put too.
+          const answer = next.perQuestion[row.questionIndex]
+          const answered = answer !== undefined
+            && (answer.selected.length > 0 || (answer.custom ?? '').trim() !== '')
+          if (answered && s.questions[row.questionIndex]?.multiSelect !== true) {
+            Object.assign(s, advanceAfterAnswer(s, row.questionIndex))
+          }
         }
         return
       }
@@ -1058,8 +1310,8 @@ export function openAskUserPanel(
      * answer is now complete submits right away (this is the free-text
      * counterpart of the option fast path — without it, typing an answer into
      * a question with no options could never reach `settle`). Otherwise, in a
-     * multi-question layout the cursor hops to the next unanswered question's
-     * first row to cut confirmation cost.
+     * multi-question layout the tab focus hops to the next unanswered
+     * question (or onto the Confirm row) to cut confirmation cost.
      */
     function commitCustomAnswer(s: AskUserState, qi: number): void {
       if (s.customEditingFor !== null) return // edit not committed (empty buffer)
@@ -1070,9 +1322,7 @@ export function openAskUserPanel(
         return
       }
       if (s.questions.length >= 2) {
-        const rows = buildRowList(s.questions, s.perQuestion)
-        const target = nextUnansweredRow(rows, s.perQuestion, qi)
-        if (target >= 0) Object.assign(s, { cursorIndex: target, cancelHint: false, attentionHint: null })
+        Object.assign(s, advanceAfterAnswer(s, qi))
       }
     }
   })
