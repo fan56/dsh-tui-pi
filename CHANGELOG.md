@@ -4,6 +4,27 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-08-26
+
+### Changed
+
+- **Footer CH rate is now session-cumulative** (`src/session.ts`). The
+  cache-hit percentage describes the whole session's input traffic —
+  `Σ cacheRead ÷ (Σ input + Σ cacheRead + Σ cacheWrite)` — instead of
+  being segmented per provider/model route with counters reset on every
+  route change. Output tokens stay out of the denominator (cache hit is
+  an input-side metric; a cache write counts as this request's miss), so
+  a long answer can no longer dilute the rate, and switching model or
+  provider mid-session keeps the counters running. The session boundary
+  remains the only reset point: `/new` and a replayed `/resume` still
+  zero every incremental stat. Aligns the TUI footer with the dsh-feishu
+  card footer.
+- e2e: new `68-ask-user` scenario covering the one-question tabs flow
+  and the Ctrl+T fold, backed by a mock-llm server; the scenario carries
+  a host guard (outside the e2e container it warns and exits 0) because
+  it would otherwise persist its mock route into the live `~/.dsh`
+  settings.
+
 ## [0.23.0] - 2026-08-25
 
 ### Changed
