@@ -238,15 +238,6 @@ export class DshSessionBridge {
    */
   private lastUsage: TokenUsage | undefined
   /**
-   * Provider/model baseline from the latest `request/header` — the route the
-   * current CH accumulation belongs to. A VALUE change (either field)
-   * restarts the CH counters (see applyEvent); a same-value header (resume
-   * replays an identical header) keeps them. `undefined` until the first
-   * header arrives.
-   */
-  private headerProvider: string | undefined
-  private headerModel: string | undefined
-  /**
    * CJK-estimated tokens of every message appended AFTER the latest
    * assistant/message (user prompts, tool results, streamed text deltas) —
    * they enter the next request. Reset to 0 by the next assistant/message,
@@ -650,8 +641,6 @@ export class DshSessionBridge {
     this.stats.contextTokens = 0
     this.lastUsage = undefined
     this.pendingTokens = 0
-    this.headerProvider = undefined
-    this.headerModel = undefined
     this.agentViews.clear()
     this.childSessions.clear()
     this.childLogs.clear()
@@ -754,10 +743,6 @@ export class DshSessionBridge {
     this.stats.contextTokens = 0
     this.lastUsage = undefined
     this.pendingTokens = 0
-    // Replay rebuilds the header baseline from the persisted log itself, so
-    // the route-change segmentation matches the live run exactly.
-    this.headerProvider = undefined
-    this.headerModel = undefined
     const sessionId = this.sessionId
     for (const event of events) {
       if (event.type === 'assistant/chunk') continue
@@ -800,6 +785,12 @@ export class DshSessionBridge {
           this.stats.outputTokens += usage.outputTokens
           this.stats.cacheReadTokens += usage.cacheReadTokens ?? 0
           this.stats.cacheWriteTokens += usage.cacheWriteTokens ?? 0
+          // CH is session-cumulative by design: hit rate = ΣcacheRead /
+          // (Σinput + ΣcacheRead + ΣcacheWrite) over the whole session's
+          // input traffic — output tokens never enter (cache hit is an
+          // input-side metric), and a provider/model route change does NOT
+          // reset the counters; the rate describes the session, not one
+          // route's prompt cache.
           const billedInput = this.stats.inputTokens + this.stats.cacheReadTokens + this.stats.cacheWriteTokens
           this.stats.cacheHitRate = billedInput > 0
             ? (this.stats.cacheReadTokens / billedInput) * 100
@@ -827,32 +818,11 @@ export class DshSessionBridge {
         this.pendingTokens += estimateToolResultTokens(event.data)
         this.stats.contextTokens = this.contextTokens()
         break
-      case 'request/header': {
-        // A provider/model VALUE change restarts the cache-hit accounting:
-        // the new route owns a fresh prompt cache, so mixing its tokens into
-        // the previous route's totals would dilute both sides' rates. Only
-        // the CH accumulators reset — msgCount/toolCallCount/outputTokens/
-        // context occupancy are route-independent and keep running. A
-        // same-value header (a resume re-emits an identical header for the
-        // same content) must NOT reset; the first header (initial) only
-        // establishes the baseline. Replay feeds persisted header events
-        // through this same case, so a resumed session re-segments its CH
-        // history identically to the live run.
-        const { provider, model } = event.data.header.config
-        if (this.headerProvider === undefined || this.headerModel === undefined) {
-          this.headerProvider = provider
-          this.headerModel = model
-          break
-        }
-        if (provider === this.headerProvider && model === this.headerModel) break
-        this.headerProvider = provider
-        this.headerModel = model
-        this.stats.inputTokens = 0
-        this.stats.cacheReadTokens = 0
-        this.stats.cacheWriteTokens = 0
-        this.stats.cacheHitRate = undefined
+      case 'request/header':
+        // Route info only — CH accounting is session-cumulative (see the
+        // assistant/message case), so a provider/model change no longer
+        // restarts the cache counters here.
         break
-      }
       default:
         break
     }
