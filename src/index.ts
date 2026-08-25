@@ -44,6 +44,7 @@ import { openSettingsBrowser } from './settings.ts'
 import { openSkillsManagerPanel } from './skills-manager.ts'
 import { openLoginFlow, openLogoutFlow } from './login.ts'
 import { reloadPlugin } from './reload.ts'
+import { runSessionRetentionOnce } from './retention.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
@@ -102,6 +103,13 @@ export const inject = ['agents', 'commands', 'userQuestions', 'systemPrompt']
 
 export function apply(ctx: Context): void {
   let handle: TuiHandle | undefined
+  // Live-session handle for the startup janitor (assigned inside the
+  // render effect below, where the bridge is constructed): retention
+  // polls the CURRENT session id at selection time and again right
+  // before every directory removal, so it must read through a ref that
+  // the effect fills in — the same mutable-binding pattern as the
+  // applyThemeRef sinks below.
+  let bridgeRef: DshSessionBridge | undefined
   // APPEND_SYSTEM.md (pi's convention; dsh side ~/.dsh/APPEND_SYSTEM.md): a
   // user-editable file appended to the system prompt of the MAIN agent this
   // TUI creates - and to no subagent (an orchestrator identity riding on the
@@ -164,6 +172,34 @@ export function apply(ctx: Context): void {
       applyThemeRef?.(pref)
       applyFooterHintsRef?.(footerHints)
       applyIconSetRef?.(iconSet)
+    })
+    // Session log retention (async, fire-and-forget): prune jsonl session
+    // directories outside the retention window so the store the core only
+    // appends to never grows unbounded. Fired AFTER registerThemeSettings —
+    // the janitor resolves its knobs through the precedence chain
+    // (settings.yaml explicit > env > default), and reading settings means
+    // waiting for the namespace registration that just left; the bounded
+    // wait rides INSIDE the fire-and-forget pass (readSettings below), so
+    // the first frame is never blocked. Silent and non-fatal;
+    // process-global one-shot so a /reload re-running apply does not start
+    // a second pass (src/retention.ts).
+    void runSessionRetentionOnce({
+      getSessionId: () => {
+        const id = bridgeRef?.getSessionId()
+        return id === undefined ? undefined : String(id)
+      },
+      // An in-flight /resume target is as load-bearing as the current
+      // session: the load reads the target's log directory for its whole
+      // duration, and deleting it mid-flight would destroy the log being
+      // replayed (review Major 2 — the exclusion set is current ∪ pending).
+      getResumingSessionId: () => {
+        const id = bridgeRef?.getResumingSessionId()
+        return id === undefined ? undefined : String(id)
+      },
+      // Explicit dsh-tui.retention overrides from settings.yaml (the user
+      // layer — readSessionManagementExplicit waits for the registration
+      // bounded, so a settings-less deployment degrades to env/defaults).
+      readSettings: async () => (await readSessionManagementExplicit(ctx))?.retention,
     })
     const themePreference = await readThemePreference(ctx)
     const panelHeight = await readPanelHeightPreference(ctx)
@@ -572,6 +608,7 @@ export function apply(ctx: Context): void {
       },
     }
     const bridge = new DshSessionBridge(ctx, bridgeCallbacks)
+    bridgeRef = bridge
     // Subagent fine-grained control, all in-process (see subagent-policy.ts):
     // a tools.guard denies spawn-tool calls once `maxAgents` children run
     // (workflow fan-out, which bypasses the tool pipeline, is pruned on
