@@ -206,6 +206,16 @@ interface SessionPersistence {
  */
 const PREVIEW_SESSION_CAP = 30
 
+/**
+ * Visible-width cap for the DIR column. Fitted column widths scan EVERY
+ * candidate row, not just the visible ones, and real cwds span 12–67 chars
+ * (measured over the local session store; the 67-char deep repo path blew
+ * the column out to ~70 and starved the flex SESSION tail). 32 keeps the
+ * 90th-percentile cwd (~31 chars) fully visible and clips only the deep
+ * outliers — longer paths truncate with an ellipsis.
+ */
+const RESUME_DIR_CAP = 32
+
 /** Concurrent `inspect` calls while enriching previews. */
 const PREVIEW_CONCURRENCY = 6
 
@@ -458,13 +468,15 @@ export async function pickPersistedSession(
   })
 
   return new Promise<PickSessionResult>(resolve => {
-    // Auto layout: SESSION and UPDATED fit their content, DIR runs to the edge
-    // (previews are often CJK, so SESSION gets a wider cap).
+    // Auto layout: UPDATED and DIR fit their content, SESSION runs to the
+    // edge (previews are often CJK, so it gets the flexible tail). DIR is
+    // capped — fitted widths scan EVERY candidate row, so one deep cwd
+    // would otherwise eat the session column (see RESUME_DIR_CAP).
     const columns: readonly TableColumn[] = autoColumns(
       [
-        { key: 'session', title: 'Session', cap: 36 },
         { key: 'when', title: 'Updated', cap: 26 },
-        { key: 'dir', title: 'Dir' },
+        { key: 'dir', title: 'Dir', cap: RESUME_DIR_CAP },
+        { key: 'session', title: 'Session' },
       ],
       rows,
       (row, key) => row[key as 'session' | 'when' | 'dir'],
