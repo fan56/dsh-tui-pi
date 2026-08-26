@@ -21,7 +21,7 @@ import {
   type ModelRow,
 } from './model-list.ts'
 import { permissionItems } from './permission.ts'
-import { autoColumns, TablePanel, type TableColumn, type TablePanelOptions } from './panels.ts'
+import { autoColumns, PanelHost, TablePanel, type TableColumn, type TablePanelOptions } from './panels.ts'
 import { readModelPrefs, writeModelPref } from './theme-settings.ts'
 import type { ThemePreference, TuiTheme } from './theme/index.ts'
 
@@ -253,6 +253,12 @@ const MODEL_PICKER_FOOTER = '↑↓ navigate · Enter select · f favorite · h 
  * flag on the cursor model (list reorders live, panel stays open), `h`
  * toggles hidden, `/` engages a session-local substring filter. Every toggle
  * persists immediately through the dsh-tui settings namespace (best-effort).
+ *
+ * With `host` given (the profile editor embeds this picker inside its own
+ * overlay flow) the stage-1 table mounts and unmounts through the host's
+ * show-new-then-hide-old lifecycle instead of a bare mountPicker; callers
+ * then typically pass a no-op `restoreFocus` and re-show their own panel
+ * once the promise resolves.
  */
 export async function pickModel(
   ctx: Context,
@@ -260,6 +266,7 @@ export async function pickModel(
   theme: TuiTheme,
   current: ModelSelection | undefined,
   restoreFocus: () => void,
+  host?: PanelHost,
 ): Promise<ModelSelection | undefined> {
   const llm = ctx.get('llm')
   if (llm === undefined) return undefined
@@ -390,7 +397,16 @@ export async function pickModel(
       rebuild(key)
     }
 
-    const overlay = mountPicker(tui, theme, list)
+    const overlay = host !== undefined ? host.open(list) : mountPicker(tui, theme, list)
+
+    /**
+     * Tear the stage-1 table down: through the host when one owns the flow
+     * (it also disposes), or the bare overlay handle otherwise.
+     */
+    const closeStage1 = (): void => {
+      if (host !== undefined) host.close()
+      else overlay?.hide()
+    }
 
     // Enter settles stage 1 once; while the model info resolves (stage 2 not
     // up yet), a stray Esc or a second Enter must not run two concurrent
@@ -402,7 +418,7 @@ export async function pickModel(
       // The picker is going away — drop any pending status-row clear timer.
       clearTimeout(statusTimer)
       if (picked === undefined) {
-        overlay.hide()
+        closeStage1()
         restoreFocus()
         resolve(undefined)
         return
@@ -411,6 +427,13 @@ export async function pickModel(
       // stage-2 picker hides it only after it owns focus (no focus trip
       // through the editor between the two overlays).
       void pickEffortStage(picked).catch(() => { /* contained */ })
+    }
+
+    // A host.open failure already ran the host's error path (focus restored);
+    // just settle the promise so the caller resumes instead of hanging.
+    if (overlay === undefined) {
+      settle(undefined)
+      return
     }
 
     /**
@@ -433,7 +456,7 @@ export async function pickModel(
       } catch {
         // Resolution failure: fall back to the plain selection, keeping the
         // current effort on the same provider.
-        overlay.hide()
+        closeStage1()
         restoreFocus()
         resolve({
           provider: picked.provider,
@@ -445,7 +468,7 @@ export async function pickModel(
 
       if (efforts === undefined || efforts.length === 0) {
         // No selectable efforts on this route: same fallback as above.
-        overlay.hide()
+        closeStage1()
         restoreFocus()
         resolve({
           provider: picked.provider,
@@ -461,7 +484,7 @@ export async function pickModel(
       const chosen = await openEffortPicker(
         tui, theme, efforts, keptEffort ?? ('high' as ReasoningEffortId), restoreFocus,
         // Hide stage 1 only after stage 2 took focus.
-        () => overlay.hide(),
+        () => closeStage1(),
       )
       if (chosen === undefined) {
         // Escaping the effort stage is an escape from the whole pick.

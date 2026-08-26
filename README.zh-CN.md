@@ -231,6 +231,8 @@ https://github.com/user-attachments/assets/aa36be36-a508-4f53-ba85-efe0394dab11
 | `/permission` | 权限预设选择器（read-only / workspace-write / danger-full-access）。 |
 | `/theme` | 配色方案选择器（`auto` / `light` / `dark`），即时生效。 |
 | `/preset` | agent preset 选择器；`<name>` 直接切换，`next` 向前循环（同 `Tab`）。 |
+| `/profile` | 切换模型 profile——默认模型 + think level 与每个 subagent 的模型/think level 的具名快照。Enter 即应用到当前会话、持久化默认模型并写入 agent markdown 文件。内置 `work` / `personal` / `other`；存储于 `$DSH_HOME/model-profiles.json`。 |
+| `/profiles` | 配置模型 profile：编辑默认模型 / think / 各 subagent 模型（全是选择面板，模型选择复用 `/model` 的收藏/隐藏表格），`s` 把当前配置保存进 profile，`n` 新建，`r` 重命名，`d` 删除，`v` 查看。 |
 | `/agents` | 管理 agent markdown 文件 + subagent 上限（`maxAgents`、`maxRounds`）。 |
 | `/subagents` | 选择运行中/最近的 subagent 并观看其实时 transcript；在查看器内按 `Enter` 可对子代理 steer（见 Subagents）。 |
 | `/reload` | 从源码热重载插件（`pnpm build` 后执行），无需重启 dsh。 |

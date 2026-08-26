@@ -1,0 +1,353 @@
+/**
+ * Model-profile storage tests (src/model-profiles.ts) — the pure layer
+ * behind /profile + /profiles.
+ *
+ * Contract under test:
+ * - Reads never throw: missing / corrupt / wrong-version / empty documents
+ *   degrade to the seeded defaults (work / personal / other); good entries
+ *   survive beside bad ones; duplicate names (case-insensitive) keep the
+ *   first occurrence; a `current` pointing at a dropped profile is unset.
+ * - Writes are atomic: success leaves no tmp sibling and creates the
+ *   directory when missing; a failing write resolves an error message
+ *   instead of throwing.
+ * - Name ops: create / rename / delete validate uniqueness
+ *   (case-insensitive), keep the `current` pointer consistent and refuse to
+ *   delete the last profile.
+ * - Snapshot semantics: capture records every agent (inherit ones as EMPTY
+ *   entries); planAgentApply produces exactly the recorded overrides for
+ *   LISTED agents (absent keys clear the line) and skips unknown ones.
+ */
+
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+
+import {
+  DEFAULT_PROFILE_NAMES,
+  MODEL_PROFILES_VERSION,
+  captureAgentsSnapshot,
+  createProfile,
+  deleteProfile,
+  findProfile,
+  formatProfileRoute,
+  loadModelProfiles,
+  modelProfilesPath,
+  normalizeModelProfiles,
+  normalizeProfileName,
+  planAgentApply,
+  profileReviewLines,
+  renameProfile,
+  saveModelProfiles,
+  seedModelProfilesDoc,
+} from '../lib/model-profiles.js'
+
+// ------------------------------------------------------------------ helpers --
+
+/** Fresh isolated directory per test; caller cleans up via the returned fn. */
+function tempStore() {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-profiles-test-'))
+  return {
+    dir,
+    path: join(dir, 'model-profiles.json'),
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  }
+}
+
+/** Minimal AgentFile stand-in — only meta.name/model/thinking matter here. */
+function agentFile(name, model, thinking) {
+  return {
+    path: `/agents/${name}.md`,
+    meta: { name, deep: 1, ...(model !== undefined ? { model } : {}), ...(thinking !== undefined ? { thinking } : {}) },
+    body: 'prompt',
+  }
+}
+
+// -------------------------------------------------------------------- seeds --
+
+test('seed document carries the three default profiles, unconfigured', () => {
+  const doc = seedModelProfilesDoc()
+  assert.deepEqual(doc.profiles.map(p => p.name), [...DEFAULT_PROFILE_NAMES])
+  assert.equal(doc.current, undefined)
+  for (const profile of doc.profiles) {
+    assert.equal(profile.defaultModel, undefined)
+    assert.deepEqual(profile.agents, {})
+  }
+})
+
+test('modelProfilesPath joins the dsh home with the store file name', () => {
+  assert.equal(modelProfilesPath('/tmp/home'), '/tmp/home/model-profiles.json')
+})
+
+// --------------------------------------------------------------------- load --
+
+test('loadModelProfiles: missing file degrades to the seeded document', () => {
+  const { path, cleanup } = tempStore()
+  try {
+    assert.deepEqual(loadModelProfiles(path), seedModelProfilesDoc())
+  } finally {
+    cleanup()
+  }
+})
+
+test('loadModelProfiles: corrupt JSON degrades to the seeded document', () => {
+  const { path, cleanup } = tempStore()
+  try {
+    writeFileSync(path, '{not json')
+    assert.deepEqual(loadModelProfiles(path), seedModelProfilesDoc())
+  } finally {
+    cleanup()
+  }
+})
+
+test('loadModelProfiles: wrong version degrades to the seeded document', () => {
+  const { path, cleanup } = tempStore()
+  try {
+    writeFileSync(path, JSON.stringify({ version: 99, profiles: [{ name: 'x', agents: {} }] }))
+    assert.deepEqual(loadModelProfiles(path), seedModelProfilesDoc())
+  } finally {
+    cleanup()
+  }
+})
+
+test('loadModelProfiles: empty or non-array profiles re-seed the defaults', () => {
+  const { path, cleanup } = tempStore()
+  try {
+    writeFileSync(path, JSON.stringify({ version: MODEL_PROFILES_VERSION, profiles: [] }))
+    assert.deepEqual(loadModelProfiles(path), seedModelProfilesDoc())
+    writeFileSync(path, JSON.stringify({ version: MODEL_PROFILES_VERSION, profiles: 'nope' }))
+    assert.deepEqual(loadModelProfiles(path), seedModelProfilesDoc())
+  } finally {
+    cleanup()
+  }
+})
+
+test('normalizeModelProfiles: good profiles survive beside invalid ones', () => {
+  const doc = normalizeModelProfiles({
+    version: MODEL_PROFILES_VERSION,
+    current: 'work',
+    profiles: [
+      { name: 'work', defaultModel: { provider: 'p', model: 'm', reasoningEffort: 'high' }, agents: {} },
+      'garbage',
+      { agents: {} }, // no name → dropped
+      { name: '', agents: {} }, // empty name → dropped
+      { name: 'personal', agents: { duck: { model: 'q/r' }, bad: 'nope', ghost: { model: 7, thinking: 'low' } } },
+    ],
+  })
+  assert.deepEqual(doc.profiles.map(p => p.name), ['work', 'personal'])
+  assert.equal(doc.current, 'work')
+  assert.deepEqual(doc.profiles[0].defaultModel, { provider: 'p', model: 'm', reasoningEffort: 'high' })
+  // A wholly-invalid entry value drops the agent; a valid-but-partial one keeps the good keys.
+  assert.deepEqual(doc.profiles[1].agents, { duck: { model: 'q/r' }, ghost: { thinking: 'low' } })
+})
+
+test('normalizeModelProfiles: duplicate names keep the first occurrence', () => {
+  const doc = normalizeModelProfiles({
+    version: MODEL_PROFILES_VERSION,
+    profiles: [
+      { name: 'Work', agents: {} },
+      { name: 'work', agents: { duck: {} } },
+    ],
+  })
+  assert.equal(doc.profiles.length, 1)
+  assert.equal(doc.profiles[0].name, 'Work')
+  assert.deepEqual(doc.profiles[0].agents, {})
+})
+
+test('normalizeModelProfiles: a current pointing at a dropped profile is unset', () => {
+  const doc = normalizeModelProfiles({
+    version: MODEL_PROFILES_VERSION,
+    current: 'ghost',
+    profiles: [{ name: 'work', agents: {} }],
+  })
+  assert.equal(doc.current, undefined)
+})
+
+test('normalizeModelProfiles: empty agent entries are kept (explicit inherit)', () => {
+  const doc = normalizeModelProfiles({
+    version: MODEL_PROFILES_VERSION,
+    profiles: [{ name: 'work', agents: { duck: {} } }],
+  })
+  assert.deepEqual(doc.profiles[0].agents, { duck: {} })
+})
+
+// --------------------------------------------------------------------- save --
+
+test('saveModelProfiles round-trips through loadModelProfiles', () => {
+  const { path, cleanup } = tempStore()
+  try {
+    const doc = seedModelProfilesDoc()
+    doc.profiles[0].defaultModel = { provider: 'p', model: 'm', reasoningEffort: 'high' }
+    doc.profiles[0].agents = { duck: { model: 'q/r', thinking: 'low' } }
+    doc.current = 'work'
+    assert.equal(saveModelProfiles(path, doc), undefined)
+    assert.deepEqual(loadModelProfiles(path), doc)
+  } finally {
+    cleanup()
+  }
+})
+
+test('saveModelProfiles creates the directory when missing and leaves no tmp sibling', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-profiles-nested-'))
+  const path = join(dir, 'deep', 'model-profiles.json')
+  try {
+    assert.equal(saveModelProfiles(path, seedModelProfilesDoc()), undefined)
+    assert.deepEqual(readdirSync(join(dir, 'deep')), ['model-profiles.json'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('saveModelProfiles resolves an error message instead of throwing on failure', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-profiles-fail-'))
+  const path = join(dir, 'model-profiles.json')
+  try {
+    mkdirSync(path) // a directory where the file should be → write fails
+    const error = saveModelProfiles(path, seedModelProfilesDoc())
+    assert.equal(typeof error, 'string')
+    assert.notEqual(error, '')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------- name ops --
+
+test('findProfile matches names case-insensitively and ignores surrounding blanks', () => {
+  const doc = seedModelProfilesDoc()
+  assert.equal(findProfile(doc, '  WORK ')?.name, 'work')
+  assert.equal(findProfile(doc, 'nope'), undefined)
+})
+
+test('normalizeProfileName trims and rejects empty input', () => {
+  assert.equal(normalizeProfileName('  work '), 'work')
+  assert.equal(normalizeProfileName('   '), undefined)
+})
+
+test('createProfile appends an empty profile and rejects taken or empty names', () => {
+  const doc = seedModelProfilesDoc()
+  const { profile } = createProfile(doc, 'lab')
+  assert.equal(profile?.name, 'lab')
+  assert.deepEqual(profile?.agents, {})
+  assert.equal(doc.profiles.length, 4)
+  assert.match(createProfile(doc, 'lab').error ?? '', /already exists/)
+  assert.match(createProfile(doc, ' PERSONAL ').error ?? '', /already exists/)
+  assert.match(createProfile(doc, '  ').error ?? '', /must not be empty/)
+})
+
+test('renameProfile keeps the current pointer and rejects collisions', () => {
+  const doc = seedModelProfilesDoc()
+  doc.current = 'work'
+  assert.equal(renameProfile(doc, 'work', 'job'), undefined)
+  assert.equal(doc.profiles[0].name, 'job')
+  assert.equal(doc.current, 'job')
+  assert.equal(renameProfile(doc, 'job', 'job '), undefined) // self-trim is fine
+  assert.match(renameProfile(doc, 'job', 'personal') ?? '', /already exists/)
+  assert.match(renameProfile(doc, 'ghost', 'x') ?? '', /no profile named/)
+  assert.match(renameProfile(doc, 'personal', ' ') ?? '', /must not be empty/)
+})
+
+test('deleteProfile removes the profile, clears a dangling current and refuses the last one', () => {
+  const doc = seedModelProfilesDoc()
+  doc.current = 'personal'
+  assert.equal(deleteProfile(doc, 'personal'), undefined)
+  assert.equal(doc.current, undefined)
+  assert.equal(doc.profiles.length, 2)
+  assert.match(deleteProfile(doc, 'ghost') ?? '', /no profile named/)
+  deleteProfile(doc, 'work')
+  deleteProfile(doc, 'other')
+  assert.match(deleteProfile(doc, 'other') ?? '', /last profile/)
+})
+
+// ------------------------------------------------------- snapshot + apply --
+
+test('captureAgentsSnapshot records overrides and keeps inherit agents as empty entries', () => {
+  const snapshot = captureAgentsSnapshot([
+    agentFile('workhorse', 'p/m', 'high'),
+    agentFile('duck'),
+  ])
+  assert.deepEqual(snapshot, { workhorse: { model: 'p/m', thinking: 'high' }, duck: {} })
+})
+
+test('planAgentApply writes exactly the recorded overrides for listed agents', () => {
+  const profile = seedModelProfilesDoc().profiles[0]
+  profile.agents = {
+    workhorse: { model: 'p/m', thinking: 'low' },
+    duck: {}, // explicit inherit → both lines cleared
+  }
+  const planned = planAgentApply(profile, [agentFile('workhorse', 'old/x'), agentFile('duck', 'old/y', 'high'), agentFile('ghost', 'old/z')])
+  assert.equal(planned.length, 2)
+  assert.deepEqual(planned[0].updates, { model: 'p/m', thinking: 'low' })
+  assert.deepEqual(planned[1].updates, { model: null, thinking: null })
+  // Agents absent from the profile (ghost) are skipped entirely.
+  assert.equal(planned.some(({ agent }) => agent.meta.name === 'ghost'), false)
+})
+
+test('planAgentApply with an empty agents map plans nothing', () => {
+  const profile = seedModelProfilesDoc().profiles[0]
+  assert.deepEqual(planAgentApply(profile, [agentFile('workhorse', 'p/m')]), [])
+})
+
+// ----------------------------------------------------------------- display --
+
+test('formatProfileRoute renders unset, plain and think-suffixed routes', () => {
+  assert.equal(formatProfileRoute(undefined), '(not set)')
+  assert.equal(formatProfileRoute(undefined, 'keep'), 'keep')
+  assert.equal(formatProfileRoute({ provider: 'p', model: 'm' }), 'p/m')
+  assert.equal(formatProfileRoute({ provider: 'p', model: 'm', reasoningEffort: 'high' }), 'p/m · think high')
+})
+
+test('profileReviewLines lists the default model, every discovered agent and stale entries', () => {
+  const profile = seedModelProfilesDoc().profiles[0]
+  profile.defaultModel = { provider: 'p', model: 'm', reasoningEffort: 'high' }
+  profile.agents = {
+    workhorse: { model: 'q/r', thinking: 'low' },
+    duck: {},
+    ghost: { model: 'x/y' },
+  }
+  const lines = profileReviewLines(profile, [agentFile('workhorse', 'a/b'), agentFile('duck'), agentFile('newcomer')], true)
+  const text = lines.join('\n')
+  assert.match(lines[0], /Profile: work/)
+  assert.match(lines[0], /current/)
+  assert.match(text, /Default model: p\/m · think high/)
+  assert.match(text, /workhorse .* q\/r · think low/)
+  assert.match(text, /duck .* \(inherit\) · inherit/)
+  // A discovered agent the profile never recorded is called out, not faked.
+  assert.match(text, /newcomer.*not saved/)
+  // A recorded agent whose file disappeared is marked.
+  assert.match(text, /ghost \(file missing\)/)
+})
+
+test('profileReviewLines hints at capture when nothing is recorded', () => {
+  const profile = seedModelProfilesDoc().profiles[0]
+  const lines = profileReviewLines(profile, [])
+  assert.match(lines.join('\n'), /none recorded/)
+})
+
+// --------------------------------------------------------- end-to-end disk --
+
+test('a captured snapshot saved and reloaded plans the identical apply', () => {
+  const { path, cleanup } = tempStore()
+  try {
+    const doc = seedModelProfilesDoc()
+    const profile = doc.profiles[0]
+    profile.defaultModel = { provider: 'p', model: 'm' }
+    profile.agents = captureAgentsSnapshot([agentFile('workhorse', 'a/b', 'high'), agentFile('duck')])
+    saveModelProfiles(path, doc)
+
+    const reloaded = loadModelProfiles(path)
+    const reloadedProfile = findProfile(reloaded, 'work')
+    assert.deepEqual(reloadedProfile?.agents, profile.agents)
+    const planned = planAgentApply(reloadedProfile ?? { name: 'x', agents: {} }, [agentFile('workhorse', 'z/z'), agentFile('duck', 'z/z')])
+    assert.deepEqual(
+      planned.map(({ updates }) => updates),
+      [{ model: 'a/b', thinking: 'high' }, { model: null, thinking: null }],
+    )
+    // The raw document stays a small, versioned, human-readable JSON file.
+    const raw = JSON.parse(readFileSync(path, 'utf8'))
+    assert.equal(raw.version, MODEL_PROFILES_VERSION)
+  } finally {
+    cleanup()
+  }
+})
