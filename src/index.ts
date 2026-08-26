@@ -1016,7 +1016,13 @@ export function apply(ctx: Context): void {
       // Seeds entered through construction never published — replaying them
       // exactly once covers the stored log with zero overlap, zero gap.
       const session = resumed.agent.session
-      bridge.replay(session.events.filter(event => event.seq < session.firstLiveSeq))
+      // Adopted live sessions (attach arm): EVERY event in the log was
+      // published before this surface started tracking it — the firehose
+      // dropped all of them, so replay unfiltered or the transcript misses
+      // everything the other surface did. Cold resumes keep the firstLiveSeq
+      // filter (seeded history replays once; live events re-arrive).
+      const adopted = 'adopted' in resumed && resumed.adopted === true
+      bridge.replay(adopted ? session.events : session.events.filter(event => event.seq < session.firstLiveSeq))
       ui.requestRender()
       return {
         kind: 'success' as const,

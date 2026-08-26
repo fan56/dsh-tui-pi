@@ -241,7 +241,8 @@ test('after detachCurrent the fresh session starts from zero and still never res
 
 test('resume adopts an already-live session instead of resuming (feishu /new case)', async () => {
   const handlers = new Map()
-  const liveAgent = { id: 'live-1', session: { id: 'live-1' }, status: 'idle' }
+  const liveAgent = { id: 'live-1', session: { id: 'live-1' }, status: 'running' }
+  const statuses = []
   let resumeCalled = 0
   const ctx = {
     on(evt, fn) { handlers.set(evt, fn); return () => handlers.delete(evt) },
@@ -254,14 +255,18 @@ test('resume adopts an already-live session instead of resuming (feishu /new cas
     },
   }
   const bridge = new DshSessionBridge(ctx, {
-    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+    onLive: () => {}, onStatus: status => statuses.push(status), onEvent: () => {},
   })
   await bridge.ensureAgent()
   const handle = await bridge.resume(SessionId('live-1'))
   assert.equal(handle.agent, liveAgent, 'adopted the SAME live instance')
+  assert.equal(handle.adopted, true, 'the caller replays the FULL log for adopted sessions')
   assert.equal(resumeCalled, 0, 'agents.resume never reached')
   assert.equal(bridge.getSessionId(), 'live-1')
+  // Running-state sync: the adopted agent was mid-turn — no transition event
+  // will fire, so the attach must publish running itself.
+  assert.deepEqual(statuses, ['running'])
   // The adopted agent is not ours — detaching must not dispose it.
   await bridge.dispose()
-  assert.equal(liveAgent.status, 'idle')
+  assert.equal(liveAgent.status, 'running')
 })

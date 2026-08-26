@@ -710,10 +710,22 @@ export class DshSessionBridge {
       // re-run here; the bot-created agent carries its own model selection.
       const live = this.ctx.agents.get(SessionId(sessionId))
       if (live !== undefined) {
-        this.handle = { agent: live, dispose: async () => { /* owned by its creator */ } }
+        const adopted: AgentHandle & { adopted?: true } = {
+          agent: live,
+          dispose: async () => { /* owned by its creator */ },
+          adopted: true,
+        }
+        this.handle = adopted
         this.sessionId = sessionId
         this.trackedSessions.add(String(sessionId))
-        return this.handle
+        // Sync the running flag: an adopted agent may be mid-turn (the bot
+        // is driving it) and no status transition will fire — without this
+        // the TUI shows idle while the session works.
+        if (live.status === 'running') {
+          this.running = true
+          this.callbacks.onStatus('running')
+        }
+        return adopted
       }
       const resumed = await this.ctx.agents.resume({
         resumeSessionId: sessionId,
