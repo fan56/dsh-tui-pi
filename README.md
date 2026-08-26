@@ -201,6 +201,10 @@ There's no slash command to toggle the feature — it's always on, controlled by
 
 While the model is mid-turn it can pause and ask you structured questions via the `ask_user_question` tool (`@deepseek-ai/dsh-tool-ask-user`, mounted by this profile's bundle patch). The TUI hosts the answering side: a bordered panel pins itself directly above the chat input (the Todos-panel slot — no floating popup), takes the keyboard while open, the tool call stays pending until you answer, and your answers flow back to the model as a normal tool result.
 
+Watch the ask-user-question flow in action:
+
+https://github.com/user-attachments/assets/aa36be36-a508-4f53-ba85-efe0394dab11
+
 - **One question at a time, tabs for the rest** — with several questions the panel shows exactly ONE question block (header row + supporting `detail` text, option rows, plus a `Type something.` sentinel row for free text); a tab strip under the title (`[1] · 2✓ · 3` — brackets mark the focused tab, ✓ an answered one) folds the other questions away. `←`/`→` (and Tab/Shift-Tab) switch tabs; answering a single-select tab auto-advances to the next unanswered one (or onto the Confirm row once everything is answered). Single-select replaces on Enter; multi-select toggles (`●`/`○` marks) and never auto-advances.
 - **Ctrl+T folds the panel to a 3-line strip** — the questions panel can block the transcript it stacks on while you think; Ctrl+T collapses it to borders + one summary line (phase, tab position, answered count, how to expand) and the same key unfolds it. While folded only the toggle and the Esc chain act; folding mid-edit commits the buffer like the ↑↓ arrow-exit does.
 - **Single-question fast path** — a lone single-select question submits immediately on Enter: picking an option or committing typed free text both submit right away (a question without options is answered by typing alone). A lone multiSelect question instead gets a `⏎ Confirm answers` row so you can pick several options before submitting.
@@ -458,6 +462,17 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
   want phone-side participation; skip it for desktop-only setups. Never
   install the router into a **web** profile (the upstream web apiproxy
   registers its own provider and does not tolerate duplicates).
+
+### Feishu integration demo
+
+The dsh-feishu companion in action — dsh-tui-pi on the desktop and
+Feishu/Lark on the phone driving (and answering for) the same dsh session:
+
+https://github.com/user-attachments/assets/177e8839-523b-487e-b3d1-6d725cd8aba5
+
+https://github.com/user-attachments/assets/c0d7092f-deda-4443-b75a-2bc93bd30d86
+
+Demos courtesy of the [dsh-feishu Demos issue](https://github.com/fan56/dsh-feishu/issues/1).
 
 ---
 
