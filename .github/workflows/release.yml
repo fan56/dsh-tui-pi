@@ -27,16 +27,16 @@ jobs:
       contents: read
       id-token: write # npm provenance (OIDC)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           # No packageManager field in package.json; lockfileVersion 9.0.
           version: 10
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # engines: node >=22.19.0
           node-version: 22
@@ -100,7 +100,7 @@ jobs:
     permissions:
       contents: write # create the GitHub Release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full fetch so the annotated tag object is available for the
           # tag-message extraction step below.
@@ -120,7 +120,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Skip if the release was already published (e.g. via `gh release create`
-      # locally with a hand-crafted body — softprops/action-gh-release@v2
+      # locally with a hand-crafted body — softprops/action-gh-release@v3
       # would otherwise overwrite that body with the tag message).
       - name: Check if GitHub Release already exists
         id: check_release
@@ -137,6 +137,6 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.check_release.outputs.exists != 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.tag_message.outputs.BODY }}
