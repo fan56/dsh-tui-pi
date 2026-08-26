@@ -71,6 +71,9 @@ export interface ProfileDeps {
   setSelection(selection: ModelSelection): void
 }
 
+/** How long a `d` delete arm stays confirmable (double-press window). */
+const DELETE_CONFIRM_MS = 2500
+
 /** The profile table columns: NAME/MODEL/THINK fit (capped), AGENTS right-aligned tail. */
 function profileColumns(
   profiles: readonly ModelProfile[],
@@ -240,7 +243,9 @@ export async function openProfileManager(
   let tableStatus: string | undefined
   let fieldsStatus: string | undefined
   let agentsStatus: string | undefined
+  /** Armed double-press delete: profile name + when it was armed. */
   let pendingDelete: string | undefined
+  let pendingDeleteAt = 0
   let pendingPreselect = preselect
   let fieldsHandle: OverlayHandle | undefined
   let agentsHandle: OverlayHandle | undefined
@@ -287,7 +292,14 @@ export async function openProfileManager(
           d: () => {
             const profile = table.selectedRow()
             if (profile === undefined) return
-            if (pendingDelete === profile.name) {
+            // Double-press confirm, time-boxed: the armed state must NOT
+            // rebuild the table (a rebuild resets the cursor to row 0, so
+            // the confirming press would target a different profile), and
+            // the window expires so a stale arm can never fire one press
+            // after the user navigated away and back.
+            const armed = pendingDelete === profile.name
+              && Date.now() - pendingDeleteAt < DELETE_CONFIRM_MS
+            if (armed) {
               pendingDelete = undefined
               const error = deleteProfile(doc, profile.name)
               if (error !== undefined) tableStatus = `✘ ${error}`
@@ -295,11 +307,13 @@ export async function openProfileManager(
                 tableStatus = persistDoc() ?? `deleted profile "${profile.name}"`
                 markChanged(`-${profile.name}`)
               }
+              showTable()
             } else {
               pendingDelete = profile.name
+              pendingDeleteAt = Date.now()
               tableStatus = `press d again to delete "${profile.name}"`
+              tui.requestRender()
             }
-            showTable()
           },
         },
       })
