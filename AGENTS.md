@@ -76,19 +76,20 @@ startup-info.ts   startup config readout under the welcome banner (mcp
 model-list.ts     /model pure logic: row assembly (favorites pinned top, dim
                   Hidden section), filter matcher, toggle/hide-guard helpers —
                   data-in/data-out, unit-tested without a terminal
-model-profiles.ts /profile + /profiles pure storage: $DSH_HOME/
+model-profiles.ts /profile-switch + /profile-cfg pure storage: $DSH_HOME/
                   model-profiles.json (atomic, self-healing reads, seeded
                   work/personal/other), name ops (create/rename/delete),
                   captureAgentsSnapshot (save-current) + planAgentApply
                   (snapshot semantics: listed agents get exactly the recorded
                   overrides, absent keys clear, unlisted agents untouched)
-profile.ts        /profile switcher + /profiles manager (agents.ts overlay
-                  pattern): switcher applies a profile through the /model
-                  chain (bridge selection + persistDefaultModel) plus agent
-                  frontmatter writes; manager = roster table (n new, d
-                  double-press delete) → FieldPanel (m model via the SAME
-                  favorites/hidden pickModel table, t think, a agents
-                  sub-table, s save current, r rename, v review)
+profile.ts        /profile-switch switcher + /profile-cfg manager
+                  (agents.ts overlay pattern): switcher applies a profile
+                  through the /model chain (bridge selection +
+                  persistDefaultModel) plus agent frontmatter writes;
+                  manager = roster table (n new, d double-press delete) →
+                  FieldPanel (m model via the SAME favorites/hidden pickModel
+                  table, t think, a agents sub-table, s save current, r
+                  rename, v review)
 settings.ts       /settings browser: categories, schema walk, write chain,
                   add-provider flow (uses provider-catalog.ts)
 sessions.ts       /session panel + /resume picker (ordered by last update:

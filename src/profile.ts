@@ -1,15 +1,15 @@
 /**
- * `/profile` + `/profiles` — user model profiles: named snapshots of the
- * whole model configuration (default model + think level, every subagent's
- * model/thinking) that switch in one step between contexts like work and
- * personal.
+ * `/profile-switch` + `/profile-cfg` — user model profiles: named snapshots
+ * of the whole model configuration (default model + think level, every
+ * subagent's model/thinking) that switch in one step between contexts like
+ * work and personal.
  *
  * Layers, all on the select-panel framework (src/panels.ts):
  *
- *   1. `/profile` switcher (TablePanel) — one row per profile (name |
+ *   1. `/profile-switch` switcher (TablePanel) — one row per profile (name |
  *      default model | think | agents), Enter applies it to the live
  *      selection AND the agent markdown files, Esc backs out.
- *   2. `/profiles` manager (TablePanel) — the roster: n new, d delete
+ *   2. `/profile-cfg` manager (TablePanel) — the roster: n new, d delete
  *      (double-press confirm), Enter opens the profile's fields.
  *   3. profile fields (FieldPanel) — model / think / agents rows plus the
  *      s save-current, r rename, v review shortcuts.
@@ -176,7 +176,7 @@ async function applyProfile(
 }
 
 /**
- * Open the `/profile` switcher. Resolves the apply summary when a profile
+ * Open the `/profile-switch` switcher. Resolves the apply summary when a profile
  * was switched, or `undefined` when cancelled / nothing applied.
  */
 export async function openProfileSwitcher(
@@ -225,7 +225,7 @@ export async function openProfileSwitcher(
 }
 
 /**
- * Open the `/profiles` manager. Resolves a summary when anything changed,
+ * Open the `/profile-cfg` manager. Resolves a summary when anything changed,
  * or `undefined` when the manager closed untouched. `preselect` jumps
  * straight into one profile's fields window.
  */
@@ -328,7 +328,7 @@ export async function openProfileManager(
 
     const showFields = (profile: ModelProfile): void => {
       const content = [
-        `named model snapshot — switch with /profile · applies ${agentsDir()}`,
+        `named model snapshot — switch with /profile-switch · applies ${agentsDir()}`,
       ]
       const agentsSet = Object.keys(profile.agents).length
       const fields = [

@@ -233,8 +233,8 @@ Inspired by [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rp
 | `/permission` | Permission-preset picker (read-only / workspace-write / danger-full-access). |
 | `/theme` | Color-scheme picker (`auto` / `light` / `dark`). Applies immediately. |
 | `/preset` | Agent-preset picker; `<name>` switches directly, `next` cycles forward (same as `Tab`). |
-| `/profile` | Switch the model profile — one named snapshot of the default model + think level and every subagent's model/think level. Enter applies it to the live selection, the persisted default and the agent markdown files. Ships `work` / `personal` / `other`; profiles live in `$DSH_HOME/model-profiles.json`. |
-| `/profiles` | Configure model profiles: edit the default model / think / per-agent models (all pickers, model picks use the same favorites/hidden table as `/model`), `s` save the current configuration into the profile, `n` new, `r` rename, `d` delete, `v` review. |
+| `/profile-switch` | Switch the model profile — one named snapshot of the default model + think level and every subagent's model/think level. Enter applies it to the live selection, the persisted default and the agent markdown files. Ships `work` / `personal` / `other`; profiles live in `$DSH_HOME/model-profiles.json`. |
+| `/profile-cfg` | Configure model profiles: edit the default model / think / per-agent models (all pickers, model picks use the same favorites/hidden table as `/model`), `s` save the current configuration into the profile, `n` new, `r` rename, `d` delete, `v` review. |
 | `/agents` | Manage agent markdown files + subagent limits (`maxAgents`, `maxRounds`). |
 | `/subagents` | Pick a running/recent subagent and watch its live transcript; `Enter` inside the viewer steers the child (see Subagents). |
 | `/reload` | Hot-reload the plugin from source (after `pnpm build`) without restarting dsh. |

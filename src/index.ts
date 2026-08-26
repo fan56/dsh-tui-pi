@@ -892,12 +892,13 @@ export function apply(ctx: Context): void {
       handler: invocation => presetHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /preset')
 
-    // /profile + /profiles: user model profiles — named snapshots of the
-    // whole model configuration (default model + think level, every
+    // /profile-switch + /profile-cfg: user model profiles — named snapshots
+    // of the whole model configuration (default model + think level, every
     // subagent's model/thinking) that switch in one step between contexts
-    // like work and personal. `/profile` applies one; `/profiles` configures
-    // them (edit fields, save current, rename, review). Storage lives at
-    // $DSH_HOME/model-profiles.json, agent overrides in ~/.dsh/agents/*.md.
+    // like work and personal. `/profile-switch` applies one;
+    // `/profile-cfg` configures them (edit fields, save current, rename,
+    // review). Storage lives at $DSH_HOME/model-profiles.json, agent
+    // overrides in ~/.dsh/agents/*.md.
     const profileDeps: ProfileDeps = {
       getSelection: () => bridge.getSelection(),
       setSelection: selection => bridge.setSelection(selection),
@@ -909,12 +910,12 @@ export function apply(ctx: Context): void {
         ? { kind: 'success' as const, text: 'Profile unchanged.' }
         : { kind: 'success' as const, text: summary }
     }
-    commands.registerLocal('profile', profileHandler)
+    commands.registerLocal('profile-switch', profileHandler)
     ctx.effect(() => ctx.commands.register({
-      name: 'profile',
+      name: 'profile-switch',
       description: 'Switch the model profile (default model, subagent models, think levels)',
       handler: invocation => profileHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /profile')
+    }), 'dsh-tui-pi: /profile-switch')
 
     const profilesHandler: LocalCommandHandler = async rawInput => {
       const trimmed = rawInput?.trim() ?? ''
@@ -926,12 +927,12 @@ export function apply(ctx: Context): void {
         ? { kind: 'success' as const, text: 'Profiles unchanged.' }
         : { kind: 'success' as const, text: summary }
     }
-    commands.registerLocal('profiles', profilesHandler)
+    commands.registerLocal('profile-cfg', profilesHandler)
     ctx.effect(() => ctx.commands.register({
-      name: 'profiles',
+      name: 'profile-cfg',
       description: 'Configure model profiles (edit, save current, rename, review)',
       handler: invocation => profilesHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /profiles')
+    }), 'dsh-tui-pi: /profile-cfg')
 
     // /model-sync: discover models for CUSTOM provider routes — the
     // hand-declared llm-pi-ai profiles carrying a baseURL — straight from each

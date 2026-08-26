@@ -61,7 +61,7 @@ export interface ModelProfile {
 
 /** The whole stored document. */
 export interface ModelProfilesDoc {
-  /** Name of the profile the last /profile switch applied. */
+  /** Name of the profile the last /profile-switch applied. */
   current?: string
   profiles: ModelProfile[]
 }
@@ -313,7 +313,7 @@ export function profileReviewLines(
     if (!discovered.has(name)) rows.push({ name, entry, stale: true })
   }
   if (rows.length === 0) {
-    lines.push('Agents: none recorded — pick models under /profiles, or press s to save the current configuration')
+    lines.push('Agents: none recorded — pick models under /profile-cfg, or press s to save the current configuration')
     return lines
   }
   lines.push(`Agents (${String(rows.length)}):`)
