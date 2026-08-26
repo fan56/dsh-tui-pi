@@ -4,6 +4,23 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Mouse motion no longer leaks into the editor under cmux** (`src/mouse-mode.ts`,
+  `src/tui.ts`). pi-tui's multiplexer probe does not know cmux, so outside
+  tmux/zellij/screen it enables all-motion mouse tracking (`?1003h`); a
+  fast-moving pointer then coalesces into one stdin chunk that escapes
+  pi-tui's single-sequence SGR parsers and gets typed into the input editor
+  (visible as `^[<35;x;yM` runs). dsh now owns the terminal mouse modes —
+  `TuiAltScreen` is constructed with `mouse: false` and dsh writes the
+  sequences itself, enabled after a successful start and disabled on dispose.
+  New `DSH_TUI_MOUSE=buttons|all|off` (default `buttons`: the button-motion
+  set pi-tui itself picks under tmux — clicks, wheel, drag-selection, and
+  scrollbar dragging keep working; idle pointer movement reports nothing).
+  `all` restores the previous behavior, `off` disables mouse entirely.
+
 ## [0.24.1] - 2026-08-26
 
 ### Fixed

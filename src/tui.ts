@@ -37,6 +37,7 @@ import {
 import { CanvasTerminal } from './canvas-terminal.ts'
 import { CwdBorderEditor } from './editor.ts'
 import { mergeKeyBindings, resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
+import { mouseDisableSequence, mouseEnableSequence, resolveMouseMode } from './mouse-mode.ts'
 import { ansiBg, ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 
@@ -134,7 +135,17 @@ export interface TuiHandle {
 
 export function startTui(options: StartTuiOptions = {}): TuiHandle {
   const terminal = new CanvasTerminal(new ProcessTerminal())
-  const tui = new TuiAltScreen(terminal, true)
+  // Mouse tracking is dsh-owned, not pi-tui-owned: `mouse: false` keeps
+  // TuiAltScreen from writing its own mode set (its multiplexer probe does
+  // not know cmux, so outside tmux/zellij/screen it would enable all-motion
+  // tracking — whose idle-pointer event bursts escape its single-sequence
+  // parsers and get typed into the editor). dsh writes the sequences itself
+  // per DSH_TUI_MOUSE (default: button-motion, same trade-off pi-tui picks
+  // under tmux) — pi-tui's mouse handling (wheel, selection, scrollbar,
+  // right-click paste) parses and consumes events regardless of who enabled
+  // the terminal mode.
+  const mouseMode = resolveMouseMode()
+  const tui = new TuiAltScreen(terminal, true, undefined, { mouse: false })
   // Mutable theme ref: `applyTheme` swaps it and every later read (handle
   // getter, baked closures below) observes the new bundle on the next call.
   let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
@@ -320,6 +331,10 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   const handle: TuiHandle = {
     dispose() {
       for (const notice of [...shellNotices]) retireNotice(notice)
+      // dsh enabled the mouse modes, so dsh disables them — TuiAltScreen was
+      // constructed with mouse:false and must not be asked to clean up modes
+      // it never wrote. Disable before stop() leaves the alt screen.
+      terminal.write(mouseDisableSequence(mouseMode))
       tui.stop()
     },
     showNotice(text: string): void {
@@ -479,6 +494,9 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
     try { tui.stop() } catch { /* best effort */ }
     throw error
   }
+  // Enabled only after a successful start: if start() threw, dsh never wrote
+  // the enable sequence, so there is nothing to roll back on this path.
+  terminal.write(mouseEnableSequence(mouseMode))
 
   return handle
 }

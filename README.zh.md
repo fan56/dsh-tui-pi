@@ -249,6 +249,7 @@ GitHub light / GitHub dark 配色方案，运行时热切换：
 - `/theme` —— 实时选择器，整个屏幕重绘（含背景）。
 - `DSH_TUI_THEME=light|dark` —— 环境变量钉选，优先于偏好设置。
 - `DSH_TUI_TRANSPARENT=1` —— 透明画布（终端背景可见）。
+- `DSH_TUI_MOUSE=buttons|all|off` —— 终端鼠标追踪模式（默认 `buttons`：点击/滚轮/拖选保留、空闲移动不上报；`all` = pi-tui 全动作追踪，cmux 下其事件突发可能漏进输入框；`off` = 完全关闭）。
 - `auto` 模式自动检测终端并跟随实时明暗切换。
 
 全屏画布背景随包内置 —— 由写流装饰器（`src/canvas-terminal.ts`）用主题色

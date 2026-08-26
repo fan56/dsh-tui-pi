@@ -270,6 +270,7 @@ GitHub light / GitHub dark palettes, hot-switchable at runtime:
 - `/theme` — live picker; the whole screen repaints including background.
 - `DSH_TUI_THEME=light|dark` — env pin that wins over preference.
 - `DSH_TUI_TRANSPARENT=1` — see-through canvas (terminal background shows through).
+- `DSH_TUI_MOUSE=buttons|all|off` — terminal mouse tracking mode (default `buttons`: clicks/wheel/drag keep working, idle pointer movement reports nothing; `all` = pi-tui's all-motion tracking, whose bursts can leak into the editor under cmux; `off` = no mouse).
 - `auto` mode detects the terminal and follows live light/dark switches.
 
 The full-screen canvas background ships inside the package — a write-stream
