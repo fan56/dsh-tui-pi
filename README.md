@@ -441,6 +441,26 @@ dsh --profile tui        # or: dsh-tui-pi (bin shim)
 
 ---
 
+## Companion plugins (optional)
+
+- **[@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router)**
+  (ships as a default dependency). Owns the single `ctx.userQuestions`
+  provider slot and fans every `ask_user_question` out to the interaction
+  surfaces bound to the asking session — first answer wins, losing surfaces
+  dismiss automatically. Activate it by listing `@aiwayds/dsh-ask-router`
+  in the profile's `bundles` **before any UI bundle**; without it the TUI
+  panel simply owns questions by itself.
+- **[@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu)** (optional).
+  Drives an existing dsh session from Feishu/Lark on the phone: round cards,
+  interactive `/resume` picker, and an ask-user **card surface** that joins
+  the router's fan-out — ask on the desktop, answer on the phone, or both
+  render and the first answer wins. Install into the same profile when you
+  want phone-side participation; skip it for desktop-only setups. Never
+  install the router into a **web** profile (the upstream web apiproxy
+  registers its own provider and does not tolerate duplicates).
+
+---
+
 ## Dev
 
 ```sh
