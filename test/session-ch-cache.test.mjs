@@ -24,6 +24,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { DshSessionBridge } from '../lib/session.js'
 
 /** A minimal harness: capture `session/event`, expose the main session. */
@@ -234,4 +235,33 @@ test('after detachCurrent the fresh session starts from zero and still never res
   assert.equal(s.inputTokens, 140, 'headers never touch the totals')
   assert.equal(s.cacheHitRate, (1860 / 2000) * 100)
   await bridge.dispose()
+})
+
+// --------------------------------------------------- resume attach arm --
+
+test('resume adopts an already-live session instead of resuming (feishu /new case)', async () => {
+  const handlers = new Map()
+  const liveAgent = { id: 'live-1', session: { id: 'live-1' }, status: 'idle' }
+  let resumeCalled = 0
+  const ctx = {
+    on(evt, fn) { handlers.set(evt, fn); return () => handlers.delete(evt) },
+    get() { return undefined },
+    agents: {
+      // dsh refuses resuming a live session — the attach arm must avoid it.
+      get(id) { return String(id) === 'live-1' ? liveAgent : undefined },
+      async create() { return { agent: { session: { id: 'root' } }, async dispose() {} } },
+      async resume() { resumeCalled += 1; throw new Error('cannot prepare session while it is live') },
+    },
+  }
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const handle = await bridge.resume(SessionId('live-1'))
+  assert.equal(handle.agent, liveAgent, 'adopted the SAME live instance')
+  assert.equal(resumeCalled, 0, 'agents.resume never reached')
+  assert.equal(bridge.getSessionId(), 'live-1')
+  // The adopted agent is not ours — detaching must not dispose it.
+  await bridge.dispose()
+  assert.equal(liveAgent.status, 'idle')
 })

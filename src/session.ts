@@ -700,6 +700,21 @@ export class DshSessionBridge {
       // Same seeding rule as createSession: a live /model or /think choice
       // survives the resume; otherwise the composed default applies.
       this.seedSelectionFromDefault()
+      // Attach arm: the session may already be LIVE in this process — e.g.
+      // created by the feishu bot's /new or resumed by it. agents.resume
+      // refuses live sessions ("cannot prepare session while it is live"),
+      // so adopt the SAME agent instead: both surfaces drive one instance.
+      // The handle is deliberately not ours (no-op dispose) — the creator's
+      // lifecycle rules apply. The create/resume setup installers
+      // (surface marker, model selection, APPEND_SYSTEM, spawn fence) do not
+      // re-run here; the bot-created agent carries its own model selection.
+      const live = this.ctx.agents.get(SessionId(sessionId))
+      if (live !== undefined) {
+        this.handle = { agent: live, dispose: async () => { /* owned by its creator */ } }
+        this.sessionId = sessionId
+        this.trackedSessions.add(String(sessionId))
+        return this.handle
+      }
       const resumed = await this.ctx.agents.resume({
         resumeSessionId: sessionId,
         agentOptions: this.selection ?? {},

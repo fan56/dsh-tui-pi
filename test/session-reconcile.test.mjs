@@ -819,6 +819,7 @@ function makeResumeHarness(failWith) {
     get() { return undefined },
     sessions: { get: () => undefined },
     agents: {
+      get() { return undefined }, // no live sessions — the attach arm never fires
       async create() { return { agent: { session: { id: 'root-session' } }, async dispose() {} } },
       async resume(options) {
         resumes.push(options)
