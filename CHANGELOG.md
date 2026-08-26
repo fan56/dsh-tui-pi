@@ -6,6 +6,30 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-26
+
+### Added
+
+- **The ask-user panel joins multi-surface routing** (`src/ask-user.ts`,
+  `src/index.ts`). With `@aiwayds/dsh-ask-router` installed,
+  `registerAskUserProvider` registers the panel as a router surface —
+  claim matches the asking agent's session, and `settled()` closes a
+  losing panel through the existing abort path — instead of taking the
+  single provider slot; every ask then renders on all claiming surfaces
+  and the first answer wins. Without the router the standalone provider
+  path is unchanged. `AskUserPanelDeps` gains an optional `getSessionId`
+  wired to the bridge.
+- **Resume adopts an already-live session** (`src/session.ts`). A session
+  created (or resumed) by another surface in the same process — the feishu
+  bot's `/new`, for example — is live in the agent registry, and
+  `agents.resume` refuses live sessions, so `/resume` could never enter
+  it. `resume()` now checks the registry first and adopts the live agent:
+  both surfaces drive one instance, and the adopted handle's dispose is a
+  no-op because the agent belongs to its creator. The create/resume setup
+  installers do not re-run on attach (a bot-created agent carries its own
+  model selection), so `/model` hot-switching and APPEND_SYSTEM do not
+  apply to such sessions yet.
+
 ### Fixed
 
 - **Mouse motion no longer leaks into the editor under cmux** (`src/mouse-mode.ts`,
