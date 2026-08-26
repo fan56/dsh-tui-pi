@@ -6,6 +6,20 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-08-26
+
+### Added
+
+- **`@aiwayds/dsh-ask-router` is now a default dependency** (`package.json`).
+  The router owns the single user-questions provider slot and fans every ask
+  out to the interaction surfaces bound to the asking session (TUI panel,
+  Feishu card, ...) — first answer wins. It is useless outside this plugin's
+  ecosystem, so it ships along; it still must be listed under the profile's
+  `bundles` (before the UI bundles) to activate, and its absence changes
+  nothing (the panel falls back to owning the slot directly). The Feishu
+  companion (`@aiwayds/dsh-feishu`) remains an OPTIONAL surface: install it
+  when phone-side cards should join the routing.
+
 ## [0.25.0] - 2026-08-26
 
 ### Added
