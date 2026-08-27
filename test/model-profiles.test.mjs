@@ -20,13 +20,14 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 import {
   DEFAULT_PROFILE_NAMES,
   MODEL_PROFILES_VERSION,
+  PROFILE_PIN_FILE,
   captureAgentsSnapshot,
   createProfile,
   deleteProfile,
@@ -36,11 +37,16 @@ import {
   modelProfilesPath,
   normalizeModelProfiles,
   normalizeProfileName,
+  parseProfilePinText,
   planAgentApply,
   profileReviewLines,
+  readNearestProfilePin,
+  removeProfilePin,
   renameProfile,
+  resolvePinnedProfile,
   saveModelProfiles,
   seedModelProfilesDoc,
+  writeProfilePin,
 } from '../lib/model-profiles.js'
 
 // ------------------------------------------------------------------ helpers --
@@ -349,5 +355,88 @@ test('a captured snapshot saved and reloaded plans the identical apply', () => {
     assert.equal(raw.version, MODEL_PROFILES_VERSION)
   } finally {
     cleanup()
+  }
+})
+
+// ------------------------------------------------------------ directory pin --
+
+test('parseProfilePinText: first usable line wins, comments and blanks skipped', () => {
+  assert.deepEqual(parseProfilePinText('work\n'), { name: 'work' })
+  assert.deepEqual(parseProfilePinText('\n# a comment\n  personal  \n'), { name: 'personal' })
+  assert.match(parseProfilePinText('# only comments\n').error ?? '', /no profile name/)
+  assert.match(parseProfilePinText('').error ?? '', /no profile name/)
+})
+
+test('writeProfilePin + readNearestProfilePin: nearest file up the tree wins', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-pin-'))
+  const child = join(dir, 'sub', 'deep')
+  mkdirSync(child, { recursive: true })
+  try {
+    assert.equal(readNearestProfilePin(child), undefined) // nothing anywhere
+    writeProfilePin(dir, 'work')
+    const fromRoot = readNearestProfilePin(dir)
+    assert.equal(fromRoot?.name, 'work')
+    assert.equal(fromRoot?.path, join(dir, PROFILE_PIN_FILE))
+    // A pin added in an ancestor is visible to deeper start dirs immediately
+    // (no memo — hand edits take effect on the next session).
+    assert.equal(readNearestProfilePin(child)?.name, 'work')
+    // A deeper file overrides the parent's.
+    writeProfilePin(child, 'personal')
+    const deep = readNearestProfilePin(child)
+    assert.equal(deep?.name, 'personal')
+    assert.equal(deep?.path, join(child, PROFILE_PIN_FILE))
+    // And removing it falls through to the ancestor's pin again.
+    assert.equal(removeProfilePin(child, 'personal'), undefined)
+    assert.equal(readNearestProfilePin(child)?.name, 'work')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('readNearestProfilePin tolerates an unreadable or garbage pin file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-pin-bad-'))
+  try {
+    writeFileSync(join(dir, PROFILE_PIN_FILE), '\n   \n# just a comment\n')
+    assert.equal(readNearestProfilePin(dir), undefined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('resolvePinnedProfile returns the named profile, undefined when unknown/unbound', () => {
+  const doc = seedModelProfilesDoc()
+  findProfile(doc, 'work').defaultModel = { provider: 'p', model: 'm' }
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-pin-res-'))
+  try {
+    assert.equal(resolvePinnedProfile(doc, dir), undefined)
+    writeProfilePin(dir, 'work')
+    assert.equal(resolvePinnedProfile(doc, dir)?.name, 'work')
+    writeProfilePin(dir, 'ghost') // profile no longer exists
+    assert.equal(resolvePinnedProfile(doc, dir), undefined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('removeProfilePin removes a simple matching file and refuses everything else', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-pin-rm-'))
+  const path = join(dir, PROFILE_PIN_FILE)
+  try {
+    // Missing file → fs error surfaced as a message.
+    assert.match(removeProfilePin(dir, 'work') ?? '', /ENOENT|no such/i)
+    // Name must match (case-insensitive); a different name refuses.
+    writeProfilePin(dir, 'work')
+    assert.equal(readFileSync(path, 'utf8'), 'work\n')
+    assert.match(removeProfilePin(dir, 'personal') ?? '', /refusing|edited by hand/)
+    assert.ok(existsSync(path), 'the refusal left the file in place')
+    assert.equal(removeProfilePin(dir, 'WORK'), undefined) // case-insensitive match removes
+    assert.equal(existsSync(path), false)
+    // A hand-decorated file (comments/extra lines) is never auto-removed.
+    writeProfilePin(dir, 'work')
+    writeFileSync(path, '# my pin\nwork\nextra line\n')
+    assert.match(removeProfilePin(dir, 'work') ?? '', /edited by hand/)
+    assert.ok(readFileSync(path, 'utf8').includes('extra line'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })

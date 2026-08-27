@@ -23,8 +23,8 @@
  *   entries, so a round-trip switch restores inherit where inherit was.
  */
 
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { dshHome } from './append-system.ts'
 import type { AgentFile, FrontmatterUpdates } from './agent-manager.ts'
 
@@ -323,4 +323,122 @@ export function profileReviewLines(
     lines.push(`  ${name}${stale ? ' (file missing)' : ''} · ${model} · ${think}`)
   }
   return lines
+}
+
+// ------------------------------------------------------- directory pin (.dsh-profile) --
+//
+// A workspace can pin itself to a profile with a `.dsh-profile` dot file: the
+// nearest one found walking UP from the process cwd wins, so a subdirectory
+// (or a linked worktree) may drop its own file to override a parent's. New
+// sessions then assemble their initial model selection from that profile
+// instead of the global agent-default-model — per-tree isolation without
+// touching settings.yaml. The file is plain text: blank lines and `#`
+// comments are skipped; the first remaining line, trimmed, is the profile
+// name.
+
+/** The workspace pin file name (`.nvmrc` convention). */
+export const PROFILE_PIN_FILE = '.dsh-profile'
+
+/**
+ * Parse the text of one `.dsh-profile` file. Returns `{ name }` — the first
+ * usable line, trimmed — or an error when blank/comment-only.
+ */
+export function parseProfilePinText(text: string): { name?: string; error?: string } {
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (line === '' || line.startsWith('#')) continue
+    const normalized = normalizeProfileName(line)
+    if (normalized === undefined) continue
+    return { name: normalized }
+  }
+  return { error: 'no profile name in file' }
+}
+
+export interface ProfilePin {
+  /** Trimmed profile name from the file. */
+  name: string
+  /** Absolute path of the file the name came from. */
+  path: string
+}
+
+/**
+ * Walk up from `startDir` to the filesystem root looking for the nearest
+ * `.dsh-profile`. No memoization: the walk costs one stat per ancestor level,
+ * runs only at session assembly, and staying uncached means a hand-added or
+ * removed pin takes effect on the very next session in this process.
+ * Returns `undefined` when nothing is found.
+ */
+export function readNearestProfilePin(startDir: string): ProfilePin | undefined {
+  let current = resolve(startDir)
+  // Bounded by the directory depth; `/`'s parent is itself.
+  while (true) {
+    const candidate = join(current, PROFILE_PIN_FILE)
+    try {
+      if (existsSync(candidate)) {
+        const parsed = parseProfilePinText(readFileSync(candidate, 'utf8'))
+        if (parsed.name !== undefined) return { name: parsed.name, path: candidate }
+      }
+    } catch {
+      // An unreadable file is treated as absent — never block session create.
+    }
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  return undefined
+}
+
+/**
+ * Resolve the pinned profile for `startDir`: find the nearest pin file and
+ * look its name up in `doc`. Resolves `undefined` when unbound, the file is
+ * broken, or the named profile no longer exists — binding stays best-effort,
+ * the caller falls back to the global default.
+ */
+export function resolvePinnedProfile(doc: ModelProfilesDoc, startDir: string): ModelProfile | undefined {
+  const pin = readNearestProfilePin(startDir)
+  return pin === undefined ? undefined : findProfile(doc, pin.name)
+}
+
+/**
+ * Write `<dir>/.dsh-profile` naming `profileName`. Drops the miss memo so a
+ * same-process session create sees it. Resolves an error message on failure,
+ * else `undefined`.
+ */
+export function writeProfilePin(dir: string, profileName: string): string | undefined {
+  const path = join(dir, PROFILE_PIN_FILE)
+  try {
+    writeFileSync(path, `${profileName}\n`)
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
+/**
+ * Remove `<dir>/.dsh-profile` — but only when we understand it fully: its
+ * sole content must be one entry line naming exactly `expectName`. A
+ * hand-decorated file (comments, extra entries) or a different name is
+ * refused so `p` can never silently destroy manual edits. Resolves an error
+ * message on refusal or fs failure, else `undefined`.
+ */
+export function removeProfilePin(dir: string, expectName: string): string | undefined {
+  const path = join(dir, PROFILE_PIN_FILE)
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(
+    line => line !== '' && !line.startsWith('#'))
+  const firstName = lines.length === 1 ? normalizeProfileName(lines[0]) : undefined
+  if (firstName === undefined || firstName.toLowerCase() !== expectName.trim().toLowerCase()) {
+    return `refusing to remove ${PROFILE_PIN_FILE} — edited by hand (remove it yourself)`
+  }
+  try {
+    rmSync(path)
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
 }

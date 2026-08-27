@@ -13,12 +13,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, type TokenUsage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ReasoningEffortId, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { settingsNamespace, SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
 import type { AgentView } from './dsh-events.ts'
 import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor, isTuiPluginInjection } from './dsh-events.ts'
+import { loadModelProfiles, modelProfilesPath, resolvePinnedProfile } from './model-profiles.ts'
 import { installSpawnToolFence, markTuiSurface } from './subagent-policy.ts'
 import type { PendingPromptView } from './steer-flow.ts'
 import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
@@ -318,17 +319,10 @@ export class DshSessionBridge {
   constructor(ctx: Context, callbacks: BridgeCallbacks) {
     this.ctx = ctx
     this.callbacks = callbacks
-    // Footer shows provider/model from the very first frame — read the
-    // composed default selection eagerly; a session created later refreshes it.
-    const defaultModel = ctx.get('agentDefaultModel')
-    const sel = defaultModel?.currentSelection()
-    this.selection = sel === undefined
-      ? undefined
-      : {
-          provider: sel.provider,
-          model: sel.model,
-          ...sel.reasoningEffort === undefined ? {} : { reasoningEffort: sel.reasoningEffort },
-        }
+    // Footer shows provider/model from the very first frame — read the cwd
+    // pin (if any) else the composed default selection eagerly; a session
+    // created later refreshes it the same way.
+    this.selection = this.pinnedRouteSelection() ?? this.composedDefaultSelection()
     this.disposers.push(ctx.on('session/event', (session: Session, event: SessionEvent) => {
       const sessionKey = String(session.id)
       // Discover subagent children by session header — the deployment may
@@ -1192,25 +1186,55 @@ export class DshSessionBridge {
   }
 
   /**
-   * Seed `selection`/`selectionRef` from the composed default — without
-   * clobbering a live user choice: `/model`/`/think` before the first prompt
-   * write the ref, and that choice must survive session creation.
+   * Seed `selection`/`selectionRef` for a new session. Precedence:
+   * 1. a `.dsh-profile` directory pin found up the cwd tree — the pin means
+   *    "this tree always starts on X", so it deliberately outranks even a
+   *    leftover in-process /model choice;
+   * 2. the composed global default (`agent-default-model`), which must not
+   *    clobber a live user choice: `/model`/`/think` before the first prompt
+   *    write the ref, and that choice survives session creation (pin absent).
    */
   private seedSelectionFromDefault(): void {
+    const pinned = this.pinnedRouteSelection()
+    if (pinned !== undefined) {
+      this.selection = pinned
+      this.selectionRef.current = { ...pinned }
+      return
+    }
     if (this.selectionRef.current !== undefined) {
       this.selection = { ...this.selectionRef.current }
       return
     }
-    const defaultModel = this.ctx.get('agentDefaultModel')
-    const selection = defaultModel?.currentSelection()
-    this.selection = selection === undefined
+    this.selection = this.composedDefaultSelection()
+    this.selectionRef.current = this.selection === undefined ? undefined : { ...this.selection }
+  }
+
+  /** The nearest `.dsh-profile` pin as a selection — best-effort, never throws. */
+  private pinnedRouteSelection(): ModelSelection | undefined {
+    try {
+      const pinned = resolvePinnedProfile(loadModelProfiles(modelProfilesPath()), process.cwd())
+      const route = pinned?.defaultModel
+      if (pinned === undefined || route === undefined) return undefined
+      return {
+        provider: route.provider,
+        model: route.model,
+        ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort as ReasoningEffortId }),
+      }
+    } catch {
+      return undefined
+    }
+  }
+
+  /** The composed global default (`agent-default-model`) as a plain selection. */
+  private composedDefaultSelection(): ModelSelection | undefined {
+    const sel = this.ctx.get('agentDefaultModel')?.currentSelection()
+    return sel === undefined
       ? undefined
       : {
-          provider: selection.provider,
-          model: selection.model,
-          ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+          provider: sel.provider,
+          model: sel.model,
+          ...sel.reasoningEffort === undefined ? {} : { reasoningEffort: sel.reasoningEffort },
         }
-    this.selectionRef.current = this.selection === undefined ? undefined : { ...this.selection }
   }
 
   /** Create the agent with the composed default model selection. */
