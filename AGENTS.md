@@ -81,11 +81,16 @@ model-profiles.ts /profile-switch + /profile-cfg pure storage: $DSH_HOME/
                   work/personal/other), name ops (create/rename/delete),
                   captureAgentsSnapshot (save-current) + planAgentApply
                   (snapshot semantics: listed agents get exactly the recorded
-                  overrides, absent keys clear, unlisted agents untouched)
+                  overrides, absent keys clear, unlisted agents untouched);
+                  directory pins — `.dsh-profile` dot file discovered walking
+                  up from cwd (nearest wins), write/remove with a hand-edit
+                  refusal guard
 profile.ts        /profile-switch switcher + /profile-cfg manager
                   (agents.ts overlay pattern): switcher applies a profile
                   through the /model chain (bridge selection +
-                  persistDefaultModel) plus agent frontmatter writes;
+                  persistDefaultModel) plus agent frontmatter writes,
+                  `p` pins/unpins the cwd (.dsh-profile — new sessions in
+                  this tree auto-load the pinned profile);
                   manager = roster table (n new, d double-press delete) →
                   FieldPanel (m model via the SAME favorites/hidden pickModel
                   table, t think, a agents sub-table, s save current, r
@@ -192,9 +197,9 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **943 tests** across 50 files (verified by
-  `node --test test/*.test.mjs` after the model-profiles feature (+25;
-  the v0.26.0 baseline was 918)). Per-file totals
+- `pnpm test` must stay green: **948 tests** across 50 files (verified by
+  `node --test test/*.mjs`; the v0.26.0 baseline was 918, model-profiles
+  added 25, the directory pin added 5). Per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals in
@@ -210,7 +215,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   theme-settings 15 + commands 9 + text 15 + font-detect 8 + quotes 7 +
   icons 7 + reload 6 + append-system 9 + install-font 6 + tokens 6 +
   queue-panel 6 + schema-model 3 + usage 26 + preset 12 + dev-upgrade 8 +
-  model-list 21 + notice-bridge 8 + plugin-inject 2 + model-profiles 25.
+  model-list 21 + notice-bridge 8 + plugin-inject 2 + model-profiles 30.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
   `dsh --profile tui`, drive keys, `capture-pane` for assertions (see HANDOFF
   "验证命令速查"). Keep the 24-row terminal case in the matrix — overlay

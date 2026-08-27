@@ -44,13 +44,19 @@ import {
   modelProfilesPath,
   planAgentApply,
   profileReviewLines,
+  readNearestProfilePin,
+  removeProfilePin,
   renameProfile,
   saveModelProfiles,
+  writeProfilePin,
+  PROFILE_PIN_FILE,
   type ModelProfile,
   type ModelProfilesDoc,
   type ProfileAgentEntry,
   type ProfileModelRoute,
+  type ProfilePin,
 } from './model-profiles.ts'
+import { join } from 'node:path'
 import { persistDefaultModel } from './session.ts'
 import { openEffortPicker, pickModel } from './selectors.ts'
 import { EditField, type ParseOutcome } from './settings.ts'
@@ -176,8 +182,15 @@ async function applyProfile(
 }
 
 /**
- * Open the `/profile-switch` switcher. Resolves the apply summary when a profile
- * was switched, or `undefined` when cancelled / nothing applied.
+ * Open the `/profile-switch` switcher. Resolves the apply summary when a
+ * profile was switched, or `undefined` when cancelled / nothing applied.
+ *
+ * `p` binds the CWD to the cursor profile (writes `.dsh-profile`, see
+ * src/model-profiles.ts) so every NEW session in this tree auto-loads it;
+ * pressing `p` on the already-bound profile unpins it again — unless the pin
+ * lives in an ancestor or was hand-decorated, which is reported in the
+ * status line instead. Enter keeps its global meaning: apply now AND persist
+ * the global default.
  */
 export async function openProfileSwitcher(
   ctx: Context,
@@ -188,6 +201,7 @@ export async function openProfileSwitcher(
 ): Promise<string | undefined> {
   const path = modelProfilesPath()
   const doc = loadModelProfiles(path)
+  const cwd = process.cwd()
   let settle: ((value: string | undefined) => void) | undefined
 
   const host = new PanelHost(tui, theme, message => {
@@ -200,18 +214,62 @@ export async function openProfileSwitcher(
     // Enter can fire again while the async apply runs — resolve-once guard,
     // the same settle discipline the pickers use.
     let applying = false
+    // Session-local status flash for the p-toggle outcome.
+    let pinStatus: string | undefined
 
-    const table = new TablePanel(theme, {
-      title: '● Model profiles',
-      columns: profileColumns(doc.profiles, doc.current),
-      rows: doc.profiles,
-      renderCell: (profile, column) => profileCell(profile, column.key, doc.current),
-      preselect: Math.max(0, doc.profiles.findIndex(profile => profile.name === doc.current)),
-      onSelect: profile => { void switchTo(profile) },
-      onCancel: () => { host.close(); restoreFocus(); resolve(undefined) },
-      footer: '↑↓ navigate · Enter switch · Esc back',
-    })
-    if (host.open(table) === undefined) return
+    /** The nearest `.dsh-profile` binding for the cwd, resolved per render. */
+    const boundPin = (): ProfilePin | undefined => readNearestProfilePin(cwd)
+
+    /**
+     * Show the table once through the host (a p-toggle swaps the whole panel:
+     * simplest way to refresh the `(dir)` markers, and PanelHost's
+     * show-new-then-hide-old keeps focus stable).
+     */
+    const showTable = (): void => {
+      const pinnedName = boundPin()?.name
+      const table = new TablePanel(theme, {
+        title: `● Model profiles · ${PROFILE_PIN_FILE} here: ${pinnedName ?? 'none'}`,
+        columns: profileColumns(doc.profiles, doc.current),
+        rows: doc.profiles,
+        renderCell: (profile, column) => profileCell(profile, column.key, doc.current),
+        preselect: Math.max(0, doc.profiles.findIndex(profile => profile.name === doc.current)),
+        status: () => pinStatus,
+        onSelect: profile => { void switchTo(profile) },
+        onCancel: () => { host.close(); restoreFocus(); resolve(undefined) },
+        footer: '↑↓ navigate · Enter switch · p pin to this dir / unpin · Esc back',
+        shortcuts: { p: () => togglePin(table) },
+      })
+      host.open(table)
+    }
+
+    /** Bind/unbind the cwd to the cursor profile; re-show to refresh markers. */
+    const togglePin = (table: TablePanel<ModelProfile>): void => {
+      const profile = table.selectedRow()
+      if (profile === undefined) return
+      const existing = boundPin()
+      if (
+        existing !== undefined
+        && existing.name.toLowerCase() === profile.name.toLowerCase()
+        && existing.path === join(cwd, PROFILE_PIN_FILE)
+      ) {
+        const error = removeProfilePin(cwd, profile.name)
+        pinStatus = error === undefined ? `unpinned ${cwd}` : `✘ ${error}`
+      } else {
+        const error = writeProfilePin(cwd, profile.name)
+        if (error !== undefined) pinStatus = `✘ ${error}`
+        else {
+          const inheritedNote = existing !== undefined && existing.path !== join(cwd, PROFILE_PIN_FILE)
+            ? ` (overrides ancestor pin "${existing.name}")`
+            : ''
+          pinStatus = `pinned "${profile.name}" → .dsh-profile${inheritedNote}`
+        }
+      }
+      showTable()
+    }
+
+    // First mount; a mount failure has already settled through the host's
+    // error path (this promise resolves there, everything below is no-op).
+    showTable()
 
     const switchTo = async (profile: ModelProfile): Promise<void> => {
       if (applying) return
@@ -219,7 +277,13 @@ export async function openProfileSwitcher(
       const summary = await applyProfile(ctx, path, doc, profile, deps)
       host.close()
       restoreFocus()
-      resolve(summary)
+      // If this tree is pinned to a DIFFERENT profile, say so — the global
+      // default moved but new sessions HERE will still auto-load the pin.
+      const pinned = readNearestProfilePin(cwd)
+      const note = pinned !== undefined && pinned.name.toLowerCase() !== profile.name.toLowerCase()
+        ? ` · note: ${PROFILE_PIN_FILE} pins "${pinned.name}" — new sessions here stay on it`
+        : ''
+      resolve(`${summary}${note}`)
     }
   })
 }
