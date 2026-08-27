@@ -17,12 +17,15 @@ import { createUserMessage, type ReasoningEffortId, type TokenUsage } from '@dee
 import { settingsNamespace, SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
+import { join } from 'node:path'
 import type { AgentView } from './dsh-events.ts'
 import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor, isTuiPluginInjection } from './dsh-events.ts'
 import { loadModelProfiles, modelProfilesPath, resolvePinnedProfile } from './model-profiles.ts'
 import { installSpawnToolFence, markTuiSurface } from './subagent-policy.ts'
 import type { PendingPromptView } from './steer-flow.ts'
+import { sessionLogRoot } from './sessions.ts'
 import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
+import { acquireWriterLock, projectKeyFor, releaseOwnedWriterLock, WriterLockedError } from './writer-lock.ts'
 
 /**
  * Register the APPEND_SYSTEM.md section on ONE agent's scoped context, so the
@@ -212,6 +215,12 @@ export class DshSessionBridge {
   private resuming: Promise<AgentHandle> | undefined
   /** Target id of the in-flight resume — see `resume()`/`getResumingSessionId()`. */
   private resumeTargetId: SessionId | undefined
+  /**
+   * Session dirs whose cross-process writer lock THIS bridge established via
+   * a cold arm. Release is bound to the owning handle's disposal
+   * (`ownWithLock`), so the set itself only tracks double-release safety.
+   */
+  private readonly heldLockDirs = new Set<string>()
   private readonly disposers: Array<() => void> = []
   private sessionId: SessionId | undefined
   /** Agent preset id to pass to `meta.agentPreset` on the next `createSession`. */
@@ -659,6 +668,75 @@ export class DshSessionBridge {
   }
 
   /**
+   * Historical cwd for a session, from the persistence header list — the
+   * log lives under THAT project key. All access best-effort: an absent
+   * service or odd host yields undefined and the arm stays UNGUARDED
+   * (fail-open, never locks a decoy), never breaks the resume.
+   */
+  private async headerCwdOf(sessionId: string): Promise<string | undefined> {
+    try {
+      const persistence = (this.ctx as Context & { get?(key: string): unknown }).get?.('sessionPersistence') as
+        | { list?: () => Promise<Array<{ id: unknown; cwd?: unknown }>> }
+        | undefined
+      const stored = (await persistence?.list?.().catch(() => [])) ?? []
+      const header = stored.find(candidate => String(candidate.id) === sessionId)
+      return typeof header?.cwd === 'string' && header.cwd !== '' ? header.cwd : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Single-writer guard for COLD arms (create / cold resume) only — the
+   * adopt arm above shares the live instance in-process and must stay
+   * lock-free. Locks sit beside the jsonl log so every process that could
+   * append to it competes on one file; a live foreign holder throws
+   * WriterLockedError (surfaces as "Cannot resume <id>: session is locked
+   * by a live process …"). `knownCwd` skips the header scan for creations,
+   * which always target process.cwd().
+   */
+  private async acquireSessionLock(sessionId: string, knownCwd?: string): Promise<{ dir: string } | undefined> {
+    const cwd = knownCwd ?? (await this.headerCwdOf(sessionId))
+    if (cwd === undefined || cwd === '') {
+      // No trustworthy cwd → the derived path would be a decoy the real
+      // writer never touches (fail-open, same policy as the feishu guard):
+      // locking a decoy would silently protect nothing while pretending to.
+      return undefined
+    }
+    const dir = join(sessionLogRoot(), projectKeyFor(cwd), sessionId)
+    const result = await acquireWriterLock(dir)
+    if (!result.ok) throw new WriterLockedError(result.holder)
+    this.heldLockDirs.add(dir)
+    return { dir }
+  }
+
+  /** Undo a guard whose arm then failed — transient errors must not pin the session. */
+  private async releaseColdLock(lock: { dir: string } | undefined): Promise<void> {
+    if (lock === undefined) return
+    this.heldLockDirs.delete(lock.dir)
+    await releaseOwnedWriterLock(lock.dir)
+  }
+
+  /**
+   * Bind lock release to an owned handle's disposal — every teardown path
+   * already goes through handle.dispose(), so this is the single choke
+   * point; switching away or exiting releases what we established.
+   */
+  private ownWithLock(handle: AgentHandle, lock: { dir: string } | undefined): AgentHandle {
+    if (lock === undefined) return handle
+    const base = handle.dispose.bind(handle)
+    const bridge = this
+    handle.dispose = async () => {
+      try {
+        await base()
+      } finally {
+        await bridge.releaseColdLock(lock)
+      }
+    }
+    return handle
+  }
+
+  /**
    * Resume a persisted session: tear down the live agent (disposers are kept —
    * the session-id filter re-binds to the resumed id) and load the persisted
    * session in its place. The caller replays `handle.agent.session.events`
@@ -721,26 +799,37 @@ export class DshSessionBridge {
         }
         return adopted
       }
-      const resumed = await this.ctx.agents.resume({
-        resumeSessionId: sessionId,
-        agentOptions: this.selection ?? {},
-        // Install the mutable selection so `/model` can live-switch the route,
-        // the APPEND_SYSTEM.md section on this agent ONLY (never its
-        // subagents), and the spawn-tool hide so the agent sees a single
-        // `use_agent` delegation entry. The surface marker scopes the live
-        // disableSubagent guard to THIS agent (resume runs setup too, so a
-        // resumed session is re-marked without relying on persisted meta).
-        setup: async agentCtx => {
-          markTuiSurface(agentCtx)
-          installModelSelection(agentCtx, this.selectionRef)
-          installAppendSystem(agentCtx)
-          installSpawnToolFence(agentCtx)
-        },
-      })
-      this.handle = resumed
+      // Cold arm — guarded: without the registry hit above, nothing here can
+      // see whether ANOTHER process owns this id right now. Take the writer
+      // lock beside its jsonl first so a concurrent owner refuses us loudly
+      // instead of two appends interleaving into "corrupt session log".
+      const lock = await this.acquireSessionLock(String(sessionId))
+      let resumed: AgentHandle
+      try {
+        resumed = await this.ctx.agents.resume({
+          resumeSessionId: sessionId,
+          agentOptions: this.selection ?? {},
+          // Install the mutable selection so `/model` can live-switch the route,
+          // the APPEND_SYSTEM.md section on this agent ONLY (never its
+          // subagents), and the spawn-tool hide so the agent sees a single
+          // `use_agent` delegation entry. The surface marker scopes the live
+          // disableSubagent guard to THIS agent (resume runs setup too, so a
+          // resumed session is re-marked without relying on persisted meta).
+          setup: async agentCtx => {
+            markTuiSurface(agentCtx)
+            installModelSelection(agentCtx, this.selectionRef)
+            installAppendSystem(agentCtx)
+            installSpawnToolFence(agentCtx)
+          },
+        })
+      } catch (error) {
+        await this.releaseColdLock(lock)
+        throw error
+      }
+      this.handle = this.ownWithLock(resumed, lock)
       this.sessionId = sessionId
       this.trackedSessions.add(String(sessionId))
-      return resumed
+      return this.handle
     })()
     this.resuming = task
     try {
@@ -1238,27 +1327,39 @@ export class DshSessionBridge {
   }
 
   /** Create the agent with the composed default model selection. */
-  private createSession(): Promise<AgentHandle> {
+  private async createSession(): Promise<AgentHandle> {
     this.seedSelectionFromDefault()
-    return this.ctx.agents.create({
-      sessionId: SessionId(crypto.randomUUID()),
-      meta: {
-        cwd: process.cwd(),
-        ...this.agentPreset !== undefined ? { agentPreset: this.agentPreset } : {},
-      },
-      agentOptions: this.selection ?? {},
-      // Install the mutable selection so `/model` can live-switch the route,
-      // the APPEND_SYSTEM.md section on this agent ONLY (never its
-      // subagents), and the spawn-tool hide so the agent sees a single
-      // `use_agent` delegation entry. The surface marker scopes the live
-      // disableSubagent guard to THIS agent.
-      setup: async agentCtx => {
-        markTuiSurface(agentCtx)
-        installModelSelection(agentCtx, this.selectionRef)
-        installAppendSystem(agentCtx)
-        installSpawnToolFence(agentCtx)
-      },
-    })
+    // Mint the id HERE so the pre-create lock covers exactly the directory
+    // agents.create is about to persist into (same cold-arm guard as resume).
+    const sessionId = crypto.randomUUID()
+    const cwd = process.cwd()
+    const lock = await this.acquireSessionLock(sessionId, cwd)
+    let handle: AgentHandle
+    try {
+      handle = await this.ctx.agents.create({
+        sessionId: SessionId(sessionId),
+        meta: {
+          cwd,
+          ...this.agentPreset !== undefined ? { agentPreset: this.agentPreset } : {},
+        },
+        agentOptions: this.selection ?? {},
+        // Install the mutable selection so `/model` can live-switch the route,
+        // the APPEND_SYSTEM.md section on this agent ONLY (never its
+        // subagents), and the spawn-tool hide so the agent sees a single
+        // `use_agent` delegation entry. The surface marker scopes the live
+        // disableSubagent guard to THIS agent.
+        setup: async agentCtx => {
+          markTuiSurface(agentCtx)
+          installModelSelection(agentCtx, this.selectionRef)
+          installAppendSystem(agentCtx)
+          installSpawnToolFence(agentCtx)
+        },
+      })
+    } catch (error) {
+      await this.releaseColdLock(lock)
+      throw error
+    }
+    return this.ownWithLock(handle, lock)
   }
 
   /** The model selection shown in the footer (live value after `/model`). */

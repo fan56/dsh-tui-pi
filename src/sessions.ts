@@ -352,7 +352,7 @@ const PREVIEW_CONCURRENCY = 6
  * while this one only enriches/filters picker rows — a wrong root here
  * degrades display, it never deletes anything.
  */
-function sessionLogRoot(): string {
+export function sessionLogRoot(): string {
   if (process.env.DSH_SESSION_ROOT !== undefined && process.env.DSH_SESSION_ROOT !== '') {
     return process.env.DSH_SESSION_ROOT
   }
