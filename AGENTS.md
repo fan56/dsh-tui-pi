@@ -197,10 +197,10 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **968 tests** across 53 files (verified by
+- `pnpm test` must stay green: **970 tests** across 53 files (verified by
   `node --test test/*.mjs`; the v0.26.0 baseline was 918, model-profiles
   added 25, the directory pin added 5, the single-writer guard added 9,
-  repair-session-log fixtures added 6, the read-only remote view added 5). Per-file totals
+  repair-session-log fixtures added 6, the read-only remote view added 7). Per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals in
@@ -208,7 +208,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   - ask-user 100 + notice-bridge 8 + skills 36 + skills-manager 24 + startup-info 19 +
   - live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
   - retention 39 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
-    writer-lock 9 + repair-session-log 6 + remote-tail 5 +
+    writer-lock 9 + repair-session-log 6 + remote-tail 7 +
   theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
   custom-provider 12 +
   messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 26 +

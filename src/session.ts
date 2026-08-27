@@ -56,6 +56,13 @@ export interface BridgeCallbacks {
   onEvent(event: SessionEvent): void
   /** Whole-agent lifecycle transition. */
   onStatus(status: 'idle' | 'running'): void
+  /**
+   * Watched remote session is idle and queued follow-ups await: the bridge
+   * already took the writer lock; rebind locally (like a manual /resume)
+   * then drain takePendingRemoteFollowups(). Throw ⇒ back to watching;
+   * the poll retries. Absent ⇒ queuing still works, waits for manual resume.
+   */
+  onRemotePromotable?(sessionId: string): Promise<void>
   /** Live snapshot of tracked subagent (child session) rows, on any change. */
   onLive(agents: readonly AgentView[]): void
   /**
@@ -224,8 +231,26 @@ export class DshSessionBridge {
   private readonly heldLockDirs = new Set<string>()
   /** Active cross-process read-only view (see watchRemote). */
   private remoteTail: RemoteSessionTail | undefined
+  /** Session watched read-only right now. */
+  private remoteWatchId: string | undefined
+  /** Follow-ups typed while watching — sent once promotion wins the lock. */
+  private readonly remoteFollowups: string[] = []
+  private promotingRemote = false
+  private promoteTimer: ReturnType<typeof setInterval> | undefined
+  private idleReleaseTimer: ReturnType<typeof setTimeout> | undefined
+  /** Writer lock taken for the CURRENTLY bound local agent (see drive arms). */
+  private driveLock: { dir: string } | undefined
   /** Test seam + tuning for the watcher (interval/decoder injection). */
   private readonly remoteTailOptions: { intervalMs?: number; decode?(file: string): Promise<string> }
+  private readonly idleReleaseDelayMs: number
+  private readonly promoteIntervalMs: number
+  /** Serializes watch-lifecycle ops against the promotion poll. */
+  private opChain: Promise<void> = Promise.resolve()
+  private runExclusive<T>(op: () => Promise<T>): Promise<T> {
+    const next = this.opChain.then(op, op)
+    this.opChain = next.then(() => undefined, () => undefined)
+    return next
+  }
   private readonly disposers: Array<() => void> = []
   private sessionId: SessionId | undefined
   /** Agent preset id to pass to `meta.agentPreset` on the next `createSession`. */
@@ -330,10 +355,16 @@ export class DshSessionBridge {
   /** `${runId}:${seq}` → childId, for `tool-workflow/agent-end` pairing. */
   private readonly runSeqToChild = new Map<string, string>()
 
-  constructor(ctx: Context, callbacks: BridgeCallbacks, options: { remoteTailOptions?: { intervalMs?: number; decode?(file: string): Promise<string> } } = {}) {
+  constructor(ctx: Context, callbacks: BridgeCallbacks, options: {
+    remoteTailOptions?: { intervalMs?: number; decode?(file: string): Promise<string> }
+    idleReleaseDelayMs?: number
+    promoteIntervalMs?: number
+  } = {}) {
     this.ctx = ctx
     this.callbacks = callbacks
     this.remoteTailOptions = options.remoteTailOptions ?? {}
+    this.idleReleaseDelayMs = options.idleReleaseDelayMs ?? 800
+    this.promoteIntervalMs = options.promoteIntervalMs ?? 1000
     // Footer shows provider/model from the very first frame — read the cwd
     // pin (if any) else the composed default selection eagerly; a session
     // created later refreshes it the same way.
@@ -400,6 +431,7 @@ export class DshSessionBridge {
       if (this.handle === undefined || agent.id !== this.handle.agent.id) return
       this.running = status === 'running'
       this.callbacks.onStatus(status)
+      if (status === 'idle') this.scheduleIdleRelease()
     }))
     // Round-count reconcile fallback: keep "rounds" and the maxRounds policy
     // live even when a child's own events never bubble to this plugin (see
@@ -529,9 +561,10 @@ export class DshSessionBridge {
   /** Queue one user prompt, creating the session lazily on first use. */
   async prompt(text: string): Promise<void> {
     if (this.remoteTail !== undefined) {
-      throw new Error(
-        'This session is driven by another process — this view is read-only. Use /resume or /new to switch sessions.',
-      )
+      // Lockless viewer: never refuse, QUEUE. The promote poll sends it the
+      // moment the driver goes idle and we win the writer lock.
+      this.remoteFollowups.push(text)
+      return
     }
     const handle = await this.ensureSession()
     const message = createUserMessage({
@@ -541,9 +574,14 @@ export class DshSessionBridge {
     handle.agent.followup(message)
   }
 
-  /** While a remote watch is active, input is refused (read-only view). */
+  /** While a remote watch is active input QUEUES instead of driving. */
   isReadOnlyView(): boolean {
     return this.remoteTail !== undefined
+  }
+
+  /** Follow-ups typed while watching, oldest first; takes them all. */
+  takePendingRemoteFollowups(): string[] {
+    return this.remoteFollowups.splice(0)
   }
 
   /**
@@ -555,7 +593,11 @@ export class DshSessionBridge {
    * message arrives. Replaces any prior binding; ends via stopRemoteWatch
    * on dispose or the next resume.
    */
-  async watchRemote(sessionId: string): Promise<void> {
+  watchRemote(sessionId: string): Promise<void> {
+    return this.runExclusive(() => this.watchRemoteInner(sessionId))
+  }
+
+  private async watchRemoteInner(sessionId: string): Promise<void> {
     await this.stopRemoteWatch()
     // Same derivation as acquireSessionLock — no cwd, no view.
     const cwd = await this.headerCwdOf(sessionId)
@@ -566,6 +608,7 @@ export class DshSessionBridge {
     // for the SAME id (post-switch) re-binds cleanly.
     this.sessionId = SessionId(sessionId)
     this.handle = undefined
+    this.remoteWatchId = sessionId
     const tail = new RemoteSessionTail(file, {
       onEvents: events => {
         // A stopped tail's in-flight final tick must not paint after detach.
@@ -601,12 +644,91 @@ export class DshSessionBridge {
     // immediately; live ticks continue on the poll cadence afterwards.
     await tail.tickOnce()
     tail.start()
+    // Promotion lives OUTSIDE the event stream: one independent poll checks
+    // (queue non-empty ∧ driver idle ∵ running flag ∧ lock winnable). This
+    // keeps takeover state transitions off the render path entirely.
+    if (this.promoteTimer === undefined) {
+      this.promoteTimer = setInterval(() => void this.maybePromoteRemote(), this.promoteIntervalMs)
+    }
   }
 
   private async stopRemoteWatch(): Promise<void> {
+    if (this.promoteTimer !== undefined) {
+      clearInterval(this.promoteTimer)
+      this.promoteTimer = undefined
+    }
+    this.remoteWatchId = undefined
     if (this.remoteTail === undefined) return
     this.remoteTail.stop()
     this.remoteTail = undefined
+  }
+
+  /**
+   * Contract "idle releases the write; next input takes it": when OUR agent
+   * settles with nothing pending locally (own re-wake included), drop the
+   * writer lock so another surface can take over. Delayed once and
+   * re-checked because upstream may latch idle only to immediately replay
+   * a queued wake as a new turn.
+   */
+  private scheduleIdleRelease(): void {
+    if (this.idleReleaseTimer !== undefined) clearTimeout(this.idleReleaseTimer)
+    this.idleReleaseTimer = setTimeout(() => {
+      this.idleReleaseTimer = undefined
+      if (this.running) return
+      // Contained: foreign-shaped agents must not let a release timer blow
+      // up the process; when the inbox is unreadable we conservatively keep
+      // the lock.
+      try {
+        if (this.getPendingPrompts().length > 0) return
+      } catch {
+        return
+      }
+      const lock = this.driveLock
+      if (lock === undefined) return
+      void this.releaseColdLock(lock)
+    }, this.idleReleaseDelayMs)
+  }
+
+  /**
+   * Promote poll tick: viewer + queued follow-ups + watched driver idle →
+   * race for the writer lock; winning hands to onRemotePromotable (UI
+   * rebuild via resume + queue drain), losing retries next tick. All async
+   * sequencing stays in THIS loop — never inside event callbacks.
+   */
+  private maybePromoteRemote(): Promise<void> {
+    return this.runExclusive(async () => {
+      await this.maybePromoteRemoteInner()
+    })
+  }
+
+  private async maybePromoteRemoteInner(): Promise<void> {
+    if (this.promotingRemote || this.running) return
+    const id = this.remoteWatchId
+    if (id === undefined || this.remoteFollowups.length === 0) return
+    const promote = this.callbacks.onRemotePromotable
+    if (promote === undefined) return
+    this.promotingRemote = true
+    let locked = false
+    try {
+      await this.acquireSessionLock(id)
+      locked = true
+    } catch {
+      /* still held / driver alive — retry next poll */
+    }
+    if (!locked) {
+      this.promotingRemote = false
+      return
+    }
+    await this.stopRemoteWatch() // ends the view BEFORE any UI rebuild
+    try {
+      await promote(id)
+      this.promotingRemote = false
+    } catch {
+      // Took the lock but the rebuild failed: back to spectating; ownership
+      // persists cooperatively so the retry below costs nothing extra.
+      this.promotingRemote = false
+      await this.watchRemote(id).catch(() => {})
+    }
   }
 
   /** The live agent, creating the session lazily when needed. */
@@ -682,6 +804,7 @@ export class DshSessionBridge {
 
   /** Dispose the live agent (if any) and stop event subscriptions. */
   async dispose(): Promise<void> {
+    if (this.idleReleaseTimer !== undefined) clearTimeout(this.idleReleaseTimer)
     await this.stopRemoteWatch()
     for (const dispose of this.disposers.splice(0)) {
       try { dispose() } catch { /* contained */ }
@@ -907,6 +1030,7 @@ export class DshSessionBridge {
         await this.releaseColdLock(lock)
         throw error
       }
+      this.driveLock = lock
       this.handle = this.ownWithLock(resumed, lock)
       this.sessionId = sessionId
       this.trackedSessions.add(String(sessionId))
@@ -1440,6 +1564,7 @@ export class DshSessionBridge {
       await this.releaseColdLock(lock)
       throw error
     }
+    this.driveLock = lock
     return this.ownWithLock(handle, lock)
   }
 

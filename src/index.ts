@@ -56,6 +56,7 @@ import {
 } from './startup-info.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
 import { WriterLockedError } from './writer-lock.ts'
+import { emitNotice } from './notice-bridge.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
 import { commandUsagePath, CommandUsageTracker } from './usage.ts'
@@ -640,7 +641,26 @@ export function apply(ctx: Context): void {
         liveWidgets.renderAgents(agents)
       },
     }
-    const bridge = new DshSessionBridge(ctx, bridgeCallbacks)
+    const bridgeCallbacksWithTakeover: BridgeCallbacks = {
+      ...bridgeCallbacks,
+      onRemotePromotable: async (idRaw: string) => {
+        // Queued follow-ups won the writer-lock race at an idle boundary:
+        // take over EXACTLY like a manual /resume, then flush the queue.
+        const resumed = await bridge.resume(SessionId(idRaw))
+        refreshPermissionPreset()
+        renderer.clear()
+        liveWidgets.clear()
+        const session = resumed.agent.session
+        const adopted = 'adopted' in resumed && resumed.adopted === true
+        bridge.replay(adopted ? session.events : session.events.filter(event => event.seq < session.firstLiveSeq))
+        for (const text of bridge.takePendingRemoteFollowups()) {
+          await bridge.prompt(text)
+        }
+        emitNotice('Write lock acquired — follow-ups sent.')
+        ui.requestRender()
+      },
+    }
+    const bridge = new DshSessionBridge(ctx, bridgeCallbacksWithTakeover)
     bridgeRef = bridge
     // Subagent fine-grained control, all in-process (see subagent-policy.ts):
     // a tools.guard denies spawn-tool calls once `maxAgents` children run
@@ -1613,7 +1633,7 @@ export function apply(ctx: Context): void {
       // runs, the dialog decides steer vs follow-up — Esc cancels and the
       // draft goes back into the editor untouched. Idle → direct send (the
       // two primitives are equivalent there: both wake a fresh turn).
-      if (decideSubmitPath(bridge.isRunning()) === 'dialog') {
+      if (decideSubmitPath(bridge.isRunning() && !bridge.isReadOnlyView()) === 'dialog') {
         const route = await openSubmitRouteDialog(ui.tui, ui.theme, text, refocusEditor)
         if (route === undefined) {
           // Review S1: restore the RAW submitted text — restoring the trimmed
@@ -1632,8 +1652,10 @@ export function apply(ctx: Context): void {
       // editor for text that never ran.
       liveWidgets.setLastRequest(line)
       renderer.renderPromptEcho(line)
+      const wasWatching = bridge.isReadOnlyView()
       try {
         await bridge.prompt(line)
+        if (wasWatching) emitNotice('Queued follow-up — sends automatically once the write lock frees up.')
       } catch (error: unknown) {
         // Buffered notice: the failure line is the only on-screen record and
         // must survive a theme-switch rebuild (doc.clear()).
