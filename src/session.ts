@@ -23,6 +23,7 @@ import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagent
 import { loadModelProfiles, modelProfilesPath, resolvePinnedProfile } from './model-profiles.ts'
 import { installSpawnToolFence, markTuiSurface } from './subagent-policy.ts'
 import type { PendingPromptView } from './steer-flow.ts'
+import { RemoteSessionTail } from './remote-tail.ts'
 import { sessionLogRoot } from './sessions.ts'
 import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
 import { acquireWriterLock, projectKeyFor, releaseOwnedWriterLock, WriterLockedError } from './writer-lock.ts'
@@ -221,6 +222,10 @@ export class DshSessionBridge {
    * (`ownWithLock`), so the set itself only tracks double-release safety.
    */
   private readonly heldLockDirs = new Set<string>()
+  /** Active cross-process read-only view (see watchRemote). */
+  private remoteTail: RemoteSessionTail | undefined
+  /** Test seam + tuning for the watcher (interval/decoder injection). */
+  private readonly remoteTailOptions: { intervalMs?: number; decode?(file: string): Promise<string> }
   private readonly disposers: Array<() => void> = []
   private sessionId: SessionId | undefined
   /** Agent preset id to pass to `meta.agentPreset` on the next `createSession`. */
@@ -325,9 +330,10 @@ export class DshSessionBridge {
   /** `${runId}:${seq}` → childId, for `tool-workflow/agent-end` pairing. */
   private readonly runSeqToChild = new Map<string, string>()
 
-  constructor(ctx: Context, callbacks: BridgeCallbacks) {
+  constructor(ctx: Context, callbacks: BridgeCallbacks, options: { remoteTailOptions?: { intervalMs?: number; decode?(file: string): Promise<string> } } = {}) {
     this.ctx = ctx
     this.callbacks = callbacks
+    this.remoteTailOptions = options.remoteTailOptions ?? {}
     // Footer shows provider/model from the very first frame — read the cwd
     // pin (if any) else the composed default selection eagerly; a session
     // created later refreshes it the same way.
@@ -522,12 +528,85 @@ export class DshSessionBridge {
 
   /** Queue one user prompt, creating the session lazily on first use. */
   async prompt(text: string): Promise<void> {
+    if (this.remoteTail !== undefined) {
+      throw new Error(
+        'This session is driven by another process — this view is read-only. Use /resume or /new to switch sessions.',
+      )
+    }
     const handle = await this.ensureSession()
     const message = createUserMessage({
       content: [{ type: 'text', text }],
       source: { kind: 'user' },
     })
     handle.agent.followup(message)
+  }
+
+  /** While a remote watch is active, input is refused (read-only view). */
+  isReadOnlyView(): boolean {
+    return this.remoteTail !== undefined
+  }
+
+  /**
+   * READ-ONLY cross-process view: another dsh process drives this session
+   * (the single-writer guard refused our cold resume), so sync DISPLAY from
+   * its persisted log instead — poll-decode, emit durable events through
+   * the same render pipeline a live session uses. Contract: latency ≈ poll
+   * interval, streaming detail omitted, every turn's final assistant
+   * message arrives. Replaces any prior binding; ends via stopRemoteWatch
+   * on dispose or the next resume.
+   */
+  async watchRemote(sessionId: string): Promise<void> {
+    await this.stopRemoteWatch()
+    // Same derivation as acquireSessionLock — no cwd, no view.
+    const cwd = await this.headerCwdOf(sessionId)
+    if (cwd === undefined) throw new Error(`cannot locate the log of ${sessionId} for read-only viewing`)
+    const file = join(sessionLogRoot(), projectKeyFor(cwd), sessionId, 'session.jsonl.zstd')
+    // The firehose gate uses this id; harmless cross-process (nothing in
+    // THIS process will publish for it) and required so a later local agent
+    // for the SAME id (post-switch) re-binds cleanly.
+    this.sessionId = SessionId(sessionId)
+    this.handle = undefined
+    const tail = new RemoteSessionTail(file, {
+      onEvents: events => {
+        // A stopped tail's in-flight final tick must not paint after detach.
+        if (this.remoteTail !== tail) return
+        for (const raw of events) {
+          const event = raw as unknown as SessionEvent
+          // Per-event containment mirrors the firehose listener contract:
+          // one unsupported/malformed row must not kill the rest of the
+          // view batch. Projection and render dispatch are contained
+          // SEPARATELY so a projection gap cannot suppress rendering.
+          try {
+            this.applyEvent(event)
+          } catch {
+            /* projection drift — the view row still renders below */
+          }
+          try {
+            this.callbacks.onEvent(event)
+            if (event.type === 'turn/start') {
+              this.running = true
+              this.callbacks.onStatus('running')
+            } else if (event.type === 'turn/end') {
+              this.running = false
+              this.callbacks.onStatus('idle')
+            }
+          } catch {
+            /* contained — keep rendering the remaining events */
+          }
+        }
+      },
+    }, this.remoteTailOptions)
+    this.remoteTail = tail
+    // Deterministic backfill before returning: callers may render/report
+    // immediately; live ticks continue on the poll cadence afterwards.
+    await tail.tickOnce()
+    tail.start()
+  }
+
+  private async stopRemoteWatch(): Promise<void> {
+    if (this.remoteTail === undefined) return
+    this.remoteTail.stop()
+    this.remoteTail = undefined
   }
 
   /** The live agent, creating the session lazily when needed. */
@@ -603,6 +682,7 @@ export class DshSessionBridge {
 
   /** Dispose the live agent (if any) and stop event subscriptions. */
   async dispose(): Promise<void> {
+    await this.stopRemoteWatch()
     for (const dispose of this.disposers.splice(0)) {
       try { dispose() } catch { /* contained */ }
     }
@@ -755,6 +835,7 @@ export class DshSessionBridge {
     // touching this field, so it always names the id actually loading.
     this.resumeTargetId = sessionId
     const task = (async () => {
+      await this.stopRemoteWatch()
       const handle = this.handle
       this.handle = undefined
       this.sessionId = undefined

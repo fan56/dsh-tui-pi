@@ -55,6 +55,7 @@ import {
   type StartupSummary,
 } from './startup-info.ts'
 import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
+import { WriterLockedError } from './writer-lock.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
 import { commandUsagePath, CommandUsageTracker } from './usage.ts'
@@ -1039,6 +1040,28 @@ export function apply(ctx: Context): void {
         resumed = await bridge.resume(picked.id)
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
+        if (error instanceof WriterLockedError) {
+          // Single-writer guard fired: another process drives this session.
+          // Rather than a dead end, degrade to a READ-ONLY view synced from
+          // its persisted log — final replies arrive (poll-delayed, without
+          // streaming detail); input is refused until /resume or /new.
+          try {
+            await bridge.watchRemote(picked.id)
+            refreshPermissionPreset()
+            renderer.clear()
+            liveWidgets.clear()
+            ui.requestRender()
+            return {
+              kind: 'success' as const,
+              text: `Watching ${clipToWidth(String(picked.id), 8)} (read-only · driven by pid ${error.holder.pid}). /resume or /new to switch.`,
+            }
+          } catch (watchError: unknown) {
+            return {
+              kind: 'error' as const,
+              text: `Cannot watch ${clipToWidth(String(picked.id), 8)} read-only: ${watchError instanceof Error ? watchError.message : String(watchError)}`,
+            }
+          }
+        }
         return {
           kind: 'error' as const,
           text: `Resume failed: ${message} — the previous session was closed; the next prompt starts a new one.`,
