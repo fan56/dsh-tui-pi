@@ -1,7 +1,7 @@
 {
   "name": "@aiwayds/dsh-tui-pi",
-  "version": "0.28.0",
-  "description": "pi-style terminal UI for DeepSeek Harness (dsh) — pi-tui look & feel, dsh slash commands, GitHub light/dark themes, powerline footer",
+  "version": "0.29.0",
+  "description": "pi-style terminal UI for DeepSeek Harness (dsh) \u2014 pi-tui look & feel, dsh slash commands, GitHub light/dark themes, powerline footer",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/fan56/dsh-tui-pi.git"
