@@ -75,20 +75,35 @@ jobs:
           fi
 
       - name: Publish to npm
-        # Idempotent: if the version is already on the registry, skip the
-        # publish. This guards against `npm publish --provenance`'s known
-        # follow-up PUT that 403s with "cannot publish over previously
-        # published versions" after the first PUT actually succeeded (the
-        # package + provenance did land — observed on v0.15.1 and v0.16.0).
-        # On a re-run, `npm view` confirms presence and we no-op so the
-        # downstream release job can still complete.
+        # Idempotent: if the version is already on the registry, warn and
+        # skip instead of failing. Two shapes of "already published":
+        # 1. Visible to `npm view` up front (re-run, or a concurrent publish
+        #    that predates this step) — pre-check no-ops so the downstream
+        #    release job can still complete.
+        # 2. Landing WHILE this very `npm publish --provenance` runs: its
+        #    known follow-up PUT 403s with "cannot publish over previously
+        #    published versions" after the first PUT actually succeeded
+        #    (package + provenance did land — observed on v0.15.1, v0.16.0,
+        #    and v0.27.0 where a parallel session published manually).
+        #    npm view cannot see that in advance; match the registry error
+        #    text instead. npm versions are immutable (--force will not
+        #    overwrite), so degrade-to-warning is the only correct outcome.
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           if npm view "@aiwayds/dsh-tui-pi@${TAG_VERSION}" version >/dev/null 2>&1; then
-            echo "::notice::@aiwayds/dsh-tui-pi@${TAG_VERSION} is already on npm — skipping publish"
-          else
-            npm publish --access public --provenance
+            echo "::warning::@aiwayds/dsh-tui-pi@${TAG_VERSION} is already on npm — skipping publish"
+            exit 0
           fi
+          set +e
+          PUB_OUT="$(npm publish --access public --provenance 2>&1)"
+          PUB_RC=$?
+          set -e
+          printf '%s\n' "$PUB_OUT"
+          if [ "${PUB_RC}" -ne 0 ] && printf '%s' "$PUB_OUT" | grep -q "cannot publish over the previously published versions"; then
+            echo "::warning::@aiwayds/dsh-tui-pi@${TAG_VERSION} was published concurrently (or landed mid-publish) — treating as success"
+            exit 0
+          fi
+          exit "${PUB_RC}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
