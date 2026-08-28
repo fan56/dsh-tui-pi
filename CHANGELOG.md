@@ -6,6 +6,31 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **System-clipboard bridge for the ask-user sentinel editor**
+  (`src/clipboard.ts`, `src/ask-user.ts`, `src/tui.ts`). The
+  `Type something.` free-text input now round-trips with the OS clipboard:
+  - `Ctrl+Shift+C` (kitty-CSI-u `\x1b[<c>;<m>u`, modifier 6) writes the
+    sentinel buffer through OSC 52 in parallel with the platform's
+    `pbcopy` / `wl-copy` / `xclip` / `xsel` / `clip`, and shows a short
+    `Copied` hint under the panel; an empty buffer is a silent no-op.
+  - **Right-click while editing** short-circuits the SGR right-click press
+    *before* it reaches pi-tui (which would otherwise start a selection
+    drag) and pipes `wl-paste` / `xclip` / `xsel` / `pbpaste` / PowerShell
+    into the same buffer; a missing binary is cached per-platform for the
+    rest of the run so the right-click path stays snappy.
+  - **Bracketed paste** (`?2004`) is sanitized through the same rules the
+    right-click path uses: every `CR`/`LF`/`CRLF` run folds to one space,
+    C0/C1 control bytes (including `ESC`) are dropped, tabs expand to four
+    spaces, and the buffer is capped at 16 KiB. A pasted paragraph lands
+    as one space-separated run, never a stack of newlines.
+  - OSC 52 writes larger than 64 KiB are skipped (the local command alone
+    is relied on) so a pathological paste can't spam the terminal with a
+    multi-MB escape run. Every I/O seam is injectable through
+    `ClipboardImpl`, so `test/clipboard.test.mjs` covers the full ladder
+    without spawning a single real process.
+
 ## [0.25.1] - 2026-08-26
 
 ### Added

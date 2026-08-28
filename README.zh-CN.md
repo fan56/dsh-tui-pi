@@ -212,6 +212,9 @@ https://github.com/user-attachments/assets/aa36be36-a508-4f53-ba85-efe0394dab11
 - **双击 Esc 表示拒绝作答** —— 200ms 内两次 Esc 返回 declined envelope（模型读到的是一条正常的回复，表示未给出答案）；长按不会误触发（低于最小间隔的按键自动重复被忽略）；工具调用被中止时也按 declined 结算。面板打开期间像打开的 overlay 一样独占键盘：Esc 永远不会进入运行任务的停止链，app 快捷键（Ctrl+L/G/O、Tab）也让位于面板。
 - **节制使用引导** —— 一段 system-prompt 引导模型只在真正需要你时才提问（1–3 个问题，每个 2–4 个选项），避免 TUI 变成问卷调查。
 - **键盘操作** —— `←→` 切换问题标签 · `↑↓` 导航 · `Enter` 选择/勾选/确认 · 在 sentinel 行打字输入自由文本 · `Ctrl+T` 折叠/展开面板 · 连按两次 `Esc` 拒绝作答。
+- **向 sentinel 粘贴内容（bracket-paste）** —— 开启了 `?2004` 的终端会把多行剪贴板内容作为一个 bracket-paste 块一次性送入；sentinel 会把 `CR`/`LF`/`CRLF` 的任何连续折成单个空格、丢弃 C0/C1 控制字节、把 tab 展开为四个空格、缓冲上限 16 KiB —— 一段粘进去的段落会变成一串空格分隔的 run，绝不会出现一堆换行符。
+- **编辑中右键 = 直接从系统剪贴板粘贴** —— TUI 在 SGR 右键 press 抵达 pi-tui 之前就把它截走（pi-tui 否则会开始一次选中拖拽），然后通过 `wl-paste`/`xclip`/`xsel`/`pbpaste`/PowerShell 把系统剪贴板内容塞进 sentinel 缓冲区；该辅助是 fire-and-forget，缺剪贴板工具就静默 no-op，同时 OSC 52 写回并行运行，使宿主终端自带的 paste 在本地工具缺失时也能工作。
+- **`Ctrl+Shift+C` 把 sentinel 缓冲区复制到系统剪贴板** —— kitty-CSI-u 编码 `\x1b[<codepoint>;<modifier>u`（modifier 6 = ctrl+shift+1）会通过 OSC 52 *和* `pbcopy`/`wl-copy`/`xclip`/`xsel`/`clip` 并行写入；面板下方会出现一个短暂的 `Copied` 提示以示确认；空缓冲区是静默 no-op。*已知限制：* Apple Terminal 会把 `Ctrl+Shift+C` 映射成它自己的复制动作，kitty 序列根本到不了我们这里，结果就是 app 内复制被当成普通 `Ctrl+C` = 退出编辑；在 tmux 下需要 `set-clipboard on`（配合对应的 `set-option` 让 pane 也通过），OSC 52 序列才能透传到宿主终端。
 
 灵感来自 [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-ask-user-question)。
 

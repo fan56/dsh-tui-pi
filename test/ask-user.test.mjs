@@ -17,12 +17,14 @@ import {
   advanceAfterAnswer,
   advanceDoubleEsc,
   allQuestionsAnswered,
+  appendCustomText,
   askUserMaxVisibleForRows,
   buildAnswerEnvelope,
   buildDeclinedEnvelope,
   buildRowList,
   canAutoSubmit,
   clampScrollWindow,
+  consumeRightClickPaste,
   DECLINE_MESSAGE,
   didDoubleEscFire,
   DOUBLE_ESC_WINDOW_MS,
@@ -32,18 +34,22 @@ import {
   focusCursor,
   INCOMPLETE_HINT,
   initialState,
+  isCustomEditing,
   isDuplicateProviderError,
+  isRightClickPress,
   needsConfirmRow,
   nextSelectableIndex,
   nextUnansweredQuestion,
   openAskUserPanel,
   patchCustomInput,
+  PASTE_MAX_LEN,
   registerAskUserProvider,
   renderCollapsedLine,
   renderQuestionsView,
   renderReviewView,
   rowIndexForNumber,
   rowNumber,
+  sanitizePastedText,
   setCustomAnswer,
   SENTINEL_LABEL,
   switchFocus,
@@ -754,11 +760,12 @@ test('renderReviewView: capped window keeps the review cursor and submit row rea
 
 /** Fake TUI harness: captures the DOCK-MOUNTED panel component and its unmount. */
 function makeHarness(clockTimes = []) {
-  const calls = { overlays: [], hides: 0, restoreFocus: 0, modal: [], focus: [], hideOverlayCalls: 0 }
+  const calls = { overlays: [], hides: 0, restoreFocus: 0, modal: [], focus: [], hideOverlayCalls: 0, renders: 0 }
   const deps = {
     tui: {
       hideOverlay() { calls.hideOverlayCalls += 1 },
       setFocus(component) { calls.focus.push(component) },
+      requestRender() { calls.renders += 1 },
     },
     theme: () => ({ palette: githubLight }),
     restoreFocus: () => { calls.restoreFocus += 1 },
@@ -1475,4 +1482,344 @@ test('registerAskUserProvider: settled() aborts the surface ask signal (panel cl
   surface.settled(request, 'feishu') // another surface answered first
   await result
   assert.deepEqual(tracked.value, buildDeclinedEnvelope(singleQuestion()), 'panel closed via the abort path')
+})
+
+// -------------------------------------------- sanitizePastedText (pure) --
+
+test('sanitizePastedText: CRLF/CR/LF runs collapse to a single space', () => {
+  assert.equal(sanitizePastedText('a\r\nb'), 'a b')
+  assert.equal(sanitizePastedText('a\rb'), 'a b')
+  assert.equal(sanitizePastedText('a\nb'), 'a b')
+  assert.equal(sanitizePastedText('a\r\n\r\n\r\nb'), 'a b')
+  assert.equal(sanitizePastedText('a\n\n\nb'), 'a b')
+  assert.equal(sanitizePastedText('a\r\nb\nc\rd'), 'a b c d')
+})
+
+test('sanitizePastedText: tabs expand to four spaces', () => {
+  assert.equal(sanitizePastedText('a\tb'), 'a    b')
+  assert.equal(sanitizePastedText('\thello'), '    hello')
+})
+
+test('sanitizePastedText: control bytes are dropped, printable brackets survive (ESC[31m → [31m)', () => {
+  // \x1b is C0 (cp 0x1b) — filtered. The remaining "[31m" is printable
+  // and lands verbatim. The color is lost, the literal text is preserved.
+  assert.equal(sanitizePastedText('hello \x1b[31mred\x1b[0m world'), 'hello [31mred[0m world')
+  // DEL (0x7F) is dropped
+  assert.equal(sanitizePastedText('a\x7fb'), 'ab')
+  // C1 control range
+  assert.equal(sanitizePastedText('a\x85b'), 'ab')
+})
+
+test('sanitizePastedText: emoji and CJK survive intact (codepoint-aware)', () => {
+  // Thumbs-up is U+1F44D (surrogate pair in UTF-16, single codepoint).
+  assert.equal(sanitizePastedText('👍 hi'), '👍 hi')
+  // CJK + latin mix
+  assert.equal(sanitizePastedText('你好 hello'), '你好 hello')
+})
+
+test('sanitizePastedText: total length is capped by codepoint count, not UTF-16 units', () => {
+  const overflow = 'a'.repeat(PASTE_MAX_LEN + 50)
+  const result = sanitizePastedText(overflow)
+  assert.equal([...result].length, PASTE_MAX_LEN, 'capped at maxLen codepoints')
+})
+
+// -------------------------------------------- isRightClickPress (pure) --
+
+test('isRightClickPress: SGR press/release/motion/wheel/modifier/bracket-paste', () => {
+  // Press, no modifier
+  assert.equal(isRightClickPress('\x1b[<2;10;5M'), true)
+  // Release (lowercase m)
+  assert.equal(isRightClickPress('\x1b[<2;10;5m'), false)
+  // Motion: 2 + 32 (drag) = 34
+  assert.equal(isRightClickPress('\x1b[<34;10;5M'), false)
+  // Wheel: 2 + 64 (scroll) = 66
+  assert.equal(isRightClickPress('\x1b[<66;1;1M'), false)
+  // Shift+right-click: 2 + 4 (shift) = 6
+  assert.equal(isRightClickPress('\x1b[<6;1;1M'), false)
+  // Bracketed paste chunk must NOT be mistaken for a right-click
+  assert.equal(isRightClickPress('\x1b[200~x\x1b[201~'), false)
+  // Empty / unrelated
+  assert.equal(isRightClickPress(''), false)
+  assert.equal(isRightClickPress('foo'), false)
+})
+
+// -------------------------------------------- appendCustomText + live panel registry --
+
+test('appendCustomText: appends into the live panel\'s editing buffer and requests a render', () => {
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r') // enter edit mode
+  const before = calls.renders
+  const out = appendCustomText('pasted!', deps.tui)
+  assert.equal(out, true, 'appendCustomText found the editing panel')
+  // The async-free append path calls tui.requestRender synchronously.
+  assert.equal(calls.renders, before + 1, `a render was requested after the append (before=${before}, after=${calls.renders})`)
+  const lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('pasted!')), 'pasted text rendered into the editor line')
+  controller.abort() // clean close
+})
+
+test('appendCustomText: returns false when no live panel is in edit mode', () => {
+  // The right-click → paste path is async: the user clicks, the OS reads
+  // the clipboard, the helper appends. We assert the "no editing panel
+  // anymore" path by:
+  //   1. opening a fresh panel,
+  //   2. NOT entering edit mode (the sentinel row stays un-engaged),
+  //   3. calling appendCustomText → must report false because no panel
+  //      is currently editing.
+  // (Earlier tests in the file may have left stray live panels from
+  // prior opens; this test relies on a single fresh panel being the
+  // only one in a known non-editing state, NOT on an empty registry.
+  // The tui argument narrows the search to this test's harness, so a
+  // stray editing panel from a prior test is correctly ignored.)
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  // Press a digit to land on an option row — NOT the sentinel — so the
+  // panel is open but `customEditingFor` is null.
+  const handle = calls.overlays[0]
+  handle.component.handleInput('1') // digit quick-pick → option 1 selected
+  // appendCustomText must report false: this panel is the live one and
+  // it is not in edit mode.
+  assert.equal(appendCustomText('too late', deps.tui), false)
+  controller.abort() // clean close
+})
+
+// -------------------------------------------- handleCustomInput: paste --
+
+test('handleCustomInput: bracketed paste appends the sanitized content into the buffer', () => {
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r') // edit
+  input('\x1b[200~foo bar\x1b[201~')
+  const lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('foo bar')), 'paste content rendered into the editor line')
+  controller.abort() // clean close
+})
+
+test('handleCustomInput: paste folds CR/LF/CRLF runs into single spaces', () => {
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r') // edit
+  input('\x1b[200~line1\r\nline2\rline3\nline4\x1b[201~')
+  const lines = panelLines(handle)
+  // The whole paste collapses to one space-separated run
+  assert.ok(lines.some(l => l.includes('line1 line2 line3 line4')), `expected collapsed run, got: ${JSON.stringify(lines.join('\n'))}`)
+  assert.equal(lines.some(l => /line1\nline2/.test(l) || /line1\rline2/.test(l)), false, 'no embedded line breaks')
+  controller.abort()
+})
+
+test('handleCustomInput: paste drops ESC bytes (color escapes become literal brackets)', () => {
+  // The panel render goes through wrapText, which collapses whitespace
+  // runs — so tab expansion in the buffer is invisible after rendering.
+  // The text shape we can observe reliably in the rendered output is the
+  // drop of the ESC byte itself: a pasted `\x1b[31m` becomes the literal
+  // text `[31m` (the color is gone, the brackets stay). The internal
+  // buffer (4-space tabs, etc.) is covered by the sanitizePastedText
+  // unit tests above.
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r')
+  input('\x1b[200~col1\tcol2\x1b[31mred\x1b[0m\x1b[201~')
+  const lines = panelLines(handle)
+  const joined = lines.join('\n')
+  assert.ok(joined.includes('[31mred[0m'), `expected ESC bytes dropped, got: ${JSON.stringify(joined)}`)
+  // No raw ESC survives in the rendered output (would be the start of an
+  // SGR sequence, none should land here).
+  assert.equal(joined.includes('\x1b['), false, 'no raw ESC[ sequences in the rendered output')
+  controller.abort()
+})
+
+test('handleCustomInput: empty paste (markers only) is a no-op', () => {
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r') // edit
+  const before = panelLines(handle)
+  input('\x1b[200~\x1b[201~')
+  const after = panelLines(handle)
+  assert.deepEqual(after, before, 'empty paste changed nothing')
+  controller.abort()
+})
+
+test('handleCustomInput: paste does not commit the buffer (no submit, no exit)', async () => {
+  const { deps, calls } = makeHarness()
+  const noOptions = [{ id: 'q1', question: 'type' }]
+  const result = openAskUserPanel(deps, noOptions)
+  const tracked = trackResolution(result)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r') // edit
+  input('\x1b[200~answer\x1b[201~')
+  assert.equal(tracked.resolved, false, 'paste must not submit')
+  // Pressing Enter now commits and submits the pasted answer.
+  input('\r')
+  await result
+  assert.equal(tracked.resolved, true)
+  assert.deepEqual(tracked.value.answers, [{ id: 'q1', selected: [], custom: 'answer' }])
+})
+
+// ------------------------------------ handleCustomInput: copy (Ctrl+Shift+C) --
+
+test('handleCustomInput: Ctrl+Shift+C writes the buffer and shows "Copied"', () => {
+  // The clipboard module is a side-effecting I/O seam; for this unit test
+  // we drive writeClipboard through the public export but stub the global
+  // clipboard impl via the function's optional parameter is not exposed
+  // at the handleInput level — instead we assert on the observable side
+  // effects: attentionHint === 'Copied' after the keypress, and the render
+  // surface now carries that hint. The actual writeClipboard call is
+  // fire-and-forget, so its outcome cannot be observed from the test
+  // without a fake impl hook; the dedicated clipboard.test.mjs covers
+  // the underlying helper in isolation.
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r') // edit
+  input('h'); input('i')
+  // Kitty-protocol encoding of Ctrl+Shift+C = \x1b[99;6u (codepoint 99, modifier 6 = ctrl+shift+1)
+  input('\x1b[99;6u')
+  const lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('Copied')), `"Copied" hint rendered, got: ${JSON.stringify(lines)}`)
+  // The buffer is unchanged by the copy — the keypress consumed itself.
+  assert.ok(lines.some(l => l.includes('hi')), 'buffer still contains the typed text')
+  controller.abort()
+})
+
+test('handleCustomInput: Ctrl+Shift+C on an empty buffer is a no-op (no "Copied" hint)', () => {
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r') // edit (empty buffer)
+  const before = panelLines(handle)
+  input('\x1b[99;6u')
+  const after = panelLines(handle)
+  assert.equal(after.some(l => l.includes('Copied')), false, 'no hint for an empty copy')
+  // Render must be unchanged in any other way too
+  assert.deepEqual(after, before)
+  controller.abort()
+})
+
+test('handleCustomInput: plain Ctrl+C (\x03) is still cancel — never copy', () => {
+  // The matchesKey matcher only fires on the kitty CSI-u / modifyOtherKeys
+  // encoding; a bare \x03 must still flow into the cancel branch and exit
+  // the editor without writing the clipboard. We assert on THIS panel's
+  // state (the cursor line carries the sentinel mark ✎ when still editing
+  // and is empty when the editor exited), not on the global isCustomEditing
+  // — the test file may have stray live panels from earlier interactions.
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r')
+  input('h'); input('i')
+  // Sanity: in edit mode the sentinel label is REPLACED by the buffer +
+  // '_' cursor, so the original "Type something." text is no longer in
+  // the rendered output. The edit line is just the buffer + '_' marker.
+  const lines = panelLines(handle)
+  assert.ok(lines.some(l => l.includes('hi')), 'editor shows the typed buffer')
+  assert.ok(!lines.some(l => l.includes('Type something.')), 'sentinel label was replaced by the edit cursor')
+  input('\x03') // bare Ctrl+C → cancel
+  // After cancel the sentinel goes back to its placeholder text and the
+  // buffer is gone.
+  const after = panelLines(handle)
+  assert.ok(after.some(l => l.includes('Type something.')), 'sentinel is back to its placeholder after cancel')
+  assert.equal(after.some(l => /Type something\.\s*hi/.test(l)), false, 'bare Ctrl+C clears the buffer and exits edit')
+  // The render should NOT show the "Copied" hint anywhere
+  assert.equal(after.some(l => l.includes('Copied')), false)
+  // The panel itself is still mounted (Ctrl+C on a free-text buffer is
+  // just exit-edit, not decline), so the user lands back on the
+  // question list. Clean up via the abort path so the panel does not
+  // leak into later tests.
+  controller.abort()
+})
+
+// ---------------------------------- consumeRightClickPaste: pure routing --
+
+test('consumeRightClickPaste: returns false for non-mouse data (forwards upstream)', () => {
+  assert.equal(consumeRightClickPaste('foo'), false)
+  assert.equal(consumeRightClickPaste('\x1b'), false)
+  assert.equal(consumeRightClickPaste('\x1b[<2;10;5m'), false, 'release is not a press')
+  assert.equal(consumeRightClickPaste('\x1b[<34;10;5M'), false, 'motion is not a press')
+})
+
+test('consumeRightClickPaste: returns true for a press (drops the upstream fire)', () => {
+  // The helper must claim the press regardless of editing state — the
+  // release that follows (lowercase m) is also ours by regex-negation,
+  // so leaving the press through would let pi-tui start a selection on
+  // mouse-drag. We DO short-circuit the clipboard read on `!isCustomEditing`
+  // (no read fires) but the boolean claim always wins for the press byte.
+  assert.equal(consumeRightClickPaste('\x1b[<2;10;5M'), true)
+})
+
+test('consumeRightClickPaste: integrated right-click → clipboard → sanitize path strips control bytes', async () => {
+  // S3 split: readClipboard no longer sanitizes (it returns the raw
+  // stdout so a future caller can get a faithful copy of what the OS
+  // gave us). The sanitize lives on the ask-user side now, in
+  // appendCustomText, where the editor buffer is the actual consumer.
+  // This test pins that contract: a clipboard payload with a CR/LF/ESC
+  // run arrives, and the editor sees the SAME flattened/sanitized form
+  // it would have seen before the split. We inject a fake ClipboardImpl
+  // through the third argument so the test never spawns a process.
+  const { deps, calls } = makeHarness()
+  const controller = new AbortController()
+  openAskUserPanel(deps, singleQuestion(), controller.signal)
+  const handle = calls.overlays[0]
+  const input = handle.component.handleInput.bind(handle.component)
+  pressUntil(handle, SENTINEL_LABEL)
+  input('\r') // enter edit mode
+  // Fake clipboard impl: the execFile call returns a payload that
+  // contains CR/LF/ESC runs. readClipboard will hand that back raw
+  // (the S3 split); the sanitize happens at appendCustomText.
+  const fakeImpl = {
+    env: { platform: 'linux', waylandDisplay: '', display: '' },
+    execFile: () => Promise.resolve({ stdout: 'a\r\nb\x1b[31mc\x1b[0md' }),
+    write: () => {},
+  }
+  // The right-click press: returns true synchronously (we short-circuit
+  // the upstream handler). The clipboard read is fire-and-forget, so we
+  // must wait one microtask + a setImmediate for the promise chain to
+  // settle before asserting on the rendered output.
+  const claimed = consumeRightClickPaste('\x1b[<2;10;5M', deps.tui, fakeImpl)
+  assert.equal(claimed, true, 'press is always claimed')
+  // Wait for the read promise → then() chain to flush.
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+  const lines = panelLines(handle)
+  const joined = lines.join('\n')
+  // Sanitized form: CR/LF/CRLF runs collapse to one space; ESC bytes
+  // are dropped (the `[31m` brackets survive as literal text). The
+  // "a b[31m" run has a SINGLE space between a and b — the CRLF folded
+  // to one space, the b is followed directly by the dropped ESC and
+  // the surviving `[`.
+  assert.ok(joined.includes('a b[31mc[0md'), `expected sanitized clipboard text in editor, got: ${JSON.stringify(joined)}`)
+  assert.equal(joined.includes('\x1b['), false, 'no raw ESC[ sequences in the rendered output')
+  controller.abort()
 })

@@ -38,6 +38,7 @@ import { CanvasTerminal } from './canvas-terminal.ts'
 import { CwdBorderEditor } from './editor.ts'
 import { mergeKeyBindings, resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
 import { mouseDisableSequence, mouseEnableSequence, resolveMouseMode } from './mouse-mode.ts'
+import { consumeRightClickPaste } from './ask-user.ts'
 import { ansiBg, ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 
@@ -134,7 +135,13 @@ export interface TuiHandle {
 }
 
 export function startTui(options: StartTuiOptions = {}): TuiHandle {
-  const terminal = new CanvasTerminal(new ProcessTerminal())
+  // Hold the raw ProcessTerminal so we can install the right-click → paste
+  // interceptor AFTER tui.start() (the wrapper has to wrap the
+  // `inputHandler` pi-tui assigns in start() — see install below). The
+  // CanvasTerminal is the surface pi-tui sees; the ProcessTerminal is the
+  // I/O surface underneath.
+  const processTerminal = new ProcessTerminal()
+  const terminal = new CanvasTerminal(processTerminal)
   // Mouse tracking is dsh-owned, not pi-tui-owned: `mouse: false` keeps
   // TuiAltScreen from writing its own mode set (its multiplexer probe does
   // not know cmux, so outside tmux/zellij/screen it would enable all-motion
@@ -497,6 +504,26 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // Enabled only after a successful start: if start() threw, dsh never wrote
   // the enable sequence, so there is nothing to roll back on this path.
   terminal.write(mouseEnableSequence(mouseMode))
+  // Right-click → paste hook: pi-tui's TuiAltScreen eats every mouse
+  // event, so the only window we have to intercept a right-click press
+  // is BEFORE it reaches the upstream input handler. pi-tui assigns
+  // `inputHandler` on the ProcessTerminal inside its own start() — a
+  // private field (typed as private in the .d.ts, but a regular property
+  // in the JS we consume). The wrapper below short-circuits an SGR
+  // right-click press (`\x1b[<2;x;yM`) and lets everything else fall
+  // through unchanged. A missing field is treated as "upstream wiring
+  // hasn't fired yet" and silently skipped — the right-click feature
+  // degrades to a no-op, every other key path is unaffected. Must run
+  // AFTER tui.start() so the upstream handler is in place.
+  type InputHandlerHolder = { inputHandler?: (data: string) => void }
+  const holder = processTerminal as unknown as InputHandlerHolder
+  const upstreamInputHandler = holder.inputHandler
+  if (upstreamInputHandler !== undefined) {
+    holder.inputHandler = (data: string) => {
+      if (consumeRightClickPaste(data, tui)) return
+      upstreamInputHandler(data)
+    }
+  }
 
   return handle
 }

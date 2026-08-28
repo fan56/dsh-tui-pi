@@ -82,6 +82,11 @@ import { getKeybindings, matchesKey, type Component, type KeyId, type TUI } from
 import type { AskUserQuestionAnswer, AskUserQuestionAnswerItem, AskUserQuestionItem, AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
 import type { Context } from '@deepseek-ai/cordis'
 import {
+  readClipboard,
+  writeClipboard,
+  type ClipboardImpl,
+} from './clipboard.ts'
+import {
   borderedRow,
   panelBottomBorder,
   panelBoxWidth,
@@ -122,6 +127,50 @@ export const ESC_REPEAT_GUARD_MS = 50
 
 /** Sentinel row label appended to every question's option list. */
 export const SENTINEL_LABEL = 'Type something.'
+
+/** Bracketed-paste markers. pi-tui's StdinBuffer re-wraps the content into
+ *  `\x1b[200~content\x1b[201~` and hands the whole string to the focused
+ *  component, so a single chunk lands here. Terminals without ?2004 paste
+ *  byte-by-byte; the existing single-character append path eats them fine,
+ *  so the absence of support needs no special-casing. */
+const PASTE_START = '\x1b[200~'
+const PASTE_END = '\x1b[201~'
+
+/** Max characters we let a paste grow the live editor buffer to.
+ *
+ *  The count is in **Unicode codepoints**, not UTF-16 code units and not
+ *  UTF-8 bytes — `sanitizePastedText` truncates with `slice(0, maxLen)`
+ *  on a codepoint-iterated string, and the panel render path measures
+ *  visible width in the same codepoint units. 16 384 codepoints is well
+ *  above any sensible free-text answer (typical "give me a one-liner"
+ *  Q&A reply is <200 chars), and it caps the worst-case render cost
+ *  the panel asks of the line wrapper — at the default 120-column
+ *  panel width that's ~140 wrapped lines per paste, still cheap to
+ *  reflow on every keystroke.
+ *
+ *  Note this is INDEPENDENT of the OSC 52 byte cap in `clipboard.ts`
+ *  (64 KiB of UTF-8). The two caps guard different threats: PASTE_MAX_LEN
+ *  protects the editor's render cost; OSC52_MAX_BYTES protects the
+ *  terminal from a multi-MB escape run. A CJK paste can therefore hit
+ *  PASTE_MAX_LEN at ~49 KiB of UTF-8 — well under OSC 52's 64 KiB
+ *  ceiling — or exceed OSC 52's cap at ~21 333 CJK codepoints while
+ *  still being well under PASTE_MAX_LEN. The two limits compose. */
+export const PASTE_MAX_LEN = 16384
+
+/** SGR-mouse right-click press encoding (no modifier). pi-tui's TuiAltScreen
+ *  eats every mouse event, so this regex is matched against the raw stdin
+ *  chunk BEFORE it reaches the upstream handler (see tui.ts). The release
+ *  byte is `m`, motion is +32, wheel is +64, modifiers add 4/8/16. */
+const RIGHT_CLICK_PRESS_RE = /^\x1b\[<2;\d+;\d+M$/
+
+/** Active panels (single instance, but we still keep a Set to make the
+ *  right-click → paste hook a pure function over the live state, and to
+ *  keep the door open for stacked panels in the future). */
+interface LiveAskUserPanel {
+  state: AskUserState
+  tui: TUI
+}
+const livePanels = new Set<LiveAskUserPanel>()
 
 /**
  * Key that folds the whole panel into a 3-line strip (and unfolds it again).
@@ -983,6 +1032,144 @@ export function renderCollapsedLine(theme: TuiTheme, state: AskUserState, width:
   return fns.accent(BOLD + clipToWidth(`${label} · Ctrl+T expand`, wrap) + RESET)
 }
 
+// ---------------------------------- paste sanitiser + clipboard helpers --
+
+/**
+ * Sanitize a chunk of pasted (or clipboard) text for the sentinel editor.
+ *
+ * The editor is one line of free text with no line breaks allowed, so a
+ * paste from a multi-line source has to be made flat. The rules are
+ * deliberately conservative: keep emoji and CJK intact (the loop iterates
+ * by codepoint, not UTF-16 code units, so surrogate pairs stay paired),
+ * drop C0/C1 control bytes, fold any run of CR/LF/CRLF into a single
+ * space, expand tabs to four spaces, and cap the total length.
+ *
+ * Order matters: filter control bytes first so a CR/LF that survives the
+ * newline-folding step can never re-enter the result as a control char,
+ * then collapse whitespace runs, then truncate. Trailing truncation is the
+ * one place the result is NOT a subsequence of the input; that's the only
+ * surprise a caller has to know about.
+ */
+export function sanitizePastedText(text: string, maxLen: number = PASTE_MAX_LEN): string {
+  // Step 1: codepoint-aware filter. `for...of` iterates by Unicode
+  // scalar value, so an emoji like "👍" (U+1F44D, surrogate pair in UTF-16)
+  // stays a single character. Drop C0 (<0x20) + DEL (0x7F) + C1 (0x80-0x9F)
+  // EXCEPT for \t (→ 4 spaces), \r and \n (kept for the newline-fold step
+  // below — dropping them in step 1 would erase the signal we use to
+  // find run boundaries), and ESC (0x1B) which is dropped (a pasted ANSI
+  // SGR run becomes harmless "literal" text: the brackets survive, the
+  // color does not).
+  let filtered = ''
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)
+    if (cp === undefined) continue
+    if (cp < 0x20) {
+      if (cp === 0x09) filtered += '    ' // \t
+      else if (cp === 0x0a || cp === 0x0d) filtered += ch // \n / \r → fold next
+      // other C0: drop
+      continue
+    }
+    if (cp === 0x7f) continue
+    if (cp >= 0x80 && cp <= 0x9f) continue
+    filtered += ch
+  }
+  // Step 2: collapse every run of \r\n / \r / \n into a single space. The
+  // pre-filter kept CR/LF intact on purpose, so the regex finds the run
+  // boundary; without it a pasted document's line breaks would simply
+  // vanish and the user would see two adjacent words glued together.
+  const collapsed = filtered.replace(/(\r\n|[\r\n])+/g, ' ')
+  // Step 3: cap by codepoint count, not UTF-16 length — the buffer is
+  // shaped by the panel render which counts visible grapheme clusters, so
+  // the truncation point must match that budget.
+  if (maxLen <= 0) return ''
+  if ([...collapsed].length <= maxLen) return collapsed
+  return [...collapsed].slice(0, maxLen).join('')
+}
+
+/** Pure test helper: does `data` look like a bare SGR-mouse right-click press? */
+export function isRightClickPress(data: string): boolean {
+  return RIGHT_CLICK_PRESS_RE.test(data)
+}
+
+/**
+ * Append already-sanitized text into the sentinel buffer for the question
+ * the panel is currently editing. No-op when there is no live edit (a
+ * stray right-click outside the editor), and the state mutation goes
+ * through `customInputs` (a copy, never in-place) so React-style render
+ * equality is preserved.
+ */
+function appendSanitizedCustomText(s: AskUserState, qi: number, text: string): void {
+  if (text === '') return
+  const next = s.customInputs.slice()
+  next[qi] = (next[qi] ?? '') + text
+  s.customInputs = next
+}
+
+/** True iff any live panel is in inline-edit mode. */
+export function isCustomEditing(): boolean {
+  for (const panel of livePanels) {
+    if (panel.state.customEditingFor !== null) return true
+  }
+  return false
+}
+
+/**
+ * Append `text` to the live sentinel buffer (after sanitizing it through
+ * the same rules as a bracketed paste). Returns `false` when no panel is
+ * in edit mode, or when the panel that was editing closed between the
+ * caller observing `isCustomEditing` and the actual append (the right-
+ * click path is async — clipboard read → then append — and a panel can
+ * settle in between).
+ *
+ * `tui` is the TUI whose right-click fired (or, in tests, the TUI the
+ * caller is driving). When provided, only panels from THAT tui are
+ * targeted — production TUI installs are singletons so the filter is a
+ * no-op in normal use, but it isolates the right-click from a stray
+ * live panel left in the global registry by a prior test run. Omit the
+ * argument only in the legacy "find any editing panel" mode (kept for
+ * the unit tests that pre-date the filter).
+ */
+export function appendCustomText(text: string, tui?: TUI): boolean {
+  for (const panel of livePanels) {
+    if (panel.state.customEditingFor === null) continue
+    if (tui !== undefined && panel.tui !== tui) continue
+    appendSanitizedCustomText(panel.state, panel.state.customEditingFor, sanitizePastedText(text))
+    panel.tui.requestRender()
+    return true
+  }
+  return false
+}
+
+/**
+ * Detect-and-fire the right-click → paste hook. Returns `true` when the
+ * chunk was a right-click press AND the helper fired (or queued) the
+ * clipboard read; the upstream input handler is short-circuited in that
+ * case so the same press never reaches pi-tui (which would otherwise eat
+ * it as a selection start). Returns `false` for everything else (release
+ * / wheel / motion / non-mouse data) so the caller forwards normally.
+ *
+ * Optional `tui` narrows the paste target to a specific TUI (the
+ * right-click originated from this TUI's terminal). Optional
+ * `clipboardImpl` overrides the default impl for tests.
+ */
+export function consumeRightClickPaste(data: string, tui?: TUI, clipboardImpl?: ClipboardImpl): boolean {
+  if (!isRightClickPress(data)) return false
+  if (!isCustomEditing()) return true // drop the press, but the release
+                                      // (next chunk, lowercase `m`) is
+                                      // still ours to swallow naturally
+  // Fire-and-forget: the right-click must not block the keystroke that
+  // arrives next, and a clipboard read failure is a silent no-op (the
+  // editor buffer is unchanged, the user is no worse off than before).
+  const runner = (impl: ClipboardImpl | undefined) => {
+    readClipboard(impl).then(text => {
+      if (text === null || text === '') return
+      appendCustomText(text, tui)
+    }).catch(() => { /* swallowed: clipboard failures never throw */ })
+  }
+  runner(clipboardImpl)
+  return true
+}
+
 // ------------------------------------------------------------ panel --
 
 /** Options for assembling the panel + provider function. */
@@ -1049,6 +1236,7 @@ export function openAskUserPanel(
      * dismissed then (see below), so focus lands on the current editor.
      */
     const close = (): void => {
+      livePanels.delete(panelEntry)
       unmount()
       deps.setModalActive(false)
       deps.restoreFocus()
@@ -1161,6 +1349,11 @@ export function openAskUserPanel(
     deps.tui.setFocus(panel)
     deps.setModalActive(true)
     signal?.addEventListener('abort', onAbort, { once: true })
+    // Register the live panel so the right-click → paste hook (installed
+    // at the TUI level in tui.ts) can find an editing panel to feed. The
+    // entry is removed in `close()` above.
+    const panelEntry: LiveAskUserPanel = { state, tui: deps.tui }
+    livePanels.add(panelEntry)
 
     // Local mutator helpers — these write into the closed-over state via
     // Object.assign so the keyboard handler can use the immutable reducers.
@@ -1283,6 +1476,14 @@ export function openAskUserPanel(
       const qi = s.customEditingFor
       if (qi === null) return
       const kb = getKeybindings()
+      // Bracketed paste FIRST: pi-tui hands the whole \x1b[200~…\x1b[201~
+      // chunk to us as a single string, and any byte in the middle could
+      // spell a key the lower branches match. Pasted content outranks
+      // confirm/cancel/etc.
+      if (data.startsWith(PASTE_START) && data.endsWith(PASTE_END) && data.length >= PASTE_START.length + PASTE_END.length) {
+        appendSanitizedCustomText(s, qi, sanitizePastedText(data.slice(PASTE_START.length, data.length - PASTE_END.length)))
+        return
+      }
       if (kb.matches(data, 'tui.select.confirm')) {
         Object.assign(s, exitCustomEdit(s, true))
         commitCustomAnswer(s, qi)
@@ -1297,6 +1498,25 @@ export function openAskUserPanel(
       if (kb.matches(data, 'tui.select.up') || kb.matches(data, 'tui.select.down')) {
         Object.assign(s, exitCustomEdit(s, true))
         moveCursor(s, kb.matches(data, 'tui.select.up') ? -1 : 1)
+        return
+      }
+      // Copy: Ctrl+Shift+C sends the current buffer to the system
+      // clipboard. The `matchesKey` matcher only fires on the kitty
+      // CSI-u / modifyOtherKeys encoding of the combo — a bare \x03 falls
+      // through to the existing Ctrl+C = cancel branch unchanged. Empty
+      // buffers are a silent no-op (also skips the "Copied" hint so the
+      // footer never lies about a copy that did nothing).
+      if (matchesKey(data, 'ctrl+shift+c')) {
+        const buffer = s.customInputs[qi] ?? ''
+        if (buffer !== '') {
+          // Fire-and-forget: the copy must not block the next keystroke,
+          // and a clipboard failure is a silent no-op (the buffer is
+          // unchanged either way). `attentionHint` reuses the existing
+          // hint slot so the "Copied" line rides the same render path
+          // every other transient hint already uses.
+          writeClipboard(buffer).catch(() => { /* swallowed: copy failures never throw */ })
+          s.attentionHint = 'Copied'
+        }
         return
       }
       if (data === '\x7f' || matchesKey(data, 'backspace')) {
