@@ -31,6 +31,35 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     `ClipboardImpl`, so `test/clipboard.test.mjs` covers the full ladder
     without spawning a single real process.
 
+## [1.0.1] - 2026-08-28
+
+### Changed
+
+- **README rewrite around feature highlights** (`README.md`,
+  `README.zh-CN.md`). Both READMEs now lead with a feature TOC and
+  impact-first structure (README.md 552→207 lines, README.zh-CN.md
+  mirrored 222-line shape):
+  - **Cache-hit definition corrected to session-cumulative rate** in both
+    languages, matching the v0.27.0 implementation in `src/session.ts`:
+    `ΣcacheRead ÷ (Σinput + ΣcacheRead + ΣcacheWrite)`, session-wide, with
+    `output` never in the denominator and route (`request/header`
+    provider/model) changes no longer resetting the counter.
+  - **Demo videos restored as bare user-attachments MP4 URLs** (ask-user
+    and Feishu panels) so GitHub renders them inline as `<video>`; the
+    dead asciinema link (410 Gone) was removed.
+  - **Feishu/Lark companion section promoted** to a standalone section
+    right after Ask User Question in both READMEs and its entry added
+    to the Features TOC; the Companion-plugins list keeps the other
+    plugins.
+  - **`Ctrl+O` pending-queue hotkey row** added to the keyboard-shortcut
+    table.
+  - **Test count corrected to 1038 / 56 files** in both READMEs and in
+    the `pnpm test` reference.
+
+No code or behavior change in this release — pure documentation. The
+underlying v1.0.0 behavior is unchanged. `pnpm check` and `pnpm test`
+(1038 / 56) pass unchanged.
+
 ## [0.25.1] - 2026-08-26
 
 ### Added

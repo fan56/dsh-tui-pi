@@ -186,7 +186,7 @@ dsh --profile tui          # 启动（或：dsh-tui-pi）
 
 ```sh
 node scripts/dev-upgrade.mjs                  # 最新版
-node scripts/dev-upgrade.mjs 1.0.0 --dry-run  # 先预览执行计划
+node scripts/dev-upgrade.mjs 1.0.1 --dry-run  # 先预览执行计划
 ```
 
 ---
