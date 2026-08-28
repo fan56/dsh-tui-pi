@@ -223,6 +223,41 @@ test('swapRepaired: a taken .corrupt-bak name gets the unix-ms suffix, never an 
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('swapRepaired: a failed swap-in restores the original from the backup before rethrowing', () => {
+  const dir = tempDir('swap-restore')
+  const log = join(dir, 'session.jsonl')
+  writeFileSync(log, 'original-bytes')
+
+  // The repaired copy vanished between verification and the swap (the
+  // crash-window the restore exists for): rename #2 fails, rename #1 rolls back.
+  assert.throws(() => swapRepaired(log, join(dir, 'missing.repaired.jsonl')), /ENOENT/)
+
+  assert.equal(readFileSync(log, 'utf8'), 'original-bytes', 'the canonical log is back in place')
+  assert.deepEqual(
+    readdirSync(dir).filter(name => name !== 'session.jsonl'),
+    [],
+    'no backup residue survives the restore',
+  )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('swapRepaired: a chmod failure never flips the swap outcome', () => {
+  const dir = tempDir('swap-chmod')
+  const log = join(dir, 'session.jsonl')
+  const repaired = join(dir, 'session.repaired.jsonl')
+  writeFileSync(log, 'corrupt-bytes')
+  writeFileSync(repaired, 'fixed-bytes')
+
+  const { backupPath } = swapRepaired(log, repaired, {
+    chmodFn: () => { throw new Error('EPERM: operation not permitted') },
+  })
+
+  assert.equal(backupPath, join(dir, 'session.jsonl.corrupt-bak'))
+  assert.equal(readFileSync(log, 'utf8'), 'fixed-bytes', 'the verified copy stays swapped in')
+  assert.equal(readFileSync(backupPath, 'utf8'), 'corrupt-bytes')
+  rmSync(dir, { recursive: true, force: true })
+})
+
 // ------------------------------------------------------ repairSessionLog ----
 
 /** Real-log fixture: a session dir under a project key, holding a "corrupt" log. */
@@ -288,6 +323,48 @@ test('repairSessionLog: an artifact that fails verification is never swapped in,
   assert.equal(readdirSync(dir).includes('session.jsonl.zstd.corrupt-bak'), false, 'no backup was made')
   assert.deepEqual(calls, ['apply', 'verify'])
   assert.equal(readdirSync(dir).includes('writer.lock'), false, 'the lock is released on failure too')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('repairSessionLog: a failed swap-in restores the canonical log and reports failed', async () => {
+  const { dir, log } = logFixture('swap-restore-e2e')
+  const spawnFn = (_file, args) => {
+    if (args.includes('--apply')) {
+      writeFileSync(repairedArtifactPath(args[1]), 'fixed-zstd-bytes')
+      return procResult({ status: 0, stdout: `wrote ${repairedArtifactPath(args[1])}` })
+    }
+    // Verification passes, but the artifact disappears before the swap's
+    // second rename — the crash window the restore path exists for.
+    rmSync(args[1])
+    return procResult({ status: 0, stdout: 'verdict: CLEAN — nothing to do.' })
+  }
+
+  const result = await repairSessionLog(log, { spawnSyncFn: spawnFn })
+
+  assert.equal(result.kind, 'failed', 'the swap failure surfaces as a result, never a throw')
+  assert.match(result.detail, /swap failed/)
+  assert.equal(readFileSync(log, 'utf8'), 'corrupt-zstd-bytes', 'the canonical log was restored')
+  assert.equal(
+    readdirSync(dir).some(name => name.includes('corrupt-bak')),
+    false,
+    'no backup residue survives the restore',
+  )
+  assert.equal(readdirSync(dir).includes('writer.lock'), false, 'the lock is released after a failed swap too')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('repairSessionLog: a chmod failure mid-swap still reports repaired', async () => {
+  const { dir, log } = logFixture('chmod-e2e')
+
+  const result = await repairSessionLog(log, {
+    spawnSyncFn: applyThenCleanSpawn(),
+    chmodFn: () => { throw new Error('EPERM: operation not permitted') },
+  })
+
+  assert.equal(result.kind, 'repaired', 'permissions are hygiene — they never flip the outcome')
+  assert.equal(readFileSync(log, 'utf8'), 'fixed-zstd-bytes')
+  assert.equal(readFileSync(result.backupPath, 'utf8'), 'corrupt-zstd-bytes')
+  assert.equal(readdirSync(dir).includes('writer.lock'), false)
   rmSync(dir, { recursive: true, force: true })
 })
 

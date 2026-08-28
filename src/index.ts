@@ -1127,12 +1127,8 @@ export function apply(ctx: Context): void {
       // gated behind an explicit confirmation dialog — it never runs
       // silently, and Cancel falls back to the plain failure text.
       const offerCorruptedLogRepair = async (message: string) => {
-        if (await openRepairConfirmDialog(ui.tui, ui.theme, refocusEditor) !== 'repair') {
-          return {
-            kind: 'error' as const,
-            text: `Cannot resume ${clipToWidth(String(target.id), 8)}: ${message}`,
-          }
-        }
+        // Locate BEFORE asking (feishu-surface order): a log that cannot be
+        // grounded on disk gives the dialog nothing to confirm.
         const persistence = ctx.get('sessionPersistence') as
           | { list?: () => Promise<Array<{ id: unknown; cwd?: unknown }>> }
           | undefined
@@ -1143,7 +1139,21 @@ export function apply(ctx: Context): void {
             text: `repair failed: cannot locate the log of ${clipToWidth(String(target.id), 8)} on disk — log untouched`,
           }
         }
-        const notice = repairFailureNotice(await repairSessionLog(logPath))
+        if (await openRepairConfirmDialog(ui.tui, ui.theme, refocusEditor) !== 'repair') {
+          return {
+            kind: 'error' as const,
+            text: `Cannot resume ${clipToWidth(String(target.id), 8)}: ${message}`,
+          }
+        }
+        // repairSessionLog maps its own failures to results; the catch is a
+        // defensive floor so the dispatch never sees an exception.
+        let notice: string | undefined
+        try {
+          notice = repairFailureNotice(await repairSessionLog(logPath))
+        } catch (error: unknown) {
+          const detail = error instanceof Error ? error.message : String(error)
+          notice = `repair failed: ${detail} — log untouched`
+        }
         if (notice !== undefined) return { kind: 'error' as const, text: notice }
         // A verified-clean log now sits under the canonical name — re-enter
         // the selected row's resume path.

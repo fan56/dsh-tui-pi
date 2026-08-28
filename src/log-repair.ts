@@ -151,15 +151,22 @@ export function verifyClean(logPath: string, options: RunRepairOptions = {}): Ve
   return run.status === 'clean' ? { ok: true } : { ok: false, detail: run.detail }
 }
 
+export interface SwapOptions {
+  /** Test seam — defaults to the real fs.chmodSync. */
+  chmodFn?: typeof chmodSync
+}
+
 /**
  * Swap the verified repaired copy in over the canonical log name: the
  * original moves aside to `<name>.corrupt-bak` (suffixed with the epoch
  * millisecond when that name is taken — never overwritten), the repaired
  * copy takes its place with owner-only permissions, matching the store's
  * private-file hygiene. Synchronous on purpose: the swap window sits under
- * the writer lock and must be a tight rename-rename pair.
+ * the writer lock and must be a tight rename-rename pair. A failed swap-in
+ * restores the original best-effort (mirroring the feishu surface) before
+ * rethrowing, so the session is never stranded without its canonical log.
  */
-export function swapRepaired(logPath: string, repairedPath: string): { backupPath: string } {
+export function swapRepaired(logPath: string, repairedPath: string, options: SwapOptions = {}): { backupPath: string } {
   let backupPath = `${logPath}.corrupt-bak`
   try {
     statSync(backupPath)
@@ -168,8 +175,26 @@ export function swapRepaired(logPath: string, repairedPath: string): { backupPat
     // Free — the plain .corrupt-bak name is ours.
   }
   renameSync(logPath, backupPath)
-  renameSync(repairedPath, logPath)
-  chmodSync(logPath, 0o600)
+  try {
+    renameSync(repairedPath, logPath)
+  } catch (error) {
+    // Best-effort restore first — the canonical name must not stay missing
+    // with the original parked in the backup; the rethrow is the signal.
+    try {
+      renameSync(backupPath, logPath)
+    } catch {
+      // Nothing further is recoverable here; the caller reports the swap
+      // failure and the .corrupt-bak copy still holds the original.
+    }
+    throw error
+  }
+  try {
+    ;(options.chmodFn ?? chmodSync)(logPath, 0o600)
+  } catch {
+    // Permissions are store hygiene, not log integrity: the swap already
+    // succeeded, so a chmod failure never flips the outcome. A later
+    // successful repair (or any manual chmod) fixes the mode.
+  }
   return { backupPath }
 }
 
@@ -186,6 +211,8 @@ export type RepairSessionResult =
 export interface RepairSessionOptions {
   /** Test seam handed down to runRepair/verifyClean. */
   spawnSyncFn?: SpawnSyncFn
+  /** Test seam handed down to swapRepaired. */
+  chmodFn?: typeof chmodSync
 }
 
 /**
@@ -220,7 +247,16 @@ export async function repairSessionLog(
         detail: `the repaired copy still fails verification: ${verdict.detail}`,
       }
     }
-    return { kind: 'repaired', backupPath: swapRepaired(logPath, run.repairedPath).backupPath }
+    return {
+      kind: 'repaired',
+      backupPath: swapRepaired(logPath, run.repairedPath, options).backupPath,
+    }
+  } catch (error) {
+    // swapRepaired restored the original best-effort before rethrowing; map
+    // the residue to a plain failure so no exception ever escapes toward the
+    // command dispatch — this module's contract is results, not throws.
+    const message = error instanceof Error ? error.message : String(error)
+    return { kind: 'failed', detail: `swap failed: ${message}` }
   } finally {
     await releaseOwnedWriterLock(dir)
   }
