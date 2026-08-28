@@ -14,6 +14,9 @@ importers:
       '@aiwayds/dsh-dcp':
         specifier: 0.5.1
         version: 0.5.1(@deepseek-ai/cordis@4.0.1)
+      '@aiwayds/dsh-model-sync':
+        specifier: ^0.1.1
+        version: 0.1.1(@deepseek-ai/cordis@4.0.1)
       '@aiwayds/dsh-subagent-registry':
         specifier: 0.3.0
         version: 0.3.0
@@ -75,6 +78,25 @@ packages:
       '@deepseek-ai/dsh-session':
         optional: true
       '@deepseek-ai/dsh-token-meter':
+        optional: true
+      '@deepseek-ai/schemastery':
+        optional: true
+
+  '@aiwayds/dsh-model-sync@0.1.1':
+    resolution: {integrity: sha512-mX9ehHDXsq9tR0d2fZousxPIZIS04J7qSHI2SiBZ1ue6dMHKZ4CoxnZFrEr8I1fO1Kyz8jonDT+8NPd5+45ySA==}
+    engines: {node: '>=22.19.0'}
+    deprecated: 'unpublished: use local install'
+    peerDependencies:
+      '@deepseek-ai/cordis': 4.0.1
+      '@deepseek-ai/dsh-credentials': 0.1.0-rc.6
+      '@deepseek-ai/dsh-settings': 0.1.0-rc.6
+      '@deepseek-ai/schemastery': 3.18.1
+    peerDependenciesMeta:
+      '@deepseek-ai/cordis':
+        optional: true
+      '@deepseek-ai/dsh-credentials':
+        optional: true
+      '@deepseek-ai/dsh-settings':
         optional: true
       '@deepseek-ai/schemastery':
         optional: true
@@ -155,6 +177,10 @@ snapshots:
   '@aiwayds/dsh-ask-router@0.1.0': {}
 
   '@aiwayds/dsh-dcp@0.5.1(@deepseek-ai/cordis@4.0.1)':
+    optionalDependencies:
+      '@deepseek-ai/cordis': 4.0.1
+
+  '@aiwayds/dsh-model-sync@0.1.1(@deepseek-ai/cordis@4.0.1)':
     optionalDependencies:
       '@deepseek-ai/cordis': 4.0.1
 

@@ -14,9 +14,20 @@
 # the bundle to be wired into the model-facing tool catalog. Without this
 # insert, the `ask_user_question` tool never registers with the model and
 # the user-questions seam has no visible surface in this profile.
+#
+# dsh-model-sync is mounted here: it is a default dependency of this package
+# and handles the automatic sync of the built-in routes' model lists — no TUI
+# command involved. It ships its own bundle patch
+# (@aiwayds/dsh-model-sync/cordis.patch.yml); the dependency only puts its
+# package in the profile's node_modules so the patch has something to mount.
+# Do NOT also list @aiwayds/dsh-model-sync in a profile's bundles: mounting
+# it here too would duplicate the entry id and crash the loader — remove it
+# from the profile's bundles instead.
 
 - insert:
     - id: tui-pi
       name: '@aiwayds/dsh-tui-pi'
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
+    - id: dsh-model-sync
+      name: '@aiwayds/dsh-model-sync'

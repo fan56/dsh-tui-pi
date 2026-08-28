@@ -126,11 +126,14 @@ GitHub 明/暗配色，`/theme` 热切换；`auto` 检测你的终端并跟随�
 | `/agents` | 管理 agent markdown 文件 + subagent 上限（`maxAgents`、`maxRounds`）。 |
 | `/subagents` | 选择运行中/最近的 subagent 并观看其实时 transcript；`Enter` steer。 |
 | `/skills` | 管理用户 skills（已安装与可用）。 |
-| `/model-sync` | 为手工声明（baseURL）的 provider 发现模型并合并进 settings。 |
 | `/reload` | `pnpm build` 后从源码热重载插件。 |
 | `/login` | 登录 provider（或 `/login openai`）；**Custom provider…** 添加任意 OpenAI/Anthropic 兼容网关。 |
 | `/logout` | 删除 provider 的已存 key 与 profile。 |
 | `/hotkeys` | 快捷键浏览器与实时编辑器。 |
+
+手工声明（baseURL）provider 的模型列表自动同步不再是内置命令：由独立的
+`@aiwayds/dsh-model-sync` 插件（本包的默认依赖）按自己的节奏保持这些路由的
+模型列表最新。
 
 其余内容作为普通 prompt 落给模型；dsh 原生命令（`plan`、`compact`、`feedback`、`goal`……）原样可用。
 
@@ -186,7 +189,7 @@ dsh --profile tui          # 启动（或：dsh-tui-pi）
 
 ```sh
 node scripts/dev-upgrade.mjs                  # 最新版
-node scripts/dev-upgrade.mjs 1.0.1 --dry-run  # 先预览执行计划
+node scripts/dev-upgrade.mjs 1.0.2 --dry-run  # 先预览执行计划
 ```
 
 ---
@@ -203,7 +206,7 @@ node scripts/dev-upgrade.mjs 1.0.1 --dry-run  # 先预览执行计划
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # 输出 lib/
-pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；56 个文件共 1038 个测试）
+pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；55 个文件共 1020 个测试）
 ```
 
 `pi-tui` 从 npm 原样运行——无补丁、无 fork。铁律与质量门禁见 [AGENTS.md](AGENTS.md)。

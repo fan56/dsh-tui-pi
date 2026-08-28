@@ -24,7 +24,6 @@ import type { PanelHeight } from './activity.ts'
 import { AGENT_TICK_MS, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickPreset, pickTheme } from './selectors.ts'
-import { runModelSync } from './model-sync.ts'
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
 import {
   currentThemePreference,
@@ -961,28 +960,6 @@ export function apply(ctx: Context): void {
       description: 'Configure model profiles (edit, save current, rename, review)',
       handler: invocation => profilesHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /profile-cfg')
-
-    // /model-sync: discover models for CUSTOM provider routes — the
-    // hand-declared llm-pi-ai profiles carrying a baseURL — straight from each
-    // endpoint's model listing, merged additively back into settings.yaml.
-    // Agentless: only the settings document is touched, never a conversation.
-    const modelSyncCustomHandler: LocalCommandHandler = async (rawInput, signal) => {
-      const settings = ctx.get('settings')
-      if (settings === undefined) {
-        return { kind: 'error' as const, text: 'Settings service is unavailable.' }
-      }
-      const llm = ctx.get('llm')
-      if (llm === undefined) {
-        return { kind: 'error' as const, text: 'LLM runtime is unavailable.' }
-      }
-      return runModelSync({ settings, llm }, { rawInput, signal })
-    }
-    commands.registerLocal('model-sync', modelSyncCustomHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'model-sync',
-      description: 'Discover models for hand-declared (baseURL) providers and merge them into settings',
-      handler: invocation => modelSyncCustomHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /model-sync')
 
     const sessionHandler: LocalCommandHandler = async () => {
       const agent = bridge.getAgent()

@@ -48,7 +48,7 @@
 - **`DSH_TUI_THEME` 会钉死显示**：env 存在时 `/theme` 选新偏好只保存并提示
   "display is pinned by DSH_TUI_THEME=…"，画布不变——这是正确行为，但主题
   切换审查必须在无 env 的 TUI 上做。
-- **裸 `/` 的自动补全弹窗只显示命令列表的前几行**（`models-sync` 这类
+- **裸 `/` 的自动补全弹窗只显示命令列表的前几行**（`usage` 这类
   排在后面的命令不可见）；`⌘ /cmd` 的 transcript 回显会永久留在屏幕上，
   overlay 断言必须用 overlay 独有文案（`● Theme`、`⚙ hotkeys`、
   `GitHub light palette` 等），不能用命令名。

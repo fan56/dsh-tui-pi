@@ -197,7 +197,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **1037 tests** across 56 files (verified by
+- `pnpm test` must stay green: **1020 tests** across 55 files (verified by
   `node --test test/*.mjs`; the v0.26.0 baseline was 918, model-profiles
   added 25, the directory pin added 5, the single-writer guard added 9,
   repair-session-log fixtures added 6, the read-only remote view added 7, the
@@ -210,7 +210,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   - live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
   - retention 39 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
     writer-lock 9 + repair-session-log 6 + remote-tail 7 + log-repair 25 +
-  theme 21 + settings 19 + welcome 18 + model-sync 18 + provider-catalog 17 +
+  theme 21 + settings 19 + welcome 18 + provider-catalog 17 +
   custom-provider 12 +
   messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 26 +
   subagent-viewer 37 + history 13 + agent-manager 13 +

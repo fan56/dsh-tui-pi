@@ -126,11 +126,15 @@ GitHub light/dark palettes, hot-switched with `/theme`; `auto` detects your term
 | `/agents` | Manage agent markdown files + subagent limits (`maxAgents`, `maxRounds`). |
 | `/subagents` | Pick a running/recent subagent and watch its live transcript; `Enter` steers it. |
 | `/skills` | Manage user skills (installed and available). |
-| `/model-sync` | Discover models for hand-declared (baseURL) providers and merge them into settings. |
 | `/reload` | Hot-reload the plugin from source after `pnpm build`. |
 | `/login` | Log in to a provider (or `/login openai`); **Custom provider…** adds any OpenAI/Anthropic-compatible gateway. |
 | `/logout` | Remove a provider's stored key and profile. |
 | `/hotkeys` | Keybinding browser and live editor. |
+
+Model-list auto-sync for hand-declared (baseURL) providers is no longer a
+built-in command: the separate `@aiwayds/dsh-model-sync` plugin (a default
+dependency of this package) keeps those routes' model lists up to date on its
+own schedule.
 
 Anything else falls through to the model as an ordinary prompt; dsh-native commands (`plan`, `compact`, `feedback`, `goal`, …) work unchanged.
 
@@ -186,7 +190,7 @@ Everything that used to need manual patching — the canvas background, the `@de
 
 ```sh
 node scripts/dev-upgrade.mjs                  # latest
-node scripts/dev-upgrade.mjs 1.0.1 --dry-run  # preview the plan first
+node scripts/dev-upgrade.mjs 1.0.2 --dry-run  # preview the plan first
 ```
 
 ---
@@ -203,7 +207,7 @@ node scripts/dev-upgrade.mjs 1.0.1 --dry-run  # preview the plan first
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (pretest builds; 1038 tests across 56 files)
+pnpm test     # unit tests, node --test against lib/ (pretest builds; 1020 tests across 55 files)
 ```
 
 `pi-tui` runs pristine from npm — no patches, no fork. See [AGENTS.md](AGENTS.md) for the iron rules and quality gates.

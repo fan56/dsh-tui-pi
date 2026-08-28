@@ -31,6 +31,45 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     `ClipboardImpl`, so `test/clipboard.test.mjs` covers the full ladder
     without spawning a single real process.
 
+## [1.0.2] - 2026-08-28
+
+### Added
+
+- **`@aiwayds/dsh-model-sync` ships as a default dependency and mounts
+  itself by default** (`package.json` `^0.1.1`; `cordis.patch.yml` bundle
+  entry `id: dsh-model-sync`). The standalone plugin owns the automatic
+  sync of the built-in routes' model lists — keeping the configured
+  `llm-pi-ai` provider routes in step with each gateway's `/models`
+  endpoint through add-only merges written via the official settings seam —
+  with no TUI command involved. It carries its own bundle patch
+  (`@aiwayds/dsh-model-sync/cordis.patch.yml`); the dependency only puts
+  the package into the profile's `node_modules` so that patch has something
+  to mount, and `cordis.patch.yml` documents the rule: do NOT also list
+  `@aiwayds/dsh-model-sync` in a profile's `bundles` — the duplicate mount
+  would crash the loader — remove that entry from the profile instead.
+
+### Changed
+
+- Package and suite bookkeeping follow the removal: version 1.0.2, and the
+  suite stands at 1037 → 1020 tests across 56 → 55 files — the deleted
+  `test/model-sync.test.mjs` carried the 18 `/model-sync` cases.
+- Docs follow the removal: both READMEs drop the `/model-sync` row from
+  the command table, add a paragraph pointing at the companion plugin, and
+  re-count their `pnpm test` reference to 1020 / 55 files;
+  `AGENTS.md`'s quality gates re-count 1020 / 55 files and drop the
+  model-sync line from the per-file tally; `e2e/README.md`'s autocomplete
+  caveat cites `usage` instead of the retired `models-sync` command; the
+  dev-upgrade examples move to 1.0.2.
+
+### Removed
+
+- The built-in `/model-sync` command (`src/model-sync.ts`,
+  `test/model-sync.test.mjs`). Model-list syncing is now owned by the
+  standalone `@aiwayds/dsh-model-sync` plugin, which this package depends on
+  and mounts by default via its own bundle patch — no TUI command needed. If
+  a profile's `bundles` also list `@aiwayds/dsh-model-sync` explicitly,
+  remove that entry: the duplicate mount would crash the loader.
+
 ## [1.0.1] - 2026-08-28
 
 ### Changed
