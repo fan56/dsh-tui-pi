@@ -6,7 +6,7 @@ pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 
 **Compatibility:** tested against dsh `0.1.1-rc.2`; slash commands keep working across dsh-commands' `execute()` signature change (pre-rc.8 3-arg → current 4-arg).
 
-[![dsh-tui-pi demo](https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d)](https://asciinema.org/a/BE212ZO8x1zEZyZn)
+https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 
 *A live recording of a session (MP4, 1.5× speed) — todos, running subagents, think/tool panels and the powerline footer in action.*
 
@@ -53,6 +53,10 @@ Running subagents show as compact one-line status rows below the editor — name
 ## Ask User Question
 
 While mid-turn, the model can pause and ask you structured questions via the `ask_user_question` tool; the answering side is a docked panel above the input — no window juggling. One question at a time with tabs for the rest, `Ctrl+T` folds the panel away, double-`Esc` declines. Free text, multi-select, a multi-question review page, bracketed-paste and right-click / `Ctrl+Shift+C` system-clipboard paste are all supported.
+
+See the ask-question flow in action:
+
+https://github.com/user-attachments/assets/aa36be36-a508-4f53-ba85-efe0394dab11
 
 ---
 
@@ -178,6 +182,16 @@ node scripts/dev-upgrade.mjs 1.0.0 --dry-run  # preview the plan first
 
 - [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) — ships as a default dependency; fans every `ask_user_question` out to all answering surfaces (TUI panel, Feishu card) and the first answer wins. List it in the profile's `bundles` before the UI bundles to activate.
 - [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) — optional; drives the same dsh session from Feishu/Lark on your phone, including an ask-user card surface. Install into the same profile for phone-side participation.
+
+### Feishu integration demo
+
+dsh-tui-pi on the desktop and Feishu/Lark on the phone driving (and answering for) the same dsh session:
+
+https://github.com/user-attachments/assets/177e8839-523b-487e-b3d1-6d725cd8aba5
+
+https://github.com/user-attachments/assets/c0d7092f-deda-4443-b75a-2bc93bd30d86
+
+Demos courtesy of the [dsh-feishu Demos issue](https://github.com/fan56/dsh-feishu/issues/1).
 
 ---
 
