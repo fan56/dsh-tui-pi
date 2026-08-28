@@ -18,6 +18,7 @@ https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 - [**Think & tool panels**](#think-and-tool-panels) — reasoning and tool activity stay out of the transcript, so the conversation reads clean.
 - [**Subagents**](#subagents) — every running subagent gets a status line; watch and steer it live.
 - [**Ask User Question**](#ask-user-question) — the model can pause and ask you structured questions, answered without leaving the TUI.
+- [**Feishu integration demo**](#feishu-integration-demo) — dsh-tui-pi on the desktop and Feishu/Lark on the phone driving (and answering for) the same dsh session.
 - [**Dynamic context pruning (DCP)**](#dynamic-context-pruning-dcp) — context stays within limits automatically, with zero LLM calls.
 - [**Persistent context**](#persistent-context) — your ground rules ride along on every request, hot-applied with no restart.
 - [**Model profiles & favorites**](#model-profiles-and-favorites) — switch a whole model setup per project and keep the picker small.
@@ -57,6 +58,18 @@ While mid-turn, the model can pause and ask you structured questions via the `as
 See the ask-question flow in action:
 
 https://github.com/user-attachments/assets/aa36be36-a508-4f53-ba85-efe0394dab11
+
+---
+
+## Feishu integration demo
+
+dsh-tui-pi on the desktop and Feishu/Lark on the phone driving (and answering for) the same dsh session:
+
+https://github.com/user-attachments/assets/177e8839-523b-487e-b3d1-6d725cd8aba5
+
+https://github.com/user-attachments/assets/c0d7092f-deda-4443-b75a-2bc93bd30d86
+
+Demos courtesy of the [dsh-feishu Demos issue](https://github.com/fan56/dsh-feishu/issues/1).
 
 ---
 
@@ -182,16 +195,6 @@ node scripts/dev-upgrade.mjs 1.0.0 --dry-run  # preview the plan first
 
 - [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) — ships as a default dependency; fans every `ask_user_question` out to all answering surfaces (TUI panel, Feishu card) and the first answer wins. List it in the profile's `bundles` before the UI bundles to activate.
 - [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) — optional; drives the same dsh session from Feishu/Lark on your phone, including an ask-user card surface. Install into the same profile for phone-side participation.
-
-### Feishu integration demo
-
-dsh-tui-pi on the desktop and Feishu/Lark on the phone driving (and answering for) the same dsh session:
-
-https://github.com/user-attachments/assets/177e8839-523b-487e-b3d1-6d725cd8aba5
-
-https://github.com/user-attachments/assets/c0d7092f-deda-4443-b75a-2bc93bd30d86
-
-Demos courtesy of the [dsh-feishu Demos issue](https://github.com/fan56/dsh-feishu/issues/1).
 
 ---
 

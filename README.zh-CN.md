@@ -18,6 +18,7 @@ https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 - [**Think 与 Tool 面板**](#think-与-tool-面板) — 推理和工具活动不进对话记录，对话读起来干净清爽。
 - [**Subagents 子代理**](#subagents-子代理) — 每个运行中的 subagent 都有一行状态；实时观看并操控它。
 - [**Ask User Question**](#ask-user-question-向用户提问) — 模型可以暂停下来向你提结构化问题，无需离开 TUI 即可作答。
+- [**飞书集成演示**](#飞书集成演示) — 桌面上的 dsh-tui-pi 与手机上的飞书/Lark 驱动（并代答）同一个 dsh session。
 - [**Dynamic context pruning (DCP)**](#dynamic-context-pruning-dcp) — 上下文自动保持在限制内，零 LLM 调用。
 - [**Persistent context 持久上下文**](#persistent-context-持久上下文) — 你的基本规则随每次请求生效，热应用无需重启。
 - [**模型 profile 与收藏**](#模型-profile-与收藏) — 按项目整体切换一套模型配置，并让选择器保持精简。
@@ -57,6 +58,18 @@ dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%) ▸ �
 看看 ask-question 流程的实际效果：
 
 https://github.com/user-attachments/assets/aa36be36-a508-4f53-ba85-efe0394dab11
+
+---
+
+## 飞书集成演示
+
+桌面上的 dsh-tui-pi 与手机上的飞书/Lark 驱动（并代答）同一个 dsh session：
+
+https://github.com/user-attachments/assets/177e8839-523b-487e-b3d1-6d725cd8aba5
+
+https://github.com/user-attachments/assets/c0d7092f-deda-4443-b75a-2bc93bd30d86
+
+演示来自 [dsh-feishu Demos issue](https://github.com/fan56/dsh-feishu/issues/1)。
 
 ---
 
@@ -182,16 +195,6 @@ node scripts/dev-upgrade.mjs 1.0.0 --dry-run  # 先预览执行计划
 
 - [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) —— 作为默认依赖附带；把每个 `ask_user_question` 扇出到所有应答面（TUI 面板、飞书卡片），第一个答案获胜。把它加进 profile 的 `bundles`，放在任何 UI bundle 之前即可激活。
 - [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) —— 可选；用手机上的飞书/Lark 驱动同一个 dsh session，包括 ask-user 卡片面。想手机侧参与就装进同一个 profile。
-
-### Feishu integration demo 飞书集成演示
-
-桌面上的 dsh-tui-pi 与手机上的飞书/Lark 驱动（并代答）同一个 dsh session：
-
-https://github.com/user-attachments/assets/177e8839-523b-487e-b3d1-6d725cd8aba5
-
-https://github.com/user-attachments/assets/c0d7092f-deda-4443-b75a-2bc93bd30d86
-
-演示来自 [dsh-feishu Demos issue](https://github.com/fan56/dsh-feishu/issues/1)。
 
 ---
 
