@@ -71,7 +71,7 @@ dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%) ▸ �
 | **Model** | 模型简称 |
 | **Thinking** | 推理强度等级（`off` / `high` / `max`） |
 | **Context** | `已用 / 上限 (百分比%)` |
-| **Cache-hit** | `CHxx%` —— prompt 缓存命中率 |
+| **Cache-hit** | `CHxx%` —— 会话的缓存命中率：全部计费输入流量（input+cacheRead+cacheWrite）中由缓存供给的比例；全 session 累计，provider/model 切换不重置；仅当会话实际计费过缓存 token（cacheRead>0 或 cacheWrite>0）后才显示 |
 | **Messages** | user + assistant 消息总数 |
 | **Tools** | 工具调用总数 |
 | **Clock** | 右对齐实时 HH:MM:SS（每秒刷新） |
@@ -157,7 +157,7 @@ dsh ▸ volc-ark-plan ▸ deepseek-v4-flash ▸ high ▸ 48.7k/1.0M(4.6%) ▸ �
 dsh plugin --profile tui add @aiwayds/dsh-dcp
 ```
 
-挂载后 DCP 在后台透明运行。footer 的 **Context** 分段计算的是当前占用——最近一次请求的 billed context 加上其后消息的 CJK 估算——所以压缩之后下一次请求会变小，显示随之回落（百分比封顶 100，窗口是硬上限）。**Cache-hit** 分段反映当前 provider/model 路由的缓存复用率——命中率按路由分段分别计算，provider 或 model 变化时归零（在下一条 billed 消息到来前隐藏）。
+挂载后 DCP 在后台透明运行。footer 的 **Context** 分段计算的是当前占用——最近一次请求的 billed context 加上其后消息的 CJK 估算——所以压缩之后下一次请求会变小，显示随之回落（百分比封顶 100，窗口是硬上限）。
 
 在 subagent 内部，已提交的压缩同样可见：DCP 在子代理自己的日志里为每次压缩追加一行 `user/message` **notice**，Ctrl+G 的 transcript 用 `🧹` 标记渲染它（区别于通用的 `ⓘ`），选择器行的描述里带有该子代理的压缩次数（描述中的 `🧹 N×`）。DCP 的 `roundInterval` 与 TUI 的 `maxRounds` 数的是**同一样东西**——`assistant/message` 事件，每次 LLM 往返计一条——但行为不同：子代理计数达到 `maxRounds` 时 TUI 排队发一个收尾请求；会话计数达到 `roundInterval` 后 DCP 在下一个空闲边界执行压缩（修剪上下文）。一个触发工作，一个释放上下文。
 
