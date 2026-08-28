@@ -14,6 +14,7 @@ import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { SESSION_LOG_FILE_NAMES } from './retention.ts'
+import { isCorruptLogError } from './log-repair.ts'
 import { emitNotice } from './notice-bridge.ts'
 import { wrapFramedOverlay } from './frame.ts'
 import {
@@ -534,12 +535,31 @@ export function normalizePreview(text: string, maxChars = PREVIEW_MAX_CHARS): st
   return oneLine.length <= maxChars ? oneLine : `${oneLine.slice(0, maxChars)}…`
 }
 
-/** Best-effort first-message preview per session id; failures map to undefined. */
+/**
+ * The picker row's SESSION-column label: the first-message preview when one
+ * was read, else the header label (cwd basename · short id). `corrupt`
+ * prepends the ⚠ marker — the same pre-read `inspect` that harvests previews
+ * already diagnosed this log as corrupt, and selecting the row will offer an
+ * in-place repair instead of a dead end. Pure so the marker contract is
+ * unit-testable without a store.
+ */
+export function resumeRowTitle(header: SessionHeader, preview: string | undefined, corrupt: boolean): string {
+  const base = preview ?? `${basename(header.cwd ?? '?')} · ${clipToWidth(String(header.id), 8)}`
+  return corrupt ? `⚠ ${base}` : base
+}
+
+/**
+ * Best-effort first-message preview per session id; failures map to
+ * undefined, and failures matching the corrupt-log fingerprint additionally
+ * record the id in `corruptIds` — zero extra IO (the inspect calls already
+ * ran for the previews), so the ⚠ rows stay a free byproduct of enrichment.
+ */
 async function loadSessionPreviews(
   persistence: SessionPersistence,
   ids: readonly SessionId[],
-): Promise<Map<string, string | undefined>> {
+): Promise<{ previews: Map<string, string | undefined>; corruptIds: Set<string> }> {
   const previews = new Map<string, string | undefined>()
+  const corruptIds = new Set<string>()
   let cursor = 0
   const workers = Array.from({ length: Math.min(PREVIEW_CONCURRENCY, ids.length) }, async () => {
     while (cursor < ids.length) {
@@ -550,14 +570,16 @@ async function loadSessionPreviews(
         const { events } = await persistence.inspect(id)
         const text = previewOfEvents(events)
         if (text) preview = normalizePreview(text)
-      } catch {
+      } catch (error) {
         preview = undefined
+        const message = error instanceof Error ? error.message : String(error)
+        if (isCorruptLogError(message)) corruptIds.add(String(id))
       }
       previews.set(String(id), preview)
     }
   })
   await Promise.all(workers)
-  return previews
+  return { previews, corruptIds }
 }
 
 /**
@@ -677,17 +699,20 @@ export async function pickPersistedSession(
 
   // Enrich the most recent candidates with their first-message preview so the
   // rows are distinguishable at a glance; older ones fall back to the header
-  // label (cwd + short id).
-  const previews = await loadSessionPreviews(persistence, ordered.slice(0, PREVIEW_SESSION_CAP).map(header => header.id))
+  // label (cwd + short id). Logs the enrichment inspect diagnosed as corrupt
+  // get the ⚠ marker — a free byproduct of the same calls, never a new scan.
+  const { previews, corruptIds } = await loadSessionPreviews(
+    persistence,
+    ordered.slice(0, PREVIEW_SESSION_CAP).map(header => header.id),
+  )
 
   const rows = ordered.map(header => {
     const id = String(header.id)
-    const preview = previews.get(id)
     const updated = lastUpdates.get(id)?.mtimeMs ?? header.createdAt
     return {
       value: id,
       header,
-      session: preview ?? `${basename(header.cwd ?? '?')} · ${clipToWidth(id, 8)}`,
+      session: resumeRowTitle(header, previews.get(id), corruptIds.has(id)),
       when: new Date(updated).toLocaleString(),
       dir: header.cwd ?? 'no cwd',
     }

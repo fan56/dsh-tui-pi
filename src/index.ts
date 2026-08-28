@@ -54,7 +54,14 @@ import {
   resolveProfileName,
   type StartupSummary,
 } from './startup-info.ts'
-import { inspectPersistedSession, pickPersistedSession, showSessionInfo } from './sessions.ts'
+import { inspectPersistedSession, pickPersistedSession, sessionLogRoot, showSessionInfo } from './sessions.ts'
+import {
+  isCorruptLogError,
+  locateSessionLog,
+  repairFailureNotice,
+  repairSessionLog,
+} from './log-repair.ts'
+import { openRepairConfirmDialog } from './repair-dialog.ts'
 import { WriterLockedError } from './writer-lock.ts'
 import { emitNotice } from './notice-bridge.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
@@ -1046,74 +1053,115 @@ export function apply(ctx: Context): void {
       }
       if (picked.kind === 'cancelled') return { kind: 'success' as const, text: 'Resume cancelled.' }
 
+      // Narrowed shared handle for the closures below (const narrowing
+      // propagates into async closures; `picked`'s does not).
+      const target = picked
+
+      // The selected row's resume path: swap the live agent for the target
+      // and rebuild transcript + stats from the stored events. Shared by the
+      // direct hit and the post-repair re-entry so both behave identically
+      // (including the WriterLockedError read-only fallback).
+      const resumeAndReplay = async () => {
+        let resumed: Awaited<ReturnType<DshSessionBridge['resume']>>
+        try {
+          resumed = await bridge.resume(target.id)
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error)
+          if (error instanceof WriterLockedError) {
+            // Single-writer guard fired: another process drives this session.
+            // Rather than a dead end, degrade to a READ-ONLY view synced from
+            // its persisted log — final replies arrive (poll-delayed, without
+            // streaming detail); input is refused until /resume or /new.
+            try {
+              await bridge.watchRemote(target.id)
+              refreshPermissionPreset()
+              renderer.clear()
+              liveWidgets.clear()
+              ui.requestRender()
+              return {
+                kind: 'success' as const,
+                text: `Watching ${clipToWidth(String(target.id), 8)} (read-only · driven by pid ${error.holder.pid}). /resume or /new to switch.`,
+              }
+            } catch (watchError: unknown) {
+              return {
+                kind: 'error' as const,
+                text: `Cannot watch ${clipToWidth(String(target.id), 8)} read-only: ${watchError instanceof Error ? watchError.message : String(watchError)}`,
+              }
+            }
+          }
+          return {
+            kind: 'error' as const,
+            text: `Resume failed: ${message} — the previous session was closed; the next prompt starts a new one.`,
+          }
+        }
+        // Seed the badge cache for the resumed session (its pin event may have
+        // been emitted before the bridge's session-id filter re-bound).
+        refreshPermissionPreset()
+        // Clear BEFORE replay: the renderer's local-echo dedupe must not see
+        // replayed user messages next to a stale prompt echo. The live widget
+        // drops the previous session's todos too (its agents already went via
+        // the bridge's onLive([]) on resume reset).
+        renderer.clear()
+        liveWidgets.clear()
+        // Replay seed history only: events at or above firstLiveSeq were
+        // published in-process and arrive again through the session/event
+        // subscription (replaying them would double-count stats and echo).
+        // Seeds entered through construction never published — replaying them
+        // exactly once covers the stored log with zero overlap, zero gap.
+        const session = resumed.agent.session
+        // Adopted live sessions (attach arm): EVERY event in the log was
+        // published before this surface started tracking it — the firehose
+        // dropped all of them, so replay unfiltered or the transcript misses
+        // everything the other surface did. Cold resumes keep the firstLiveSeq
+        // filter (seeded history replays once; live events re-arrive).
+        const adopted = 'adopted' in resumed && resumed.adopted === true
+        bridge.replay(adopted ? session.events : session.events.filter(event => event.seq < session.firstLiveSeq))
+        ui.requestRender()
+        return {
+          kind: 'success' as const,
+          text: `Resumed ${clipToWidth(String(target.id), 8)} · ${session.events.length} events.`,
+        }
+      }
+
+      // Corrupt-log branch: the repair rewrites user data on disk, so it is
+      // gated behind an explicit confirmation dialog — it never runs
+      // silently, and Cancel falls back to the plain failure text.
+      const offerCorruptedLogRepair = async (message: string) => {
+        if (await openRepairConfirmDialog(ui.tui, ui.theme, refocusEditor) !== 'repair') {
+          return {
+            kind: 'error' as const,
+            text: `Cannot resume ${clipToWidth(String(target.id), 8)}: ${message}`,
+          }
+        }
+        const persistence = ctx.get('sessionPersistence') as
+          | { list?: () => Promise<Array<{ id: unknown; cwd?: unknown }>> }
+          | undefined
+        const logPath = await locateSessionLog(persistence, String(target.id), sessionLogRoot())
+        if (logPath === undefined) {
+          return {
+            kind: 'error' as const,
+            text: `repair failed: cannot locate the log of ${clipToWidth(String(target.id), 8)} on disk — log untouched`,
+          }
+        }
+        const notice = repairFailureNotice(await repairSessionLog(logPath))
+        if (notice !== undefined) return { kind: 'error' as const, text: notice }
+        // A verified-clean log now sits under the canonical name — re-enter
+        // the selected row's resume path.
+        return resumeAndReplay()
+      }
+
       // Validate the target log before tearing down the current agent: a
       // corrupt log must leave the live session untouched.
       try {
         await inspectPersistedSession(ctx, picked.id)
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
+        if (isCorruptLogError(message)) {
+          return offerCorruptedLogRepair(message)
+        }
         return { kind: 'error' as const, text: `Cannot resume ${clipToWidth(String(picked.id), 8)}: ${message}` }
       }
-
-      let resumed: Awaited<ReturnType<DshSessionBridge['resume']>>
-      try {
-        resumed = await bridge.resume(picked.id)
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (error instanceof WriterLockedError) {
-          // Single-writer guard fired: another process drives this session.
-          // Rather than a dead end, degrade to a READ-ONLY view synced from
-          // its persisted log — final replies arrive (poll-delayed, without
-          // streaming detail); input is refused until /resume or /new.
-          try {
-            await bridge.watchRemote(picked.id)
-            refreshPermissionPreset()
-            renderer.clear()
-            liveWidgets.clear()
-            ui.requestRender()
-            return {
-              kind: 'success' as const,
-              text: `Watching ${clipToWidth(String(picked.id), 8)} (read-only · driven by pid ${error.holder.pid}). /resume or /new to switch.`,
-            }
-          } catch (watchError: unknown) {
-            return {
-              kind: 'error' as const,
-              text: `Cannot watch ${clipToWidth(String(picked.id), 8)} read-only: ${watchError instanceof Error ? watchError.message : String(watchError)}`,
-            }
-          }
-        }
-        return {
-          kind: 'error' as const,
-          text: `Resume failed: ${message} — the previous session was closed; the next prompt starts a new one.`,
-        }
-      }
-      // Seed the badge cache for the resumed session (its pin event may have
-      // been emitted before the bridge's session-id filter re-bound).
-      refreshPermissionPreset()
-      // Clear BEFORE replay: the renderer's local-echo dedupe must not see
-      // replayed user messages next to a stale prompt echo. The live widget
-      // drops the previous session's todos too (its agents already went via
-      // the bridge's onLive([]) on resume reset).
-      renderer.clear()
-      liveWidgets.clear()
-      // Replay seed history only: events at or above firstLiveSeq were
-      // published in-process and arrive again through the session/event
-      // subscription (replaying them would double-count stats and echo).
-      // Seeds entered through construction never published — replaying them
-      // exactly once covers the stored log with zero overlap, zero gap.
-      const session = resumed.agent.session
-      // Adopted live sessions (attach arm): EVERY event in the log was
-      // published before this surface started tracking it — the firehose
-      // dropped all of them, so replay unfiltered or the transcript misses
-      // everything the other surface did. Cold resumes keep the firstLiveSeq
-      // filter (seeded history replays once; live events re-arrive).
-      const adopted = 'adopted' in resumed && resumed.adopted === true
-      bridge.replay(adopted ? session.events : session.events.filter(event => event.seq < session.firstLiveSeq))
-      ui.requestRender()
-      return {
-        kind: 'success' as const,
-        text: `Resumed ${clipToWidth(String(picked.id), 8)} · ${session.events.length} events.`,
-      }
+      return resumeAndReplay()
     }
     commands.registerLocal('resume', resumeHandler)
     ctx.effect(() => ctx.commands.register({
