@@ -31,6 +31,19 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     `ClipboardImpl`, so `test/clipboard.test.mjs` covers the full ladder
     without spawning a single real process.
 
+## [1.0.4] - 2026-08-29
+
+### Fixed
+
+- **Registry recovery release.** npm 1.0.3 was published from an
+  un-versioned working tree on 2026-08-28 and its git history was removed;
+  it also bundled a TUI-side `/model-sync` registration whose final home is
+  the `@aiwayds/dsh-model-sync` plugin (0.1.3+ registers the command itself
+  through the shared dsh command registry, which every interactive UI
+  discovers automatically). 1.0.4 re-publishes the v1.0.2 tree — zero code
+  changes — so `^1.0.x` ranges resolve to a clean release. npm 1.0.3 is
+  considered superseded; pin `1.0.2`/`1.0.4` if a range still picks it up.
+
 ## [1.0.2] - 2026-08-28
 
 ### Added
