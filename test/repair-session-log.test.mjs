@@ -134,6 +134,46 @@ test('zstd input produces .repaired.jsonl.zstd output that decompresses clean', 
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('apply output honors the loader frame contract: frame 1 is the header line alone', () => {
+  const dir = tempDir('frames')
+  const file = join(dir, 's.jsonl.zstd')
+  const rows = [headerLine, plain(0), plain(1), packed(2, 5), plain(7), plain(7), plain(8)]
+  const raw = spawnSync('zstd', ['-19'], { input: Buffer.from(`${rows.join('\n')}\n`), maxBuffer: 1 << 20 })
+  assert.equal(raw.status, 0)
+  writeFileSync(file, raw.stdout)
+  const apply = run(file, ['--apply'])
+  assert.equal(apply.code, 0, apply.err)
+
+  const out = readFileSync(join(dir, 's.repaired.jsonl.zstd'))
+  const magics = []
+  for (let i = 0; i <= out.length - 4; i++) {
+    if (out[i] === 0x28 && out[i + 1] === 0xB5 && out[i + 2] === 0x2F && out[i + 3] === 0xFD) magics.push(i)
+  }
+  // dsh's jsonl loader requires the FIRST frame to hold exactly one header
+  // line; a single-frame rewrite is rejected with "first frame is not exactly
+  // one header line" and bricks /resume listing for the whole workspace.
+  assert.ok(magics.length >= 2, `expected multiple frames, got ${magics.length}`)
+  const firstSlice = out.subarray(magics[0], magics[1])
+  const firstBack = spawnSync('zstd', ['-dc'], { input: firstSlice, maxBuffer: 1 << 20 })
+  assert.equal(firstBack.status, 0)
+  const firstLines = firstBack.stdout.toString('utf8').trim().split('\n')
+  assert.equal(firstLines.length, 1, 'frame 1 must be the header line alone')
+  assert.equal(JSON.parse(firstLines[0]).seq, undefined, 'frame 1 is the identity row')
+
+  const back = spawnSync('zstd', ['-dc', join(dir, 's.repaired.jsonl.zstd')], { maxBuffer: 1 << 20 })
+  assert.equal(back.status, 0)
+  // Expand covered slots: plain rows carry `seq`, packed runs carry `seq0` +
+  // a dt span (`dt.length + 1` slots starting at seq0).
+  const seqs = back.stdout.toString('utf8').trim().split('\n').map(JSON.parse)
+    .flatMap(r => Number.isSafeInteger(r.seq)
+      ? [r.seq]
+      : Number.isSafeInteger(r.seq0)
+        ? Array.from({ length: r.data.dt.length + 1 }, (_, i) => r.seq0 + i)
+        : []) // identity/header rows occupy no seq slot
+  assert.deepEqual(seqs, [0, 1, 2, 3, 4, 5, 6, 7, 8])
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('torn lines abort with exit 2 by default and are droppable with --skip-bad-lines', () => {
   const dir = tempDir('torn')
   const file = join(dir, 's.jsonl')

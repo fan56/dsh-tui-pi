@@ -28,6 +28,10 @@
  *      deliberately deferred; such rows are reported explicitly.
  *   3. Survivors are renumbered into one dense seq space (packed rows keep
  *      their internal span width) and written to `<name>.repaired.jsonl[.zstd]`
+ *      re-encoded in the writer's multi-frame shape — frame 1 carries the
+ *      header line alone, remaining rows chunked 512 per frame — so the
+ *      output loads in dsh directly (a single-frame rewrite would be
+ *      rejected with "first frame is not exactly one header line").
  *      beside the original. The original is NEVER modified or deleted; to
  *      actually LOAD the repair you must move it over the corrupted name
  *      yourself (the success line prints the exact mv command).
@@ -149,11 +153,21 @@ function decompress(file) {
   return proc.stdout.toString('utf8')
 }
 
-function compressTo(text, outPathTmp) {
-  const proc = spawnSync('zstd', ['-19'], { input: Buffer.from(text, 'utf8'), maxBuffer: 1 << 30 })
-  if (proc.error) fail(`cannot run zstd: ${proc.error.message}`)
-  if (proc.status !== 0) fail(`zstd compress failed: ${String(proc.stderr).slice(0, 200)}`)
-  writeFileSync(outPathTmp, proc.stdout)
+function compressToFrames(lines, outPathTmp) {
+  // dsh's jsonl backend reads frame 1 as exactly one header line and frames
+  // 2+ as row batches; a single-frame rewrite of the whole body loads as
+  // "first frame is not exactly one header line". Frame 1 = the identity
+  // line alone, remaining rows chunked FRAME_ROWS per frame.
+  const FRAME_ROWS = 512
+  const chunks = [lines.slice(0, 1)]
+  for (let i = 1; i < lines.length; i += FRAME_ROWS) chunks.push(lines.slice(i, i + FRAME_ROWS))
+  const parts = chunks.map(chunk => {
+    const proc = spawnSync('zstd', ['-19'], { input: Buffer.from(`${chunk.join('\n')}\n`, 'utf8'), maxBuffer: 1 << 30 })
+    if (proc.error) fail(`cannot run zstd: ${proc.error.message}`)
+    if (proc.status !== 0) fail(`zstd compress failed: ${String(proc.stderr).slice(0, 200)}`)
+    return proc.stdout
+  })
+  writeFileSync(outPathTmp, Buffer.concat(parts))
 }
 
 function main() {
@@ -222,7 +236,7 @@ function main() {
   const stem = basename(file).replace(/\.jsonl(\.zstd)?$/, '')
   const outPath = join(dirname(file), `${stem}.repaired.jsonl${isZstd ? '.zstd' : ''}`)
   const tmpPath = `${outPath}.tmp`
-  if (isZstd) compressTo(body, tmpPath)
+  if (isZstd) compressToFrames(fixedLines, tmpPath)
   else writeFileSync(tmpPath, body)
   renameSync(tmpPath, outPath)
   console.log(`wrote ${outPath} (${fixedLines.length} rows, dense seq 0..${lastIndex}). Original untouched.`)
