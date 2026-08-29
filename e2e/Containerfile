@@ -8,6 +8,11 @@
 FROM docker.m.daocloud.io/library/ubuntu:24.04
 
 ARG NODE_VERSION=22.23.2
+# npmmirror's binary mirror is the default: nodejs.org's CDN is not
+# reachable from this network's podman VM (same pollution family as the
+# docker.io base image above — nodejs.org answers fine from the host).
+# On a clean network: --build-arg NODE_DIST_BASE=https://nodejs.org/dist
+ARG NODE_DIST_BASE=https://npmmirror.com/mirrors/node
 ARG PNPM_VERSION=10.33.0
 ARG DSH_VERSION=0.1.0-rc.8
 
@@ -27,7 +32,7 @@ RUN case "$(uname -m)" in \
       *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;; \
     esac \
  && curl -fsSL \
-      "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+      "${NODE_DIST_BASE}/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
       | tar -xJ -C /usr/local --strip-components=1 \
  && node --version
 

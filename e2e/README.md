@@ -18,8 +18,9 @@
 - 场景执行：`e2e/` 以只读方式挂到容器 `/e2e`，因此改测试脚本不需要
   重建镜像；改 `src/` 或 `package.json` 才需要。
 - 网络说明：基础镜像走 `docker.m.daocloud.io` 镜像源（本网络环境下
-  registry-1.docker.io 被 DNS 污染）；容器内 npmjs.org / nodejs.org
-  均直连可达，不需要镜像源。
+  registry-1.docker.io 被 DNS 污染）；容器内 npmjs.org 可直连，
+  nodejs.org 的 CDN 同被污染——Node tarball 默认走 npmmirror 二进制
+  镜像（`ARG NODE_DIST_BASE` 可切回官方源）。
 
 ## 场景清单（scenarios/）
 
