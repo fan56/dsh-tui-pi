@@ -43,6 +43,14 @@ append-system.ts  APPEND_SYSTEM.md support (pi convention, dsh side
                   there (idempotent marker, atomic) and migrated out of the
                   legacy ~/.dsh/AGENTS.md
 commands.ts       CommandService: parse + dual-channel dispatch + autocomplete
+btw.ts            /btw by-the-way side questions (TUI-owned, ADR 0001): arg
+                  parsing (--model override), read-only recent-conversation
+                  snapshot builder, single-flight queue, stream consumption +
+                  controller over structural slices (unit-tested); idle main
+                  line refuses; nothing enters the session log or the main line
+btw-overlay.ts    the btw overlay: framed panel bound to one run state (setText
+                  streaming, Markdown once on settle), Esc close via the focus
+                  contract, PanelHost two-step wiring (BtwOverlayWire)
 notice-bridge.ts  shared notice bridge — the ONLY channel for operator
                   traces (invalid dsh-tui.retention/resume settings values,
                   the settings-namespace registration failure, a missing
@@ -197,11 +205,11 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **1020 tests** across 55 files (verified by
+- `pnpm test` must stay green: **1071 tests** across 56 files (verified by
   `node --test test/*.mjs`; the v0.26.0 baseline was 918, model-profiles
   added 25, the directory pin added 5, the single-writer guard added 9,
   repair-session-log fixtures added 6, the read-only remote view added 7, the
-  corrupt-log repair flow added 25). Per-file totals
+  corrupt-log repair flow added 25, btw added 51). Per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals in
@@ -211,7 +219,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   - retention 39 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
     writer-lock 9 + repair-session-log 6 + remote-tail 7 + log-repair 25 +
   theme 21 + settings 19 + welcome 18 + provider-catalog 17 +
-  custom-provider 12 +
+  custom-provider 12 + btw 51 +
   messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 26 +
   subagent-viewer 37 + history 13 + agent-manager 13 +
   sessions 35 + theme-switch 11 + frame 11 + footer-hints 10 + permission 9 +

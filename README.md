@@ -116,6 +116,7 @@ GitHub light/dark palettes, hot-switched with `/theme`; `auto` detects your term
 | `/session` | Read-only info: id, cwd, model, token usage, event count. |
 | `/resume` | Pick a persisted session (newest first), validate its log, restore it. |
 | `/new` | Detach the current session; the next prompt opens a fresh one. |
+| `/btw` | By-the-way side question while the main task runs — one tool-less model call over a recent-conversation snapshot, streamed into a temporary overlay. Never kept in the session; idle main line refuses it; `--model provider/model` overrides the route; bare `/btw` reopens the last answer (`DSH_TUI_BTW_CONTEXT_MESSAGES` sizes the snapshot). |
 | `/settings` | Text-based settings browser (namespaces, schema walk, secrets masked). |
 | `/export` | Write the current session log as JSONL. |
 | `/permission` | Permission-preset picker (read-only / workspace-write / danger-full-access). |

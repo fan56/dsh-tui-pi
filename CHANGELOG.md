@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-30
+
+### Added
+- `/btw` — by-the-way side questions while the main task runs: one tool-less one-shot model call (same model as the session unless `--model provider/model` overrides the route) over a read-only recent-conversation snapshot (`DSH_TUI_BTW_CONTEXT_MESSAGES`, default 6, clamped 0–50), streamed into a temporary framed overlay. Nothing enters the session log, the inbox, or any main-line model request; Esc closes the overlay without stopping the call — the finished exchange lands in an in-process last-btw slot and bare `/btw` reopens it (the live run, or the last exchange once settled). One side call at a time with a bounded queue (5); `/new`, `/resume`, a remote takeover and the stop gesture cancel the running call and drop the queue; the idle main line refuses `/btw` (a normal prompt is strictly better there — tools, history, full context). Snapshot filtering keeps real user prompts only, so `agent.inject()` synthetic context (file notices, skill content) never crowds the dialog window. Placement rationale: `docs/adr/0001-btw-tui-owned-command.md` (TUI-owned command, not an independent plugin)
+- 51 unit tests for the btw decision layer (arg parsing, snapshot assembly, single-flight queue, stream consumption, controller cancel/queue races); e2e: the node dist tarball pulls through the npmmirror binary mirror (nodejs.org is unreachable from the e2e container's network; `ARG NODE_DIST_BASE` switches back)
+
 ## [1.0.8] - 2026-08-29
 
 ### Changed

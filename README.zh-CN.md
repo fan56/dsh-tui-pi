@@ -116,6 +116,7 @@ GitHub 明/暗配色，`/theme` 热切换；`auto` 检测你的终端并跟随�
 | `/session` | 只读信息：id、cwd、model、token 用量、事件数。 |
 | `/resume` | 选择持久化的 session（新的在前），校验日志后恢复。 |
 | `/new` | 分离当前 session；下一条 prompt 开启新会话。 |
+| `/btw` | 主线任务运行中的「顺带一问」——一次无工具的单次模型调用（带最近对话快照），答案流式呈现在临时浮层里。不进会话记录；主线空闲时拒绝使用；`--model provider/model` 临时换路由；空参 `/btw` 回看上一条问答（`DSH_TUI_BTW_CONTEXT_MESSAGES` 控制快照条数）。 |
 | `/settings` | 文本式设置浏览器（命名空间、schema 遍历、密钥脱敏）。 |
 | `/export` | 把当前会话日志写成 JSONL。 |
 | `/permission` | 权限预设选择器（read-only / workspace-write / danger-full-access）。 |

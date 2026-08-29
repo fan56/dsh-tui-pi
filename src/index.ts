@@ -78,6 +78,15 @@ import {
   type QueueActionResult,
 } from './steer-flow.ts'
 import { openSubmitRouteDialog } from './route-dialog.ts'
+import {
+  BtwController,
+  BTW_IDLE_NOTICE,
+  BTW_USAGE,
+  buildBtwSnapshot,
+  parseBtwInput,
+  resolveSnapshotLimit,
+} from './btw.ts'
+import { BtwOverlayWire } from './btw-overlay.ts'
 import { openPendingQueuePanel } from './queue-panel.ts'
 import type { AgentView } from './dsh-events.ts'
 import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
@@ -514,6 +523,8 @@ export function apply(ctx: Context): void {
      */
     const stopTask = async (): Promise<void> => {
       renderer.renderNotice(`${stopIcon()} canceling current turn…`, 'info')
+      // The stop gesture is the everything-stop: side calls die with the turn.
+      btwController.cancelAll()
       const cancelled = await bridge.cancelActiveTurn()
       // State raced idle between the decision and the cancel call — nothing
       // to cancel (e.g. the turn settled inside the confirm window).
@@ -652,6 +663,7 @@ export function apply(ctx: Context): void {
       onRemotePromotable: async (idRaw: string) => {
         // Queued follow-ups won the writer-lock race at an idle boundary:
         // take over EXACTLY like a manual /resume, then flush the queue.
+        btwController.cancelAll()
         const resumed = await bridge.resume(SessionId(idRaw))
         refreshPermissionPreset()
         renderer.clear()
@@ -761,6 +773,89 @@ export function apply(ctx: Context): void {
     // Wiring through the handle: the editor is rebuilt on theme hot-swap, and
     // these providers are re-applied to the replacement instance.
     ui.setEditorAutocompleteProvider(commands.autocompleteProvider())
+
+    // ------------------------------------------------------------ /btw (TUI-owned; ADR 0001) --
+    // By-the-way side questions: one tool-less one-shot model call over a
+    // read-only recent-conversation snapshot, streaming into a framed
+    // overlay. Nothing enters the session log, the inbox, or any main-line
+    // model request. Placed here (not an independent plugin) because the
+    // deliverable — overlay, focus, cancellation timing — only exists inside
+    // dsh-tui-pi; see docs/adr/0001-btw-tui-owned-command.md.
+    const btwWire = new BtwOverlayWire({
+      tui: ui.tui,
+      theme: () => ui.theme,
+      restoreFocus: refocusEditor,
+    })
+    const btwSnapshotLimit = resolveSnapshotLimit(process.env.DSH_TUI_BTW_CONTEXT_MESSAGES)
+    const btwController = new BtwController({
+      stream: options => {
+        const llm = ctx.get('llm')
+        if (llm === undefined) throw new Error('LLM service is not available.')
+        return llm.stream({
+          provider: options.provider,
+          model: options.model,
+          ...(options.reasoningEffort === undefined ? {} : { reasoningEffort: options.reasoningEffort }),
+          messages: options.messages,
+          system: options.system,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        })
+      },
+      resolveSelection: () => {
+        const selection = bridge.getSelection()
+        return selection === undefined
+          ? undefined
+          : { provider: selection.provider, model: selection.model, reasoningEffort: selection.reasoningEffort }
+      },
+      buildSnapshot: () => {
+        const agent = bridge.getAgent()
+        return agent === undefined
+          ? []
+          : buildBtwSnapshot(agent.session.events, btwSnapshotLimit)
+      },
+      requestRender: () => ui.requestRender(),
+      notify: (message, kind) => renderer.renderNotice(message, kind),
+      onRunStarted: run => btwWire.open(run),
+      onOverlayRequestedClose: () => btwWire.requestClose(),
+      hasCapturingSurface: () => ui.tui.hasOverlay() || askUserActive,
+    })
+    btwWire.attach(btwController)
+
+    const btwHandler: LocalCommandHandler = async rawInput => {
+      const parsed = parseBtwInput(rawInput)
+      if (parsed.kind === 'empty') {
+        const opened = btwController.openReview()
+        return opened === 'live'
+          ? { kind: 'success' as const, text: 'btw — the running answer is back on screen.' }
+          : opened === 'review'
+          ? { kind: 'success' as const, text: 'Last btw exchange shown.' }
+          : { kind: 'success' as const, text: BTW_USAGE }
+      }
+      if (parsed.kind === 'error') return { kind: 'error' as const, text: parsed.error }
+      // btw is by-the-way by definition: the main line must be running (and
+      // this must be the live view, not a read-only remote one) — when idle,
+      // a normal prompt is strictly better (tools, history, full context).
+      if (!(bridge.isRunning() && !bridge.isReadOnlyView())) {
+        return { kind: 'error' as const, text: BTW_IDLE_NOTICE }
+      }
+      const result = btwController.submit({
+        question: parsed.question,
+        ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
+      })
+      switch (result.kind) {
+        case 'started':
+          return { kind: 'success' as const, text: 'btw — answering alongside the main task.' }
+        case 'queued':
+          return { kind: 'success' as const, text: `btw queued (position ${result.position}).` }
+        case 'rejected':
+          return { kind: 'error' as const, text: `btw rejected — ${result.reason}.` }
+      }
+    }
+    commands.registerLocal('btw', btwHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'btw',
+      description: 'Ask a side question while the main task runs (temp overlay, not kept)',
+      handler: invocation => btwHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /btw')
 
     // ------------------------------------------- TUI-owned slash commands --
     // Web-surface parity: `model` is a browser client contribution there and
@@ -1040,6 +1135,9 @@ export function apply(ctx: Context): void {
       // (including the WriterLockedError read-only fallback).
       const resumeAndReplay = async () => {
         let resumed: Awaited<ReturnType<DshSessionBridge['resume']>>
+        // Switching sessions cancels any in-flight btw (Q5b) — its snapshot
+        // belongs to the session being left.
+        btwController.cancelAll()
         try {
           resumed = await bridge.resume(target.id)
         } catch (error: unknown) {
@@ -1238,6 +1336,8 @@ export function apply(ctx: Context): void {
     // detachCurrent keeps the event subscriptions alive (dispose() would
     // splice them away and no future message would ever render again).
     const newHandler: LocalCommandHandler = async () => {
+      // A new session strands the btw context snapshot — cancel first (Q5b).
+      btwController.cancelAll()
       try { await bridge.detachCurrent() } catch { /* contained */ }
       // No agent → the badge cache must not serve the old session's preset
       // to a later one (the next prompt re-seeds it).
@@ -1777,6 +1877,7 @@ export function apply(ctx: Context): void {
       clearInterval(clockTimer)
       clearInterval(liveTimer)
       git.dispose()
+      btwController.dispose()
       applyThemeRef = undefined
       applyPanelHeightRef = undefined
       applyFooterHintsRef = undefined

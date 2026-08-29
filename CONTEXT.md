@@ -61,3 +61,25 @@ live in ARCHITECTURE.md / HANDOFF.md.
   struck-through `✕ canceled`, a failed delivery shows `✘ not delivered`,
   and an abort resolves echoes whose message left the inbox as canceled; a
   ⏳/↪ badge may never linger as a ghost)
+- **Btw**: 主线 agent 运行中用户以 `/btw <问题>` 发起的顺带提问，by the
+  way——空闲时不可用，被拒并指引正常提问；不占用主线、不落盘
+  (a by-the-way question posed while the main agent is running; rejected when
+  idle, where a normal prompt is strictly better; never touches the main line
+  or the session log)
+- **Side call**: 回答 btw 的独立单次模型调用：无工具、带最近对话的只读快照，
+  与主线互不感知；默认同当前会话模型，可临时覆盖
+  (the tool-less one-shot model call that answers a btw, running over a
+  read-only snapshot of recent conversation; same model as the session unless
+  overridden)
+- **Btw overlay**: 呈现 btw 问答的浮层；不落盘，关闭后 resume/重启不可恢复
+  (the overlay presenting a btw exchange; never persisted — gone on
+  resume/restart)
+- **Last-btw slot**: 进程内单槽缓存最近一次 btw 问答，供 `/btw` 空参回看；
+  随进程消亡，仍不落盘
+  (the in-process single slot holding the most recent btw exchange, reopened
+  by bare `/btw`; dies with the process, still never persisted)
+- **Queued btw**: btw 在跑时新提交的请求，单并发下排队依次执行；主线变故
+  （切会话 / `/new` / abort）时在跑与排队的一并取消
+  (a btw submitted while another is in flight, queued behind it; a main-line
+  disruption — session switch / `/new` / abort — cancels running and queued
+  alike)
