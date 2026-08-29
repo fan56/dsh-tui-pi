@@ -124,18 +124,22 @@ test('fetchPresetRoster: shipped ids get English names (official string kept); u
     await writeFile(join(dir, 'standard', 'preset.yml'), 'name: 标准模式\ndescription: 功能完整的编码 Agent\norder: 1\n')
     await mkdir(join(dir, 'ptc'))
     await writeFile(join(dir, 'ptc', 'agent.cordis.yml'), '')
+    await mkdir(join(dir, 'cordis'))
+    await writeFile(join(dir, 'cordis', 'agent.cordis.yml'), '')
+    await writeFile(join(dir, 'cordis', 'preset.yml'), 'name: 创造模式\norder: 2\n')
     await mkdir(join(dir, 'lab-rodent')) // unmapped id, no metadata
     await writeFile(join(dir, 'lab-rodent', 'agent.cordis.yml'), '')
     await mkdir(join(dir, 'not-a-preset')) // no composition file → skipped
     __setPresetRootOverride([{ path: dir, trust: 'system' }])
     const roster = await fetchPresetRoster()
-    assert.equal(roster.length, 3)
+    assert.equal(roster.length, 4)
     const standard = roster.find(p => p.id === 'standard')
     assert.equal(standard.name, 'Standard', 'mapped id shows the English name')
     assert.equal(standard.officialName, '标准模式', 'official string kept for /preset matching')
     assert.equal(standard.description, '功能完整的编码 Agent')
     assert.equal(standard.trust, 'system')
     assert.equal(roster.find(p => p.id === 'ptc').name, 'PTC', 'mapping applies even without metadata')
+    assert.equal(roster.find(p => p.id === 'cordis').name, 'Cordis', 'cordis keeps the framework name')
     assert.equal(roster.find(p => p.id === 'lab-rodent').name, 'lab-rodent', 'unmapped id → official fallback (id)')
   } finally {
     __setPresetRootOverride(undefined)

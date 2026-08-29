@@ -95,7 +95,7 @@ export function resolvePresetRoots(): PresetRoot[] {
 const PRESET_ENGLISH_NAMES: Readonly<Record<string, string>> = {
   standard: 'Standard',
   minimal: 'Minimal',
-  cordis: 'Create',
+  cordis: 'Cordis',
   code: 'PTC',
   ptc: 'PTC',
 }
