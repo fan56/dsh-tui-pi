@@ -29,6 +29,14 @@
  * Delivery mirrors the maxRounds wrap-up's timing defense: it runs in a
  * `queueMicrotask` callback with a flush-time liveness re-check, and state
  * moves only after a successful send.
+ *
+ * TODO(alpha): upstream v0.1.2-alpha emits new session events —
+ * `model/selection` (the route actually chosen for a child, when
+ * subagent-model-selection is enabled) and `subagent/model-selection-policy`.
+ * Rendering `model/selection` in the picker rows / transcript would make the
+ * "user-pinned route (agent frontmatter) vs model-chosen route" outcome
+ * visible; DURABLE_TYPES in remote-tail.ts and the transcript's event
+ * handling would need to learn them first.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
