@@ -6,6 +6,18 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-08-29
+
+### Fixed
+- alpha-era (v0.1.2-alpha+) host support for the standalone ask path: when `ctx.userQuestions.registerProvider` is absent, register a claim-scoped `'user-questions/request'` cordis waterfall answerer instead of silently degrading to NO_PROVIDER (asks for other sessions delegate via `next()`; rc-era behavior unchanged)
+- preset roster on alpha-era hosts: probe the shipped presets inside the `@deepseek-ai/dsh-agent-presets` package (nested and flat install layouts) in addition to the rc-era `dsh/config/agent-presets` root, and read `preset.yml` metadata (rc `metadata.yml` still wins when both exist)
+
+### Changed
+- raised the `@aiwayds/dsh-ask-router` dependency floor to `^0.2.0` — older ask-router releases crash on load on alpha-era hosts
+
+### Added
+- 5 unit tests (waterfall answerer claim/delegate/dispose, preset.yml metadata, dual-layout root probing) via a new `__setPresetRootOverride` test seam
+
 ## [1.0.5] - 2026-08-29
 
 ### Changed
