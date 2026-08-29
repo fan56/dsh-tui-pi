@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-08-29
+
+### Changed
+- the `cordis` preset label is `Cordis` (the preset id / framework name) instead of 1.0.7's `Create` — the official 创造模式 reads as a rendering, and the id is what the ecosystem knows
+
 ## [1.0.7] - 2026-08-29
 
 ### Fixed
