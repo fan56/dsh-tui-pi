@@ -21,6 +21,9 @@ import { homedir } from 'node:os'
 export interface PresetEntry {
   readonly id: string
   readonly name: string
+  /** The official display string from the preset's metadata, when `name`
+   *  carries our English override instead of it (matched by `/preset`). */
+  readonly officialName?: string
   readonly description?: string
   readonly trust: 'system' | 'user'
   readonly isDefault: boolean
@@ -82,6 +85,22 @@ export function resolvePresetRoots(): PresetRoot[] {
 }
 
 /**
+ * English display names for the shipped presets, keyed by preset id. Upstream
+ * publishes display metadata in Chinese only (e.g. `标准模式`) with no i18n
+ * mechanism, which would put Chinese in front of every user — so the roster
+ * overrides the ids we know. Anything unmapped (a renamed or newly shipped
+ * preset) keeps its official string until mapped here. `code` (rc) and `ptc`
+ * (alpha) are the same preset across the upstream rename.
+ */
+const PRESET_ENGLISH_NAMES: Readonly<Record<string, string>> = {
+  standard: 'Standard',
+  minimal: 'Minimal',
+  cordis: 'Create',
+  code: 'PTC',
+  ptc: 'PTC',
+}
+
+/**
  * Scan one preset root directory for valid presets. A preset is a directory
  * containing `agent.cordis.yml` (the composition file). Directories without
  * it are skipped. Entries come back in readdir order — no explicit sort is
@@ -106,12 +125,14 @@ async function scanRoot(root: PresetRoot): Promise<PresetEntry[]> {
     } catch {
       continue // no composition file → skip
     }
-    // Read optional metadata for name/description: `metadata.yml` on rc-era
-    // hosts, `preset.yml` since alpha (same fields). First file that reads
-    // wins; absent metadata keeps the directory id as the name.
+    // Read optional display metadata: `preset.yml` is the canonical file on
+    // current rc and alpha hosts alike (`METADATA_FILE` in
+    // @deepseek-ai/dsh-agent-presets); `metadata.yml` stays as a legacy
+    // fallback. First file that reads wins; absent metadata keeps the
+    // directory id as the name.
     let name = entry.name
     let description: string | undefined
-    for (const metaName of ['metadata.yml', 'preset.yml']) {
+    for (const metaName of ['preset.yml', 'metadata.yml']) {
       let meta: string
       try {
         meta = await readFile(join(dir, metaName), 'utf8')
@@ -124,9 +145,13 @@ async function scanRoot(root: PresetRoot): Promise<PresetEntry[]> {
       if (descMatch) description = descMatch[1].trim()
       break
     }
+    // English override for the known shipped ids; unmapped presets keep the
+    // official string (metadata name ?? id).
+    const officialName = name === entry.name ? undefined : name
     presets.push({
       id: entry.name,
-      name,
+      name: PRESET_ENGLISH_NAMES[entry.name] ?? name,
+      ...(officialName !== undefined ? { officialName } : {}),
       description,
       trust: root.trust,
       isDefault: false, // will be set later from settings
@@ -166,11 +191,16 @@ export function currentPreset(state: PresetState): PresetEntry | undefined {
 }
 
 /**
- * Find a preset by id or name (case-insensitive). Used by `/preset <name>`.
+ * Find a preset by id, name, or official name (case-insensitive). Used by
+ * `/preset <name>` — the official string keeps working even where the roster
+ * shows our English override.
  */
 export function findPresetByName(state: PresetState, name: string): PresetEntry | undefined {
   const lower = name.toLowerCase()
-  return state.roster.find(p => p.id.toLowerCase() === lower || p.name.toLowerCase() === lower)
+  return state.roster.find(p =>
+    p.id.toLowerCase() === lower
+    || p.name.toLowerCase() === lower
+    || (p.officialName !== undefined && p.officialName.toLowerCase() === lower))
 }
 
 /** The preset id selected out of the box when the roster supplies it. It

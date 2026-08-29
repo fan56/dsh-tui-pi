@@ -67,6 +67,16 @@ test('findPresetByName matches display name', () => {
   assert.equal(findPresetByName(state, 'creative').id, 'creative')
 })
 
+test('findPresetByName also matches the official name behind an English override', () => {
+  const state = {
+    roster: [{ id: 'standard', name: 'Standard', officialName: '标准模式', trust: 'system', isDefault: false }],
+    index: 0,
+  }
+  assert.equal(findPresetByName(state, '标准模式').id, 'standard')
+  assert.equal(findPresetByName(state, 'Standard').id, 'standard')
+  assert.equal(findPresetByName(state, 'standard').id, 'standard')
+})
+
 test('formatPresetLabel returns name or empty string', () => {
   assert.equal(formatPresetLabel(roster[0]), 'Standard')
   assert.equal(formatPresetLabel(undefined), '')
@@ -106,7 +116,7 @@ test('resolvePresetRoots probes rc-era and alpha-era shipped layouts plus the us
   assert.ok(paths.some(p => p.endsWith('.dsh/.agent-presets')), 'user root probed')
 })
 
-test('fetchPresetRoster reads preset.yml metadata on alpha-era presets; missing metadata falls back to the id', async () => {
+test('fetchPresetRoster: shipped ids get English names (official string kept); unmapped ids fall back to official string', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-presets-'))
   try {
     await mkdir(join(dir, 'standard'))
@@ -114,32 +124,40 @@ test('fetchPresetRoster reads preset.yml metadata on alpha-era presets; missing 
     await writeFile(join(dir, 'standard', 'preset.yml'), 'name: 标准模式\ndescription: 功能完整的编码 Agent\norder: 1\n')
     await mkdir(join(dir, 'ptc'))
     await writeFile(join(dir, 'ptc', 'agent.cordis.yml'), '')
+    await mkdir(join(dir, 'lab-rodent')) // unmapped id, no metadata
+    await writeFile(join(dir, 'lab-rodent', 'agent.cordis.yml'), '')
     await mkdir(join(dir, 'not-a-preset')) // no composition file → skipped
     __setPresetRootOverride([{ path: dir, trust: 'system' }])
     const roster = await fetchPresetRoster()
-    assert.equal(roster.length, 2)
+    assert.equal(roster.length, 3)
     const standard = roster.find(p => p.id === 'standard')
-    assert.equal(standard.name, '标准模式')
+    assert.equal(standard.name, 'Standard', 'mapped id shows the English name')
+    assert.equal(standard.officialName, '标准模式', 'official string kept for /preset matching')
     assert.equal(standard.description, '功能完整的编码 Agent')
     assert.equal(standard.trust, 'system')
-    assert.equal(roster.find(p => p.id === 'ptc').name, 'ptc', 'no metadata → id as name')
+    assert.equal(roster.find(p => p.id === 'ptc').name, 'PTC', 'mapping applies even without metadata')
+    assert.equal(roster.find(p => p.id === 'lab-rodent').name, 'lab-rodent', 'unmapped id → official fallback (id)')
   } finally {
     __setPresetRootOverride(undefined)
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('fetchPresetRoster: metadata.yml still wins when both metadata files exist', async () => {
+test('fetchPresetRoster: preset.yml wins when both metadata files exist (metadata.yml is legacy)', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-presets-'))
   try {
     await mkdir(join(dir, 'hybrid'))
     await writeFile(join(dir, 'hybrid', 'agent.cordis.yml'), '')
     await writeFile(join(dir, 'hybrid', 'metadata.yml'), 'name: 旧版名字\n')
     await writeFile(join(dir, 'hybrid', 'preset.yml'), 'name: 新版名字\norder: 1\n')
+    await mkdir(join(dir, 'legacy'))
+    await writeFile(join(dir, 'legacy', 'agent.cordis.yml'), '')
+    await writeFile(join(dir, 'legacy', 'metadata.yml'), 'name: 仅旧版名字\n') // old host, no preset.yml
     __setPresetRootOverride([{ path: dir, trust: 'user' }])
     const roster = await fetchPresetRoster()
-    assert.equal(roster.length, 1)
-    assert.equal(roster[0].name, '旧版名字')
+    assert.equal(roster.length, 2)
+    assert.equal(roster.find(p => p.id === 'hybrid').name, '新版名字')
+    assert.equal(roster.find(p => p.id === 'legacy').name, '仅旧版名字', 'metadata.yml still read when preset.yml is absent')
   } finally {
     __setPresetRootOverride(undefined)
     await rm(dir, { recursive: true, force: true })
