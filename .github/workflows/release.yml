@@ -1,11 +1,12 @@
 # Release: publish to npm + create the GitHub Release when a v* tag is pushed.
 #
 # The package is published (@aiwayds/dsh-tui-pi, scoped, no "private" field),
-# so this workflow runs check+test as a gate, builds lib/, verifies the tag
-# matches package.json, publishes with npm provenance (OIDC), then opens a
-# GitHub Release whose body is the annotated tag message. Two jobs: if the
-# GitHub Release step fails after a successful publish, re-run the `release`
-# job alone — the npm publish is never repeated.
+# so this workflow runs check+test as a gate, builds lib/, stamps package.json
+# to the tag's version (the tag is the source of truth — small patches skip
+# the version-bump commit entirely), publishes with npm provenance (OIDC),
+# then opens a GitHub Release whose body is the annotated tag message. Two
+# jobs: if the GitHub Release step fails after a successful publish, re-run
+# the `release` job alone — the npm publish is never repeated.
 name: Release
 
 on:
@@ -64,15 +65,17 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Verify tag matches package.json version
+      - name: Stamp package.json to the tag version
+        # The tag is the single source of truth for what gets published. Small
+        # patches skip the version-bump commit — push the fix, tag it, and the
+        # workflow rewrites package.json here (--allow-same-version makes a
+        # matching version a no-op). main's package.json may lag behind npm;
+        # the next deliberate bump (`npm version minor|major`) starts from
+        # whatever main carries, and the stamp keeps publishes tag-accurate.
         run: |
-          PKG_VERSION="$(node -p "require('./package.json').version")"
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          echo "package.json ${PKG_VERSION} vs tag ${GITHUB_REF_NAME} -> ${TAG_VERSION}"
-          if [ "${PKG_VERSION}" != "${TAG_VERSION}" ]; then
-            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${PKG_VERSION} — refusing to publish"
-            exit 1
-          fi
+          npm version "${TAG_VERSION}" --no-git-tag-version --allow-same-version
+          echo "publishing @aiwayds/dsh-tui-pi@${TAG_VERSION} (tag ${GITHUB_REF_NAME})"
 
       - name: Publish to npm
         # Idempotent: if the version is already on the registry, warn and
