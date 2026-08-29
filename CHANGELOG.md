@@ -6,6 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-08-29
+
+### Fixed
+- the footer brand segment showed upstream's Chinese-only preset display names (`dsh(标准模式)`) to every user once 1.0.6 unlocked `preset.yml` metadata on rc-era hosts. The roster now maps the shipped preset ids to English names — `standard`→Standard, `minimal`→Minimal, `cordis`→Create, `code` (rc) / `ptc` (alpha)→PTC — and falls back to the official string for anything unmapped (a renamed or newly shipped preset keeps its official display name until mapped). `/preset <name>` accepts the official name too (new `officialName` entry field)
+- corrected the metadata file precedence: `preset.yml` is the canonical display-metadata file on current rc and alpha hosts alike (`METADATA_FILE` in `@deepseek-ai/dsh-agent-presets`); `metadata.yml` is legacy and is only read when `preset.yml` is absent. The previous "metadata.yml wins" order was based on a wrong assumption and never matched shipped layouts
+
+### Added
+- unit-test coverage for the English-mapping hit and official-string fallback, preset.yml-first metadata precedence with the legacy `metadata.yml` fallback, and official-name matching via `/preset`
+
 ## [1.0.6] - 2026-08-29
 
 ### Fixed
