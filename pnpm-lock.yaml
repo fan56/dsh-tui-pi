@@ -15,8 +15,8 @@ importers:
         specifier: 0.5.1
         version: 0.5.1(@deepseek-ai/cordis@4.0.1)
       '@aiwayds/dsh-model-sync':
-        specifier: ^0.1.1
-        version: 0.1.1(@deepseek-ai/cordis@4.0.1)
+        specifier: ^0.1.4
+        version: 0.1.4(@deepseek-ai/cordis@4.0.1)
       '@aiwayds/dsh-subagent-registry':
         specifier: 0.3.0
         version: 0.3.0
@@ -82,17 +82,19 @@ packages:
       '@deepseek-ai/schemastery':
         optional: true
 
-  '@aiwayds/dsh-model-sync@0.1.1':
-    resolution: {integrity: sha512-mX9ehHDXsq9tR0d2fZousxPIZIS04J7qSHI2SiBZ1ue6dMHKZ4CoxnZFrEr8I1fO1Kyz8jonDT+8NPd5+45ySA==}
+  '@aiwayds/dsh-model-sync@0.1.4':
+    resolution: {integrity: sha512-Tjq6pwjQSh1rbaBmetA3z9d2PIBVGObxM1qB95vlMzPiaVgIB98BTb3EjAJhUe1OUbf0Sd5QZk/AmiQDJ/JvOA==}
     engines: {node: '>=22.19.0'}
-    deprecated: 'unpublished: use local install'
     peerDependencies:
       '@deepseek-ai/cordis': 4.0.1
+      '@deepseek-ai/dsh-commands': 0.1.1-rc.2
       '@deepseek-ai/dsh-credentials': 0.1.0-rc.6
       '@deepseek-ai/dsh-settings': 0.1.0-rc.6
       '@deepseek-ai/schemastery': 3.18.1
     peerDependenciesMeta:
       '@deepseek-ai/cordis':
+        optional: true
+      '@deepseek-ai/dsh-commands':
         optional: true
       '@deepseek-ai/dsh-credentials':
         optional: true
@@ -180,7 +182,7 @@ snapshots:
     optionalDependencies:
       '@deepseek-ai/cordis': 4.0.1
 
-  '@aiwayds/dsh-model-sync@0.1.1(@deepseek-ai/cordis@4.0.1)':
+  '@aiwayds/dsh-model-sync@0.1.4(@deepseek-ai/cordis@4.0.1)':
     optionalDependencies:
       '@deepseek-ai/cordis': 4.0.1
 
