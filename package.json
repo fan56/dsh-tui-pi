@@ -1,6 +1,6 @@
 {
   "name": "@aiwayds/dsh-tui-pi",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "pi-style terminal UI for DeepSeek Harness (dsh) — pi-tui look & feel, dsh slash commands, GitHub light/dark themes, powerline footer",
   "repository": {
     "type": "git",
@@ -47,7 +47,7 @@
   "dependencies": {
     "@aiwayds/dsh-ask-router": "^0.1.0",
     "@aiwayds/dsh-dcp": "0.5.1",
-    "@aiwayds/dsh-model-sync": "^0.1.1",
+    "@aiwayds/dsh-model-sync": "^0.1.4",
     "@aiwayds/dsh-subagent-registry": "0.3.0",
     "@earendil-works/pi-tui": "0.84.2"
   },

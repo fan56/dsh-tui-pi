@@ -6,11 +6,25 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-08-29
+
+### Changed
+
+- **`@aiwayds/dsh-model-sync` dependency floor `^0.1.1` → `^0.1.4`.**
+  model-sync 0.1.3 crashes every dsh boot (cordis 4 rejects its bare
+  `ctx.commands` read without a declared inject; fixed in 0.1.4, which
+  registers `/model-sync` through a `ctx.inject` sub-fiber). The floor
+  bump guarantees a fresh install of dsh-tui-pi can never resolve a
+  boot-crashing model-sync. Existing trees that already pinned 0.1.3 in a
+  lockfile need `npm update @aiwayds/dsh-model-sync` (or pnpm equivalent).
+
 ### Added
 
 - **System-clipboard bridge for the ask-user sentinel editor**
   (`src/clipboard.ts`, `src/ask-user.ts`, `src/tui.ts`). The
-  `Type something.` free-text input now round-trips with the OS clipboard:
+  `Type something.` free-text input now round-trips with the OS clipboard
+  (documented here for the first time — this code has shipped unannounced
+  in the 1.0.2–1.0.4 tarballs):
   - `Ctrl+Shift+C` (kitty-CSI-u `\x1b[<c>;<m>u`, modifier 6) writes the
     sentinel buffer through OSC 52 in parallel with the platform's
     `pbcopy` / `wl-copy` / `xclip` / `xsel` / `clip`, and shows a short

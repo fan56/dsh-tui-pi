@@ -190,7 +190,7 @@ Everything that used to need manual patching — the canvas background, the `@de
 
 ```sh
 node scripts/dev-upgrade.mjs                  # latest
-node scripts/dev-upgrade.mjs 1.0.4 --dry-run  # preview the plan first
+node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # preview the plan first
 ```
 
 ---
