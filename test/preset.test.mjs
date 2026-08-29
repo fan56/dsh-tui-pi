@@ -1,6 +1,12 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cyclePreset, currentPreset, DEFAULT_PRESET_ID, findPresetByName, formatPresetLabel, initialPresetIndex } from '../lib/preset.js'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  __setPresetRootOverride, cyclePreset, currentPreset, DEFAULT_PRESET_ID, fetchPresetRoster,
+  findPresetByName, formatPresetLabel, initialPresetIndex, resolvePresetRoots,
+} from '../lib/preset.js'
 
 const roster = [
   { id: 'standard', name: 'Standard', trust: 'system', isDefault: true },
@@ -88,4 +94,54 @@ test('initialPresetIndex falls back to the first entry without a standard preset
 
 test('initialPresetIndex returns 0 for an empty roster', () => {
   assert.equal(initialPresetIndex([]), 0)
+})
+
+// --------------------------------------------- filesystem roster scan --
+
+test('resolvePresetRoots probes rc-era and alpha-era shipped layouts plus the user root', () => {
+  const paths = resolvePresetRoots().map(r => r.path)
+  assert.ok(paths.includes('/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/config/agent-presets'), 'rc-era layout probed')
+  assert.ok(paths.includes('/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets'), 'alpha-era nested layout probed')
+  assert.ok(paths.includes('/opt/homebrew/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets'), 'alpha-era flat layout probed')
+  assert.ok(paths.some(p => p.endsWith('.dsh/.agent-presets')), 'user root probed')
+})
+
+test('fetchPresetRoster reads preset.yml metadata on alpha-era presets; missing metadata falls back to the id', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-presets-'))
+  try {
+    await mkdir(join(dir, 'standard'))
+    await writeFile(join(dir, 'standard', 'agent.cordis.yml'), '')
+    await writeFile(join(dir, 'standard', 'preset.yml'), 'name: 标准模式\ndescription: 功能完整的编码 Agent\norder: 1\n')
+    await mkdir(join(dir, 'ptc'))
+    await writeFile(join(dir, 'ptc', 'agent.cordis.yml'), '')
+    await mkdir(join(dir, 'not-a-preset')) // no composition file → skipped
+    __setPresetRootOverride([{ path: dir, trust: 'system' }])
+    const roster = await fetchPresetRoster()
+    assert.equal(roster.length, 2)
+    const standard = roster.find(p => p.id === 'standard')
+    assert.equal(standard.name, '标准模式')
+    assert.equal(standard.description, '功能完整的编码 Agent')
+    assert.equal(standard.trust, 'system')
+    assert.equal(roster.find(p => p.id === 'ptc').name, 'ptc', 'no metadata → id as name')
+  } finally {
+    __setPresetRootOverride(undefined)
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('fetchPresetRoster: metadata.yml still wins when both metadata files exist', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-presets-'))
+  try {
+    await mkdir(join(dir, 'hybrid'))
+    await writeFile(join(dir, 'hybrid', 'agent.cordis.yml'), '')
+    await writeFile(join(dir, 'hybrid', 'metadata.yml'), 'name: 旧版名字\n')
+    await writeFile(join(dir, 'hybrid', 'preset.yml'), 'name: 新版名字\norder: 1\n')
+    __setPresetRootOverride([{ path: dir, trust: 'user' }])
+    const roster = await fetchPresetRoster()
+    assert.equal(roster.length, 1)
+    assert.equal(roster[0].name, '旧版名字')
+  } finally {
+    __setPresetRootOverride(undefined)
+    await rm(dir, { recursive: true, force: true })
+  }
 })

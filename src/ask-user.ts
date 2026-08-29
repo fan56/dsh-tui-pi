@@ -1595,11 +1595,20 @@ interface AskSurfacesSeam {
 }
 
 /**
- * Wires the provider into `ctx.userQuestions`. Call from inside `ctx.effect`.
+ * Wires the TUI into `ctx.userQuestions`. Call from inside `ctx.effect`.
+ * Three registration shapes, chosen by what the host exposes:
+ *
+ * - dsh-ask-router present → register as ONE surface among several (claim by
+ *   session, first answer wins across surfaces), leaving the ask slot to the
+ *   router entirely;
+ * - rc-era host (provider slot) → own the slot; a DUPLICATE_PROVIDER error
+ *   yields ownership silently to the prior UI;
+ * - alpha-era host (no slot) → register a claim-scoped 'user-questions/request'
+ *   cordis waterfall answerer: answer by returning, delegate via next().
  *
  * Failure semantics are deliberate (review round BM):
  * - missing service → one notice + no-op disposer. The tool stays mounted by the
- *   bundle patch; without a provider its calls fail with the upstream
+ *   bundle patch; without an answerer its calls fail with the upstream
  *   NO_PROVIDER error, which is better than crashing the whole TUI plugin.
  * - DUPLICATE_PROVIDER → silent no-op disposer (a prior UI owns the slot).
  * - anything else → rethrown so the effect fails loudly instead of leaving a
@@ -1610,9 +1619,9 @@ export function registerAskUserProvider(
   deps: AskUserPanelDeps,
 ): () => void {
   // dsh-ask-router present: register as ONE surface among several (claim by
-  // session, first answer wins across surfaces) instead of taking the single
-  // provider slot. Absent router keeps the standalone provider path below —
-  // zero behavior change without the router installed.
+  // session, first answer wins across surfaces) instead of taking an ask
+  // slot. Absent router keeps the standalone path below (provider slot on
+  // rc-era hosts, claim-scoped waterfall answerer on alpha-era hosts).
   const router = (typeof ctx.get === 'function'
     ? ctx.get('askSurfaces') as AskSurfacesSeam | undefined
     : undefined)
@@ -1640,24 +1649,48 @@ export function registerAskUserProvider(
     })
   }
   const userQuestions = (ctx as { userQuestions?: UserQuestionsSeam }).userQuestions
-  if (userQuestions === undefined || typeof userQuestions.registerProvider !== 'function') {
+  if (userQuestions === undefined) {
     // Through the shared notice bridge (src/notice-bridge.ts), never raw
     // stderr: the TUI owns the terminal, and this registers during
     // startup — possibly before the first frame.
     emitNotice('ctx.userQuestions not mounted — ask_user_question calls will fail with NO_PROVIDER')
     return () => { /* no-op */ }
   }
-  try {
-    return userQuestions.registerProvider({
-      ask: request => openAskUserPanel(deps, request.questions, request.signal),
-    })
-  } catch (error) {
-    if (isDuplicateProviderError(error)) {
-      // A prior UI is already the provider — yield ownership instead of crashing.
-      return () => { /* no-op */ }
+  if (typeof userQuestions.registerProvider === 'function') {
+    try {
+      return userQuestions.registerProvider({
+        ask: request => openAskUserPanel(deps, request.questions, request.signal),
+      })
+    } catch (error) {
+      if (isDuplicateProviderError(error)) {
+        // A prior UI is already the provider — yield ownership instead of crashing.
+        return () => { /* no-op */ }
+      }
+      throw error
     }
-    throw error
   }
+  // alpha-era host: the provider slot is gone; answerers compose on the
+  // scoped 'user-questions/request' cordis waterfall (answer by returning,
+  // delegate with next()). Claims mirror the surface path above, so a
+  // co-present native answerer still serves asks for other sessions. The
+  // event is not part of the rc-era type surface, hence the structural cast.
+  const registerWaterfall = (ctx as unknown as {
+    on(
+      event: 'user-questions/request',
+      listener: (
+        request: AskRequestShape,
+        next: () => Promise<AskUserQuestionAnswer>,
+      ) => Promise<AskUserQuestionAnswer>,
+    ): () => boolean
+  }).on
+  return registerWaterfall('user-questions/request', (request, next) => {
+    const mine = deps.getSessionId?.()
+    if (mine !== undefined) {
+      const asking = request.agent?.session?.id
+      if (asking !== undefined && String(asking) !== mine) return next()
+    }
+    return openAskUserPanel(deps, request.questions, request.signal)
+  })
 }
 
 // `AskUserQuestionOption` is imported for type completeness (re-exported for tests).

@@ -1230,6 +1230,56 @@ test('registerAskUserProvider: missing userQuestions service emits one notice an
   assert.match(notices[0], /userQuestions/)
 })
 
+test('registerAskUserProvider: alpha-era host (no provider slot) registers a claim-scoped waterfall answerer', async () => {
+  let eventName
+  let listener
+  let disposed = 0
+  const ctx = {
+    userQuestions: {}, // alpha-era host: service present, provider slot gone
+    on(event, fn) {
+      eventName = event
+      listener = fn
+      return () => { disposed += 1 }
+    },
+  }
+  const { deps } = makeHarness()
+  const disposer = registerAskUserProvider(ctx, deps)
+  assert.equal(eventName, 'user-questions/request')
+  assert.equal(typeof listener, 'function')
+
+  // Claimed ask (no agent info → show beats drop) opens the panel and
+  // never delegates.
+  const controller = new AbortController()
+  const result = listener({ questions: singleQuestion(), signal: controller.signal }, async () => {
+    throw new Error('claimed asks must not delegate')
+  })
+  const tracked = trackResolution(result)
+  controller.abort() // abort → close → declined envelope
+  await result
+  assert.deepEqual(tracked.value, buildDeclinedEnvelope(singleQuestion()))
+
+  disposer()
+  assert.equal(disposed, 1)
+})
+
+test('registerAskUserProvider: alpha-era host delegates unclaimed sessions via next()', async () => {
+  let listener
+  const ctx = { userQuestions: {}, on(event, fn) { listener = fn; return () => {} } }
+  const { deps } = makeHarness()
+  deps.getSessionId = () => 'sess-a'
+  registerAskUserProvider(ctx, deps)
+  let nextCalls = 0
+  const delegated = await listener(
+    { questions: singleQuestion(), agent: { session: { id: 'sess-b' } } },
+    async () => {
+      nextCalls += 1
+      return buildDeclinedEnvelope(singleQuestion())
+    },
+  )
+  assert.equal(nextCalls, 1, 'unclaimed session delegates')
+  assert.deepEqual(delegated, buildDeclinedEnvelope(singleQuestion()))
+})
+
 /**
  * Run fn with a notice sink registered and collect what it receives: the
  * provider's missing-service trace rides the shared notice bridge, never

@@ -33,27 +33,44 @@ export interface PresetState {
 }
 
 /** A preset root: a directory containing preset subdirectories. */
-interface PresetRoot {
+export interface PresetRoot {
   path: string
   trust: 'system' | 'user'
 }
 
+/** Test seam: replace the scanned roots for hermetic roster tests. */
+let presetRootOverride: PresetRoot[] | undefined
+export function __setPresetRootOverride(roots: PresetRoot[] | undefined): void {
+  presetRootOverride = roots
+}
+
 /**
- * Resolve the preset roots — same logic as dsh-app-boot's profile-boot:
- *   1. shipped root: `<dsh install>/config/agent-presets/`
+ * Resolve the preset roots — same discovery families as dsh-agent-presets:
+ *   1. shipped root: `<dsh install>/config/agent-presets/` (rc-era hosts) or
+ *      the `presets/` dir inside the `@deepseek-ai/dsh-agent-presets` package
+ *      (alpha-era hosts)
  *   2. user root: `~/.dsh/.agent-presets/`
- * The shipped root is found via the dsh CLI's install location; the user root
- * is the conventional `~/.dsh/.agent-presets/` (dsh-agent-presets USER_PRESET_DIR).
+ * The shipped root is located by probing the known install layouts; the user
+ * root is the conventional `~/.dsh/.agent-presets/`.
+ *
+ * Nonexistent roots scan to an empty roster, so every candidate is probed
+ * in order — rc-era layouts first, then the dsh-agent-presets package nested
+ * under the dsh install, then the flat global-root variant (npm hoisting).
  */
-function resolvePresetRoots(): PresetRoot[] {
+export function resolvePresetRoots(): PresetRoot[] {
   const roots: PresetRoot[] = []
-  // Shipped root: resolve from the dsh CLI binary location. The dsh binary is
-  // at `/usr/local/bin/dsh` or `/opt/homebrew/bin/dsh`, and the config dir is
-  // at `<dsh-install>/../lib/node_modules/@deepseek-ai/dsh/config/agent-presets/`.
-  // We try the known homebrew path first, then fall back to a `which dsh` probe.
+  // Shipped root probes. The dsh binary is at `/usr/local/bin/dsh` or
+  // `/opt/homebrew/bin/dsh`; rc-era hosts keep the config dir at
+  // `<global>/lib/node_modules/@deepseek-ai/dsh/config/agent-presets/`, while
+  // alpha-era hosts bundle the shipped presets inside `@deepseek-ai/dsh-agent-presets`
+  // (observed nested under the dsh package; flat at the global root when npm hoists).
   const shippedPaths = [
     '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/config/agent-presets',
     '/usr/local/lib/node_modules/@deepseek-ai/dsh/config/agent-presets',
+    '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets',
+    '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets',
+    '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets',
+    '/usr/local/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets',
   ]
   for (const p of shippedPaths) {
     roots.push({ path: p, trust: 'system' })
@@ -89,17 +106,23 @@ async function scanRoot(root: PresetRoot): Promise<PresetEntry[]> {
     } catch {
       continue // no composition file → skip
     }
-    // Read optional metadata.yml for name/description
+    // Read optional metadata for name/description: `metadata.yml` on rc-era
+    // hosts, `preset.yml` since alpha (same fields). First file that reads
+    // wins; absent metadata keeps the directory id as the name.
     let name = entry.name
     let description: string | undefined
-    try {
-      const meta = await readFile(join(dir, 'metadata.yml'), 'utf8')
+    for (const metaName of ['metadata.yml', 'preset.yml']) {
+      let meta: string
+      try {
+        meta = await readFile(join(dir, metaName), 'utf8')
+      } catch {
+        continue
+      }
       const nameMatch = meta.match(/^name:\s*(.+)$/m)
       if (nameMatch) name = nameMatch[1].trim()
       const descMatch = meta.match(/^description:\s*(.+)$/m)
       if (descMatch) description = descMatch[1].trim()
-    } catch {
-      // no metadata → use id as name
+      break
     }
     presets.push({
       id: entry.name,
@@ -118,7 +141,7 @@ async function scanRoot(root: PresetRoot): Promise<PresetEntry[]> {
  * presets are found.
  */
 export async function fetchPresetRoster(): Promise<PresetEntry[]> {
-  const roots = resolvePresetRoots()
+  const roots = presetRootOverride ?? resolvePresetRoots()
   const seen = new Set<string>()
   const roster: PresetEntry[] = []
   for (const root of roots) {

@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@aiwayds/dsh-ask-router':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
       '@aiwayds/dsh-dcp':
         specifier: 0.5.1
         version: 0.5.1(@deepseek-ai/cordis@4.0.1)
@@ -36,8 +36,8 @@ importers:
 
 packages:
 
-  '@aiwayds/dsh-ask-router@0.1.0':
-    resolution: {integrity: sha512-+4SRV7TuuJDyD2ZbdrTb4iZ6QQrHZNz0XdFWcSMJBqrM9Xgu5OFgtcmJzdp16cZgEPBtDK3X57fyPYyuLy/wHg==}
+  '@aiwayds/dsh-ask-router@0.2.0':
+    resolution: {integrity: sha512-xs7FV/EPWM9EameM95aeaR6BSlOmlKlPp5zwbqoA6iyAa/WuZPZ1SZ1L0uBmA4US7D7I/w8BvPFTHqnCwmdXRA==}
     engines: {node: '>=22.19.0'}
 
   '@aiwayds/dsh-dcp@0.5.1':
@@ -176,7 +176,7 @@ packages:
 
 snapshots:
 
-  '@aiwayds/dsh-ask-router@0.1.0': {}
+  '@aiwayds/dsh-ask-router@0.2.0': {}
 
   '@aiwayds/dsh-dcp@0.5.1(@deepseek-ai/cordis@4.0.1)':
     optionalDependencies:
