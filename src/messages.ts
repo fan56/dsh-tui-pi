@@ -37,6 +37,7 @@ import type {} from '@deepseek-ai/dsh-commands'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { stopIcon } from './icons.ts'
 import { clipToWidth } from './text.ts'
+import { isImageBlock, renderImageAttachments, type ImageBlockLike } from './attachments.ts'
 import { buildWelcomeBanner } from './welcome.ts'
 import { formatStartupInfoLines, type StartupSummary } from './startup-info.ts'
 import { formatDailyQuote, pickDailyQuote } from './quotes.ts'
@@ -550,11 +551,13 @@ export class TranscriptRenderer {
 
   private renderUserMessage(event: SessionEvent & { type: 'user/message' }): void {
     const message = event.data
+    // Structural image-block pick: dsh's branded AttachmentId defeats the
+    // S-extends-ContentBlock narrowing, so filter over the erased view.
+    const imageBlocks = (message.content as readonly unknown[]).filter(isImageBlock)
     const textParts = message.content
       .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
       .map(block => block.text)
     const text = textParts.join('\n').trim()
-    if (text === '') return
     const kind = message.source.kind
     if (kind === 'user') {
       // A claimed pending echo restyles its badge bubble in place instead of
@@ -562,20 +565,34 @@ export class TranscriptRenderer {
       // event's message id is the primary key — the trimmed text only backs
       // it up for echoes registered before ids were threaded through.
       const claimedId = (message as { id?: unknown }).id
-      if (this.consumePendingEcho(text, claimedId)) return
+      const claimed = text === '' ? false : this.consumePendingEcho(text, claimedId)
       // Dedup the session echo of a prompt we already rendered locally on submit.
-      if (this.lastEcho === text) {
-        this.lastEcho = undefined
+      const deduped = text !== '' && this.lastEcho === text
+      if (deduped) this.lastEcho = undefined
+      // The local echo never carries attachments (the TUI has no attach UI),
+      // so claimed/deduped messages still render their image blocks here —
+      // they arrived from another surface (web / feishu) together with the
+      // prompt text already on screen.
+      if (claimed || deduped) {
+        this.renderImages(imageBlocks)
         return
       }
       this.lastEcho = undefined
-      this.renderUserText(text)
+      if (text !== '') this.renderUserText(text)
+      this.renderImages(imageBlocks)
     } else {
+      if (text === '' && imageBlocks.length === 0) return
       // Injected context (agent.inject): file-change notices, skill content, …
       const first = text.split('\n')[0] ?? ''
       const preview = clipToWidth(first, 120)
       this.appendLine(ansiFg(this.theme.palette.fgSubtle) + `ⓘ ${preview}` + RESET)
     }
+  }
+
+  /** Render a message's image-attachment slots (placeholder → bitmap / note). */
+  private renderImages(blocks: readonly ImageBlockLike[]): void {
+    if (blocks.length === 0) return
+    renderImageAttachments(this.doc, blocks, this.theme, { requestRender: () => this.requestRender() })
   }
 
   private renderUserText(text: string): void {
