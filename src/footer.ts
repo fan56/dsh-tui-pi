@@ -30,7 +30,7 @@ import { arrowRight } from './icons.ts'
  * 105-118-column terminals and hides its suffix on <=104).
  */
 export const FOOTER_HINT =
-  '⌨ Enter: send · Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents · Tab: preset · ↑↓: history'
+  '⌨ Enter: send · Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents · Ctrl+Shift+F: search · Tab: preset · ↑↓: history'
 
 /** The toggleable footer hint segments, keyed as in the `dsh-tui` settings. */
 export interface FooterHints {
@@ -39,6 +39,7 @@ export interface FooterHints {
   quit: boolean
   quitEmpty: boolean
   subagents: boolean
+  search: boolean
   preset: boolean
   history: boolean
 }
@@ -50,6 +51,7 @@ export const DEFAULT_FOOTER_HINTS: FooterHints = Object.freeze({
   quit: true,
   quitEmpty: true,
   subagents: true,
+  search: true,
   preset: true,
   history: true,
 })
@@ -61,6 +63,7 @@ export const FOOTER_HINT_ITEMS: ReadonlyArray<{ id: keyof FooterHints; label: st
   { id: 'quit', label: 'Ctrl+C ×2: quit' },
   { id: 'quitEmpty', label: 'Ctrl+D: quit (empty)' },
   { id: 'subagents', label: 'Ctrl+G: subagents' },
+  { id: 'search', label: 'Ctrl+Shift+F: search' },
   { id: 'preset', label: 'Tab: preset' },
   { id: 'history', label: '↑↓: history' },
 ]

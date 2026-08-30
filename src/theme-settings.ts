@@ -115,6 +115,7 @@ const THEME_SETTINGS_SCHEMA = z.object({
       quit: z.boolean().default(true).description('Show "Ctrl+C ×2: quit" in the footer hint bar'),
       quitEmpty: z.boolean().default(true).description('Show "Ctrl+D: quit (empty)" in the footer hint bar'),
       subagents: z.boolean().default(true).description('Show "Ctrl+G: subagents" in the footer hint bar'),
+      search: z.boolean().default(true).description('Show "Ctrl+Shift+F: search" in the footer hint bar'),
       history: z.boolean().default(true).description('Show "↑↓: history" in the footer hint bar'),
     })
     .default({ ...DEFAULT_FOOTER_HINTS })

@@ -25,11 +25,12 @@ test('buildFooterHint with the default selection equals the legacy FOOTER_HINT',
 })
 
 test('buildFooterHint keeps only the selected segments, in the fixed display order', () => {
-  const shown = { ...DEFAULT_FOOTER_HINTS, send: false, subagents: false }
+  const shown = { ...DEFAULT_FOOTER_HINTS, send: false, subagents: false, search: false }
   const hint = buildFooterHint(shown)
   assert.equal(hint, '⌨ Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Tab: preset · ↑↓: history')
   assert.ok(!hint.includes('Enter: send'))
   assert.ok(!hint.includes('Ctrl+G: subagents'))
+  assert.ok(!hint.includes('Ctrl+Shift+F: search'))
 })
 
 test('buildFooterHint with every segment off is empty', () => {
@@ -37,7 +38,7 @@ test('buildFooterHint with every segment off is empty', () => {
   assert.equal(buildFooterHint(allOff), '')
 })
 
-test('DEFAULT_FOOTER_HINTS covers exactly the seven FOOTER_HINT_ITEMS keys, all on', () => {
+test('DEFAULT_FOOTER_HINTS covers exactly the eight FOOTER_HINT_ITEMS keys, all on', () => {
   const ids = FOOTER_HINT_ITEMS.map(item => item.id)
   assert.deepEqual(Object.keys(DEFAULT_FOOTER_HINTS).sort(), ids.slice().sort())
   for (const id of ids) assert.equal(DEFAULT_FOOTER_HINTS[id], true)
@@ -45,8 +46,9 @@ test('DEFAULT_FOOTER_HINTS covers exactly the seven FOOTER_HINT_ITEMS keys, all 
 
 test('the default hint width matches the current segment set', () => {
   // Width guard: record the current width so future edits notice growth.
-  // The hint bar clips to terminal width, so growth is safe.
-  assert.equal(visibleWidth(FOOTER_HINT), 117)
+  // The hint bar clips to terminal width, so growth is safe. Grew from 117
+  // to 140 when the Ctrl+Shift+F search segment joined (transcript search).
+  assert.equal(visibleWidth(FOOTER_HINT), 140)
 })
 
 test('FooterHint renders one clipped row at any width - never a wrap', () => {

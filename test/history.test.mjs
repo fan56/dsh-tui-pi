@@ -206,7 +206,8 @@ test('FOOTER_HINT width is within a single-line budget', () => {
   // Guard against future footer-hint length regressions. The hint bar is a
   // width-clipping component (see test/footer-hints.test.mjs) so a longer
   // default is safe — it clips cleanly on narrow terminals. Record the
-  // current width so a future edit notices the growth.
+  // current width so a future edit notices the growth. Cap raised from 130
+  // to 145 when the Ctrl+Shift+F search segment joined (width now 140).
   const width = visibleWidth(FOOTER_HINT)
-  assert.ok(width <= 130, `FOOTER_HINT is ${width} columns`)
+  assert.ok(width <= 145, `FOOTER_HINT is ${width} columns`)
 })
