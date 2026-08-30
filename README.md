@@ -24,6 +24,7 @@ https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 - [**Model profiles & favorites**](#model-profiles-and-favorites) — switch a whole model setup per project and keep the picker small.
 - [**Sessions & resume**](#sessions-and-resume) — sessions stay tidy automatically and resume in a few keystrokes.
 - [**Themes**](#themes) — GitHub light/dark palettes, hot-switchable; `auto` follows your terminal.
+- [**Search, selection & images**](#search-selection-and-images) — `Ctrl+Shift+F` over the whole transcript, drag-select copies to the OS clipboard, attachments from web/Feishu render inline, LaTeX replies draw as Unicode math.
 
 ---
 
@@ -107,6 +108,15 @@ GitHub light/dark palettes, hot-switched with `/theme`; `auto` detects your term
 
 ---
 
+## Search, selection and images
+
+- **Transcript search** — `Ctrl+Shift+F` opens an input overlay over the transcript; `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G` walk the matches, `Esc` closes. While it is open the search owns the keys, so your Esc/Ctrl+C gestures stay untouched.
+- **Selection copy** — drag to select anywhere in the transcript; releasing copies through the OS clipboard (`pbcopy` / `wl-copy` / `xclip` / `xsel` / `clip`, with OSC 52 riding along for terminals that honor it). `DSH_TUI_COPY_ON_SELECT=0` keeps selection visual-only. Mouse tracking is still tuned by `DSH_TUI_MOUSE` (default `buttons`: clicks, wheel, drag-selection and scrollbar dragging, no idle-motion noise).
+- **Images from other surfaces** — messages sent with attachments from the web UI or Feishu render inline in the transcript: a real bitmap on Kitty / Ghostty / WezTerm (kitty graphics) and iTerm2, a clickable filename fallback elsewhere, and a muted "unavailable" note if the stored attachment fails verification. Session resume re-renders past images too.
+- **LaTeX in replies** — `$e^{i\pi}+1=0$` and `$$\int_0^1 x\,dx$$` render as terminal-friendly Unicode math (`e^(iπ)+1 = 0`, `∫₀¹ x dx`). Quirk inherited from upstream: a literal `$$` pair in prose is treated as display math.
+
+---
+
 ## Slash commands
 
 | Command | What it does |
@@ -152,6 +162,7 @@ Anything else falls through to the model as an ordinary prompt; dsh-native comma
 | `Ctrl+L` | Open the model/think picker |
 | `Ctrl+G` | Open the subagent picker (viewer `Enter` opens steer) |
 | `Ctrl+O` | Pending-message queue (s steer now · d remove) |
+| `Ctrl+Shift+F` | Transcript search (`Enter`/`Ctrl+G` next · `Shift+Enter`/`Ctrl+Shift+G` previous · `Esc` close) |
 | `Tab` | Cycle agent presets |
 | `↑` / `↓` | Browse submitted-message history |
 
@@ -174,7 +185,7 @@ dsh-tui:
     minBytes: 20480
 ```
 
-Other knobs: `dsh-tui.panelHeight` (think/tool panel height), `dsh-tui.iconSet` (`auto`/`nerdfont`/`plain` — powerline glyphs adapt to your font; install a Nerd Font with `node scripts/install-font.mjs`), `~/.dsh/keybindings.json` (key remaps).
+Other knobs: `dsh-tui.panelHeight` (think/tool panel height), `dsh-tui.iconSet` (`auto`/`nerdfont`/`plain` — powerline glyphs adapt to your font; install a Nerd Font with `node scripts/install-font.mjs`), `dsh-tui.footerHints` (toggle each footer hint segment, incl. `search`), `DSH_TUI_COPY_ON_SELECT=0` (keep drag-selection visual-only), `~/.dsh/keybindings.json` (key remaps).
 
 ---
 
