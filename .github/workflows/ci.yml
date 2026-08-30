@@ -50,7 +50,7 @@ jobs:
         # dev machines. To upgrade: bump the pin here (and in release.yml) to
         # the version installed locally (`npm ls -g @deepseek-ai/dsh`), then
         # confirm `pnpm check` still passes.
-        run: npm install -g @deepseek-ai/dsh@0.1.0-rc.8 --no-audit --no-fund
+        run: npm install -g @deepseek-ai/dsh@0.1.1-rc.2 --no-audit --no-fund
 
       - name: Check (tsc --noEmit)
         run: pnpm check

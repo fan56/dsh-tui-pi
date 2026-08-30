@@ -53,7 +53,7 @@ jobs:
         # dev machines. To upgrade: bump the pin here (and in ci.yml) to the
         # version installed locally (`npm ls -g @deepseek-ai/dsh`), then
         # confirm `pnpm check` still passes.
-        run: npm install -g @deepseek-ai/dsh@0.1.0-rc.8 --no-audit --no-fund
+        run: npm install -g @deepseek-ai/dsh@0.1.1-rc.2 --no-audit --no-fund
 
       # Gate: never publish from a tree that does not typecheck or pass tests.
       # `pnpm check`'s precheck hook re-runs scripts/link-dsh-closure.mjs,

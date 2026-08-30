@@ -4,7 +4,7 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-08-30
 
 ### Added
 - **Fullscreen transcript search** (`Ctrl+Shift+F`) — pi-tui ships the search wiring itself (input overlay anchored top-right, `enter`/`ctrl+g` and `shift+enter`/`ctrl+shift+g` navigation, escape to close) over the layout root's primary ScrollView, which is our transcript. Dispatch order keeps the app key chain safe: TuiAltScreen's viewport listener registers in its constructor, before the app-level Esc/Ctrl+C chains, so while the search is open enter/escape/ctrl+g are consumed modally. The footer hint bar gains a toggleable `Ctrl+Shift+F: search` segment (default on, `dsh-tui.footerHints.search`; the default hint grows 117 → 140 columns). e2e: new `22-search` scenario drives open/query/navigate/close/reopen over a real PTY
@@ -14,6 +14,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - **`@earendil-works/pi-tui` `0.84.2` → `0.84.4`** — brings the image-heavy-output V8 string-limit crash fix (prerequisite for image rendering), terminal capability overrides (`PI_HYPERLINKS` / `PI_IMAGE_PROTOCOL` / `PI_TRUE_COLOR` env), `copyOnSelect` selection handling, terminal word-selection joiners for double-click (paths and kebab-case tokens stay whole), and the markdown table-cell style-prefix fix. Mouse parsers and StdinBuffer are byte-identical between the two versions (verified by diff and a coalesced-input probe)
+- **CI closure pin `@deepseek-ai/dsh` `0.1.0-rc.8` → `0.1.1-rc.2`** (ci.yml + release.yml) — CI now typechecks against the same closure as dev machines. The rc.8 closure predates the dsh attachment subsystem (`dsh-attachment` / `dsh-attachment-local`), so the new image-rendering import would fail the gate; rc.2 ships it (196-package closure, matches the link-dsh-closure source)
 
 ### Fixed
 - the mouse-garbage diagnosis corrected (no behavior change): the upstream input path splits coalesced SGR mouse chunks per sequence (StdinBuffer, verified empirically), so the 1.0.x "escapes pi-tui's single-sequence parsers" theory was a plausible mis-attribution — the shipped button-motion default remains the right mitigation under cmux regardless, since idle-motion bursts simply stop existing
