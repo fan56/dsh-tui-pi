@@ -10,9 +10,11 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import {
   __resetClipboardUnavailableForTest,
+  COPY_ON_SELECT_ENV,
   defaultImpl,
   readClipboard,
   readCommandsForPlatform,
+  resolveCopyOnSelect,
   writeClipboard,
   writeCommandsForPlatform,
 } from '../lib/clipboard.js'
@@ -445,4 +447,35 @@ test('readClipboard: defaultImpl is a real-IO object but the test injects a fake
   assert.equal(typeof defaultImpl.env.platform, 'string')
   // The platform field is one of the supported values.
   assert.ok(['darwin', 'linux', 'win32', 'freebsd', 'openbsd', 'sunos', 'aix'].includes(defaultImpl.env.platform))
+})
+
+// ------------------------------------------------- copy-on-select env ----
+
+test('resolveCopyOnSelect: unset env defaults to enabled (release-copies behavior)', () => {
+  assert.equal(resolveCopyOnSelect({}), true, 'no variable → copy on select stays on')
+  assert.equal(resolveCopyOnSelect({ [COPY_ON_SELECT_ENV]: '' }), true, 'empty value → on')
+  assert.equal(resolveCopyOnSelect({ [COPY_ON_SELECT_ENV]: '   ' }), true, 'whitespace → on')
+})
+
+test('resolveCopyOnSelect: only explicit off values disable; invalid values stay on', () => {
+  for (const off of ['0', 'false', 'off', '  OFF ', 'False']) {
+    assert.equal(resolveCopyOnSelect({ [COPY_ON_SELECT_ENV]: off }), false, `${JSON.stringify(off)} → off`)
+  }
+  for (const on of ['1', 'true', 'on', 'yes', 'garbage', '-1']) {
+    assert.equal(resolveCopyOnSelect({ [COPY_ON_SELECT_ENV]: on }), true, `${JSON.stringify(on)} → on (invalid must never disable)`)
+  }
+})
+
+test('resolveCopyOnSelect: real process env does not leak into injected env reads', () => {
+  // resolveCopyOnSelect must only read the env it is handed — a machine
+  // with DSH_TUI_COPY_ON_SELECT exported must not flip an injected {} read.
+  const real = process.env[COPY_ON_SELECT_ENV]
+  try {
+    process.env[COPY_ON_SELECT_ENV] = '0'
+    assert.equal(resolveCopyOnSelect({}), true, 'injected env is authoritative')
+    assert.equal(resolveCopyOnSelect(), false, 'default env read picks up the process value')
+  } finally {
+    if (real === undefined) delete process.env[COPY_ON_SELECT_ENV]
+    else process.env[COPY_ON_SELECT_ENV] = real
+  }
 })

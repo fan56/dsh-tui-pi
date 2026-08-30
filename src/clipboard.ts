@@ -271,3 +271,18 @@ async function runWriteLadder(
 export function __resetClipboardUnavailableForTest(): void {
   readUnavailable.clear()
 }
+
+/** Environment variable selecting fullscreen copy-on-select (`DSH_TUI_COPY_ON_SELECT`). */
+export const COPY_ON_SELECT_ENV = 'DSH_TUI_COPY_ON_SELECT'
+
+/**
+ * Resolve whether releasing a fullscreen mouse selection copies it to the
+ * clipboard (pi-tui `TuiAltScreen` `copyOnSelect`). Enabled by default — the
+ * same trade-off pi-tui picks and the behavior the plugin always had — so an
+ * unset/invalid value must never accidentally disable the feature; only an
+ * explicit off value (`0`/`false`/`off`) turns it off.
+ */
+export function resolveCopyOnSelect(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[COPY_ON_SELECT_ENV]?.trim().toLowerCase()
+  return !(raw === '0' || raw === 'false' || raw === 'off')
+}

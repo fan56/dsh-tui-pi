@@ -35,6 +35,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import { CanvasTerminal } from './canvas-terminal.ts'
+import { defaultImpl, resolveCopyOnSelect, writeClipboard } from './clipboard.ts'
 import { CwdBorderEditor } from './editor.ts'
 import { mergeKeyBindings, resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
 import { mouseDisableSequence, mouseEnableSequence, resolveMouseMode } from './mouse-mode.ts'
@@ -134,6 +135,25 @@ export interface TuiHandle {
   setKeyBindings(bindings: Partial<KeyBindings>): void
 }
 
+/**
+ * TuiAltScreen option bundle for fullscreen selection copy. `copyOnSelect`
+ * resolves from DSH_TUI_COPY_ON_SELECT (default on); `copySelection` routes
+ * the copied text through our clipboard ladder (native commands + OSC 52)
+ * instead of pi-tui's bare-OSC-52 fallback. `impl`/`env` are test seams.
+ */
+export function selectionCopyOptions(
+  env: NodeJS.ProcessEnv = process.env,
+  impl = defaultImpl,
+): {
+  copyOnSelect: boolean
+  copySelection: (text: string) => Promise<boolean>
+} {
+  return {
+    copyOnSelect: resolveCopyOnSelect(env),
+    copySelection: text => writeClipboard(text, impl),
+  }
+}
+
 export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // Hold the raw ProcessTerminal so we can install the right-click → paste
   // interceptor AFTER tui.start() (the wrapper has to wrap the
@@ -152,7 +172,16 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // right-click paste) parses and consumes events regardless of who enabled
   // the terminal mode.
   const mouseMode = resolveMouseMode()
-  const tui = new TuiAltScreen(terminal, true, undefined, { mouse: false })
+  const tui = new TuiAltScreen(terminal, true, undefined, {
+    mouse: false,
+    // Selection copy rides the same dsh-owned mouse events: releasing a
+    // drag selection copies through our clipboard ladder (native pbcopy/
+    // wl-copy/xclip/xsel/clip + OSC 52 with a verified success path) —
+    // pi-tui's bare-OSC-52 fallback shows "Copied!" while leaving the
+    // system clipboard untouched on macOS Terminal.app and tmux without
+    // passthrough. DSH_TUI_COPY_ON_SELECT=0 keeps selection visual-only.
+    ...selectionCopyOptions(),
+  })
   // Mutable theme ref: `applyTheme` swaps it and every later read (handle
   // getter, baked closures below) observes the new bundle on the next call.
   let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
