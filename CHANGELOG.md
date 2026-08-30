@@ -4,7 +4,7 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.1] - 2026-08-30
 
 ### Added
 - the startup plugin tree shows each user plugin's installed version (`├─ @aiwayds/dsh-feishu@0.5.0`) — resolved from the profile's own install tree by walking up from the specifier's resolved entry to the nearest package.json (bare specifiers and dev `file:`/path entries both work; an `exports` field that hides package.json cannot break it). Best-effort: an unresolvable plugin renders its plain name as before; base rows stay collapsed and unversioned
