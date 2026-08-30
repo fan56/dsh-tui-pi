@@ -1,4 +1,5 @@
-# CI: typecheck + tests on every push to main and every pull request.
+# CI: typecheck + tests on every push to main, every pull request, and a
+# daily schedule.
 #
 # The source imports `@deepseek-ai/*` packages (cordis, dsh-session, …) that
 # are NOT declared in package.json — they resolve through symlinks into a dsh
@@ -6,12 +7,20 @@
 # runner has no global dsh, so we install the dsh CLI from npm; `pnpm check`'s
 # precheck hook then re-runs the linker, which resolves the global closure
 # (nested or npm's flat layout) into node_modules/@deepseek-ai.
+#
+# The dsh CLI is resolved at run time from npm's `latest` dist-tag — no pin
+# to go stale. The daily schedule re-tests against whatever the closure has
+# become since the last push, so a new dsh release that breaks the plugin
+# surfaces as a red run within a day instead of at the next release.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Daily at 03:17 UTC — off the top-of-hour congestion.
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read
@@ -45,12 +54,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install dsh CLI (provides the @deepseek-ai/* closure)
-        # Pinned to an exact rc so CI typechecks against the same closure as
-        # dev machines. To upgrade: bump the pin here (and in release.yml) to
-        # the version installed locally (`npm ls -g @deepseek-ai/dsh`), then
-        # confirm `pnpm check` still passes.
-        run: npm install -g @deepseek-ai/dsh@0.1.1-rc.2 --no-audit --no-fund
+      - name: Install latest dsh CLI (provides the @deepseek-ai/* closure)
+        run: |
+          echo "latest @deepseek-ai/dsh: $(npm view @deepseek-ai/dsh version)"
+          npm install -g @deepseek-ai/dsh --no-audit --no-fund
 
       - name: Check (tsc --noEmit)
         run: pnpm check
