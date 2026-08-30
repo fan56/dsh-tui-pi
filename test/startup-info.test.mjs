@@ -9,7 +9,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Container } from '@earendil-works/pi-tui'
@@ -18,6 +18,7 @@ import { darkTheme, lightTheme } from '../lib/theme/index.js'
 import { visibleWidth } from '../lib/text.js'
 import {
   classifyPluginEntries,
+  moduleVersionResolver,
   collectStartupSummary,
   countSkills,
   detectProfileFlag,
@@ -256,7 +257,13 @@ test('collectStartupSummary snapshots loader entries and both skill dirs', () =>
     assert.equal(summary.profile, 'tui')
     assert.deepEqual(summary.mcp, [{ name: 'anysearch', disabled: false }])
     assert.deepEqual(summary.skills, { installed: 1, total: 2 })
-    assert.deepEqual(summary.userPlugins, ['@aiwayds/dsh-dcp'])
+    // The collector wires the real version resolver (anchored at this built
+    // lib, inside the repo): @aiwayds/dsh-dcp is a real dependency here, so
+    // the row carries the installed version. End-to-end proof of the suffix.
+    const dcpVersion = JSON.parse(
+      readFileSync(new URL('../node_modules/@aiwayds/dsh-dcp/package.json', import.meta.url), 'utf8'),
+    ).version
+    assert.deepEqual(summary.userPlugins, [`@aiwayds/dsh-dcp@${dcpVersion}`])
     assert.equal(summary.baseCount, 1)
     assert.equal(summary.pluginTotal, 3)
 
@@ -305,4 +312,40 @@ test('a renderer built without a summary keeps the plain 5-child welcome', () =>
   const doc = new Container()
   new TranscriptRenderer(doc, darkTheme, () => {})
   assert.equal(doc.children.length, 5, 'no summary block when the snapshot is undefined')
+})
+
+// ------------------------------------------------- plugin row versions ----
+
+test('classifyPluginEntries suffixes user rows with the resolved version', () => {
+  const versions = { '@aiwayds/dsh-feishu': '0.5.0', '@aiwayds/dsh-dcp': '0.5.1' }
+  const view = classifyPluginEntries(
+    [
+      entry('feishu', '@aiwayds/dsh-feishu'),
+      entry('dcp', '@aiwayds/dsh-dcp', { disabled: true }),
+      entry('mystery', '@aiwayds/dsh-no-version'),
+      entry('llm', '@deepseek-ai/dsh-llm'),
+    ],
+    name => versions[name],
+  )
+  assert.deepEqual(view.userPlugins, [
+    '@aiwayds/dsh-feishu@0.5.0',
+    '@aiwayds/dsh-dcp@0.5.1 (disabled)',
+    '@aiwayds/dsh-no-version',
+  ])
+  assert.equal(view.baseCount, 1, 'base rows stay collapsed (never versioned)')
+})
+
+test('classifyPluginEntries without a resolver keeps the plain-name rows', () => {
+  const view = classifyPluginEntries([entry('feishu', '@aiwayds/dsh-feishu'), entry('dcp', '@aiwayds/dsh-dcp', { disabled: true })])
+  assert.deepEqual(view.userPlugins, ['@aiwayds/dsh-feishu', '@aiwayds/dsh-dcp (disabled)'])
+})
+
+test('moduleVersionResolver resolves a real sibling package and degrades on unknown names', () => {
+  const resolveVersion = moduleVersionResolver(import.meta.url)
+  // The test file sits inside the repo, whose node_modules holds the real
+  // @earendil-works/pi-tui — the walk-up must find ITS package.json, not a
+  // nearer one, and the value must match what npm installed.
+  const expected = JSON.parse(readFileSync(new URL('../node_modules/@earendil-works/pi-tui/package.json', import.meta.url), 'utf8')).version
+  assert.equal(resolveVersion('@earendil-works/pi-tui'), expected)
+  assert.equal(resolveVersion('definitely-not-a-real-pkg-xyz'), undefined, 'unresolvable name → no version')
 })

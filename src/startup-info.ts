@@ -21,7 +21,8 @@
 
 import { readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { dshHome } from './append-system.ts'
 import { clipToWidth } from './text.ts'
@@ -112,10 +113,13 @@ export function countSkills(publicNames: readonly string[], curatedNames: readon
  * Split loader entries into the summary's plugin view: MCP servers off the
  * mcp-client instances (disabled ones kept but flagged, so the count stays
  * honest about what the tree declares vs. what runs), user plugin rows
- * (`name` + a `(disabled)` suffix), and the base count. Group rows never
- * count.
+ * (`name` + a `@version` suffix when resolvable + a `(disabled)` suffix),
+ * and the base count. Group rows never count.
  */
-export function classifyPluginEntries(entries: readonly PluginEntryView[]): Pick<StartupSummary, 'mcp' | 'userPlugins' | 'baseCount' | 'pluginTotal'> {
+export function classifyPluginEntries(
+  entries: readonly PluginEntryView[],
+  resolveVersion?: (name: string) => string | undefined,
+): Pick<StartupSummary, 'mcp' | 'userPlugins' | 'baseCount' | 'pluginTotal'> {
   const mcp: McpServer[] = []
   const userPlugins: string[] = []
   let baseCount = 0
@@ -132,9 +136,45 @@ export function classifyPluginEntries(entries: readonly PluginEntryView[]): Pick
       baseCount += 1
       continue
     }
-    userPlugins.push(entry.disabled ? `${entry.name} (disabled)` : entry.name)
+    const version = resolveVersion?.(entry.name)
+    const label = typeof version === 'string' && version !== '' ? `${entry.name}@${version}` : entry.name
+    userPlugins.push(entry.disabled ? `${label} (disabled)` : label)
   }
   return { mcp, userPlugins, baseCount, pluginTotal }
+}
+
+/**
+ * Build a plugin-version resolver anchored at `anchor` (a module URL or file
+ * path — the plugin's own built file keeps it inside the profile's install
+ * tree, where the sibling user plugins live). Resolution walks UP from the
+ * specifier's resolved entry file to the nearest package.json, so it works
+ * for bare specifiers and dev `file:`/path entries alike and is immune to
+ * an `exports` field that hides package.json. Best-effort: an unresolvable
+ * name degrades to `undefined` (the row renders without a version).
+ */
+export function moduleVersionResolver(anchor: string): (name: string) => string | undefined {
+  let req: NodeRequire
+  try {
+    req = createRequire(anchor)
+  } catch {
+    return () => undefined
+  }
+  return name => {
+    let entryPath: string
+    try {
+      entryPath = req.resolve(name)
+    } catch {
+      return undefined
+    }
+    let dir = dirname(entryPath)
+    for (let prev = ''; dir !== prev; prev = dir, dir = dirname(dir)) {
+      try {
+        const version = req(join(dir, 'package.json'))?.version
+        if (typeof version === 'string' && version !== '') return version
+      } catch { /* no package.json at this level — keep walking */ }
+    }
+    return undefined
+  }
 }
 
 /**
@@ -293,7 +333,7 @@ export function collectStartupSummary(ctx: Context): StartupSummary | undefined 
   } catch {
     return undefined
   }
-  const classified = classifyPluginEntries(entries)
+  const classified = classifyPluginEntries(entries, moduleVersionResolver(import.meta.url))
   const agentsHome = process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents')
   const skills = countSkills(
     readDirNames(resolve(agentsHome, 'skills')),
