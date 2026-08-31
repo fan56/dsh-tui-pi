@@ -101,11 +101,11 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 
 *被双写者写坏的会话日志——resume 选择器里带 ⚠ 标记，一键就地修复（原件保留为 `.corrupt-bak`），会话完整复活：*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-log-repair.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-log-repair.mp4" controls></video>
 
 *跨进程安全——第二个进程在会话存活时会被拒绝，并降级为只读旁观，实时镜像持有方的一举一动：*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-writer-guard.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-writer-guard.mp4" controls></video>
 
 ---
 
@@ -124,7 +124,7 @@ GitHub 明/暗配色，`/theme` 热切换；`auto` 检测你的终端并跟随�
 
 *`Ctrl+Shift+F` 实战——输入过滤、`Enter` 走匹配、`Esc` 关闭：*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-search.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-search.mp4" controls></video>
 
 ---
 
@@ -161,7 +161,7 @@ GitHub 明/暗配色，`/theme` 热切换；`auto` 检测你的终端并跟随�
 
 *`/btw` 实战——主线任务运行中，侧问在临时浮层里作答（主线完全无感知）：*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-btw.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-btw.mp4" controls></video>
 
 ---
 
@@ -220,7 +220,7 @@ node scripts/dev-upgrade.mjs 1.0.4 --dry-run  # 先预览执行计划
 
 *启动 TUI——启动插件树逐行列出每个 profile 插件及其安装的 npm 版本：*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-startup-tree.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-startup-tree.mp4" controls></video>
 
 ---
 
@@ -230,7 +230,7 @@ node scripts/dev-upgrade.mjs 1.0.4 --dry-run  # 先预览执行计划
 - [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) —— 可选；用手机上的飞书/Lark 驱动同一个 dsh session，包括 ask-user 卡片面。想手机侧参与就装进同一个 profile。
 - [@aiwayds/dsh-mcp-adapter](https://github.com/fan56/dsh-mcp-adapter) —— 可选；把每个 `mcp__*` 工具 schema 折叠成两个恒定 meta-tool，让 prompt 成本与 server/工具数量无关（O(1)），并提供 `/mcp` 命令——server/工具树、折叠统计、按 server 的 disable/enable 门闩：
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-mcp.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-mcp.mp4" controls></video>
 
 ---
 

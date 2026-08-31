@@ -102,11 +102,11 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 
 *A double-writer-scarred session log — flagged ⚠ in the resume picker, repaired in place with one tap (the original is kept as `.corrupt-bak`), and the session comes back alive:*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-log-repair.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-log-repair.mp4" controls></video>
 
 *Cross-process safety — a second process is refused while the session is live, and falls back to a read-only watch that mirrors the owner's turn in real time:*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-writer-guard.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-writer-guard.mp4" controls></video>
 
 ---
 
@@ -125,7 +125,7 @@ GitHub light/dark palettes, hot-switched with `/theme`; `auto` detects your term
 
 *`Ctrl+Shift+F` in action — type to filter, `Enter` walks the matches, `Esc` closes:*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-search.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-search.mp4" controls></video>
 
 ---
 
@@ -163,7 +163,7 @@ Anything else falls through to the model as an ordinary prompt; dsh-native comma
 
 *`/btw` in action — a side question answered in a temporary overlay while the main turn keeps running (the main line never sees it):*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-btw.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-btw.mp4" controls></video>
 
 ---
 
@@ -223,7 +223,7 @@ node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # preview the plan first
 
 *Launching the TUI — the startup plugin tree lists every profile plugin with its installed npm version:*
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-startup-tree.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-startup-tree.mp4" controls></video>
 
 ---
 
@@ -233,7 +233,7 @@ node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # preview the plan first
 - [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) — optional; drives the same dsh session from Feishu/Lark on your phone, including an ask-user card surface. Install into the same profile for phone-side participation.
 - [@aiwayds/dsh-mcp-adapter](https://github.com/fan56/dsh-mcp-adapter) — optional; folds every `mcp__*` tool schema into two constant meta-tools so prompt cost stays O(1) in servers/tools, and adds the `/mcp` command — server/tool tree, folding stats, and a per-server disable/enable latch:
 
-<video src="https://github.com/fan56/dsh-tui-pi/releases/download/demos-20260831/dsh-tui-pi-mcp.mp4" controls></video>
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/dsh-tui-pi-mcp.mp4" controls></video>
 
 ---
 
