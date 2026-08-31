@@ -205,29 +205,27 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **1071 tests** across 56 files (verified by
-  `node --test test/*.mjs`; the v0.26.0 baseline was 918, model-profiles
-  added 25, the directory pin added 5, the single-writer guard added 9,
-  repair-session-log fixtures added 6, the read-only remote view added 7, the
-  corrupt-log repair flow added 25, btw added 51). Per-file totals
+- `pnpm test` must stay green: **1105 tests** across 60 files (verified by
+  `node --test test/*.mjs`; the v0.26.0 baseline was 918 — later feature
+  rounds kept adding, see HANDOFF). Per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals in
   HANDOFF.md.
-  - ask-user 121 + clipboard 23 + notice-bridge 8 + skills 36 + skills-manager 24 + startup-info 19 +
-  - live 35 + keymap 31 + login 25 + panels 24 + session-reconcile 30 +
-  - retention 39 + pending-echo 26 + steer-flow 22 + session-header-reset 9 +
-    writer-lock 9 + repair-session-log 6 + remote-tail 7 + log-repair 25 +
-  theme 21 + settings 19 + welcome 18 + provider-catalog 17 +
-  custom-provider 12 + btw 51 +
-  messages 16 + hotkeys 16 + theme-canvas 16 + subagent-policy 26 +
-  subagent-viewer 37 + history 13 + agent-manager 13 +
-  sessions 35 + theme-switch 11 + frame 11 + footer-hints 10 + permission 9 +
-  theme-settings 15 + commands 9 + text 15 + font-detect 8 + quotes 7 +
-  icons 7 + reload 6 + append-system 9 + install-font 6 + tokens 6 +
-  queue-panel 6 + schema-model 3 + usage 26 + preset 12 + dev-upgrade 8 +
-  model-list 21 + notice-bridge 8 + plugin-inject 2 + model-profiles 30 +
-  mouse-mode 5 + session-ch-cache 8.
+  - ask-user 123 + btw 45 + retention 39 + subagent-viewer 37 + skills 36 +
+  - live 35 + sessions 35 + keymap 31 + session-reconcile 30 + model-profiles 30 +
+  - usage 26 + subagent-policy 26 + pending-echo 26 + clipboard 26 + login 25 +
+    log-repair 25 + startup-info 24 + skills-manager 24 + panels 24 +
+  - steer-flow 22 + theme 21 + model-list 21 + settings 19 + welcome 18 +
+    provider-catalog 17 + theme-canvas 16 + preset 16 + messages 16 + hotkeys 16 +
+  - theme-settings 15 + text 15 + history 13 + agent-manager 13 + image-blocks 12 +
+    custom-provider 12 + theme-switch 11 + frame 11 + footer-hints 10 +
+  - writer-lock 9 + permission 9 + commands 9 + append-system 9 +
+    session-ch-cache 8 + notice-bridge 8 + font-detect 8 + dev-upgrade 8 +
+    repair-session-log 7 + remote-tail 7 + quotes 7 + icons 7 + tokens 6 +
+    reload 6 + queue-panel 6 + install-font 6 + selection-copy 5 +
+    mouse-mode 5 + markdown-latex 5 + transcript-search 4 + schema-model 3 +
+    plugin-inject 2.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
   `dsh --profile tui`, drive keys, `capture-pane` for assertions (see HANDOFF
   "验证命令速查"). Keep the 24-row terminal case in the matrix — overlay

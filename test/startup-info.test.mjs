@@ -25,6 +25,7 @@ import {
   formatResumeCommand,
   formatStartupInfoLines,
   parseResumeArg,
+  pluginVersionResolver,
   profileFromBaseUrl,
   resolveProfileName,
   skillNamesFromListing,
@@ -238,6 +239,15 @@ test('collectStartupSummary snapshots loader entries and both skill dirs', () =>
   try {
     mkdirSync(join(home, 'skills'), { recursive: true })
     mkdirSync(join(agentsHome, 'skills'), { recursive: true })
+    // The loader imports entry packages from the profile root, so the summary
+    // must read versions from that tree — even when it differs from this
+    // repo's own node_modules (the link:-mount drift the resolver avoids).
+    mkdirSync(join(home, 'profiles', 'tui', 'node_modules', '@aiwayds', 'dsh-dcp'), { recursive: true })
+    writeFileSync(
+      join(home, 'profiles', 'tui', 'node_modules', '@aiwayds', 'dsh-dcp', 'package.json'),
+      JSON.stringify({ name: '@aiwayds/dsh-dcp', version: '9.9.9' }),
+    )
+    writeFileSync(join(home, 'profiles', 'tui', 'node_modules', '@aiwayds', 'dsh-dcp', 'index.js'), 'module.exports = {}')
     writeFileSync(join(agentsHome, 'skills', 'installed.md'), 'x')
     writeFileSync(join(agentsHome, 'skills', 'available.md'), 'x')
     writeFileSync(join(home, 'skills', 'installed.md'), 'x')
@@ -257,13 +267,11 @@ test('collectStartupSummary snapshots loader entries and both skill dirs', () =>
     assert.equal(summary.profile, 'tui')
     assert.deepEqual(summary.mcp, [{ name: 'anysearch', disabled: false }])
     assert.deepEqual(summary.skills, { installed: 1, total: 2 })
-    // The collector wires the real version resolver (anchored at this built
-    // lib, inside the repo): @aiwayds/dsh-dcp is a real dependency here, so
-    // the row carries the installed version. End-to-end proof of the suffix.
-    const dcpVersion = JSON.parse(
-      readFileSync(new URL('../node_modules/@aiwayds/dsh-dcp/package.json', import.meta.url), 'utf8'),
-    ).version
-    assert.deepEqual(summary.userPlugins, [`@aiwayds/dsh-dcp@${dcpVersion}`])
+    // The collector anchors the version resolver at the booted profile root
+    // (derived from DSH_HOME + the profile name): @aiwayds/dsh-dcp exists in
+    // BOTH trees with different versions, and the profile root's must win.
+    // End-to-end proof of the suffix and of the anchor choice.
+    assert.deepEqual(summary.userPlugins, ['@aiwayds/dsh-dcp@9.9.9'])
     assert.equal(summary.baseCount, 1)
     assert.equal(summary.pluginTotal, 3)
 
@@ -348,4 +356,32 @@ test('moduleVersionResolver resolves a real sibling package and degrades on unkn
   const expected = JSON.parse(readFileSync(new URL('../node_modules/@earendil-works/pi-tui/package.json', import.meta.url), 'utf8')).version
   assert.equal(resolveVersion('@earendil-works/pi-tui'), expected)
   assert.equal(resolveVersion('definitely-not-a-real-pkg-xyz'), undefined, 'unresolvable name → no version')
+})
+
+test('pluginVersionResolver prefers the profile root and falls back to the anchor tree', () => {
+  const profileRoot = mkdtempSync(join(tmpdir(), 'startup-info-profile-'))
+  try {
+    mkdirSync(join(profileRoot, 'node_modules', '@aiwayds', 'profile-only-pkg'), { recursive: true })
+    writeFileSync(join(profileRoot, 'package.json'), JSON.stringify({ name: 'fake-profile', private: true }))
+    writeFileSync(
+      join(profileRoot, 'node_modules', '@aiwayds', 'profile-only-pkg', 'package.json'),
+      JSON.stringify({ name: '@aiwayds/profile-only-pkg', version: '9.9.9' }),
+    )
+    // require.resolve needs a real entry file, not just package.json.
+    writeFileSync(join(profileRoot, 'node_modules', '@aiwayds', 'profile-only-pkg', 'index.js'), 'module.exports = {}')
+    const resolveVersion = pluginVersionResolver(import.meta.url, profileRoot)
+    assert.equal(resolveVersion('@aiwayds/profile-only-pkg'), '9.9.9', 'profile-root tree wins')
+    const expected = JSON.parse(readFileSync(new URL('../node_modules/@earendil-works/pi-tui/package.json', import.meta.url), 'utf8')).version
+    assert.equal(resolveVersion('@earendil-works/pi-tui'), expected, 'anchor tree answers names the profile root lacks')
+    assert.equal(resolveVersion('definitely-not-a-real-pkg-xyz'), undefined)
+  } finally {
+    rmSync(profileRoot, { recursive: true, force: true })
+  }
+})
+
+test('pluginVersionResolver without a profile root matches the anchor-only resolver', () => {
+  const expected = JSON.parse(readFileSync(new URL('../node_modules/@earendil-works/pi-tui/package.json', import.meta.url), 'utf8')).version
+  const resolveVersion = pluginVersionResolver(import.meta.url, undefined)
+  assert.equal(resolveVersion('@earendil-works/pi-tui'), expected)
+  assert.equal(resolveVersion('definitely-not-a-real-pkg-xyz'), undefined)
 })

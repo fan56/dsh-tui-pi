@@ -178,6 +178,27 @@ export function moduleVersionResolver(anchor: string): (name: string) => string 
 }
 
 /**
+ * Plugin-version resolver for the summary rows, preferring the profile root
+ * (`$DSH_HOME/profiles/<name>`): the cordis loader imports every entry
+ * package from there, so its install tree holds the versions that actually
+ * run. Anchoring at this plugin's own file instead reads whatever tree the
+ * plugin was loaded from — for a `link:`-mounted checkout that is a dev
+ * node_modules that can drift from the booted tree (stale versions, rows
+ * without a version for packages it doesn't depend on). Names that only
+ * resolve in the plugin's own tree — or any run without a profile root
+ * (an embedding host, a dev config dir) — fall back to the anchor resolver.
+ */
+export function pluginVersionResolver(
+  anchor: string,
+  profileRoot?: string,
+): (name: string) => string | undefined {
+  if (profileRoot === undefined) return moduleVersionResolver(anchor)
+  const fromProfile = moduleVersionResolver(join(profileRoot, 'package.json'))
+  const fromSelf = moduleVersionResolver(anchor)
+  return name => fromProfile(name) ?? fromSelf(name)
+}
+
+/**
  * Render the summary as transcript lines: the profile name as the tree
  * root, the plugin tree below it (every user plugin one `├─` row, the
  * harness base collapsed into the final `└─` row), then the counts line
@@ -333,11 +354,13 @@ export function collectStartupSummary(ctx: Context): StartupSummary | undefined 
   } catch {
     return undefined
   }
-  const classified = classifyPluginEntries(entries, moduleVersionResolver(import.meta.url))
+  const profile = resolveProfileName(ctx)
+  const profileRoot = profile === undefined ? undefined : join(dshHome(), 'profiles', profile)
+  const classified = classifyPluginEntries(entries, pluginVersionResolver(import.meta.url, profileRoot))
   const agentsHome = process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents')
   const skills = countSkills(
     readDirNames(resolve(agentsHome, 'skills')),
     readDirNames(resolve(dshHome(), 'skills')),
   )
-  return { profile: resolveProfileName(ctx), ...classified, skills }
+  return { profile, ...classified, skills }
 }
