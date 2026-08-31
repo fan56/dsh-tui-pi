@@ -61,7 +61,9 @@ export interface ModelProfile {
 
 /** The whole stored document. */
 export interface ModelProfilesDoc {
-  /** Name of the profile the last /profile-switch applied. */
+  /** Informational: the profile the last /profile-switch applied, anywhere.
+   * No UI reads this — the ● "current" markers show the tree's own binding
+   * (boundProfileName) so workspaces never see each other's switches. */
   current?: string
   profiles: ModelProfile[]
 }
@@ -412,6 +414,45 @@ export function writeProfilePin(dir: string, profileName: string): string | unde
   } catch (error) {
     return error instanceof Error ? error.message : String(error)
   }
+}
+
+/**
+ * Bind `dir` to `profileName` as part of a switch. A missing pin file is
+ * written; an existing one is overwritten ONLY when we understand it —
+ * exactly one entry line, naming any profile (ours included). A
+ * hand-decorated file (comments, extra entries, no entry) is refused so a
+ * switch can never silently destroy manual edits — the same guard
+ * `removeProfilePin` applies to unpinning. Resolves an error message on
+ * refusal or fs failure, else `undefined`.
+ */
+export function bindWorkspaceProfile(dir: string, profileName: string): string | undefined {
+  const path = join(dir, PROFILE_PIN_FILE)
+  let text: string | undefined
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    text = undefined // absent (or unreadable — the write below reports that)
+  }
+  if (text !== undefined) {
+    const entries = text.split(/\r?\n/).map(line => line.trim()).filter(
+      line => line !== '' && !line.startsWith('#'))
+    if (entries.length !== 1 || normalizeProfileName(entries[0]) === undefined) {
+      return `refusing to overwrite ${PROFILE_PIN_FILE} — edited by hand (switch applied live only)`
+    }
+  }
+  return writeProfilePin(dir, profileName)
+}
+
+/**
+ * The profile bound to `startDir`'s tree, for display: the nearest pin's
+ * name when that profile still exists, else `undefined`. This is what the
+ * ● "current" markers show — current is a property of a workspace tree,
+ * not of the machine, so the old global `doc.current` marker no longer
+ * drives any UI.
+ */
+export function boundProfileName(doc: ModelProfilesDoc, startDir: string): string | undefined {
+  const pin = readNearestProfilePin(startDir)
+  return pin === undefined ? undefined : findProfile(doc, pin.name)?.name
 }
 
 /**

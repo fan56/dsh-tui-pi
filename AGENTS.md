@@ -92,7 +92,8 @@ model-profiles.ts /profile-switch + /profile-cfg pure storage: $DSH_HOME/
                   overrides, absent keys clear, unlisted agents untouched);
                   directory pins — `.dsh-profile` dot file discovered walking
                   up from cwd (nearest wins), write/remove with a hand-edit
-                  refusal guard
+                  refusal guard, bindWorkspaceProfile (switch-time binding,
+                  same guard) + boundProfileName (per-tree ● current)
 profile.ts        /profile-switch switcher + /profile-cfg manager
                   (agents.ts overlay pattern): switcher applies a profile
                   through the /model chain (bridge selection +
@@ -205,7 +206,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **1105 tests** across 60 files (verified by
+- `pnpm test` must stay green: **1108 tests** across 61 files (verified by
   `node --test test/*.mjs`; the v0.26.0 baseline was 918 — later feature
   rounds kept adding, see HANDOFF). Per-file totals
   below; verify after any new logic is added and update if numbers
@@ -213,7 +214,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   `lib/` (`node --test`, pretest builds). Update the totals in
   HANDOFF.md.
   - ask-user 123 + btw 45 + retention 39 + subagent-viewer 37 + skills 36 +
-  - live 35 + sessions 35 + keymap 31 + session-reconcile 30 + model-profiles 30 +
+  - live 35 + sessions 35 + keymap 31 + session-reconcile 30 + model-profiles 33 +
   - usage 26 + subagent-policy 26 + pending-echo 26 + clipboard 26 + login 25 +
     log-repair 25 + startup-info 24 + skills-manager 24 + panels 24 +
   - steer-flow 22 + theme 21 + model-list 21 + settings 19 + welcome 18 +

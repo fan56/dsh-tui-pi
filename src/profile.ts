@@ -7,8 +7,11 @@
  * Layers, all on the select-panel framework (src/panels.ts):
  *
  *   1. `/profile-switch` switcher (TablePanel) — one row per profile (name |
- *      default model | think | agents), Enter applies it to the live
- *      selection AND the agent markdown files, Esc backs out.
+ *      default model | think | agents). Enter applies the profile to the
+ *      live selection AND the agent markdown files, and BINDS this directory
+ *      tree (.dsh-profile) so new sessions here start on it — switching is
+ *      workspace-scoped: other trees keep their own binding, or the global
+ *      default. Esc backs out; p pins/unpins manually.
  *   2. `/profile-cfg` manager (TablePanel) — the roster: n new, d delete
  *      (double-press confirm), Enter opens the profile's fields.
  *   3. profile fields (FieldPanel) — model / think / agents rows plus the
@@ -20,8 +23,12 @@
  *
  * Every edit persists to `$DSH_HOME/model-profiles.json` immediately
  * (src/model-profiles.ts). Applying a profile writes the agent frontmatter
- * files (updateAgentFrontmatter) and the default model through the same
- * chain as /model: live bridge selection + persistDefaultModel.
+ * files (updateAgentFrontmatter — global `~/.dsh/agents`, the one part a
+ * switch cannot scope per-tree yet) and binds the workspace tree via
+ * `.dsh-profile` (src/model-profiles.ts); the live default model rides the
+ * bridge selection. The GLOBAL agent-default-model is written only by
+ * /model, never by a profile switch. The ● "current" marker is the tree's
+ * own binding (boundProfileName), not a machine-wide pointer.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -35,6 +42,8 @@ import {
   type AgentFile,
 } from './agent-manager.ts'
 import {
+  bindWorkspaceProfile,
+  boundProfileName,
   captureAgentsSnapshot,
   createProfile,
   deleteProfile,
@@ -57,7 +66,6 @@ import {
   type ProfilePin,
 } from './model-profiles.ts'
 import { join } from 'node:path'
-import { persistDefaultModel } from './session.ts'
 import { openEffortPicker, pickModel } from './selectors.ts'
 import { EditField, type ParseOutcome } from './settings.ts'
 import {
@@ -132,26 +140,27 @@ function selectionToRoute(selection: ModelSelection): ProfileModelRoute {
 }
 
 /**
- * Apply `profile` end to end: default model + think level through the /model
- * chain (live selection ref + persisted default; a profile without a default
- * model leaves the current selection alone), every LISTED agent's
+ * Apply `profile` end to end, scoped to the current workspace tree:
+ * default model + think level through the live selection ref (a profile
+ * without a default model leaves the selection alone), every LISTED agent's
  * frontmatter through the snapshot semantics (src/model-profiles.ts), then
- * the current pointer and the store. Resolves the command summary text —
- * failures ride along as ⚠ parts instead of aborting the rest.
+ * the tree binding (`.dsh-profile` in `cwd` — new sessions here assemble
+ * from this profile) and the store's informational last-applied pointer.
+ * Resolves the command summary text — failures ride along as ⚠ parts
+ * instead of aborting the rest. Deliberately does NOT touch the global
+ * agent-default-model: that is /model's write, and crossing tree boundaries
+ * is exactly what a profile switch must not do.
  */
 async function applyProfile(
-  ctx: Context,
   path: string,
   doc: ModelProfilesDoc,
   profile: ModelProfile,
   deps: ProfileDeps,
+  cwd: string,
 ): Promise<string> {
   const parts: string[] = []
   if (profile.defaultModel !== undefined) {
-    const selection = routeToSelection(profile.defaultModel)
-    deps.setSelection(selection)
-    const persistError = await persistDefaultModel(ctx, selection)
-    if (persistError !== undefined) parts.push(`⚠ default model not persisted: ${persistError}`)
+    deps.setSelection(routeToSelection(profile.defaultModel))
   }
 
   const { agents } = listAgentFiles(agentsDir())
@@ -169,6 +178,22 @@ async function applyProfile(
   }
   if (failed.length > 0) parts.push(`⚠ agents failed: ${failed.join(', ')}`)
 
+  // Bind the tree BEFORE reporting: an ancestor pin would otherwise keep
+  // winning at assembly while the summary claims the switch took. A
+  // hand-decorated pin file is refused by bindWorkspaceProfile — surfaced,
+  // never clobbered.
+  const ancestor = readNearestProfilePin(cwd)
+  const pinError = bindWorkspaceProfile(cwd, profile.name)
+  if (pinError !== undefined) {
+    parts.push(`⚠ ${pinError}`)
+  } else if (
+    ancestor !== undefined
+    && ancestor.path !== join(cwd, PROFILE_PIN_FILE)
+    && ancestor.name.toLowerCase() !== profile.name.toLowerCase()
+  ) {
+    parts.push(`overrides ancestor pin "${ancestor.name}"`)
+  }
+
   doc.current = profile.name
   const saveError = saveModelProfiles(path, doc)
   if (saveError !== undefined) parts.push(`⚠ profile not saved: ${saveError}`)
@@ -176,7 +201,12 @@ async function applyProfile(
   const modelText = profile.defaultModel !== undefined
     ? formatProfileRoute(profile.defaultModel)
     : 'model unchanged'
-  return [`Profile → ${profile.name} · ${modelText} · agents ${String(updated)} updated`, ...parts]
+  const pinText = pinError === undefined ? `pinned this tree (${PROFILE_PIN_FILE})` : ''
+  return [
+    `Profile → ${profile.name} · ${modelText} · agents ${String(updated)} updated`,
+    pinText,
+    ...parts,
+  ]
     .filter(part => part !== '')
     .join(' · ')
 }
@@ -185,15 +215,16 @@ async function applyProfile(
  * Open the `/profile-switch` switcher. Resolves the apply summary when a
  * profile was switched, or `undefined` when cancelled / nothing applied.
  *
- * `p` binds the CWD to the cursor profile (writes `.dsh-profile`, see
- * src/model-profiles.ts) so every NEW session in this tree auto-loads it;
- * pressing `p` on the already-bound profile unpins it again — unless the pin
- * lives in an ancestor or was hand-decorated, which is reported in the
- * status line instead. Enter keeps its global meaning: apply now AND persist
- * the global default.
+ * Enter is a WORKSPACE-SCOPED switch: apply to the live session, apply the
+ * agent frontmatter (global files — the one unscoped part), and bind this
+ * directory tree via `.dsh-profile` (see src/model-profiles.ts) so every
+ * NEW session here auto-loads it. Other trees are untouched. A
+ * hand-decorated pin file refuses the binding and says so in the summary.
+ * `p` binds/unbinds the cwd manually — pressing it on the already-bound
+ * profile unpins — unless the pin lives in an ancestor or was
+ * hand-decorated, which is reported in the status line instead.
  */
 export async function openProfileSwitcher(
-  ctx: Context,
   tui: TUI,
   theme: TuiTheme,
   deps: ProfileDeps,
@@ -202,6 +233,8 @@ export async function openProfileSwitcher(
   const path = modelProfilesPath()
   const doc = loadModelProfiles(path)
   const cwd = process.cwd()
+  // The ● current marker is THIS tree's binding, not a machine-wide pointer.
+  const currentName = boundProfileName(doc, cwd)
   let settle: ((value: string | undefined) => void) | undefined
 
   const host = new PanelHost(tui, theme, message => {
@@ -229,14 +262,14 @@ export async function openProfileSwitcher(
       const pinnedName = boundPin()?.name
       const table = new TablePanel(theme, {
         title: `● Model profiles · ${PROFILE_PIN_FILE} here: ${pinnedName ?? 'none'}`,
-        columns: profileColumns(doc.profiles, doc.current),
+        columns: profileColumns(doc.profiles, currentName),
         rows: doc.profiles,
-        renderCell: (profile, column) => profileCell(profile, column.key, doc.current),
-        preselect: Math.max(0, doc.profiles.findIndex(profile => profile.name === doc.current)),
+        renderCell: (profile, column) => profileCell(profile, column.key, currentName),
+        preselect: Math.max(0, doc.profiles.findIndex(profile => profile.name === currentName)),
         status: () => pinStatus,
         onSelect: profile => { void switchTo(profile) },
         onCancel: () => { host.close(); restoreFocus(); resolve(undefined) },
-        footer: '↑↓ navigate · Enter switch · p pin to this dir / unpin · Esc back',
+        footer: '↑↓ navigate · Enter switch (binds this dir) · p pin/unpin · Esc back',
         shortcuts: { p: () => togglePin(table) },
       })
       host.open(table)
@@ -274,16 +307,12 @@ export async function openProfileSwitcher(
     const switchTo = async (profile: ModelProfile): Promise<void> => {
       if (applying) return
       applying = true
-      const summary = await applyProfile(ctx, path, doc, profile, deps)
+      // The summary carries the whole outcome — binding result, ancestor
+      // overrides, refusals — as its tail parts.
+      const summary = await applyProfile(path, doc, profile, deps, cwd)
       host.close()
       restoreFocus()
-      // If this tree is pinned to a DIFFERENT profile, say so — the global
-      // default moved but new sessions HERE will still auto-load the pin.
-      const pinned = readNearestProfilePin(cwd)
-      const note = pinned !== undefined && pinned.name.toLowerCase() !== profile.name.toLowerCase()
-        ? ` · note: ${PROFILE_PIN_FILE} pins "${pinned.name}" — new sessions here stay on it`
-        : ''
-      resolve(`${summary}${note}`)
+      resolve(summary)
     }
   })
 }
@@ -303,6 +332,8 @@ export async function openProfileManager(
 ): Promise<string | undefined> {
   const path = modelProfilesPath()
   const doc = loadModelProfiles(path)
+  // The ● current marker is THIS tree's binding, not a machine-wide pointer.
+  const currentName = boundProfileName(doc, process.cwd())
   const changed: string[] = []
   let tableStatus: string | undefined
   let fieldsStatus: string | undefined
@@ -343,9 +374,9 @@ export async function openProfileManager(
       pendingPreselect = undefined
       const table = new TablePanel(theme, {
         title: '● Model profiles — configure',
-        columns: profileColumns(doc.profiles, doc.current),
+        columns: profileColumns(doc.profiles, currentName),
         rows: doc.profiles,
-        renderCell: (profile, column) => profileCell(profile, column.key, doc.current),
+        renderCell: (profile, column) => profileCell(profile, column.key, currentName),
         preselect: preselectIndex !== undefined && preselectIndex >= 0 ? preselectIndex : undefined,
         status: () => tableStatus,
         footer: '↑↓ navigate · Enter open · n new · d delete · Esc back',
@@ -392,7 +423,7 @@ export async function openProfileManager(
 
     const showFields = (profile: ModelProfile): void => {
       const content = [
-        `named model snapshot — switch with /profile-switch · applies ${agentsDir()}`,
+        `named model snapshot — /profile-switch applies it live and binds this directory tree · agent overrides write ${agentsDir()} (global)`,
       ]
       const agentsSet = Object.keys(profile.agents).length
       const fields = [
@@ -411,7 +442,7 @@ export async function openProfileManager(
         { key: 'agents', value: `${String(agentsSet)} agent override(s) recorded`, editable: true },
       ]
       const view = new FieldPanel(theme, {
-        title: profileTitle(theme, profile, doc),
+        title: profileTitle(theme, profile, currentName),
         content,
         fields,
         status: () => fieldsStatus,
@@ -698,7 +729,7 @@ export async function openProfileManager(
       const { agents } = listAgentFiles(agentsDir())
       host.open(new ViewerPanel(theme, {
         title: `ⓘ Model profile — ${profile.name}`,
-        lines: profileReviewLines(profile, agents, doc.current === profile.name),
+        lines: profileReviewLines(profile, agents, currentName === profile.name),
         footer: '  Esc to close',
         onClose: () => showFields(profile),
       }))
@@ -709,8 +740,8 @@ export async function openProfileManager(
 }
 
 /** The accent title line of the profile fields window (current profiles get the ● mark). */
-function profileTitle(theme: TuiTheme, profile: ModelProfile, doc: ModelProfilesDoc): string {
-  const mark = doc.current === profile.name ? '● ' : ''
+function profileTitle(theme: TuiTheme, profile: ModelProfile, currentName: string | undefined): string {
+  const mark = currentName === profile.name ? '● ' : ''
   return ansiFg(theme.palette.accent) + BOLD + `${mark}${clipToWidth(profile.name, 100)}` + RESET
 }
 

@@ -1016,17 +1016,17 @@ export function apply(ctx: Context): void {
 
     // /profile-switch + /profile-cfg: user model profiles — named snapshots
     // of the whole model configuration (default model + think level, every
-    // subagent's model/thinking) that switch in one step between contexts
-    // like work and personal. `/profile-switch` applies one;
-    // `/profile-cfg` configures them (edit fields, save current, rename,
-    // review). Storage lives at $DSH_HOME/model-profiles.json, agent
-    // overrides in ~/.dsh/agents/*.md.
+    // subagent's model/thinking). Switching is WORKSPACE-SCOPED: Enter
+    // applies the profile to the live session + agent markdown and binds the
+    // current directory tree (.dsh-profile) so NEW sessions here start on
+    // it — other trees keep their own binding, or the global default.
+    // Storage lives at $DSH_HOME/model-profiles.json.
     const profileDeps: ProfileDeps = {
       getSelection: () => bridge.getSelection(),
       setSelection: selection => bridge.setSelection(selection),
     }
     const profileHandler: LocalCommandHandler = async () => {
-      const summary = await openProfileSwitcher(ctx, ui.tui, ui.theme, profileDeps, refocusEditor)
+      const summary = await openProfileSwitcher(ui.tui, ui.theme, profileDeps, refocusEditor)
       ui.requestRender()
       return summary === undefined
         ? { kind: 'success' as const, text: 'Profile unchanged.' }
@@ -1035,7 +1035,7 @@ export function apply(ctx: Context): void {
     commands.registerLocal('profile-switch', profileHandler)
     ctx.effect(() => ctx.commands.register({
       name: 'profile-switch',
-      description: 'Switch the model profile (default model, subagent models, think levels)',
+      description: 'Switch the model profile for this workspace (default model, subagent models, think levels)',
       handler: invocation => profileHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /profile-switch')
 

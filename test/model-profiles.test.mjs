@@ -16,6 +16,10 @@
  * - Snapshot semantics: capture records every agent (inherit ones as EMPTY
  *   entries); planAgentApply produces exactly the recorded overrides for
  *   LISTED agents (absent keys clear the line) and skips unknown ones.
+ * - Workspace binding: bindWorkspaceProfile writes a fresh pin and rebinds a
+ *   clean one but refuses a hand-decorated file (same guard as
+ *   removeProfilePin); boundProfileName resolves the nearest pin through the
+ *   doc — the ● current display — and stays undefined for unknown names.
  */
 
 import test from 'node:test'
@@ -28,6 +32,8 @@ import {
   DEFAULT_PROFILE_NAMES,
   MODEL_PROFILES_VERSION,
   PROFILE_PIN_FILE,
+  bindWorkspaceProfile,
+  boundProfileName,
   captureAgentsSnapshot,
   createProfile,
   deleteProfile,
@@ -436,6 +442,66 @@ test('removeProfilePin removes a simple matching file and refuses everything els
     writeFileSync(path, '# my pin\nwork\nextra line\n')
     assert.match(removeProfilePin(dir, 'work') ?? '', /edited by hand/)
     assert.ok(readFileSync(path, 'utf8').includes('extra line'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('bindWorkspaceProfile writes a fresh file and rebinds a clean one', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-pin-bind-'))
+  const path = join(dir, PROFILE_PIN_FILE)
+  try {
+    // Missing file → written.
+    assert.equal(bindWorkspaceProfile(dir, 'work'), undefined)
+    assert.equal(readFileSync(path, 'utf8'), 'work\n')
+    // A clean single-entry file naming ANOTHER profile is rebound (a switch
+    // moves this tree's binding).
+    writeProfilePin(dir, 'personal')
+    assert.equal(bindWorkspaceProfile(dir, 'work'), undefined)
+    assert.equal(readFileSync(path, 'utf8'), 'work\n')
+    // Same name: idempotent rewrite, no error.
+    assert.equal(bindWorkspaceProfile(dir, 'WORK'), undefined)
+    assert.equal(readFileSync(path, 'utf8'), 'WORK\n')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('bindWorkspaceProfile refuses a hand-decorated file and leaves it untouched', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-pin-bind2-'))
+  const path = join(dir, PROFILE_PIN_FILE)
+  try {
+    // Comments + entries + extra lines: never clobbered by a switch.
+    const handEdited = '# my pin\nwork\nextra line\n'
+    writeFileSync(path, handEdited)
+    assert.match(bindWorkspaceProfile(dir, 'personal') ?? '', /refusing|edited by hand/)
+    assert.equal(readFileSync(path, 'utf8'), handEdited)
+    // Comment-only file: hand-written too, refused.
+    writeFileSync(path, '# just a comment\n')
+    assert.match(bindWorkspaceProfile(dir, 'personal') ?? '', /refusing|edited by hand/)
+    assert.equal(readFileSync(path, 'utf8'), '# just a comment\n')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('boundProfileName resolves the nearest binding through the doc, undefined when unknown', () => {
+  const doc = seedModelProfilesDoc()
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-pin-cur-'))
+  const child = join(dir, 'sub')
+  mkdirSync(child, { recursive: true })
+  try {
+    assert.equal(boundProfileName(doc, dir), undefined) // nothing bound
+    writeProfilePin(dir, 'work')
+    assert.equal(boundProfileName(doc, dir), 'work')
+    // Case-insensitive lookup, canonical stored name returned.
+    writeProfilePin(dir, 'WORK')
+    assert.equal(boundProfileName(doc, dir), 'work')
+    // A child inherits the nearest ancestor's binding.
+    assert.equal(boundProfileName(doc, child), 'work')
+    // A pin naming a since-deleted profile binds nothing.
+    writeProfilePin(dir, 'ghost')
+    assert.equal(boundProfileName(doc, dir), undefined)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
