@@ -47,7 +47,6 @@
   "dependencies": {
     "@aiwayds/dsh-ask-router": "^0.2.0",
     "@aiwayds/dsh-dcp": "0.5.1",
-    "@aiwayds/dsh-model-sync": "^0.1.4",
     "@aiwayds/dsh-subagent-registry": "0.3.0",
     "@earendil-works/pi-tui": "0.84.4"
   },
