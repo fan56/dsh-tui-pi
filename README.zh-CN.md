@@ -99,11 +99,32 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 
 `/resume` 用几次按键恢复任意最近的 session（按最后更新排序），`/new` 开启新会话，`/export` 把会话日志写成 JSONL（`~/Downloads/dsh-session-<id>.jsonl`）。启动清理器（`dsh-tui.retention.*`）修剪旧的会话日志，存储不会无界增长；resume 选择器只显示工作集（`dsh-tui.resume.*`）。两者都可在 `~/.dsh/settings.yaml` 配置，并带环境变量覆盖。
 
+*被双写者写坏的会话日志——resume 选择器里带 ⚠ 标记，一键就地修复（原件保留为 `.corrupt-bak`），会话完整复活：*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/log-repair.mp4" controls></video>
+
+*跨进程安全——第二个进程在会话存活时会被拒绝，并降级为只读旁观，实时镜像持有方的一举一动：*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/writer-guard.mp4" controls></video>
+
 ---
 
 ## Themes 主题
 
 GitHub 明/暗配色，`/theme` 热切换；`auto` 检测你的终端并跟随实时的明/暗切换。`DSH_TUI_THEME=light|dark` 钉选一套配色，`DSH_TUI_TRANSPARENT=1` 让画布透出终端背景，`DSH_TUI_MOUSE=buttons|all|off` 调节鼠标追踪。
+
+---
+
+## 搜索、选择与图片
+
+- **全文搜索** —— `Ctrl+Shift+F` 在 transcript 上打开输入浮层；`Enter`/`Ctrl+G` 与 `Shift+Enter`/`Ctrl+Shift+G` 在匹配间跳转，`Esc` 关闭。搜索打开期间按键归它所有，你的 Esc/Ctrl+C 手势不受影响。
+- **划选复制** —— 在 transcript 任意位置拖选，松手即复制到系统剪贴板（`pbcopy`/`wl-copy`/`xclip`/`xsel`/`clip`，并附带 OSC 52）。`DSH_TUI_COPY_ON_SELECT=0` 让划选只做视觉高亮。
+- **来自其他面的图片** —— web 或飞书带附件发来的消息会在 transcript 内联渲染：Kitty / Ghostty / WezTerm（kitty 图形协议）与 iTerm2 上是真位图，其余终端回退为可点击文件名。resume 也会重渲染历史图片。
+- **回复中的 LaTeX** —— `$e^{i\pi}+1=0$` 与 `$$\int_0^1 x\,dx$$` 渲染为终端友好的 Unicode 数学。
+
+*`Ctrl+Shift+F` 实战——输入过滤、`Enter` 走匹配、`Esc` 关闭：*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/search.mp4" controls></video>
 
 ---
 
@@ -137,6 +158,10 @@ GitHub 明/暗配色，`/theme` 热切换；`auto` 检测你的终端并跟随�
 模型列表最新。
 
 其余内容作为普通 prompt 落给模型；dsh 原生命令（`plan`、`compact`、`feedback`、`goal`……）原样可用。
+
+*`/btw` 实战——主线任务运行中，侧问在临时浮层里作答（主线完全无感知）：*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/btw.mp4" controls></video>
 
 ---
 
@@ -193,12 +218,19 @@ node scripts/dev-upgrade.mjs                  # 最新版
 node scripts/dev-upgrade.mjs 1.0.4 --dry-run  # 先预览执行计划
 ```
 
+*启动 TUI——启动插件树逐行列出每个 profile 插件及其安装的 npm 版本：*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/startup-tree.mp4" controls></video>
+
 ---
 
 ## Companion plugins 伴生插件
 
 - [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) —— 作为默认依赖附带；把每个 `ask_user_question` 扇出到所有应答面（TUI 面板、飞书卡片），第一个答案获胜。把它加进 profile 的 `bundles`，放在任何 UI bundle 之前即可激活。
 - [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) —— 可选；用手机上的飞书/Lark 驱动同一个 dsh session，包括 ask-user 卡片面。想手机侧参与就装进同一个 profile。
+- [@aiwayds/dsh-mcp-adapter](https://github.com/fan56/dsh-mcp-adapter) —— 可选；把每个 `mcp__*` 工具 schema 折叠成两个恒定 meta-tool，让 prompt 成本与 server/工具数量无关（O(1)），并提供 `/mcp` 命令——server/工具树、折叠统计、按 server 的 disable/enable 门闩：
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/mcp.mp4" controls></video>
 
 ---
 

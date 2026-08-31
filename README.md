@@ -100,6 +100,14 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp
 
 `/resume` restores any recent session in a few keystrokes (ordered by last update), `/new` starts fresh, `/export` writes the session log as JSONL (`~/Downloads/dsh-session-<id>.jsonl`). A startup janitor (`dsh-tui.retention.*`) prunes old session logs so the store never grows without bound; the resume picker shows only the working set (`dsh-tui.resume.*`). Both are configurable in `~/.dsh/settings.yaml` with env overrides.
 
+*A double-writer-scarred session log — flagged ⚠ in the resume picker, repaired in place with one tap (the original is kept as `.corrupt-bak`), and the session comes back alive:*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/log-repair.mp4" controls></video>
+
+*Cross-process safety — a second process is refused while the session is live, and falls back to a read-only watch that mirrors the owner's turn in real time:*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/writer-guard.mp4" controls></video>
+
 ---
 
 ## Themes
@@ -114,6 +122,10 @@ GitHub light/dark palettes, hot-switched with `/theme`; `auto` detects your term
 - **Selection copy** — drag to select anywhere in the transcript; releasing copies through the OS clipboard (`pbcopy` / `wl-copy` / `xclip` / `xsel` / `clip`, with OSC 52 riding along for terminals that honor it). `DSH_TUI_COPY_ON_SELECT=0` keeps selection visual-only. Mouse tracking is still tuned by `DSH_TUI_MOUSE` (default `buttons`: clicks, wheel, drag-selection and scrollbar dragging, no idle-motion noise).
 - **Images from other surfaces** — messages sent with attachments from the web UI or Feishu render inline in the transcript: a real bitmap on Kitty / Ghostty / WezTerm (kitty graphics) and iTerm2, a clickable filename fallback elsewhere, and a muted "unavailable" note if the stored attachment fails verification. Session resume re-renders past images too.
 - **LaTeX in replies** — `$e^{i\pi}+1=0$` and `$$\int_0^1 x\,dx$$` render as terminal-friendly Unicode math (`e^(iπ)+1 = 0`, `∫₀¹ x dx`). Quirk inherited from upstream: a literal `$$` pair in prose is treated as display math.
+
+*`Ctrl+Shift+F` in action — type to filter, `Enter` walks the matches, `Esc` closes:*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/search.mp4" controls></video>
 
 ---
 
@@ -148,6 +160,10 @@ dependency of this package) keeps those routes' model lists up to date on its
 own schedule.
 
 Anything else falls through to the model as an ordinary prompt; dsh-native commands (`plan`, `compact`, `feedback`, `goal`, …) work unchanged.
+
+*`/btw` in action — a side question answered in a temporary overlay while the main turn keeps running (the main line never sees it):*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/btw.mp4" controls></video>
 
 ---
 
@@ -202,8 +218,9 @@ Everything that used to need manual patching — the canvas background, the `@de
 
 ```sh
 node scripts/dev-upgrade.mjs                  # latest
-node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # preview the plan first
-```
+*Launching the TUI — the startup plugin tree lists every profile plugin with its installed npm version:*
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/startup-tree.mp4" controls></video>
 
 ---
 
@@ -211,6 +228,9 @@ node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # preview the plan first
 
 - [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) — ships as a default dependency; fans every `ask_user_question` out to all answering surfaces (TUI panel, Feishu card) and the first answer wins. List it in the profile's `bundles` before the UI bundles to activate.
 - [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) — optional; drives the same dsh session from Feishu/Lark on your phone, including an ask-user card surface. Install into the same profile for phone-side participation.
+- [@aiwayds/dsh-mcp-adapter](https://github.com/fan56/dsh-mcp-adapter) — optional; folds every `mcp__*` tool schema into two constant meta-tools so prompt cost stays O(1) in servers/tools, and adds the `/mcp` command — server/tool tree, folding stats, and a per-server disable/enable latch:
+
+<video src="https://github.com/fan56/dsh-tui-pi/raw/main/assets/demos/mcp.mp4" controls></video>
 
 ---
 
