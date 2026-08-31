@@ -22,6 +22,7 @@ https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 - [**Dynamic context pruning (DCP)**](docs/features/dcp.md) — context stays within limits automatically, with zero LLM calls.
 - [**Persistent context**](docs/features/persistent-context.md) — your ground rules ride along on every request, hot-applied with no restart.
 - [**Model profiles & favorites**](docs/features/model-profiles.md) — switch a whole model setup per project and keep the picker small.
+- [**Agent preset switching**](docs/features/preset-switch.md) — `Tab` / `/preset` between the shipped agent compositions (`standard`, `minimal`, …); what a preset really gates, and exactly when a switch takes effect.
 - [**Sessions & resume**](docs/features/sessions-resume.md) — sessions stay tidy automatically and resume in a few keystrokes; a cross-process writer guard keeps the log single-writer.
 - [**Themes**](docs/features/themes.md) — GitHub light/dark palettes, hot-switchable; `auto` follows your terminal.
 - [**Search, selection & images**](docs/features/search-selection-images.md) — `Ctrl+Shift+F` over the whole transcript, drag-select copies to the OS clipboard, attachments from web/Feishu render inline, LaTeX replies draw as Unicode math.

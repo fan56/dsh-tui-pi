@@ -22,6 +22,7 @@ https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 - [**动态上下文修剪（DCP）**](docs/features/dcp.md) —— 上下文自动保持在窗口内，零 LLM 调用。
 - [**持久上下文**](docs/features/persistent-context.md) —— 你的基本规则随每个请求生效，热应用无需重启。
 - [**模型 profile 与收藏**](docs/features/model-profiles.md) —— 按项目切换整套模型配置，选择器保持精简。
+- [**Agent preset 切换**](docs/features/preset-switch.md) —— `Tab` / `/preset` 在内置 agent 组合（`standard`、`minimal`……）间切换；preset 到底管什么、切换何时生效。
 - [**Sessions 会话与恢复**](docs/features/sessions-resume.md) —— 会话自动保持整洁、几次按键恢复；跨进程写者守卫保证日志单写者。
 - [**Themes 主题**](docs/features/themes.md) —— GitHub 明/暗配色热切换；`auto` 跟随终端。
 - [**搜索、选择与图片**](docs/features/search-selection-images.md) —— `Ctrl+Shift+F` 全文搜索、划选复制到系统剪贴板、web/飞书附件内联渲染、LaTeX 转 Unicode 数学。
