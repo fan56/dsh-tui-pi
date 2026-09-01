@@ -107,6 +107,26 @@ export const PENDING_TERMINAL_LABELS: Record<PendingTerminal, string> = {
 const STRIKE = '\x1b[9m'
 const STRIKE_OFF = '\x1b[29m'
 
+/**
+ * A GFM table separator row (`| --- | :-: |`): after trimming, a line made
+ * of pipes, dashes, colons and spaces only, bracketed by pipes, carrying an
+ * internal pipe and at least one dash. Deliberately narrow — ordinary
+ * command output (prose, key: value lines) must never flip the echo into
+ * Markdown rendering, and ASCII rules like `|------|` are not tables.
+ */
+const GFM_TABLE_SEPARATOR_ROW = /^\|[\s:|-]*\|[\s:|-]*-[\s:|-]*\|$/
+
+/**
+ * True when the text contains a GFM table separator row — the gate for
+ * rendering slash-command success output through the Markdown component
+ * (a raw pipe table is unreadable; any other text stays a plain line).
+ * Pipe-less separator rows (`--- | ---`, no leading/trailing pipes) are
+ * deliberately not detected — such output degrades gracefully to plain text.
+ */
+export function hasGfmTable(text: string): boolean {
+  return text.split('\n').some(line => GFM_TABLE_SEPARATOR_ROW.test(line.trim()))
+}
+
 /** Everything needed to find one pending echo (id primary, text fallback). */
 export interface PendingEchoMatch {
   /** The delivered message id (`message.id` of the routed prompt). */
@@ -394,8 +414,27 @@ export class TranscriptRenderer {
     if (error !== undefined) {
       this.appendLine(ansiFg(this.theme.palette.danger) + `✘ ${error}` + RESET)
     } else if (text !== undefined && text.trim() !== '') {
-      this.appendLine(ansiFg(this.theme.palette.fgMuted) + text + RESET)
+      this.appendCommandText(text)
     }
+  }
+
+  /**
+   * Success output of a slash command. Table-bearing text renders through
+   * the same Markdown construction as assistant messages (a raw pipe table
+   * is unreadable); anything else keeps the fgMuted plain line. Both the
+   * first render and the applyOp replay (setTheme/relayout rebuilds) come
+   * through here, so the choice is stable across rebuilds.
+   */
+  private appendCommandText(text: string): void {
+    if (hasGfmTable(text)) {
+      const md = new Markdown(text, 1, 0, this.theme.markdown, {
+        color: text => ansiFg(this.theme.palette.fgDefault) + text + RESET,
+      })
+      this.doc.addChild(md)
+      this.requestRender()
+      return
+    }
+    this.appendLine(ansiFg(this.theme.palette.fgMuted) + text + RESET)
   }
 
   /**

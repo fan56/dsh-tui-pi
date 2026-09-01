@@ -21,9 +21,9 @@ import {
   toolSubject,
   DEFAULT_PANEL_HEIGHT,
 } from '../lib/activity.js'
-import { TranscriptRenderer } from '../lib/messages.js'
-import { Container } from '@earendil-works/pi-tui'
-import { darkTheme, lightTheme } from '../lib/theme/index.js'
+import { TranscriptRenderer, hasGfmTable } from '../lib/messages.js'
+import { Container, Markdown } from '@earendil-works/pi-tui'
+import { ansiFg, darkTheme, lightTheme } from '../lib/theme/index.js'
 import { visibleWidth } from '../lib/text.js'
 
 const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
@@ -289,4 +289,65 @@ test('user bubbles carry the dark foreground SGR (visible on the dark canvas)', 
   )
 
   assert.ok(stripAnsi(rendered).includes('▎ hello there'), 'bubble content survives')
+})
+
+// ------------------------------------------------- command echo markdown --
+
+test('hasGfmTable fires only on a real GFM separator row', () => {
+  // Hits: a genuine separator row, alone or embedded in larger output.
+  assert.ok(hasGfmTable('| --- | --- |'))
+  assert.ok(hasGfmTable('|:---|---:|'))
+  assert.ok(hasGfmTable('## Stats 🐳\n\n| name | n |\n| --- | ---: |\n| a | 1 |'))
+  assert.ok(hasGfmTable('  | --- | --- |  '), 'leading/trailing spaces are trimmed')
+  // Misses: plain command output must never flip into Markdown.
+  assert.ok(!hasGfmTable('Model: deepseek/deepseek-v4'))
+  assert.ok(!hasGfmTable('Permission unchanged.'))
+  assert.ok(!hasGfmTable('done: 3 | failed: 0'), 'a pipe without a leading pipe is prose')
+  assert.ok(!hasGfmTable('| name | value |'), 'header row without dashes is not a separator')
+  assert.ok(!hasGfmTable('| - |-'), 'unterminated row is not a separator')
+  assert.ok(!hasGfmTable('---'), 'thematic break without pipes is not a separator')
+  assert.ok(!hasGfmTable('|------|'), 'ASCII rule without an internal pipe is not a separator')
+  assert.ok(!hasGfmTable(''))
+  assert.ok(hasGfmTable('| --- | --- |'), 'the tightened regex keeps real two-column separators')
+})
+
+test('command echo with an ASCII rule (|------|) stays plain text — no Markdown', () => {
+  // A single-column dashed row (only the two bracketing pipes) is a drawn
+  // rule, not a table: the tightened separator regex rejects it, so marked
+  // never silently drops its overflow cells and the echo stays a plain line.
+  assert.equal(hasGfmTable('|------|'), false)
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, darkTheme, () => {})
+  renderer.renderCommandEcho('/stats', undefined, 'cache hit\n|------|')
+  assert.equal(doc.children.filter(child => child instanceof Markdown).length, 0, 'no Markdown component')
+  const rendered = stripAnsi(doc.children.map(child => child.render(200).join('\n')).join('\n'))
+  assert.ok(rendered.includes('|------|'), 'the rule line passes through untouched')
+})
+
+test('command echo with a GFM table renders through the Markdown component', () => {
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, darkTheme, () => {})
+  const text = 'Plugins:\n\n| plugin | status |\n| --- | --- |\n| dcp | ok 🐳 |'
+  renderer.renderCommandEcho('/plugins', undefined, text)
+  let markdown = doc.children.filter(child => child instanceof Markdown)
+  assert.equal(markdown.length, 1, 'exactly one Markdown component for the table output')
+  const frame = stripAnsi(markdown[0].render(100).join('\n'))
+  assert.ok(frame.includes('─'), 'the table renders as a framed GFM table, not raw pipes')
+  assert.ok(frame.includes('dcp'), 'table content survives')
+
+  // The replay (applyOp → renderCommandEcho) rebuilds the same Markdown.
+  renderer.setTheme(lightTheme)
+  markdown = doc.children.filter(child => child instanceof Markdown)
+  assert.equal(markdown.length, 1, 'the theme-switch rebuild re-renders the table as Markdown')
+  assert.ok(stripAnsi(markdown[0].render(100).join('\n')).includes('dcp'), 'table survives the rebuild')
+})
+
+test('command echo without a table keeps the fgMuted plain line (no Markdown)', () => {
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, darkTheme, () => {})
+  renderer.renderCommandEcho('/model', undefined, 'Model: deepseek/deepseek-v4')
+  assert.equal(doc.children.filter(child => child instanceof Markdown).length, 0, 'no Markdown component')
+  const styled = doc.children.map(child => child.render(200).join('\n')).join('\n')
+  assert.ok(styled.includes(ansiFg(darkTheme.palette.fgMuted)), 'plain text keeps the muted color')
+  assert.ok(stripAnsi(styled).includes('Model: deepseek/deepseek-v4'), 'content intact')
 })

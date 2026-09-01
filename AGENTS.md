@@ -206,7 +206,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **1108 tests** across 61 files (verified by
+- `pnpm test` must stay green: **1112 tests** across 61 files (verified by
   `node --test test/*.mjs`; the v0.26.0 baseline was 918 — later feature
   rounds kept adding, see HANDOFF). Per-file totals
   below; verify after any new logic is added and update if numbers
@@ -218,7 +218,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   - usage 26 + subagent-policy 26 + pending-echo 26 + clipboard 26 + login 25 +
     log-repair 25 + startup-info 24 + skills-manager 24 + panels 24 +
   - steer-flow 22 + theme 21 + model-list 21 + settings 19 + welcome 18 +
-    provider-catalog 17 + theme-canvas 16 + preset 16 + messages 16 + hotkeys 16 +
+    provider-catalog 17 + theme-canvas 16 + preset 16 + messages 20 + hotkeys 16 +
   - theme-settings 15 + text 15 + history 13 + agent-manager 13 + image-blocks 12 +
     custom-provider 12 + theme-switch 11 + frame 11 + footer-hints 10 +
   - writer-lock 9 + permission 9 + commands 9 + append-system 9 +
