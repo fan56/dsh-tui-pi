@@ -474,7 +474,7 @@ export class DshSessionBridge {
     for (const childId of this.childSessions) {
       const session = sessions.get(SessionId(childId))
       if (session === undefined) continue
-      const events = session.events
+      const events = session.snapshotEvents()
       const len = events.length
       let from = this.reconciledLen.get(childId) ?? 0
       // A torn-down / re-seeded child session restarts its log — recount it.
@@ -942,7 +942,7 @@ export class DshSessionBridge {
   /**
    * Resume a persisted session: tear down the live agent (disposers are kept —
    * the session-id filter re-binds to the resumed id) and load the persisted
-   * session in its place. The caller replays `handle.agent.session.events`
+   * session in its place. The caller replays `handle.agent.session.snapshotEvents()`
    * through `replay()` to rebuild stats/transcript — clear the transcript
    * BEFORE replaying (the renderer's echo dedupe must not see replayed user
    * messages next to a stale local echo). Serialized: concurrent calls share
@@ -1588,7 +1588,7 @@ export class DshSessionBridge {
   isSessionBlank(): boolean {
     if (this.sessionId === undefined) return true
     const agent = this.getAgent()
-    return agent === undefined || agent.session.events.length === 0
+    return agent === undefined || agent.session.seq === 0
   }
 }
 

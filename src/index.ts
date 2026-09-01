@@ -675,7 +675,7 @@ export function apply(ctx: Context): void {
         liveWidgets.clear()
         const session = resumed.agent.session
         const adopted = 'adopted' in resumed && resumed.adopted === true
-        bridge.replay(adopted ? session.events : session.events.filter(event => event.seq < session.firstLiveSeq))
+        bridge.replay(adopted ? session.snapshotEvents() : session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
         for (const text of bridge.takePendingRemoteFollowups()) {
           await bridge.prompt(text)
         }
@@ -818,7 +818,7 @@ export function apply(ctx: Context): void {
         const agent = bridge.getAgent()
         return agent === undefined
           ? []
-          : buildBtwSnapshot(agent.session.events, btwSnapshotLimit)
+          : buildBtwSnapshot(agent.session.snapshotEvents(), btwSnapshotLimit)
       },
       requestRender: () => ui.requestRender(),
       notify: (message, kind) => renderer.renderNotice(message, kind),
@@ -1084,7 +1084,7 @@ export function apply(ctx: Context): void {
         cacheReadTokens: stats.cacheReadTokens,
         cacheWriteTokens: stats.cacheWriteTokens,
         status: agent === undefined ? 'none' : agentStatus,
-        eventCount: agent === undefined ? undefined : agent.session.events.length,
+        eventCount: agent === undefined ? undefined : agent.session.seq,
         parentSession: header?.parentSession === undefined ? undefined : String(header.parentSession),
       }, refocusEditor)
       return { kind: 'success' as const, text: agent === undefined ? 'No active session.' : 'Session info shown.' }
@@ -1198,11 +1198,11 @@ export function apply(ctx: Context): void {
         // everything the other surface did. Cold resumes keep the firstLiveSeq
         // filter (seeded history replays once; live events re-arrive).
         const adopted = 'adopted' in resumed && resumed.adopted === true
-        bridge.replay(adopted ? session.events : session.events.filter(event => event.seq < session.firstLiveSeq))
+        bridge.replay(adopted ? session.snapshotEvents() : session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
         ui.requestRender()
         return {
           kind: 'success' as const,
-          text: `Resumed ${clipToWidth(String(target.id), 8)} · ${session.events.length} events.`,
+          text: `Resumed ${clipToWidth(String(target.id), 8)} · ${session.seq} events.`,
         }
       }
 
@@ -1283,7 +1283,7 @@ export function apply(ctx: Context): void {
           renderer.clear()
           liveWidgets.clear()
           const session = resumed.agent.session
-          bridge.replay(session.events.filter(event => event.seq < session.firstLiveSeq))
+          bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
           ui.requestRender()
         } catch { /* best-effort: fall back to lazy session creation */ }
       })()
@@ -1306,7 +1306,7 @@ export function apply(ctx: Context): void {
           renderer.clear()
           liveWidgets.clear()
           const session = resumed.agent.session
-          bridge.replay(session.events.filter(event => event.seq < session.firstLiveSeq))
+          bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
           ui.requestRender()
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error)
@@ -1328,7 +1328,7 @@ export function apply(ctx: Context): void {
       description: 'Export this session log as JSONL',
       input: { hint: '[path]' },
       handler: async invocation => {
-        const events = invocation.agent.session.events
+        const events = invocation.agent.session.snapshotEvents()
         const fallback = join(homedir(), 'Downloads', `dsh-session-${clipToWidth(String(invocation.agent.session.id), 8)}.jsonl`)
         const target = invocation.rawInput.trim() === '' ? fallback : resolve(invocation.rawInput.trim())
         await mkdir(dirname(target), { recursive: true })

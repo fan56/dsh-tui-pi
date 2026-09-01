@@ -21,7 +21,7 @@ function makeHarness() {
   const handlers = new Map()
   const childEvents = []
   const sessions = {
-    get(id) { return String(id) === 'child-1' ? { events: childEvents } : undefined },
+    get(id) { return String(id) === 'child-1' ? { get seq() { return childEvents.length }, snapshotEvents: () => childEvents } : undefined },
   }
   const ctx = {
     on(evt, fn) { handlers.set(evt, fn); return () => handlers.delete(evt) },
