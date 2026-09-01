@@ -15,7 +15,23 @@
  *   - parent assembly contains the section (both wirings)
  *   - a child-like scope does NOT see it (new wiring only)
  */
-const closure = '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai'
+// The @deepseek-ai closure to verify against: DSH_CLOSURE_DIR override first
+// (dev against an unreleased dsh line), then the global dsh install's own
+// nested closure — same resolution order as scripts/link-dsh-closure.mjs.
+import { execFileSync } from 'node:child_process'
+import { existsSync, realpathSync } from 'node:fs'
+function findClosure() {
+  if (process.env.DSH_CLOSURE_DIR) return realpathSync(process.env.DSH_CLOSURE_DIR)
+  try {
+    const bin = execFileSync('which', ['dsh'], { encoding: 'utf8' }).trim()
+    if (bin !== '') {
+      const nested = `${realpathSync(bin)}/../../node_modules/@deepseek-ai`
+      if (existsSync(`${nested}/cordis`)) return realpathSync(nested)
+    }
+  } catch { /* dsh not on PATH */ }
+  return '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai'
+}
+const closure = findClosure()
 
 const { Context } = await import(`file://${closure}/cordis/lib/index.js`)
 const { default: SystemPrompt } = await import(`file://${closure}/dsh-system-prompt/lib/index.js`)

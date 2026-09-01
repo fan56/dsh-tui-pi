@@ -35,7 +35,6 @@ import {
   INCOMPLETE_HINT,
   initialState,
   isCustomEditing,
-  isDuplicateProviderError,
   isRightClickPress,
   needsConfirmRow,
   nextSelectableIndex,
@@ -59,7 +58,6 @@ import {
 import { githubLight } from '../lib/theme/palette.js'
 import { visibleWidth } from '../lib/text.js'
 import { resetNoticeBridge, setNoticeSink } from '../lib/notice-bridge.js'
-import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
 
 const theme = { palette: githubLight }
 
@@ -1188,54 +1186,21 @@ test('openAskUserPanel: pre-aborted signal declines without ever opening an over
 
 // ------------------------------------------- provider registration semantics --
 
-test('registerAskUserProvider: happy path registers, forwards ask(), and passes the disposer through', async () => {
-  let registered
-  let disposed = 0
-  const ctx = { userQuestions: { registerProvider(provider) { registered = provider; return () => { disposed += 1 } } } }
-  const { deps, calls } = makeHarness()
-  const disposer = registerAskUserProvider(ctx, deps)
-  assert.equal(typeof registered.ask, 'function')
-  const controller = new AbortController()
-  const result = registered.ask({ questions: singleQuestion(), signal: controller.signal })
-  const tracked = trackResolution(result)
-  controller.abort() // abort → close → declined envelope
-  await result
-  assert.deepEqual(tracked.value, buildDeclinedEnvelope(singleQuestion()))
-  disposer()
-  assert.equal(disposed, 1)
-})
-
-test('registerAskUserProvider: DUPLICATE_PROVIDER yields ownership silently (no-op disposer)', () => {
-  const ctx = { userQuestions: { registerProvider() { throw new UserQuestionError('a user-questions provider is already registered', 'DUPLICATE_PROVIDER') } } }
-  const notices = captureNotices(() => {
-    const disposer = registerAskUserProvider(ctx, makeHarness().deps)
-    assert.equal(typeof disposer, 'function')
-    disposer() // must be safe to call
-  })
-  assert.deepEqual(notices, [])
-})
-
-test('registerAskUserProvider: unexpected registration failures are NOT swallowed', () => {
-  const ctx = { userQuestions: { registerProvider() { throw new TypeError('boom') } } }
-  assert.throws(() => registerAskUserProvider(ctx, makeHarness().deps), /boom/)
-})
-
-test('registerAskUserProvider: missing userQuestions service emits one notice and degrades instead of crashing', () => {
+test('registerAskUserProvider: missing event surface emits one notice and degrades instead of crashing', () => {
   const notices = captureNotices(() => {
     const disposer = registerAskUserProvider({}, makeHarness().deps)
     assert.equal(typeof disposer, 'function')
     disposer()
   })
   assert.equal(notices.length, 1)
-  assert.match(notices[0], /userQuestions/)
+  assert.match(notices[0], /NO_PROVIDER/)
 })
 
-test('registerAskUserProvider: alpha-era host (no provider slot) registers a claim-scoped waterfall answerer', async () => {
+test('registerAskUserProvider: registers a claim-scoped waterfall answerer', async () => {
   let eventName
   let listener
   let disposed = 0
   const ctx = {
-    userQuestions: {}, // alpha-era host: service present, provider slot gone
     on(event, fn) {
       eventName = event
       listener = fn
@@ -1262,9 +1227,9 @@ test('registerAskUserProvider: alpha-era host (no provider slot) registers a cla
   assert.equal(disposed, 1)
 })
 
-test('registerAskUserProvider: alpha-era host delegates unclaimed sessions via next()', async () => {
+test('registerAskUserProvider: delegates unclaimed sessions via next()', async () => {
   let listener
-  const ctx = { userQuestions: {}, on(event, fn) { listener = fn; return () => {} } }
+  const ctx = { on(event, fn) { listener = fn; return () => {} } }
   const { deps } = makeHarness()
   deps.getSessionId = () => 'sess-a'
   registerAskUserProvider(ctx, deps)
@@ -1296,16 +1261,6 @@ function captureNotices(fn) {
   }
   return notices
 }
-
-// ------------------------------------------- duplicate-error classifier (pure) --
-
-test('isDuplicateProviderError: matches only UserQuestionError with code DUPLICATE_PROVIDER', () => {
-  assert.equal(isDuplicateProviderError(new UserQuestionError('already registered', 'DUPLICATE_PROVIDER')), true)
-  assert.equal(isDuplicateProviderError(new UserQuestionError('aborted', 'ASK_ABORTED')), false)
-  assert.equal(isDuplicateProviderError(new TypeError('boom')), false)
-  assert.equal(isDuplicateProviderError('DUPLICATE_PROVIDER'), false)
-  assert.equal(isDuplicateProviderError(undefined), false)
-})
 
 // ------------------------------------- terminal-height-adaptive scroll window --
 
@@ -1498,18 +1453,18 @@ test('openAskUserPanel: the docked panel renders in the Todos-panel box language
 
 // ------------------------------------------------ ask-surface routing --
 
-test('registerAskUserProvider: with dsh-ask-router present it registers as a surface, never touching the provider slot', async () => {
+test('registerAskUserProvider: with dsh-ask-router present it registers as a surface, never touching the waterfall', async () => {
   let surface
-  let providerTouched = 0
+  let waterfallTouched = 0
   const ctx = {
     get: key => key === 'askSurfaces' ? { register(s) { surface = s; return () => {} } } : undefined,
-    userQuestions: { registerProvider() { providerTouched += 1; return () => {} } },
+    on() { waterfallTouched += 1; return () => {} },
   }
   const { deps } = makeHarness()
   registerAskUserProvider(ctx, deps)
   assert.ok(surface !== undefined, 'surface registered with the router')
   assert.equal(surface.name, 'dsh-tui')
-  assert.equal(providerTouched, 0, 'the provider slot is left for the router')
+  assert.equal(waterfallTouched, 0, 'the standalone waterfall is left unregistered')
 
   // Claim routing: only questions from THIS bridge's session are ours.
   deps.getSessionId = () => 'sess-a'
@@ -1522,7 +1477,6 @@ test('registerAskUserProvider: settled() aborts the surface ask signal (panel cl
   let surface
   const ctx = {
     get: () => ({ register(s) { surface = s; return () => {} } }),
-    userQuestions: { registerProvider: () => () => {} },
   }
   const { deps } = makeHarness()
   registerAskUserProvider(ctx, deps)

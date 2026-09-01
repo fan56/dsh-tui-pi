@@ -89,7 +89,7 @@ test('DEFAULT_PRESET_ID is standard', () => {
 test('initialPresetIndex selects the standard preset when present', () => {
   // `standard` is not the first-scanned entry here — scan order must not win.
   const scanned = [
-    { id: 'code', name: 'Code', trust: 'system', isDefault: false },
+    { id: 'ptc', name: 'PTC', trust: 'system', isDefault: false },
     { id: 'minimal', name: 'Minimal', trust: 'system', isDefault: false },
     { id: 'standard', name: 'Standard', trust: 'system', isDefault: false },
   ]
@@ -108,12 +108,12 @@ test('initialPresetIndex returns 0 for an empty roster', () => {
 
 // --------------------------------------------- filesystem roster scan --
 
-test('resolvePresetRoots probes rc-era and alpha-era shipped layouts plus the user root', () => {
+test('resolvePresetRoots probes the dsh-agent-presets shipped layouts plus the user root', () => {
   const paths = resolvePresetRoots().map(r => r.path)
-  assert.ok(paths.includes('/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/config/agent-presets'), 'rc-era layout probed')
-  assert.ok(paths.includes('/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets'), 'alpha-era nested layout probed')
-  assert.ok(paths.includes('/opt/homebrew/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets'), 'alpha-era flat layout probed')
+  assert.ok(paths.includes('/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets'), 'nested layout probed')
+  assert.ok(paths.includes('/opt/homebrew/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets'), 'flat layout probed')
   assert.ok(paths.some(p => p.endsWith('.dsh/.agent-presets')), 'user root probed')
+  assert.ok(paths.every(p => !p.includes('/config/agent-presets')), 'the pre-alpha config-dir layout is no longer probed')
 })
 
 test('fetchPresetRoster: shipped ids get English names (official string kept); unmapped ids fall back to official string', async () => {
@@ -147,21 +147,16 @@ test('fetchPresetRoster: shipped ids get English names (official string kept); u
   }
 })
 
-test('fetchPresetRoster: preset.yml wins when both metadata files exist (metadata.yml is legacy)', async () => {
+test('fetchPresetRoster: preset.yml is the only metadata file read (the metadata.yml legacy probe is gone)', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-presets-'))
   try {
-    await mkdir(join(dir, 'hybrid'))
-    await writeFile(join(dir, 'hybrid', 'agent.cordis.yml'), '')
-    await writeFile(join(dir, 'hybrid', 'metadata.yml'), 'name: 旧版名字\n')
-    await writeFile(join(dir, 'hybrid', 'preset.yml'), 'name: 新版名字\norder: 1\n')
     await mkdir(join(dir, 'legacy'))
     await writeFile(join(dir, 'legacy', 'agent.cordis.yml'), '')
-    await writeFile(join(dir, 'legacy', 'metadata.yml'), 'name: 仅旧版名字\n') // old host, no preset.yml
+    await writeFile(join(dir, 'legacy', 'metadata.yml'), 'name: 仅旧版名字\n') // no preset.yml — ignored
     __setPresetRootOverride([{ path: dir, trust: 'user' }])
     const roster = await fetchPresetRoster()
-    assert.equal(roster.length, 2)
-    assert.equal(roster.find(p => p.id === 'hybrid').name, '新版名字')
-    assert.equal(roster.find(p => p.id === 'legacy').name, '仅旧版名字', 'metadata.yml still read when preset.yml is absent')
+    assert.equal(roster.length, 1)
+    assert.equal(roster[0].name, 'legacy', 'a bare metadata.yml no longer names a preset (alpha hosts ship preset.yml only)')
   } finally {
     __setPresetRootOverride(undefined)
     await rm(dir, { recursive: true, force: true })
