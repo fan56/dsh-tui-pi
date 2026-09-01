@@ -22,9 +22,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import {
   SettingsConflictError,
-  settingsNamespace,
   type SettingsDescriptor,
-  type SettingsNamespace,
   type SettingsPathOp,
   type SettingsProvider,
 } from '@deepseek-ai/dsh-settings'
@@ -38,8 +36,17 @@ import { RESUME_MAX_AGE_DAYS, RESUME_MIN_BYTES } from './sessions.ts'
 import { emitNotice } from './notice-bridge.ts'
 import type { ThemePreference } from './theme/index.ts'
 
-/** Settings namespace carrying the persisted dsh-tui preferences. */
-export const THEME_SETTINGS_NAMESPACE: SettingsNamespace = settingsNamespace('dsh-tui')
+/**
+ * Settings namespace carrying the persisted dsh-tui preferences.
+ *
+ * dsh-settings 0.1.2-alpha.3 removed the runtime settingsNamespace() helper
+ * (and the SettingsNamespace constructor it returned): a plain literal is the
+ * supported spelling — register() brand-checks it at the type level
+ * (SettingsNamespaceInput) and validates the same lowercase-hyphenated pattern
+ * at runtime (parseSettingsNamespace). Comparisons against a descriptor's
+ * branded `ns` stay exact string equality.
+ */
+export const THEME_SETTINGS_NAMESPACE = 'dsh-tui'
 
 /** Subagent concurrency/rounds/tool knobs read by the subagent policy. */
 export interface SubagentLimits {
@@ -237,11 +244,9 @@ let registrationPromise: Promise<void> | undefined
 /**
  * Register the `dsh-tui` settings namespace with the settings provider.
  *
- * `installSettingsSection` cannot express the `applies` marker (its hooks
- * carry no options, and the registration's applies is fixed at `register`
- * time), so this registers directly through the provider, mirroring that
- * helper's wiring: the registration rides the scoped injection fiber and
- * disappears with the settings service. `onPreferenceChange`, when given,
+ * This registers directly through the provider (not through a
+ * section-install helper): the registration rides the scoped injection fiber
+ * and disappears with the settings service. `onPreferenceChange`, when given,
  * receives every committed change (including this TUI's own writes) through
  * the scope's watch hook; callers guard re-applies by theme-bundle identity
  * and height change, so an echoed self-write is a no-op. No source thunk is

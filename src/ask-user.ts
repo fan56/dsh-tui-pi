@@ -1557,26 +1557,6 @@ export function openAskUserPanel(
 
 // ----------------------------------------------------- the provider --
 
-/**
- * True only for the upstream's documented duplicate-registration failure
- * (`UserQuestionError` with code `DUPLICATE_PROVIDER`) — the one case where
- * yielding the single provider slot to the prior UI is correct. Matched
- * structurally on `name` + `code` so a cross-realm HarnessError instance or a
- * test double classifies identically.
- */
-export function isDuplicateProviderError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  if (error.name !== 'UserQuestionError') return false
-  return (error as { code?: string }).code === 'DUPLICATE_PROVIDER'
-}
-
-/** Minimal structural view of the `ctx.userQuestions` seam we register against. */
-interface UserQuestionsSeam {
-  registerProvider(provider: {
-    ask: (request: AskRequestShape) => Promise<AskUserQuestionAnswer>
-  }): () => void
-}
-
 /** The ask request fields the TUI side consumes (agent identifies the asker). */
 interface AskRequestShape {
   questions: AskUserQuestionItem[]
@@ -1596,21 +1576,19 @@ interface AskSurfacesSeam {
 
 /**
  * Wires the TUI into `ctx.userQuestions`. Call from inside `ctx.effect`.
- * Three registration shapes, chosen by what the host exposes:
+ * Two registration shapes, chosen by what the host exposes:
  *
  * - dsh-ask-router present → register as ONE surface among several (claim by
- *   session, first answer wins across surfaces), leaving the ask slot to the
- *   router entirely;
- * - rc-era host (provider slot) → own the slot; a DUPLICATE_PROVIDER error
- *   yields ownership silently to the prior UI;
- * - alpha-era host (no slot) → register a claim-scoped 'user-questions/request'
- *   cordis waterfall answerer: answer by returning, delegate via next().
+ *   session, first answer wins across surfaces), leaving the ask dispatch to
+ *   the router entirely;
+ * - otherwise → register a claim-scoped 'user-questions/request' cordis
+ *   waterfall answerer: answer by returning, delegate via next().
  *
  * Failure semantics are deliberate (review round BM):
- * - missing service → one notice + no-op disposer. The tool stays mounted by the
- *   bundle patch; without an answerer its calls fail with the upstream
- *   NO_PROVIDER error, which is better than crashing the whole TUI plugin.
- * - DUPLICATE_PROVIDER → silent no-op disposer (a prior UI owns the slot).
+ * - no event surface (`ctx.on`) → one notice + no-op disposer. The tool stays
+ *   mounted by the bundle patch; without an answerer its calls fail with the
+ *   upstream NO_PROVIDER error, which is better than crashing the whole TUI
+ *   plugin.
  * - anything else → rethrown so the effect fails loudly instead of leaving a
  *   mounted tool with no UI and no trace.
  */
@@ -1620,8 +1598,7 @@ export function registerAskUserProvider(
 ): () => void {
   // dsh-ask-router present: register as ONE surface among several (claim by
   // session, first answer wins across surfaces) instead of taking an ask
-  // slot. Absent router keeps the standalone path below (provider slot on
-  // rc-era hosts, claim-scoped waterfall answerer on alpha-era hosts).
+  // slot. Absent router keeps the standalone waterfall path below.
   const router = (typeof ctx.get === 'function'
     ? ctx.get('askSurfaces') as AskSurfacesSeam | undefined
     : undefined)
@@ -1648,33 +1625,22 @@ export function registerAskUserProvider(
       },
     })
   }
-  const userQuestions = (ctx as { userQuestions?: UserQuestionsSeam }).userQuestions
-  if (userQuestions === undefined) {
+  // Standalone path: answerers compose on the Agent-scoped
+  // 'user-questions/request' cordis waterfall (answer by returning, delegate
+  // with next()) — the host's single dispatch since the provider slot was
+  // removed. Claims mirror the surface path above, so a co-present native
+  // answerer still serves asks for other sessions. The event is part of the
+  // host's declared cordis Events (dsh-user-questions types), but this plugin
+  // treats dsh-user-questions as an optional peer, so the ctx.on call keeps a
+  // structural cast over the event name.
+  if (typeof ctx.on !== 'function') {
     // Through the shared notice bridge (src/notice-bridge.ts), never raw
     // stderr: the TUI owns the terminal, and this registers during
     // startup — possibly before the first frame.
-    emitNotice('ctx.userQuestions not mounted — ask_user_question calls will fail with NO_PROVIDER')
+    emitNotice('ctx.on is unavailable — the ask_user_question answerer could not register; its calls will fail with NO_PROVIDER')
     return () => { /* no-op */ }
   }
-  if (typeof userQuestions.registerProvider === 'function') {
-    try {
-      return userQuestions.registerProvider({
-        ask: request => openAskUserPanel(deps, request.questions, request.signal),
-      })
-    } catch (error) {
-      if (isDuplicateProviderError(error)) {
-        // A prior UI is already the provider — yield ownership instead of crashing.
-        return () => { /* no-op */ }
-      }
-      throw error
-    }
-  }
-  // alpha-era host: the provider slot is gone; answerers compose on the
-  // scoped 'user-questions/request' cordis waterfall (answer by returning,
-  // delegate with next()). Claims mirror the surface path above, so a
-  // co-present native answerer still serves asks for other sessions. The
-  // event is not part of the rc-era type surface, hence the structural cast.
-  const registerWaterfall = (ctx as unknown as {
+  const registerWaterfall = (ctx as {
     on(
       event: 'user-questions/request',
       listener: (

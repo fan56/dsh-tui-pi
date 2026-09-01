@@ -42,6 +42,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+// Loads the SessionEventMap augmentation that adds the 'todo/write'
+// whole-list snapshot (declared by dsh-tool-todo since alpha.3 moved it out
+// of dsh-session; the root entry re-exports the types module).
+import type {} from '@deepseek-ai/dsh-tool-todo'
 import {
   Editor,
   getKeybindings,

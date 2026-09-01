@@ -38,11 +38,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import { getPath, nodeAtPath, rehydrateSchema, type SchemaNode } from './schema-model.ts'
 import type {
   SettingsDescriptor,
-  SettingsNamespace,
   SettingsPathOp,
   SettingsProvider,
 } from '@deepseek-ai/dsh-settings'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import {
   getKeybindings,
   Input,
@@ -119,10 +117,16 @@ export const CATEGORY_MAP: readonly SettingsCategory[] = [
 /** Cap for a category row's member-name description line. */
 export const CATEGORY_DESC_MAX = 60
 
-/** Branded namespaces the Models category reads and writes. */
-const NS_LLM_PI_AI = settingsNamespace('llm-pi-ai')
-const NS_LLM_DEEPSEEK = settingsNamespace('llm-deepseek')
-const NS_AGENT_DEFAULT_MODEL = settingsNamespace('agent-default-model')
+/**
+ * Namespaces the Models category reads and writes. dsh-settings
+ * 0.1.2-alpha.3 removed the runtime settingsNamespace() helper: plain
+ * literals are the supported spelling — register()/mutate() brand-check them
+ * at the type level (SettingsNamespaceInput) and validate the same pattern at
+ * runtime (parseSettingsNamespace).
+ */
+const NS_LLM_PI_AI = 'llm-pi-ai'
+const NS_LLM_DEEPSEEK = 'llm-deepseek'
+const NS_AGENT_DEFAULT_MODEL = 'agent-default-model'
 
 /**
  * Group a describe() namespace list into ordered categories — general, models,
@@ -309,7 +313,7 @@ type RowKind = 'cycle' | 'input' | 'drill' | 'readonly' | 'reset' | 'addkey'
 
 interface RowSpec {
   id: string
-  ns: SettingsNamespace
+  ns: string
   path: string[]
   label: string
   kind: RowKind
@@ -838,11 +842,11 @@ class SettingsBrowser {
     this.descriptors = this.settings.describe()
   }
 
-  private descriptor(ns: SettingsNamespace): SettingsDescriptor | undefined {
+  private descriptor(ns: string): SettingsDescriptor | undefined {
     return this.descriptors.find(d => d.ns === ns)
   }
 
-  private root(ns: SettingsNamespace): SchemaNode | undefined {
+  private root(ns: string): SchemaNode | undefined {
     const cached = this.roots.get(ns)
     if (cached !== undefined) return cached
     const desc = this.descriptor(ns)
@@ -1244,7 +1248,7 @@ class SettingsBrowser {
    * level and call the parent's submenu `done()`.
    */
   private sectionList(
-    ns: SettingsNamespace,
+    ns: string,
     path: string[],
     onExit: () => void,
   ): { list: SettingsListPanel; refresh: () => void } {
@@ -1270,7 +1274,7 @@ class SettingsBrowser {
     return { list, refresh }
   }
 
-  private buildRows(ns: SettingsNamespace, node: SchemaNode, path: string[], value: unknown): RowSpec[] {
+  private buildRows(ns: string, node: SchemaNode, path: string[], value: unknown): RowSpec[] {
     const rows: RowSpec[] = []
     if (node.type === 'object' || node.type === 'dict') {
       rows.push({
@@ -1312,7 +1316,7 @@ class SettingsBrowser {
     return rows
   }
 
-  private fieldRow(ns: SettingsNamespace, node: SchemaNode, path: string[], label: string): RowSpec {
+  private fieldRow(ns: string, node: SchemaNode, path: string[], label: string): RowSpec {
     const desc = this.descriptor(ns)
     const meta = fieldMeta(node)
     const value = getPath(desc?.value, path)
@@ -1460,7 +1464,7 @@ class SettingsBrowser {
   // ------------------------------------------------------------------- write path --
 
   /** Serialized settings write; resolves with an error message, or undefined. */
-  private write(ns: SettingsNamespace, ops: readonly SettingsPathOp[]): Promise<string | undefined> {
+  private write(ns: string, ops: readonly SettingsPathOp[]): Promise<string | undefined> {
     const task = this.writeChain.then(async () => {
       try {
         // Revision read at execution time: the previous write in the chain has

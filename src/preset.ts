@@ -48,28 +48,26 @@ export function __setPresetRootOverride(roots: PresetRoot[] | undefined): void {
 }
 
 /**
- * Resolve the preset roots — same discovery families as dsh-agent-presets:
- *   1. shipped root: `<dsh install>/config/agent-presets/` (rc-era hosts) or
- *      the `presets/` dir inside the `@deepseek-ai/dsh-agent-presets` package
- *      (alpha-era hosts)
+ * Resolve the preset roots — same discovery families as dsh-agent-presets
+ * (alpha.3: shipped presets are bundled inside the `@deepseek-ai/dsh-agent-presets`
+ * package; locally authored presets live under the Harness home):
+ *   1. shipped root: the `presets/` dir inside the `@deepseek-ai/dsh-agent-presets`
+ *      package
  *   2. user root: `~/.dsh/.agent-presets/`
  * The shipped root is located by probing the known install layouts; the user
  * root is the conventional `~/.dsh/.agent-presets/`.
  *
  * Nonexistent roots scan to an empty roster, so every candidate is probed
- * in order — rc-era layouts first, then the dsh-agent-presets package nested
- * under the dsh install, then the flat global-root variant (npm hoisting).
+ * in order — the dsh-agent-presets package nested under the dsh install
+ * first, then the flat global-root variant (npm hoisting).
  */
 export function resolvePresetRoots(): PresetRoot[] {
   const roots: PresetRoot[] = []
   // Shipped root probes. The dsh binary is at `/usr/local/bin/dsh` or
-  // `/opt/homebrew/bin/dsh`; rc-era hosts keep the config dir at
-  // `<global>/lib/node_modules/@deepseek-ai/dsh/config/agent-presets/`, while
-  // alpha-era hosts bundle the shipped presets inside `@deepseek-ai/dsh-agent-presets`
-  // (observed nested under the dsh package; flat at the global root when npm hoists).
+  // `/opt/homebrew/bin/dsh`; the shipped presets are bundled inside
+  // `@deepseek-ai/dsh-agent-presets` (observed nested under the dsh package;
+  // flat at the global root when npm hoists).
   const shippedPaths = [
-    '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/config/agent-presets',
-    '/usr/local/lib/node_modules/@deepseek-ai/dsh/config/agent-presets',
     '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets',
     '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets',
     '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets',
@@ -89,14 +87,14 @@ export function resolvePresetRoots(): PresetRoot[] {
  * publishes display metadata in Chinese only (e.g. `标准模式`) with no i18n
  * mechanism, which would put Chinese in front of every user — so the roster
  * overrides the ids we know. Anything unmapped (a renamed or newly shipped
- * preset) keeps its official string until mapped here. `code` (rc) and `ptc`
- * (alpha) are the same preset across the upstream rename.
+ * preset) keeps its official string until mapped here. The shipped alpha.3
+ * roster is standard / minimal / cordis / ptc (the pre-alpha `code` id was
+ * renamed upstream and no longer exists).
  */
 const PRESET_ENGLISH_NAMES: Readonly<Record<string, string>> = {
   standard: 'Standard',
   minimal: 'Minimal',
   cordis: 'Cordis',
-  code: 'PTC',
   ptc: 'PTC',
 }
 
@@ -125,25 +123,22 @@ async function scanRoot(root: PresetRoot): Promise<PresetEntry[]> {
     } catch {
       continue // no composition file → skip
     }
-    // Read optional display metadata: `preset.yml` is the canonical file on
-    // current rc and alpha hosts alike (`METADATA_FILE` in
-    // @deepseek-ai/dsh-agent-presets); `metadata.yml` stays as a legacy
-    // fallback. First file that reads wins; absent metadata keeps the
-    // directory id as the name.
+    // Read the display metadata: `preset.yml` is the canonical file
+    // (`METADATA_FILE` in @deepseek-ai/dsh-agent-presets); absent metadata
+    // keeps the directory id as the name.
     let name = entry.name
     let description: string | undefined
-    for (const metaName of ['preset.yml', 'metadata.yml']) {
-      let meta: string
-      try {
-        meta = await readFile(join(dir, metaName), 'utf8')
-      } catch {
-        continue
-      }
+    let meta: string
+    try {
+      meta = await readFile(join(dir, 'preset.yml'), 'utf8')
+    } catch {
+      meta = ''
+    }
+    if (meta !== '') {
       const nameMatch = meta.match(/^name:\s*(.+)$/m)
       if (nameMatch) name = nameMatch[1].trim()
       const descMatch = meta.match(/^description:\s*(.+)$/m)
       if (descMatch) description = descMatch[1].trim()
-      break
     }
     // English override for the known shipped ids; unmapped presets keep the
     // official string (metadata name ?? id).

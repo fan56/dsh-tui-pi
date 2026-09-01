@@ -14,6 +14,11 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+// Loads dsh-tool-todo's SessionEventMap augmentation, which adds the
+// 'todo/write' whole-list snapshot to the host's session event union
+// (alpha.3 moved the TodoItem/'todo/write' declarations out of dsh-session;
+// the root entry re-exports the types module).
+import type {} from '@deepseek-ai/dsh-tool-todo'
 import { Loader } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
 import { FooterHint, PowerlineFooter, type FooterDataSource, type FooterHints } from './footer.ts'
@@ -730,12 +735,15 @@ export function apply(ctx: Context): void {
     // `ask_user_question`. The upstream `dsh-tool-ask-user` is a single
     // tool-call pause, and over-using it (e.g. for trivial decisions, for
     // rhetorical questions, or for things the model can decide itself)
-    // turns the TUI into a stuttering questionnaire. Order 112 sits between
-    // the deployment persona (0) and tool-guidance buckets (100–199) so the
-    // rule reads as part of the tooling contract.
+    // turns the TUI into a stuttering questionnaire. The order rides the
+    // host's centrally allocated PTC_ONLY position — alpha.3's
+    // getSectionOrder(name) replaced the numeric constants and the old
+    // 100–199 section bucket; PTC_ONLY is the tool-behavior region that sits
+    // after the deployment persona and ahead of every per-tool section, so
+    // the rule still reads as part of the tooling contract.
     ctx.effect(() => ctx.systemPrompt.section({
       name: 'dsh-tui:ask-user',
-      order: 112,
+      order: ctx.systemPrompt.getSectionOrder('PTC_ONLY'),
       text:
         '## ask_user_question\n\n'
         + 'Use `ask_user_question` ONLY when you genuinely need the human to: confirm a decision, '
@@ -759,9 +767,9 @@ export function apply(ctx: Context): void {
     const refreshPermissionPreset = (): void => {
       const presets = ctx.get('permissionPresets')
       const agent = bridge.getAgent()
-      permissionPreset = presets === undefined || agent === undefined
-        ? undefined
-        : presets.current(agent.session.events)
+        permissionPreset = presets === undefined || agent === undefined
+          ? undefined
+          : presets.current(agent.session)
     }
 
     // Usage memory for the slash completion list: successful commands and
@@ -1580,7 +1588,7 @@ export function apply(ctx: Context): void {
       const presets = ctx.get('permissionPresets')
       const agent = bridge.getAgent()
       if (presets === undefined || agent === undefined) return undefined
-      const current = permissionPreset ?? presets.current(agent.session.events)
+      const current = permissionPreset ?? presets.current(agent.session)
       return displayPermissionPreset(current, presets.optionOf(current).name)
     })
 
@@ -1726,7 +1734,7 @@ export function apply(ctx: Context): void {
         const presets = ctx.get('permissionPresets')
         if (presets !== undefined) {
           const agent = bridge.getAgent()
-          const current = agent === undefined ? undefined : presets.current(agent.session.events)
+          const current = agent === undefined ? undefined : presets.current(agent.session)
           let picked: string | undefined
           try {
             picked = await pickPermission(ctx, ui.tui, ui.theme, current, refocusEditor)

@@ -14,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type ReasoningEffortId, type TokenUsage } from '@deepseek-ai/dsh-llm'
-import { settingsNamespace, SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
+import { SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
 import { join } from 'node:path'
@@ -1621,7 +1621,10 @@ export async function persistDefaultModel(ctx: Context, selection: ModelSelectio
   }
   const settings = ctx.get('settings')
   if (settings === undefined) return undefined
-  const ns = settingsNamespace('agent-default-model')
+  // dsh-settings 0.1.2-alpha.3 removed the runtime settingsNamespace() helper:
+  // a plain literal is the supported spelling (type-level brand check plus the
+  // host's runtime parseSettingsNamespace validation).
+  const ns = 'agent-default-model'
   // The descriptor carries the namespace's revision (optimistic-concurrency
   // token for mutate) and proves the schema registration that validates the
   // field names below; the write itself rejects when the namespace is

@@ -34,6 +34,10 @@ import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 // Loads the SessionEventMap augmentation that adds command/run + command/done.
 import type {} from '@deepseek-ai/dsh-commands'
+// Loads the SessionEventMap augmentation that adds the 'todo/write'
+// whole-list snapshot (declared by dsh-tool-todo since alpha.3 moved it out
+// of dsh-session; the root entry re-exports the types module).
+import type {} from '@deepseek-ai/dsh-tool-todo'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { stopIcon } from './icons.ts'
 import { clipToWidth } from './text.ts'

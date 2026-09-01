@@ -24,7 +24,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { settingsNamespace, type SettingsProvider } from '@deepseek-ai/dsh-settings'
+import type { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import { type OverlayHandle, type TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
 import { autoColumns, TablePanel } from './panels.ts'
@@ -40,8 +40,14 @@ import { CUSTOM_PROVIDER_ID, CustomProviderFlow, customProviderEntry } from './c
 import { AddProviderFlow, commitProvider } from './settings.ts'
 import type { TuiTheme } from './theme/index.ts'
 
-/** The llm-pi-ai settings namespace (same id the /settings browser uses). */
-const LLM_PI_AI_NS = settingsNamespace('llm-pi-ai')
+/**
+ * The llm-pi-ai settings namespace (same id the /settings browser uses).
+ * dsh-settings 0.1.2-alpha.3 removed the runtime settingsNamespace() helper:
+ * a plain literal is the supported spelling — register() brand-checks it at
+ * the type level (SettingsNamespaceInput) and validates the same pattern at
+ * runtime (parseSettingsNamespace).
+ */
+const LLM_PI_AI_NS = 'llm-pi-ai'
 
 /**
  * Resolve a `/login <provider>` argument against the picker directory:
