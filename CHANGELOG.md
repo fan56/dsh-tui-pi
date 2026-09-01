@@ -4,6 +4,19 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **BREAKING — dsh host floor `>= 0.1.2-alpha.3`, rc-line support dropped** (ADR 0002): all rc/alpha dual paths and feature-detection are gone, single-target alpha only
+  - ask-user answers on the Agent-scoped `'user-questions/request'` cordis waterfall only — the rc-era `ctx.userQuestions.registerProvider` slot (and its `DUPLICATE_PROVIDER` yield + `isDuplicateProviderError` classifier) is deleted; the dsh-ask-router surface path is unaffected
+  - dsh-settings removed the `settingsNamespace()` runtime helper: the `dsh-tui` / `llm-pi-ai` / `llm-deepseek` / `agent-default-model` namespaces are plain literals now (type-level brand check via `SettingsNamespaceInput` + host-side runtime validation)
+  - `permissionPresets.current()`/`set()` take the `Session` (alpha.3 folds knob state through the session projection) instead of the raw event array
+  - the ask-user guidance system-prompt section rides `systemPrompt.getSectionOrder('PTC_ONLY')` instead of the hardcoded numeric order 112 (alpha.3 replaced the numeric constants with `getSectionOrder`/`getContextOrder`)
+  - the `'todo/write'` event type comes from `@deepseek-ai/dsh-tool-todo` (moved out of dsh-session in alpha.3) via its SessionEventMap augmentation
+  - preset discovery probes only the `@deepseek-ai/dsh-agent-presets` package layouts (the pre-alpha `<dsh install>/config/agent-presets` probe and the `metadata.yml` legacy fallback are gone; alpha ships `preset.yml` only), and the English mapping drops the `code` id — the shipped alpha roster is standard/minimal/cordis/ptc
+  - peers: `@deepseek-ai/dsh-user-questions` `0.1.1-rc.2` (exact) → `>=0.1.2-alpha.3` (floor); devDependencies pin `0.1.2-alpha.3`; pnpm-lock regenerated in the same commit
+- **CI/resolution moves to the rolling `@alpha` dist-tag** (ci.yml + release.yml) — `latest` still points at the rc line the plugin dropped; the daily schedule stays so alpha.4+ drift surfaces within a day; new `scripts/smoke-boot.mjs` boots the packed plugin in a scratch dsh profile (mount + loader-clean boot proof) as a CI gate; e2e container pins `DSH_VERSION=0.1.2-alpha.3`
+
 ## [1.3.1] - 2026-09-01
 
 ### Added

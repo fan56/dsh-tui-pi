@@ -4,7 +4,7 @@
 
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的 pi 风格终端 UI——一套把 dsh 变成 pi 式编码代理体验的插件套件：pi-tui 的外观与交互、dsh 斜杠命令、GitHub 明/暗主题和 powerline 状态栏。
 
-**兼容性**：已针对 dsh `0.1.1-rc.2` 测试；斜杠命令在 `dsh-commands` 的 `execute()` 签名变更（rc.8 之前的 3 参 → 当前的 4 参）下依然可用。
+**要求 dsh >= 0.1.2-alpha.3** —— 本插件只面向 0.1.2-alpha 宿主线（不再支持 rc 线，见 [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)）。
 
 https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 

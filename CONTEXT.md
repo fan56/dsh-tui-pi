@@ -3,6 +3,26 @@
 Shared vocabulary for this repo. Definitions only — implementation details
 live in ARCHITECTURE.md / HANDOFF.md.
 
+- **Closure（宿主闭包）**: 随 dsh CLI 一起安装的 `@deepseek-ai/*` 子包集合；
+  插件类型与运行时的唯一真源——源码 import 的所有 `@deepseek-ai/*` 都经
+  `scripts/link-dsh-closure.mjs` 软链解析到同一个 closure 实例，typecheck
+  看到的类型图就是宿主运行的那份
+  (the set of `@deepseek-ai/*` sub-packages installed alongside the dsh CLI;
+  the single source of truth for the plugin's types and runtime — every
+  `@deepseek-ai/*` import resolves through symlink to that one closure
+  instance, so tsc sees exactly the type graph the host runs)
+- **Floor**: peer 声明中本插件要求的宿主最低版本，`>=` 语义——不精确钉，
+  随宿主滚动线向上（当前 `dsh-user-questions >= 0.1.2-alpha.3`）
+  (the minimum host version a peer declaration requires, `>=` semantics —
+  deliberately not an exact pin; it only ratchets up along the host's
+  rolling line, currently `dsh-user-questions >= 0.1.2-alpha.3`)
+- **Era**: rc/alpha 双路径兼容模式——插件同时支撑两条宿主形状分支、运行时
+  feature-detect 选路。**已废弃**：2026-09-01 起 single-target，全仓只保留
+  alpha（`0.1.2-alpha.3+`）路径，双路径分支与其测试一并删除（ADR 0002）
+  (the rc/alpha dual-path compatibility mode — supporting two host shapes
+  with runtime feature-detection. **Deprecated**: single-target since
+  2026-09-01; only the alpha (`0.1.2-alpha.3+`) path remains and the dual
+  branches plus their tests are gone, see ADR 0002)
 - **Favorite**: 用户标记为收藏的模型，以 provider/id 标识，持久意图，置顶显示
   (a model the user starred; identified by its provider/id composite key,
   persisted, pinned to the top of the picker)
@@ -20,11 +40,15 @@ live in ARCHITECTURE.md / HANDOFF.md.
   (a structured question the model asks the human mid-turn through the
   `ask_user_question` tool; the tool call stays pending until answered, and
   the canonical answer envelope returns as the tool result)
-- **Provider**: `ctx.userQuestions.registerProvider` 注册的回答端实现；
-  单一活跃 provider，重复注册让位为 no-op 不崩溃
-  (the answering-side implementation registered on the `userQuestions`
-  capability seam; single active provider — a duplicate registration yields
-  a no-op instead of crashing)
+- **Provider**: 回答端实现——挂在 Agent-scoped 的 `'user-questions/request'`
+  cordis waterfall 上（返回即认领，`next()` 即让渡）；alpha 起这是宿主唯一
+  的回答端注册方式，`registerProvider` 单槽已删除。单一活跃 TUI 答端，
+  不属于本会话的 ask 经 `next()` 让渡
+  (the answering-side implementation — composed on the Agent-scoped
+  `'user-questions/request'` cordis waterfall (return to claim, `next()` to
+  delegate). Since alpha this is the host's only answerer registration; the
+  `registerProvider` slot is gone. One active TUI answerer; asks from other
+  sessions delegate through `next()`)
 - **Sentinel row**: 每个问题选项列表末尾的「Type something.」自由输入行，
   已写入自定义答案时显示 `✎ <text>`
   (the free-text input row appended after every question's option list;
