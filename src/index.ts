@@ -1699,7 +1699,7 @@ export function apply(ctx: Context): void {
      * (model/effort pickers, settings browser, session panel, resume list),
      * and plugin flows hold the editor just as long: /wiki onboard parks the
      * user in ask-user panels, /vault backup|restore push over the network.
-     * The generic 30s guard would fire mid-flow and echo a spurious
+     * The generic guard would fire mid-flow and echo a spurious
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
@@ -1714,7 +1714,7 @@ export function apply(ctx: Context): void {
       let executeLine = line
       const signal = name !== undefined && MODAL_COMMANDS.has(name)
         ? new AbortController().signal
-        : AbortSignal.timeout(30_000)
+        : AbortSignal.timeout(90_000)
       // Bare /permission (no arguments) opens the preset picker — UI sugar
       // over dsh's canonical command: a picked row is replayed as
       // `/permission <name>` through the normal execute path below, so the
