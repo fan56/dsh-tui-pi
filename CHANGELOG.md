@@ -4,6 +4,38 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-01
+
+### Added
+- **slash-command output containing a GFM table renders as a real table** — `renderCommandEcho`'s success branch (extracted as `appendCommandText`) routes captured output through the pi-tui Markdown component when it contains a GitHub-flavored-markdown table, so plugin reports like `/llm-stats` draw framed, styled tables instead of raw pipe rows. A new `hasGfmTable` gate keys on a strict multi-column separator row, so ASCII dashed rules (`|------|`) and plain-text command output keep the unchanged fallback; session replay shares the same path. +4 messages tests (16 → 20, full suite 1112)
+
+### Changed
+- the generic slash-command guard (wedge protection) raised from 30s to 90s — slow but legitimate commands (model-backed handlers, network round trips) no longer get clipped; whitelisted modal commands keep the never-aborting signal
+- `/wiki` and `/vault backup|restore` are whitelisted from the generic command guard — both outlasted the 30s `AbortSignal.timeout` and died with a spurious "aborted due to timeout" while the panel stayed open
+
+## [1.2.4] - 2026-08-31
+
+### Added
+- per-feature docs gain the second demo batch (real config, real model) embedded via GitHub user-attachments — footer, think & tool panels, subagents, DCP and themes
+- a preset-switching guide (`docs/features/preset-switch.md`, linked from both READMEs) covering the entry points (Tab / `/preset`), the shipped roster, and the two mechanics that routinely surprise: a switch is read only at session create (existing sessions need `/new`; `/resume` ignores the selection), and a preset gates only the agent-plane composition — profile-plugin tools like `use_agent` stay visible on every preset
+
+## [1.2.3] - 2026-08-31
+
+### Fixed
+- `/profile-switch` is workspace-scoped — switching used to persist the profile's default model through the global agent-default-model (`settings.yaml`) and drive every panel's ● current marker from the machine-wide pointer, leaking into every other workspace; Enter now writes/rebinds a clean `.dsh-profile` for the current directory tree (hand-decorated files are refused, never clobbered), other trees keep their own binding or the global default, and the global default model remains `/model`'s write. +3 tests (bind/bound), 1108 green
+
+### Changed
+- README feature sections split into per-feature docs (`docs/features/<name>.md`); the in-repo demo-video embed experiment was reverted — `*.mp4` stays gitignored, videos move to GitHub user-attachments
+
+## [1.2.2] - 2026-08-31
+
+### Fixed
+- the startup plugin tree resolves each user plugin's installed version from the profile root — the resolver anchored at this plugin's own module URL, so `link:`-mounted checkouts read the repo's dev `node_modules` (stale labels, e.g. subagent-registry 0.3.0 vs the installed 0.4.0) and plugins outside the dev closure rendered without a version at all
+- `@aiwayds` runtime dep floors relaxed from exact `0.3.0` pins to carets — subagent-registry `^0.4.0`, dcp `^0.5.1`; the exact pin made fresh installs pull a stale nested copy whose version the plugin tree then reported
+
+### Removed
+- the deprecated `dsh-model-sync` mount — upstream archived it on 2026-08-28, and the stale bundle-patch insert crashed the whole plugin tree at boot (`ERR_MODULE_NOT_FOUND`) once a profile dropped the package
+
 ## [1.2.1] - 2026-08-30
 
 ### Added
