@@ -17,10 +17,10 @@ else
 fi
 DSH_VERSION_OUT="$(dsh --version 2>&1 || true)"
 info "dsh --version: $DSH_VERSION_OUT"
-if printf '%s' "$DSH_VERSION_OUT" | grep -q '0\.1\.0-rc\.8'; then
-  ok 'dsh version is 0.1.0-rc.8'
+if printf '%s' "$DSH_VERSION_OUT" | grep -q '0\.1\.2-alpha'; then
+  ok 'dsh version is on the 0.1.2-alpha line'
 else
-  warn "dsh version output did not contain 0.1.0-rc.8: $DSH_VERSION_OUT"
+  warn "dsh version output did not contain 0.1.2-alpha: $DSH_VERSION_OUT"
 fi
 
 # --- plugin tarball ------------------------------------------------------

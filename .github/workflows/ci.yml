@@ -1,17 +1,15 @@
-# CI: typecheck + tests on every push to main, every pull request, and a
-# daily schedule.
+# CI: build, typecheck, unit suite, and a real-host boot smoke on every push
+# to main, every pull request, and a daily schedule.
 #
-# The source imports `@deepseek-ai/*` packages (cordis, dsh-session, …) that
-# are NOT declared in package.json — they resolve through symlinks into a dsh
-# install's own node_modules (see scripts/link-dsh-closure.mjs). A clean CI
-# runner has no global dsh, so we install the dsh CLI from npm; `pnpm check`'s
-# precheck hook then re-runs the linker, which resolves the global closure
-# (nested or npm's flat layout) into node_modules/@deepseek-ai.
-#
-# The dsh CLI is resolved at run time from npm's `latest` dist-tag — no pin
-# to go stale. The daily schedule re-tests against whatever the closure has
-# become since the last push, so a new dsh release that breaks the plugin
-# surfaces as a red run within a day instead of at the next release.
+# The dsh CLI version is resolved at runtime from the npm registry's rolling
+# `alpha` dist-tag — never hand-pinned (the rc lesson: `latest` still points
+# at the rc line the plugin dropped with 0.1.2-alpha.3, so installing
+# `latest` would typecheck and boot against a host the plugin no longer
+# supports). The daily schedule re-tests against whatever the closure has
+# become since the last push, so a new dsh alpha that breaks the plugin
+# surfaces as a red run within a day instead of at the next release. The
+# smoke boots a scratch profile with the plugin mounted via the real dsh CLI
+# (scripts/smoke-boot.mjs) so "loads under real cordis" is a gate, not a hope.
 name: CI
 
 on:
@@ -31,7 +29,7 @@ concurrency:
 
 jobs:
   ci:
-    name: Check & Test
+    name: Build, Test & Boot-Smoke
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -40,7 +38,9 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v6
         with:
-          # No packageManager field in package.json; lockfileVersion 9.0.
+          # pnpm-lock.yaml is committed and MUST be regenerated in the same
+          # commit as any package.json change — CI installs frozen and fails
+          # fast otherwise.
           version: 10
 
       - name: Setup Node
@@ -51,16 +51,28 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install dependencies
+      - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Install latest dsh CLI (provides the @deepseek-ai/* closure)
+      - name: Install dsh CLI (rolling @alpha dist-tag, never hand-pinned)
         run: |
-          echo "latest @deepseek-ai/dsh: $(npm view @deepseek-ai/dsh version)"
-          npm install -g @deepseek-ai/dsh --no-audit --no-fund
+          DSH_VERSION="$(npm view @deepseek-ai/dsh@alpha version)"
+          echo "dsh closure: ${DSH_VERSION}"
+          npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" --no-audit --no-fund
 
-      - name: Check (tsc --noEmit)
-        run: pnpm check
+      # Point node_modules/@deepseek-ai/* at the installed CLI's closure so
+      # tsc sees exactly the type graph the host runs (one cordis instance —
+      # a second local copy breaks the declare-module augmentation merge).
+      - name: Link dsh closure types
+        run: node scripts/link-dsh-closure.mjs
 
-      - name: Test (pretest builds lib/, then node --test)
+      # pnpm does not run npm pre/post hooks by default, so build explicitly
+      # before test (the test files import lib/).
+      - name: Build & Check (tsc)
+        run: pnpm build && pnpm check
+
+      - name: Test (unit suite)
         run: pnpm test
+
+      - name: Boot smoke (real dsh host, scratch profile)
+        run: node scripts/smoke-boot.mjs

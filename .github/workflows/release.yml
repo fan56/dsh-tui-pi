@@ -48,14 +48,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install latest dsh CLI (provides the @deepseek-ai/* closure)
-        # Resolved at run time from npm's `latest` dist-tag — no pin to go
-        # stale; the release gate tests against the newest dsh closure, the
-        # same one a fresh install will run the plugin on. ci.yml adds a
-        # daily schedule so closure breakage surfaces before a release.
+      - name: Install dsh CLI (rolling @alpha dist-tag, never hand-pinned)
+        # The plugin targets the 0.1.2-alpha line; `latest` still points at
+        # the rc line it dropped, so the release gate installs the rolling
+        # @alpha closure — the same host line a fresh install of this plugin
+        # line will run on. ci.yml adds a daily schedule so closure breakage
+        # surfaces before a release.
         run: |
-          echo "latest @deepseek-ai/dsh: $(npm view @deepseek-ai/dsh version)"
-          npm install -g @deepseek-ai/dsh --no-audit --no-fund
+          DSH_VERSION="$(npm view @deepseek-ai/dsh@alpha version)"
+          echo "dsh closure: ${DSH_VERSION}"
+          npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" --no-audit --no-fund
 
       # Gate: never publish from a tree that does not typecheck or pass tests.
       # `pnpm check`'s precheck hook re-runs scripts/link-dsh-closure.mjs,
