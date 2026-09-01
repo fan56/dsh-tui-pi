@@ -42,6 +42,15 @@ const scopeDir = join(repoRoot, 'node_modules', '@deepseek-ai')
 
 /** The global dsh package's own `node_modules/@deepseek-ai` closure dir. */
 function findDshClosure() {
+  // 0) Explicit override for dev/typecheck against an unreleased dsh line,
+  //    e.g. a scratch closure from: npm i --prefix ~/tmp/dsh-alpha-closure @deepseek-ai/dsh@alpha
+  //    DSH_CLOSURE_DIR=~/tmp/dsh-alpha-closure/node_modules/@deepseek-ai node scripts/link-dsh-closure.mjs
+  const override = process.env.DSH_CLOSURE_DIR
+  if (override !== undefined && override !== "") {
+    const dir = realpathSync(override)
+    if (existsSync(join(dir, "cordis"))) return dir
+    console.warn(`[link-dsh-closure] DSH_CLOSURE_DIR=${override} lacks @deepseek-ai/cordis — ignoring override`)
+  }
   // 1) Follow the `dsh` bin — the most faithful pointer to the installed CLI
   //    (`/opt/homebrew/bin/dsh` → …/lib/bin.js → pkg dir → its node_modules).
   try {
