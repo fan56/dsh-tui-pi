@@ -1696,12 +1696,14 @@ export function apply(ctx: Context): void {
 
     /**
      * Modal commands keep an overlay open for as long as the user browses
-     * (model/effort pickers, settings browser, session panel, resume list).
-     * The generic 30s guard would fire mid-session and echo a spurious
+     * (model/effort pickers, settings browser, session panel, resume list),
+     * and plugin flows hold the editor just as long: /wiki onboard parks the
+     * user in ask-user panels, /vault backup|restore push over the network.
+     * The generic 30s guard would fire mid-flow and echo a spurious
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'profile-switch', 'profile-cfg'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'profile-switch', 'profile-cfg', 'wiki', 'vault'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {
