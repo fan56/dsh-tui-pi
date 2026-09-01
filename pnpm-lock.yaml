@@ -14,6 +14,9 @@ importers:
       '@aiwayds/dsh-dcp':
         specifier: ^0.5.1
         version: 0.5.1(@deepseek-ai/cordis@4.0.1)
+      '@aiwayds/dsh-llm-stats':
+        specifier: ^0.3.0
+        version: 0.3.0
       '@aiwayds/dsh-subagent-registry':
         specifier: ^0.4.0
         version: 0.4.0
@@ -75,6 +78,18 @@ packages:
       '@deepseek-ai/dsh-session':
         optional: true
       '@deepseek-ai/dsh-token-meter':
+        optional: true
+      '@deepseek-ai/schemastery':
+        optional: true
+
+  '@aiwayds/dsh-llm-stats@0.3.0':
+    resolution: {integrity: sha512-PmV/WBNh1vaxESTvbtXBoS9TJd2mvNOQiX0PAD6jdvOmbKeyVB9fpfBYh2Pg9x2/PJTE5cetleJoCGrEYZmduQ==}
+    engines: {node: '>=22.19.0'}
+    peerDependencies:
+      '@deepseek-ai/dsh-llm': 0.1.1-rc.2
+      '@deepseek-ai/schemastery': 3.18.1
+    peerDependenciesMeta:
+      '@deepseek-ai/dsh-llm':
         optional: true
       '@deepseek-ai/schemastery':
         optional: true
@@ -157,6 +172,8 @@ snapshots:
   '@aiwayds/dsh-dcp@0.5.1(@deepseek-ai/cordis@4.0.1)':
     optionalDependencies:
       '@deepseek-ai/cordis': 4.0.1
+
+  '@aiwayds/dsh-llm-stats@0.3.0': {}
 
   '@aiwayds/dsh-subagent-registry@0.4.0': {}
 

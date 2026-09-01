@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-09-01
+
+### Added
+- **`@aiwayds/dsh-llm-stats@^0.3.0` ships as a default dependency** so fresh installs of the TUI profile carry the stats plugin out of the box; activation still follows the profile's `bundles` list
+
 ## [1.3.0] - 2026-09-01
 
 ### Added
