@@ -4,6 +4,14 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **docs** — CONTEXT.md floor claims updated to the actual `>=0.1.2-alpha.4` peer floor; README's dangling ADR 0002 link repaired
+
+### Fixed
+- **e2e: the 66-retention-resume seeder resolves the host persistence backend dynamically** — probes `npm root -g` for the nested and npm-flat global layouts instead of hard-coding one, and fail-fasts with both candidates before touching fixtures (a seeder miss used to make the janitor "removed" checks pass vacuously)
+
 ## [2.1.1] - 2026-09-02
 
 ### Changed
