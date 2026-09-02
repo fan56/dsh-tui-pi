@@ -87,23 +87,36 @@ model-list.ts     /model pure logic: row assembly (favorites pinned top, dim
 model-profiles.ts /profile-switch + /profile-cfg pure storage: $DSH_HOME/
                   model-profiles.json (atomic, self-healing reads, seeded
                   work/personal/other), name ops (create/rename/delete),
-                  captureAgentsSnapshot (save-current) + planAgentApply
-                  (snapshot semantics: listed agents get exactly the recorded
-                  overrides, absent keys clear, unlisted agents untouched);
+                  captureAgentsSnapshot (save-current; snapshot semantics:
+                  non-empty entries override at compose time, empty/missing
+                  keys fall back to the frontmatter baseline — applying
+                  writes no agent file, see agent-runtime.ts);
                   directory pins — `.dsh-profile` dot file discovered walking
                   up from cwd (nearest wins), write/remove with a hand-edit
                   refusal guard, bindWorkspaceProfile (switch-time binding,
                   same guard) + boundProfileName (per-tree ● current)
 profile.ts        /profile-switch switcher + /profile-cfg manager
                   (agents.ts overlay pattern): switcher applies a profile
-                  through the /model chain (bridge selection +
-                  persistDefaultModel) plus agent frontmatter writes,
-                  `p` pins/unpins the cwd (.dsh-profile — new sessions in
-                  this tree auto-load the pinned profile);
+                  through the /model chain (bridge selection) + binds the
+                  tree (.dsh-profile) — agent model/think values are NOT
+                  written anywhere, the registry composes them at spawn
+                  (src/agent-runtime.ts); `p` pins/unpins the cwd (.dsh-profile
+                  — new sessions in this tree auto-load the pinned profile);
                   manager = roster table (n new, d double-press delete) →
                   FieldPanel (m model via the SAME favorites/hidden pickModel
                   table, t think, a agents sub-table, s save current, r
                   rename, v review)
+agent-runtime.ts  profile-aware agent runtime composition — the single import
+                  seam for the dsh-subagent-registry contract
+                  (workspaceProfileName / composeAgentRuntime /
+                  readModelProfilesDoc): composed DISPLAY values (frontmatter
+                  baseline ⊕ pinned-profile overrides) + the scoped EDIT path
+                  (pin → existing profile: model-profiles.json per-agent
+                  override, frontmatter untouched; else the frontmatter
+                  baseline); probes the registry at load and falls back to
+                  the built-in equivalent until it ships (per-field override,
+                  missing keys fall back to the baseline, thinking
+                  whitelisted against the effort ids)
 settings.ts       /settings browser: categories, schema walk, write chain,
                   add-provider flow (uses provider-catalog.ts)
 sessions.ts       /session panel + /resume picker (ordered by last update:
@@ -206,20 +219,22 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` must stay green: **1112 tests** across 61 files (verified by
-  `node --test test/*.mjs`; the v0.26.0 baseline was 918 — later feature
-  rounds kept adding, see HANDOFF). Per-file totals
+- `pnpm test` runs **1143 tests** across 64 files (verified by
+  `node --test test/*.mjs`; per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals in
-  HANDOFF.md.
+  HANDOFF.md. 3 image-blocks failures (the pi-tui 0.84.4 Image
+  component's changed text fallback) are pre-existing baseline failures,
+  unrelated to new logic.
   - ask-user 123 + btw 45 + retention 39 + subagent-viewer 37 + skills 36 +
-  - live 35 + sessions 35 + keymap 31 + session-reconcile 30 + model-profiles 33 +
+  - live 35 + sessions 35 + keymap 31 + session-reconcile 30 + model-profiles 31 +
   - usage 26 + subagent-policy 26 + pending-echo 26 + clipboard 26 + login 25 +
     log-repair 25 + startup-info 24 + skills-manager 24 + panels 24 +
   - steer-flow 22 + theme 21 + model-list 21 + settings 19 + welcome 18 +
     provider-catalog 17 + theme-canvas 16 + preset 16 + messages 20 + hotkeys 16 +
-  - theme-settings 15 + text 15 + history 13 + agent-manager 13 + image-blocks 12 +
+  - theme-settings 15 + text 15 + history 13 + agent-manager 14 +
+    agent-runtime 16 + profile-apply 4 + image-blocks 12 +
     custom-provider 12 + theme-switch 11 + frame 11 + footer-hints 10 +
   - writer-lock 9 + permission 9 + commands 9 + append-system 9 +
     session-ch-cache 8 + notice-bridge 8 + font-detect 8 + dev-upgrade 8 +
