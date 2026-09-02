@@ -14,19 +14,24 @@
  * (same as settings.yaml).
  *
  * Snapshot semantics — the part to keep straight:
- * - `profile.agents[name]` PRESENT → applying writes that agent's
- *   frontmatter model/thinking to exactly the recorded values (absent keys
- *   CLEAR the line — explicit inherit).
- * - `profile.agents[name]` ABSENT → applying leaves the agent untouched
- *   (an agent file created after the last save — the profile never knew it).
+ * - `profile.agents[name]` records compose-time overrides: a non-empty
+ *   string value wins; an empty entry or a missing key falls back to the
+ *   agent file's frontmatter baseline.
+ * - Applying a profile NEVER writes an agent file: per-agent model/think
+ *   values are composed at spawn from the frontmatter baseline ⊕ this
+ *   pinned profile's overrides (src/agent-runtime.ts → the registry's
+ *   composeAgentRuntime, per workspace pin) — which is what keeps a switch
+ *   workspace-scoped. Agents absent from the profile compose from the
+ *   baseline (the profile never discovered them).
  * - "Save current" records EVERY discovered agent, inherit ones as empty
- *   entries, so a round-trip switch restores inherit where inherit was.
+ *   entries, so the snapshot is complete — composing it later falls back
+ *   to the baseline where inherit was.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { dshHome } from './append-system.ts'
-import type { AgentFile, FrontmatterUpdates } from './agent-manager.ts'
+import type { AgentFile } from './agent-manager.ts'
 
 /** On-disk schema version; bump only for breaking changes. */
 export const MODEL_PROFILES_VERSION = 1
@@ -42,8 +47,10 @@ export interface ProfileModelRoute {
   reasoningEffort?: string
 }
 
-/** One agent's recorded overrides inside a profile. An EMPTY entry (no keys)
- * is meaningful: explicit inherit — applying clears the frontmatter lines. */
+/** One agent's recorded overrides inside a profile — the compose-time delta.
+ * An EMPTY entry (no keys) records "inherit"; an edit sets a value to null
+ * to DELETE the key, so that field falls back to the frontmatter baseline.
+ * The agent file itself is never rewritten by a profile. */
 export interface ProfileAgentEntry {
   /** dsh model route (`provider/model`); absent = inherit the default model. */
   model?: string
@@ -55,7 +62,7 @@ export interface ProfileAgentEntry {
 export interface ModelProfile {
   name: string
   defaultModel?: ProfileModelRoute
-  /** Agent name → recorded overrides; absent names are skipped on apply. */
+  /** Agent name → recorded overrides; absent names compose from the baseline. */
   agents: Record<string, ProfileAgentEntry>
 }
 
@@ -241,8 +248,8 @@ export function deleteProfile(doc: ModelProfilesDoc, name: string): string | und
 /**
  * Record every discovered agent's model/thinking into a fresh agents map —
  * the "save current" capture. Inherit agents become EMPTY entries so the
- * snapshot is complete: applying it later restores inherit where inherit
- * was (see the module header's snapshot semantics).
+ * snapshot is complete: composing it later falls back to the baseline where
+ * inherit was (see the module header's snapshot semantics).
  */
 export function captureAgentsSnapshot(agents: readonly AgentFile[]): Record<string, ProfileAgentEntry> {
   const snapshot: Record<string, ProfileAgentEntry> = {}
@@ -253,38 +260,6 @@ export function captureAgentsSnapshot(agents: readonly AgentFile[]): Record<stri
     }
   }
   return snapshot
-}
-
-/** One planned frontmatter write produced by `planAgentApply`. */
-export interface PlannedAgentUpdate {
-  agent: AgentFile
-  updates: FrontmatterUpdates
-}
-
-/**
- * The frontmatter writes that apply `profile` onto the discovered `agents`:
- * every agent LISTED in the profile gets exactly the recorded overrides
- * (absent keys clear the line); agents absent from the profile are skipped
- * — the profile never knew them, applying must not guess. The caller
- * executes each plan through `updateAgentFrontmatter`.
- */
-export function planAgentApply(
-  profile: ModelProfile,
-  agents: readonly AgentFile[],
-): PlannedAgentUpdate[] {
-  const planned: PlannedAgentUpdate[] = []
-  for (const agent of agents) {
-    const entry = profile.agents[agent.meta.name]
-    if (entry === undefined) continue
-    planned.push({
-      agent,
-      updates: {
-        model: entry.model ?? null,
-        thinking: entry.thinking ?? null,
-      },
-    })
-  }
-  return planned
 }
 
 /** `provider/model · think high` label for a route; `fallback` when unset. */

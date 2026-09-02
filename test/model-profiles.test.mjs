@@ -14,8 +14,9 @@
  *   (case-insensitive), keep the `current` pointer consistent and refuse to
  *   delete the last profile.
  * - Snapshot semantics: capture records every agent (inherit ones as EMPTY
- *   entries); planAgentApply produces exactly the recorded overrides for
- *   LISTED agents (absent keys clear the line) and skips unknown ones.
+ *   entries — at compose the baseline still applies). The effective-value
+ *   compose path itself lives in agent-runtime.ts (registry contract); the
+ *   pure store layer plans no agent-file writes.
  * - Workspace binding: bindWorkspaceProfile writes a fresh pin and rebinds a
  *   clean one but refuses a hand-decorated file (same guard as
  *   removeProfilePin); boundProfileName resolves the nearest pin through the
@@ -44,7 +45,6 @@ import {
   normalizeModelProfiles,
   normalizeProfileName,
   parseProfilePinText,
-  planAgentApply,
   profileReviewLines,
   readNearestProfilePin,
   removeProfilePin,
@@ -282,25 +282,6 @@ test('captureAgentsSnapshot records overrides and keeps inherit agents as empty 
   assert.deepEqual(snapshot, { workhorse: { model: 'p/m', thinking: 'high' }, duck: {} })
 })
 
-test('planAgentApply writes exactly the recorded overrides for listed agents', () => {
-  const profile = seedModelProfilesDoc().profiles[0]
-  profile.agents = {
-    workhorse: { model: 'p/m', thinking: 'low' },
-    duck: {}, // explicit inherit → both lines cleared
-  }
-  const planned = planAgentApply(profile, [agentFile('workhorse', 'old/x'), agentFile('duck', 'old/y', 'high'), agentFile('ghost', 'old/z')])
-  assert.equal(planned.length, 2)
-  assert.deepEqual(planned[0].updates, { model: 'p/m', thinking: 'low' })
-  assert.deepEqual(planned[1].updates, { model: null, thinking: null })
-  // Agents absent from the profile (ghost) are skipped entirely.
-  assert.equal(planned.some(({ agent }) => agent.meta.name === 'ghost'), false)
-})
-
-test('planAgentApply with an empty agents map plans nothing', () => {
-  const profile = seedModelProfilesDoc().profiles[0]
-  assert.deepEqual(planAgentApply(profile, [agentFile('workhorse', 'p/m')]), [])
-})
-
 // ----------------------------------------------------------------- display --
 
 test('formatProfileRoute renders unset, plain and think-suffixed routes', () => {
@@ -339,7 +320,7 @@ test('profileReviewLines hints at capture when nothing is recorded', () => {
 
 // --------------------------------------------------------- end-to-end disk --
 
-test('a captured snapshot saved and reloaded plans the identical apply', () => {
+test('a captured snapshot saved and reloaded keeps the recorded agents', () => {
   const { path, cleanup } = tempStore()
   try {
     const doc = seedModelProfilesDoc()
@@ -351,11 +332,6 @@ test('a captured snapshot saved and reloaded plans the identical apply', () => {
     const reloaded = loadModelProfiles(path)
     const reloadedProfile = findProfile(reloaded, 'work')
     assert.deepEqual(reloadedProfile?.agents, profile.agents)
-    const planned = planAgentApply(reloadedProfile ?? { name: 'x', agents: {} }, [agentFile('workhorse', 'z/z'), agentFile('duck', 'z/z')])
-    assert.deepEqual(
-      planned.map(({ updates }) => updates),
-      [{ model: 'a/b', thinking: 'high' }, { model: null, thinking: null }],
-    )
     // The raw document stays a small, versioned, human-readable JSON file.
     const raw = JSON.parse(readFileSync(path, 'utf8'))
     assert.equal(raw.version, MODEL_PROFILES_VERSION)
