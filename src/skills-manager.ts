@@ -12,6 +12,7 @@ import { readdir, symlink, mkdir, unlink, lstat, realpath } from 'node:fs/promis
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
+import { dshHome } from './append-system.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   getKeybindings,
@@ -279,8 +280,8 @@ export class SkillsManagerPanel implements Component {
 
   /** Path to the public skills directory (~/.agents/skills). */
   private static readonly PUBLIC_SKILLS_DIR = resolve(join(homedir(), '.agents', 'skills'))
-  /** Path to the curated skills directory (~/.dsh/skills). */
-  private static readonly CURATED_SKILLS_DIR = resolve(join(homedir(), '.dsh', 'skills'))
+  /** Path to the curated skills directory ($DSH_HOME/skills). */
+  private static readonly CURATED_SKILLS_DIR = resolve(join(dshHome(), 'skills'))
 
   constructor(
     ctx: Context,

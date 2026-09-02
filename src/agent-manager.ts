@@ -27,6 +27,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
+import { dshHome } from './append-system.ts'
 
 /** One agent's frontmatter-derived metadata (the editable surface). */
 export interface AgentMeta {
@@ -58,9 +59,9 @@ export type AgentParseResult =
   | { ok: true; agent: AgentFile }
   | { ok: false; error: string }
 
-/** The dsh agents directory (`~/.dsh/agents`, under the dsh home). */
+/** The dsh agents directory (`$DSH_HOME/agents`, under the dsh home). */
 export function agentsDir(): string {
-  return join(homedir(), '.dsh', 'agents')
+  return join(dshHome(), 'agents')
 }
 
 /**

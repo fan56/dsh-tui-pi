@@ -22,13 +22,16 @@
  *      explicit inherit, t edits think alone.
  *
  * Every edit persists to `$DSH_HOME/model-profiles.json` immediately
- * (src/model-profiles.ts). Applying a profile writes the agent frontmatter
- * files (updateAgentFrontmatter — global `~/.dsh/agents`, the one part a
- * switch cannot scope per-tree yet) and binds the workspace tree via
- * `.dsh-profile` (src/model-profiles.ts); the live default model rides the
- * bridge selection. The GLOBAL agent-default-model is written only by
- * /model, never by a profile switch. The ● "current" marker is the tree's
- * own binding (boundProfileName), not a machine-wide pointer.
+ * (src/model-profiles.ts). Applying a profile sets the live default model,
+ * binds the workspace tree via `.dsh-profile` (src/model-profiles.ts) and
+ * records the last-applied pointer — it writes NO agent files: each agent's
+ * runtime model/thinking is composed at spawn from the frontmatter baseline
+ * ⊕ this pinned profile's per-agent overrides (src/agent-runtime.ts, the
+ * registry's profile-aware composer), so a switch is fully workspace-scoped.
+ * The live default model rides the bridge selection. The GLOBAL
+ * agent-default-model is written only by /model, never by a profile switch.
+ * The ● "current" marker is the tree's own binding (boundProfileName), not a
+ * machine-wide pointer.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -38,7 +41,6 @@ import type { OverlayHandle, TUI } from '@earendil-works/pi-tui'
 import {
   agentsDir,
   listAgentFiles,
-  updateAgentFrontmatter,
   type AgentFile,
 } from './agent-manager.ts'
 import {
@@ -51,7 +53,6 @@ import {
   formatProfileRoute,
   loadModelProfiles,
   modelProfilesPath,
-  planAgentApply,
   profileReviewLines,
   readNearestProfilePin,
   removeProfilePin,
@@ -142,16 +143,18 @@ function selectionToRoute(selection: ModelSelection): ProfileModelRoute {
 /**
  * Apply `profile` end to end, scoped to the current workspace tree:
  * default model + think level through the live selection ref (a profile
- * without a default model leaves the selection alone), every LISTED agent's
- * frontmatter through the snapshot semantics (src/model-profiles.ts), then
- * the tree binding (`.dsh-profile` in `cwd` — new sessions here assemble
- * from this profile) and the store's informational last-applied pointer.
+ * without a default model leaves the selection alone), the tree binding
+ * (`.dsh-profile` in `cwd` — new sessions here assemble from this profile)
+ * and the store's informational last-applied pointer. Agent model/thinking
+ * values are NOT written anywhere here: each agent's runtime values compose
+ * at spawn from the frontmatter baseline ⊕ this pinned profile's overrides
+ * (src/agent-runtime.ts), which is what makes a switch workspace-scoped.
  * Resolves the command summary text — failures ride along as ⚠ parts
  * instead of aborting the rest. Deliberately does NOT touch the global
  * agent-default-model: that is /model's write, and crossing tree boundaries
  * is exactly what a profile switch must not do.
  */
-async function applyProfile(
+export async function applyProfile(
   path: string,
   doc: ModelProfilesDoc,
   profile: ModelProfile,
@@ -162,21 +165,6 @@ async function applyProfile(
   if (profile.defaultModel !== undefined) {
     deps.setSelection(routeToSelection(profile.defaultModel))
   }
-
-  const { agents } = listAgentFiles(agentsDir())
-  let updated = 0
-  const failed: string[] = []
-  for (const { agent, updates } of planAgentApply(profile, agents)) {
-    const error = updateAgentFrontmatter(agent.path, updates)
-    if (error === undefined) {
-      agent.meta.model = updates.model ?? undefined
-      agent.meta.thinking = updates.thinking ?? undefined
-      updated++
-    } else {
-      failed.push(agent.meta.name)
-    }
-  }
-  if (failed.length > 0) parts.push(`⚠ agents failed: ${failed.join(', ')}`)
 
   // Bind the tree BEFORE reporting: an ancestor pin would otherwise keep
   // winning at assembly while the summary claims the switch took. A
@@ -203,7 +191,7 @@ async function applyProfile(
     : 'model unchanged'
   const pinText = pinError === undefined ? `pinned this tree (${PROFILE_PIN_FILE})` : ''
   return [
-    `Profile → ${profile.name} · ${modelText} · agents ${String(updated)} updated`,
+    `Profile → ${profile.name} · ${modelText} · agent values compose per-workspace at spawn`,
     pinText,
     ...parts,
   ]
@@ -215,10 +203,12 @@ async function applyProfile(
  * Open the `/profile-switch` switcher. Resolves the apply summary when a
  * profile was switched, or `undefined` when cancelled / nothing applied.
  *
- * Enter is a WORKSPACE-SCOPED switch: apply to the live session, apply the
- * agent frontmatter (global files — the one unscoped part), and bind this
- * directory tree via `.dsh-profile` (see src/model-profiles.ts) so every
- * NEW session here auto-loads it. Other trees are untouched. A
+ * Enter is a WORKSPACE-SCOPED switch: apply to the live session, and bind
+ * this directory tree via `.dsh-profile` (see src/model-profiles.ts) so
+ * every NEW session here auto-loads it — agent model/think values are not
+ * written anywhere; each agent composes its runtime values at spawn from
+ * the frontmatter baseline ⊕ this pinned profile (src/agent-runtime.ts).
+ * Other trees are untouched. A
  * hand-decorated pin file refuses the binding and says so in the summary.
  * `p` binds/unbinds the cwd manually — pressing it on the already-bound
  * profile unpins — unless the pin lives in an ancestor or was
@@ -423,7 +413,7 @@ export async function openProfileManager(
 
     const showFields = (profile: ModelProfile): void => {
       const content = [
-        `named model snapshot — /profile-switch applies it live and binds this directory tree · agent overrides write ${agentsDir()} (global)`,
+        `named model snapshot — /profile-switch applies it live and binds this directory tree · agent overrides compose per-workspace at spawn (frontmatter baseline ⊕ this profile — no global write)`,
       ]
       const agentsSet = Object.keys(profile.agents).length
       const fields = [

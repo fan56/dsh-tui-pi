@@ -15,7 +15,7 @@
 
 import { access, readdir, readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { homedir } from 'node:os'
+import { dshHome } from './append-system.ts'
 
 /** One preset entry from the deployment roster. */
 export interface PresetEntry {
@@ -76,8 +76,8 @@ export function resolvePresetRoots(): PresetRoot[] {
   for (const p of shippedPaths) {
     roots.push({ path: p, trust: 'system' })
   }
-  // User root: ~/.dsh/.agent-presets/
-  const userRoot = resolve(homedir(), '.dsh', '.agent-presets')
+  // User root: $DSH_HOME/.agent-presets/
+  const userRoot = resolve(join(dshHome(), '.agent-presets'))
   roots.push({ path: userRoot, trust: 'user' })
   return roots
 }

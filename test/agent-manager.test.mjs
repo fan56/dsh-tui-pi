@@ -6,9 +6,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  agentsDir,
   convertZcodeModel,
   listAgentFiles,
   migrateLegacyAgentsDir,
@@ -234,5 +235,18 @@ test('migrateLegacyAgentsDir: copies legacy files only when the target is empty'
     assert.deepEqual(listAgentFiles(target).agents.map(agent => agent.meta.name), ['a'])
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('agentsDir: resolves from $DSH_HOME and falls back to ~/.dsh', () => {
+  const prev = process.env.DSH_HOME
+  try {
+    process.env.DSH_HOME = '/tmp/dsh-home-agents-test'
+    assert.equal(agentsDir(), join('/tmp/dsh-home-agents-test', 'agents'))
+    delete process.env.DSH_HOME
+    assert.equal(agentsDir(), join(homedir(), '.dsh', 'agents'))
+  } finally {
+    if (prev === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prev
   }
 })

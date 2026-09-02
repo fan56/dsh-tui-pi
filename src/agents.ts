@@ -16,8 +16,14 @@
  *      `dsh-tui` settings namespace. Also the initial view when no agent
  *      files exist yet, so the caps stay configurable before any agent.
  *
- * Edits go straight to the frontmatter of the agent's markdown file and
- * take effect the next time the agent is spawned.
+ * Edits go through the workspace-scoped path: when this directory tree is
+ * pinned to an existing profile, model/think edits land in that profile's
+ * per-agent overrides ($DSH_HOME/model-profiles.json) and the frontmatter
+ * baseline is untouched; otherwise they write the agent file's frontmatter
+ * as before. The table and the fields window always show the COMPOSED
+ * values (frontmatter baseline ⊕ pinned-profile overrides — what a spawned
+ * agent actually gets), so an edit never looks like a no-op.
+ * `deep` stays a frontmatter-only key (profiles have no deep override).
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -38,6 +44,12 @@ import {
   type AgentFile,
   type AgentMeta,
 } from './agent-manager.ts'
+import {
+  agentEditTarget,
+  commitAgentModelEdit,
+  composeAgentValues,
+  type AgentRuntimeValues,
+} from './agent-runtime.ts'
 import { EditField, type ParseOutcome } from './settings.ts'
 import { readSubagentLimits, writeSubagentLimit } from './theme-settings.ts'
 import {
@@ -105,8 +117,12 @@ function parseLimitInput(text: string): ParseOutcome {
 }
 
 /** The four agent-table columns under the auto layout: NAME/MODEL/DEEP fit
- *  the loaded agents (capped), DESCRIPTION runs to the right edge. */
-function agentColumns(agents: readonly AgentFile[]): readonly TableColumn[] {
+ *  the loaded agents (capped), DESCRIPTION runs to the right edge. The
+ *  model cell shows the COMPOSED value (frontmatter ⊕ pinned profile). */
+function agentColumns(
+  agents: readonly AgentFile[],
+  cell: (agent: AgentFile, key: string) => string,
+): readonly TableColumn[] {
   return autoColumns(
     [
       { key: 'name', title: 'name', cap: 16 },
@@ -115,18 +131,23 @@ function agentColumns(agents: readonly AgentFile[]): readonly TableColumn[] {
       { key: 'description', title: 'description' },
     ],
     agents,
-    (agent, key) => agentCell(agent, { key }),
+    cell,
   )
 }
 
-/** Cell text for one agent table row. */
-function agentCell(agent: AgentFile, column: { key: string }): string {
-  const meta = agent.meta
-  switch (column.key) {
-    case 'name': return meta.displayName ?? meta.name
-    case 'model': return meta.model ?? '(inherit)'
-    case 'deep': return String(meta.deep)
-    default: return meta.description ?? ''
+/** Cell text for one agent table row, model column COMPOSED (baseline ⊕
+ *  pinned-profile overrides — what a spawned agent actually gets). */
+function agentCellFor(
+  effective: ReadonlyMap<string, AgentRuntimeValues>,
+): (agent: AgentFile, column: { key: string }) => string {
+  return (agent, column) => {
+    const meta = agent.meta
+    switch (column.key) {
+      case 'name': return meta.displayName ?? meta.name
+      case 'model': return effective.get(meta.name)?.model ?? '(inherit)'
+      case 'deep': return String(meta.deep)
+      default: return meta.description ?? ''
+    }
   }
 }
 
@@ -239,6 +260,25 @@ export async function openAgentManager(
   const seed = seedFromZcode(dir)
   const { agents, broken } = listAgentFiles(dir)
 
+  const cwd = process.cwd()
+  /** Where model/think edits land in this workspace (decided at open; the
+   *  commit rechecks against the same store, so the two cannot diverge). */
+  const editTarget = agentEditTarget({ startDir: cwd })
+  /** Composed runtime value per agent (baseline ⊕ pinned profile), resolved
+   *  on open and after each edit — never inside a render callback (iron
+   *  rule 1: no I/O in render). */
+  const effective: Map<string, AgentRuntimeValues> = new Map()
+  const refreshEffective = (): void => {
+    effective.clear()
+    for (const agent of agents) {
+      effective.set(agent.meta.name, composeAgentValues(agent.meta.name, {
+        model: agent.meta.model ?? null,
+        thinking: agent.meta.thinking ?? null,
+      }, { startDir: cwd }))
+    }
+  }
+  refreshEffective()
+
   const changed: string[] = []
   let detailStatus: string | undefined
   let limitsStatus: string | undefined
@@ -263,9 +303,9 @@ export async function openAgentManager(
       pendingPreselect = undefined
       const table = new TablePanel(theme, {
         title: '● Agents',
-        columns: agentColumns(agents),
+        columns: agentColumns(agents, (agent, key) => agentCellFor(effective)(agent, { key })),
         rows: agents,
-        renderCell: agentCell,
+        renderCell: agentCellFor(effective),
         preselect: preselectIndex !== undefined && preselectIndex >= 0 ? preselectIndex : undefined,
         footer: '↑↓ navigate · Enter open · Esc back · l limits',
         // Defensive: an empty table (never shown, but guards the round-trip)
@@ -292,10 +332,16 @@ export async function openAgentManager(
 
     const showFields = (agent: AgentFile): void => {
       const meta = agent.meta
+      const eff = effective.get(meta.name)
       const content = (meta.description ?? '(no description)').split('\n')
+      content.push(
+        editTarget.kind === 'profile'
+          ? `model/think edits apply to profile "${editTarget.name}" (workspace-scoped — the frontmatter baseline stays untouched)`
+          : 'no workspace profile pin — edits write the frontmatter baseline (global)',
+      )
       const fields = [
-        { key: 'model', value: meta.model ?? '(inherit — default model)', editable: true },
-        { key: 'thinking', value: meta.thinking ?? '(inherit)', editable: true },
+        { key: 'model', value: eff?.model ?? '(inherit — default model)', editable: true },
+        { key: 'thinking', value: eff?.thinking ?? '(inherit)', editable: true },
         { key: 'deep', value: String(meta.deep), editable: true },
       ]
       const view = new FieldPanel(theme, {
@@ -320,37 +366,45 @@ export async function openAgentManager(
       fieldsHandle = host.open(view)
     }
 
-    /** Commit path shared by model/think edits: write, mutate, flash, re-show. */
-    const writeAndFlash = (agent: AgentFile, error: string | undefined, message: string): void => {
-      if (error !== undefined) {
-        detailStatus = `✘ ${error}`
-      } else {
-        if (!changed.includes(agent.meta.name)) changed.push(agent.meta.name)
-        detailStatus = message
-      }
-      showFields(agent)
+    /** The agent meta as the user sees it: composed values feed the picker's
+     *  preselect (a profile override is what the fields window shows). */
+    const effectiveMeta = (agent: AgentFile): AgentMeta => {
+      const eff = effective.get(agent.meta.name)
+      return eff === undefined
+        ? agent.meta
+        : { ...agent.meta, model: eff.model, thinking: eff.thinking }
     }
 
     const changeModel = async (agent: AgentFile): Promise<void> => {
-      const picked = await pickAgentModel(ctx, tui, theme, agent.meta, host)
+      const picked = await pickAgentModel(ctx, tui, theme, effectiveMeta(agent), host)
       if (picked === undefined) {
         showFields(agent)
         return
       }
-      const error = updateAgentFrontmatter(agent.path, {
+      const result = commitAgentModelEdit(agent.meta.name, agent.path, {
         model: picked.model,
         thinking: picked.thinking,
-      })
-      if (error === undefined) {
+      }, { startDir: cwd })
+      if (result.error !== undefined) {
+        detailStatus = `✘ ${result.error}`
+        showFields(agent)
+        return
+      }
+      if (result.target.kind === 'frontmatter') {
         agent.meta.model = picked.model
         agent.meta.thinking = picked.thinking ?? undefined
       }
+      refreshEffective()
+      if (!changed.includes(agent.meta.name)) changed.push(agent.meta.name)
       const thinkText = picked.thinking !== null ? ` · think ${picked.thinking}` : ''
-      writeAndFlash(agent, error, `saved ${agent.meta.name} → ${picked.model}${thinkText}`)
+      const scopeNote = result.target.kind === 'profile' ? ` (profile "${result.target.name}")` : ''
+      detailStatus = `saved ${agent.meta.name} → ${picked.model}${thinkText}${scopeNote}`
+      showFields(agent)
     }
 
     const changeThinking = async (agent: AgentFile): Promise<void> => {
-      if (agent.meta.model === undefined) {
+      const model = effective.get(agent.meta.name)?.model
+      if (model === undefined) {
         detailStatus = '✘ no model set — pick a model first (m)'
         showFields(agent)
         return
@@ -361,24 +415,24 @@ export async function openAgentManager(
         showFields(agent)
         return
       }
-      const slash = agent.meta.model.indexOf('/')
+      const slash = model.indexOf('/')
       if (slash <= 0) {
-        detailStatus = `✘ cannot resolve think levels for ${agent.meta.model}`
+        detailStatus = `✘ cannot resolve think levels for ${model}`
         showFields(agent)
         return
       }
       let efforts: readonly LlmReasoningEffortInfo[] | undefined
       try {
-        efforts = (await llm.resolveModelInfo(agent.meta.model.slice(0, slash), agent.meta.model.slice(slash + 1))).reasoning?.efforts
+        efforts = (await llm.resolveModelInfo(model.slice(0, slash), model.slice(slash + 1))).reasoning?.efforts
       } catch {
         efforts = undefined
       }
       if (efforts === undefined || efforts.length === 0) {
-        detailStatus = `✘ ${agent.meta.model} exposes no think levels`
+        detailStatus = `✘ ${model} exposes no think levels`
         showFields(agent)
         return
       }
-      const currentEffort = agent.meta.thinking as ReasoningEffortId | undefined
+      const currentEffort = effective.get(agent.meta.name)?.thinking as ReasoningEffortId | undefined
       const chosen = await openEffortPicker(
         tui, theme, efforts, currentEffort, () => {}, () => fieldsHandle?.hide(),
       )
@@ -387,9 +441,18 @@ export async function openAgentManager(
         return
       }
       const thinking = chosen.effort === 'default' ? null : chosen.effort
-      const error = updateAgentFrontmatter(agent.path, { thinking })
-      if (error === undefined) agent.meta.thinking = thinking ?? undefined
-      writeAndFlash(agent, error, `saved ${agent.meta.name} → think ${thinking ?? 'inherit'}`)
+      const result = commitAgentModelEdit(agent.meta.name, agent.path, { thinking }, { startDir: cwd })
+      if (result.error !== undefined) {
+        detailStatus = `✘ ${result.error}`
+        showFields(agent)
+        return
+      }
+      if (result.target.kind === 'frontmatter') agent.meta.thinking = thinking ?? undefined
+      refreshEffective()
+      if (!changed.includes(agent.meta.name)) changed.push(agent.meta.name)
+      const scopeNote = result.target.kind === 'profile' ? ` (profile "${result.target.name}")` : ''
+      detailStatus = `saved ${agent.meta.name} → think ${thinking ?? 'inherit'}${scopeNote}`
+      showFields(agent)
     }
 
     const showDeepEditor = (agent: AgentFile): void => {
