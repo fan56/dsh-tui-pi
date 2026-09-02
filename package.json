@@ -78,7 +78,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "@deepseek-ai/dsh-user-questions": "0.1.2-alpha.4",
+    "@deepseek-ai/dsh-user-questions": "0.1.2-alpha.5",
     "typescript": "~5.9.0"
   },
   "dsh": {
