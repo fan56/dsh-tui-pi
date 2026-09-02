@@ -4,6 +4,14 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-02
+
+### Added
+- **default dependencies now bundle `@aiwayds/dsh-mcp-adapter`, `@aiwayds/dsh-model-sync`, `@aiwayds/dsh-llm-proxy` and `@aiwayds/dsh-web-search-anysearch`** — installing the package puts them into the profile's `node_modules`; activation still follows the profile's `bundles` list. The READMEs now recommend installing `@aiwayds/dsh-llmwiki-memory` (OKF topic memory for dsh)
+
+### Changed
+- **dependency floors bumped to the current npm latest** — ask-router `0.3.0`, dcp `0.6.0`, llm-stats `0.4.0`, subagent-registry `0.5.0`; pnpm-lock regenerated in the same change
+
 ## [2.0.2] - 2026-09-02
 
 ### Fixed
@@ -14,22 +22,18 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - **Boot crash on dsh 0.1.2-alpha.4 with legacy session_projcache records**: the `dsh-tui-pi` launcher now runs a preflight migration (`bin/preflight-projcache.mjs`) before `exec dsh`, backfilling `identity.isSeeded: false` and `identity.inheritedEventCount: 0` on every legacy record under `<DSH_HOME>/storages/session_projcache/sessions/` — alpha.4 fail-fasts on those fields at storage-open time and old records (0.1.1-rc.2 era) crashed the whole boot. Each rewrite is backed up next to the original and applied atomically; already-migrated records are left byte-identical; unparsable records are skipped with a warning; any preflight failure is swallowed so startup is never blocked.
 
-## [Unreleased]
-
-### Added
-- **default dependencies now bundle `@aiwayds/dsh-mcp-adapter`, `@aiwayds/dsh-model-sync`, `@aiwayds/dsh-llm-proxy` and `@aiwayds/dsh-web-search-anysearch`** — installing the package puts them into the profile's `node_modules`; activation still follows the profile's `bundles` list. The READMEs now recommend installing `@aiwayds/dsh-llmwiki-memory` (OKF topic memory for dsh)
+## [2.0.0] - 2026-09-02
 
 ### Changed
-- **BREAKING — dsh host floor `>= 0.1.2-alpha.3`, rc-line support dropped** (ADR 0002): all rc/alpha dual paths and feature-detection are gone, single-target alpha only
+- **BREAKING — dsh host floor `>= 0.1.2-alpha.4`, rc-line support dropped** (ADR 0002; adapted against `0.1.2-alpha.3`, the closure re-tracked to `0.1.2-alpha.4` before shipping): all rc/alpha dual paths and feature-detection are gone, single-target alpha only
   - ask-user answers on the Agent-scoped `'user-questions/request'` cordis waterfall only — the rc-era `ctx.userQuestions.registerProvider` slot (and its `DUPLICATE_PROVIDER` yield + `isDuplicateProviderError` classifier) is deleted; the dsh-ask-router surface path is unaffected
   - dsh-settings removed the `settingsNamespace()` runtime helper: the `dsh-tui` / `llm-pi-ai` / `llm-deepseek` / `agent-default-model` namespaces are plain literals now (type-level brand check via `SettingsNamespaceInput` + host-side runtime validation)
   - `permissionPresets.current()`/`set()` take the `Session` (alpha.3 folds knob state through the session projection) instead of the raw event array
   - the ask-user guidance system-prompt section rides `systemPrompt.getSectionOrder('PTC_ONLY')` instead of the hardcoded numeric order 112 (alpha.3 replaced the numeric constants with `getSectionOrder`/`getContextOrder`)
   - the `'todo/write'` event type comes from `@deepseek-ai/dsh-tool-todo` (moved out of dsh-session in alpha.3) via its SessionEventMap augmentation
   - preset discovery probes only the `@deepseek-ai/dsh-agent-presets` package layouts (the pre-alpha `<dsh install>/config/agent-presets` probe and the `metadata.yml` legacy fallback are gone; alpha ships `preset.yml` only), and the English mapping drops the `code` id — the shipped alpha roster is standard/minimal/cordis/ptc
-  - peers: `@deepseek-ai/dsh-user-questions` `0.1.1-rc.2` (exact) → `>=0.1.2-alpha.3` (floor); devDependencies pin `0.1.2-alpha.3`; pnpm-lock regenerated in the same commit
+  - peers: `@deepseek-ai/dsh-user-questions` `0.1.1-rc.2` (exact) → `>=0.1.2-alpha.4` (floor); devDependencies pin `0.1.2-alpha.4`; pnpm-lock regenerated in the same commit
 - **CI/resolution moves to the rolling `@alpha` dist-tag** (ci.yml + release.yml) — `latest` still points at the rc line the plugin dropped; the daily schedule stays so alpha.4+ drift surfaces within a day; new `scripts/smoke-boot.mjs` boots the packed plugin in a scratch dsh profile (mount + loader-clean boot proof) as a CI gate; e2e container pins `DSH_VERSION=0.1.2-alpha.3`
-- **dependency floors bumped to the current npm latest** — ask-router `0.3.0`, dcp `0.6.0`, llm-stats `0.4.0`, subagent-registry `0.5.0`; pnpm-lock regenerated in the same change
 
 ## [1.3.1] - 2026-09-01
 
