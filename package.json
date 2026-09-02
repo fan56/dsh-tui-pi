@@ -1,6 +1,6 @@
 {
   "name": "@aiwayds/dsh-tui-pi",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "pi-style terminal UI for DeepSeek Harness (dsh) — pi-tui look & feel, dsh slash commands, GitHub light/dark themes, powerline footer",
   "repository": {
     "type": "git",
@@ -19,6 +19,18 @@
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./projcache": {
+      "types": "./lib/projcache.d.ts",
+      "default": "./lib/projcache.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "dsh-tui-pi": "bin/dsh-tui-pi"
   },

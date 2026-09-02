@@ -1,11 +1,12 @@
 /**
- * bin/preflight-projcache.mjs — legacy session_projcache record migration.
+ * src/preflight-projcache.ts — legacy session_projcache record migration.
  *
  * dsh 0.1.2-alpha.4 fail-fasts at boot when a session_projcache record lacks
  * identity.isSeeded / identity.inheritedEventCount. These tests pin the
  * backfill behavior: which records get fixed, which are left byte-identical,
  * backup + atomic-rewrite guarantees, --check reporting, and the
- * never-blocks-startup CLI contract.
+ * never-blocks-startup CLI contract (bin/preflight-projcache.mjs, the
+ * launcher-side mount point of the shared core).
  */
 
 import test from 'node:test'
@@ -15,7 +16,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { preflightProjcache } from '../bin/preflight-projcache.mjs'
+import { preflightProjcache, projcacheSessionsDir } from '../lib/preflight-projcache.js'
 
 const SCRIPT = fileURLToPath(new URL('../bin/preflight-projcache.mjs', import.meta.url))
 
@@ -180,4 +181,21 @@ test('the CLI shell migrates records and always exits 0', () => {
   const record = JSON.parse(readRecord(sessions, 'session-cli.json'))
   assert.equal(record.identity.isSeeded, false)
   assert.equal(record.identity.inheritedEventCount, 0)
+})
+
+test('projcacheSessionsDir honors DSH_HOME and falls back to ~/.dsh', () => {
+  const { home } = makeSessionsDir()
+  const previous = process.env.DSH_HOME
+  try {
+    process.env.DSH_HOME = home
+    assert.equal(projcacheSessionsDir(), path.join(home, 'storages', 'session_projcache', 'sessions'))
+    delete process.env.DSH_HOME
+    assert.equal(
+      projcacheSessionsDir(),
+      path.join(os.homedir(), '.dsh', 'storages', 'session_projcache', 'sessions'),
+    )
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+  }
 })

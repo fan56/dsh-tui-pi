@@ -40,7 +40,7 @@ dsh plugin --profile tui add @aiwayds/dsh-dcp                 # optional
 dsh --profile tui          # launch (or: dsh-tui-pi)
 ```
 
-The `dsh-tui-pi` launcher runs a silent preflight before booting dsh: it migrates legacy `session_projcache` records that are missing `identity.isSeeded`/`identity.inheritedEventCount` (records written before dsh 0.1.2-alpha.4 would otherwise crash the boot). It is idempotent — already-migrated records are never touched — and a preflight failure never blocks startup.
+Legacy `session_projcache` records (missing `identity.isSeeded`/`identity.inheritedEventCount`, written before dsh 0.1.2-alpha.4) are migrated at the profile layer: the bundle patch replaces the stock `session-projection-cache` row with a wrapper (`@aiwayds/dsh-tui-pi/projcache`) that backfills the records while its module loads — strictly before the stock plugin could open the domain and crash the boot — so every `dsh --profile tui` start is covered, launcher or not. Migration is idempotent, backs up every rewritten file next to the original, and never blocks startup. The `dsh-tui-pi` launcher additionally runs the same migration as a CLI preflight before `exec dsh`.
 
 Everything that used to need manual patching — the canvas background, the `@deepseek-ai` module closure, the compaction backend — now happens automatically. Upgrade an existing profile after a release:
 

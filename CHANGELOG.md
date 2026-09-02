@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-09-02
+
+### Fixed
+- **the projection-cache boot-crash fix now covers plain `dsh --profile tui` boots, launcher or not** — 2.0.1 shipped the migration only behind the `dsh-tui-pi` launcher's preflight, but product users start dsh directly and never ran it. The bundle patch now disables the stock `session-projection-cache` row (guarded by `name`, so a renamed future row is skipped with a warning, never disabled blindly) and inserts a wrapper entry (`tui-pi-projcache` → `@aiwayds/dsh-tui-pi/projcache`) that re-exports the stock module unchanged but runs the record migration at module-evaluation time — the one hook the loader reaches strictly before the stock plugin's `Service.init`, so the legacy records are backfilled on disk before the domain opens and the first post-upgrade boot survives instead of crashing. The wrapper entry mirrors the stock row's `writeEveryEvents`/`writeIntervalMs` config (the schema requires them). The migration core moved to `src/preflight-projcache.ts`, shared by the wrapper and the launcher's CLI preflight; the boot smoke now seeds a legacy record into its scratch home and asserts the rescue (boot survives, record backfilled, backup written)
+
 ## [2.0.1] - 2026-09-02
 
 ### Fixed
