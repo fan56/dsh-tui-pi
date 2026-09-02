@@ -6,7 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-02
+
+### Added
+- **per-workspace agent model/thinking composition** — an agent's runtime model/think values compose at spawn time from the frontmatter baseline plus the pinned profile's per-agent overrides, via the `@aiwayds/dsh-subagent-registry@^0.6.0` contract (`composeAgentRuntime` / `workspaceProfileName` / `readModelProfilesDoc`; a built-in equivalent covers the registry's absence); non-empty entries override, empty/missing/null values fall back to the baseline
+
 ### Changed
+- **profile apply no longer writes global agent frontmatter** — `/profile-switch` binds the tree (`.dsh-profile`) and composes at spawn instead of rewriting `~/.dsh/agents/*.md`, so a profile applied in one workspace no longer leaks into every other workspace (the cross-workspace crosstalk fix)
+- **`/agents` edits are scope-aware** — with a workspace profile pin, model/think edits land in the profile's per-agent overrides (`model-profiles.json`) with the frontmatter bytes untouched; unpinned trees keep writing the frontmatter baseline; the dead `planAgentApply` write-plan path is removed and agentsDir resolution aligns to `$DSH_HOME`
+- **dependency floor: `@aiwayds/dsh-subagent-registry ^0.6.0`** — pnpm-lock converged to the published 0.6.0 in the same change
 - **docs** — CONTEXT.md floor claims updated to the actual `>=0.1.2-alpha.4` peer floor; README's dangling ADR 0002 link repaired
 
 ### Fixed
