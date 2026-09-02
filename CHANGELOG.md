@@ -4,6 +4,14 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-09-02
+
+### Changed
+- **e2e docs** — scenario table restored for `22-search` / `60-preset`; the container host now resolves from the rolling `@alpha` dist-tag (was the stale `0.1.2-alpha.3` pin), overridable via `--build-arg DSH_VERSION=<version>`
+
+### Fixed
+- **the podman e2e suite is green again on the current host line** — the `66-retention-resume` seeder passes the `dsh-session-persistence-jsonl@0.1.2-alpha.4` materialization contract (`encodeMaterialization({ meta }, events)` storage descriptor; the bare-meta call shape was the alpha.3 contract)
+
 ## [2.1.0] - 2026-09-02
 
 ### Added
