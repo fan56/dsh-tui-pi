@@ -12,6 +12,13 @@
 //          auto-advance and the Confirm row);
 //   - body carries E2E_ASK_TRIGGER and a tool message (the answers came back)
 //       -> stream the fixed final text E2E-ASK-FLOW-COMPLETE;
+//   - body carries E2E_BTW_Q (a /btw side question; checked FIRST because the
+//       side call's snapshot embeds the main prompt) -> after a 6s hold
+//       (the overlay's 'Thinking…' window, wide enough to queue a second
+//       side call) stream the fixed btw answer;
+//   - body carries E2E_BTW_MAIN (the 69-btw main prompt) -> stream ~42s of
+//       slow tick text, ending with E2E-BTW-MAIN-DONE, so the main line stays
+//       busy while the scenario fires side calls into the window;
 //   - anything else -> stream a short ignore text (keeps stray turns alive
 //     without consuming the scripted phases).
 //
@@ -38,6 +45,21 @@ const TOOL_CALL_ID = 'call-e2e-ask-1'
 const MODEL = 'mock-chat'
 const FINAL_TEXT = 'E2E-ASK-FLOW-COMPLETE — all three answers received and recorded. Nothing else to do.'
 const IGNORE_TEXT = 'E2E mock: no scripted behavior for this request.'
+
+// 69-btw phases: the MAIN key keeps the agent turn busy (slow tick stream, a
+// wide window to fire side calls into); the Q keys are the side-call questions
+// themselves. The btw request carries the recent-conversation snapshot, which
+// includes the main prompt — decidePhase checks the Q keys FIRST.
+const BTW_MAIN_KEY = 'E2E_BTW_MAIN'
+const BTW_MAIN_DONE = 'E2E-BTW-MAIN-DONE — the main turn is complete.'
+const BTW_MAIN_TICKS = 60
+const BTW_MAIN_TICK_DELAY_MS = 700
+const BTW_Q_ANSWERS = [
+  { key: 'E2E_BTW_Q1', answer: 'E2E-BTW-ANSWER-ONE — the deploy is green and the cache is warm.' },
+  { key: 'E2E_BTW_Q2', answer: 'E2E-BTW-ANSWER-TWO — rollback is one command away.' },
+]
+const BTW_FIRST_CHUNK_DELAY_MS = 6000
+const BTW_CHUNK_DELAY_MS = 400
 
 // The three questions handed to ask_user_question: two single-select (auto-
 // advance applies) and one multiSelect (stays put), matching the assertions
@@ -108,6 +130,10 @@ const completionMessage = (delta, finishReason) => ({
 
 /** Decide the scripted phase for one chat request body. */
 function decidePhase(bodyText) {
+  // btw keys first: the side call's snapshot embeds the main prompt, so a
+  // btw request body contains BOTH markers.
+  if (bodyText.includes('E2E_BTW_Q')) return 'btw'
+  if (bodyText.includes(BTW_MAIN_KEY)) return 'main-slow'
   const hasTrigger = bodyText.includes(TRIGGER)
   // The openai SDK serializes without spaces; be lenient about formatting.
   const hasToolResult = bodyText.includes('"role":"tool"') || bodyText.includes('"role": "tool"')
@@ -115,6 +141,58 @@ function decidePhase(bodyText) {
   if (hasTrigger && hasToolResult) return 'final'
   if (hasTrigger) return 'ask'
   return 'ignore'
+}
+
+/** The btw answer text for a request body (first matching Q key wins). */
+function btwAnswer(bodyText) {
+  const hit = BTW_Q_ANSWERS.find(entry => bodyText.includes(entry.key))
+  return hit !== undefined ? hit.answer : 'E2E-BTW-ANSWER-UNKNOWN'
+}
+
+/**
+ * Emit a timed SSE script (phases that need the model to stay busy), then
+ * close with the usage chunk + [DONE]. `entries` is a list of
+ * `{ delayMs, delta, finish }` steps; each write is its own setTimeout so a
+ * phase can hold a wide, deterministic busy window.
+ */
+function streamTimed(res, entries, wantsUsage) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache',
+  })
+  let at = 0
+  for (const entry of entries) {
+    at += entry.delayMs
+    setTimeout(() => {
+      if (res.destroyed) return
+      res.write(`data: ${sseChunk(entry.delta, entry.finish ?? null)}\n\n`)
+      if (entry.finish !== undefined) {
+        if (wantsUsage) res.write(`data: ${usageChunk()}\n\n`)
+        res.write('data: [DONE]\n\n')
+        res.end()
+      }
+    }, at)
+  }
+}
+
+/** The btw phase script: hold 'Thinking…', then stream the answer, then stop. */
+function btwStreamEntries(bodyText) {
+  const answer = btwAnswer(bodyText)
+  return [
+    { delayMs: BTW_FIRST_CHUNK_DELAY_MS, delta: { role: 'assistant', content: answer } },
+    { delayMs: BTW_CHUNK_DELAY_MS, delta: {}, finish: 'stop' },
+  ]
+}
+
+/** The main-slow phase script: a long tick stream keeping the line busy. */
+function mainSlowStreamEntries() {
+  const entries = []
+  for (let i = 1; i <= BTW_MAIN_TICKS; i += 1) {
+    entries.push({ delayMs: BTW_MAIN_TICK_DELAY_MS, delta: { role: 'assistant', content: `main-line progress tick ${i}; ` } })
+  }
+  entries.push({ delayMs: BTW_MAIN_TICK_DELAY_MS, delta: { role: 'assistant', content: BTW_MAIN_DONE } })
+  entries.push({ delayMs: BTW_CHUNK_DELAY_MS, delta: {}, finish: 'stop' })
+  return entries
 }
 
 function handleChat(req, res, body) {
@@ -135,10 +213,23 @@ function handleChat(req, res, body) {
   if (!stream) {
     const message = phase === 'ask'
       ? { tool_calls: [{ id: TOOL_CALL_ID, type: 'function', function: { name: TOOL_NAME, arguments: JSON.stringify(QUESTIONS) } }] }
+      : phase === 'btw'
+      ? { content: btwAnswer(bodyText) }
+      : phase === 'main-slow'
+      ? { content: `${Array.from({ length: BTW_MAIN_TICKS }, (_, i) => `main-line progress tick ${i + 1}; `).join('')}${BTW_MAIN_DONE}` }
       : { content: phase === 'final' ? FINAL_TEXT : IGNORE_TEXT }
     const finishReason = phase === 'ask' ? 'tool_calls' : 'stop'
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(completionMessage(message, finishReason)))
+    return
+  }
+
+  if (phase === 'btw') {
+    streamTimed(res, btwStreamEntries(bodyText), wantsUsage)
+    return
+  }
+  if (phase === 'main-slow') {
+    streamTimed(res, mainSlowStreamEntries(), wantsUsage)
     return
   }
 

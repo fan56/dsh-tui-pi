@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **e2e: two scenarios close the biggest default-feature gaps in the podman suite** — `69-btw` drives `/btw` end-to-end offline over the 68 mock route (idle paths: bare `/btw` usage text, the idle-rejection notice, the `--model` argument error; busy paths under a ~42s mock main turn: the framed overlay with the side model label, `Thinking…` → streamed answer, `btw queued (position 1)` + the overlay's `· 1 queued` status, the `Not kept in the session` badge, the promote-under-overlay notice, the live reopen via bare `/btw`, the screen-level not-persisted proof after Esc, and the Last-btw review); `74-profiles` covers the 2.2.0 model-profiles surface with zero model traffic (`/profile-switch` seeded roster → apply + `.dsh-profile` binding → the `● work` marker → `p` unpin; `/agents` scope-aware edits land in `model-profiles.json` under the pin with the frontmatter untouched, and in the agent file itself without it). `lib/mock-llm.mjs` gains two body-keyed phases — `E2E_BTW_Q` (checked first: the side call's snapshot embeds the main prompt) and `E2E_BTW_MAIN`'s slow tick stream.
+
 ## [2.2.0] - 2026-09-02
 
 ### Added
