@@ -30,6 +30,53 @@ if [ ! -d /e2e/scenarios ]; then
   exit 0
 fi
 
+# --- seeder prerequisite: locate the host's persistence backend entry ----------
+# seed_session imports the real `@deepseek-ai/dsh-session-persistence-jsonl`
+# backend from the global dsh closure. That closure is installed as one
+# `npm install -g @deepseek-ai/dsh` and may land in EITHER layout (see the
+# release.yml comment: nested or npm's flat layout), so probe both candidates
+# under `npm root -g` in order — first existing wins. Resolution runs BEFORE
+# any fixture write/delete on purpose: a silently broken import would turn
+# every seed_session into a no-op, and Phase A's `[[ -d ]]` "removed" checks
+# would then pass vacuously while only the survivor check errors — a
+# misleading "janitor over-deleted" picture for whoever debugs the run.
+NPM_GLOBAL_ROOT="$(npm root -g 2>/dev/null || true)"
+PERSISTENCE_CANDIDATES=(
+  "$NPM_GLOBAL_ROOT/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js"
+  "$NPM_GLOBAL_ROOT/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js"
+)
+
+# Echo the first existing backend entry path; return 1 when no candidate
+# exists (the caller fail-fasts with the full candidate list).
+resolve_persistence_entry() {
+  local candidate
+  for candidate in "${PERSISTENCE_CANDIDATES[@]}"; do
+    if [[ -f $candidate ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! PERSISTENCE_ENTRY="$(resolve_persistence_entry)"; then
+  # Print EVERY candidate by iterating the array — hard-coded [0]/[1] indices
+  # would silently hide a third candidate added later. The raw `npm root -g`
+  # value goes out too: that probe is `|| true`-guarded, so a failing npm
+  # collapses to an empty root and every candidate degenerates to
+  # `/@deepseek-ai/...`. Without the raw value that reads as "the global
+  # layout moved" when the real fault is "npm root -g did not answer".
+  bad 'cannot resolve @deepseek-ai/dsh-session-persistence-jsonl for the seeder'
+  info "npm root -g => '$NPM_GLOBAL_ROOT' (empty means the probe itself failed)"
+  for candidate in "${PERSISTENCE_CANDIDATES[@]}"; do
+    info "  tried: $candidate"
+  done
+  info 'host global layout changed? update PERSISTENCE_CANDIDATES above'
+  summary
+  exit 1
+fi
+info "persistence backend entry (nested-or-flat): $PERSISTENCE_ENTRY"
+
 # --- in-script helper: write a single seeded session directory -----------------
 # Layout matches dsh's session-persistence backend:
 #   $HOME/.dsh/sessions/<project>/<id>/session.jsonl.zstd
@@ -69,6 +116,10 @@ fi
 # directly). `meta` stays the logical unseeded SessionHeader (isSeeded
 # absent); omitting inheritedEventCount mirrors the unseeded-creation
 # path (`toHeaderLine` requires cut === 0 for an unseeded header).
+# The backend module itself is imported from a DYNAMICALLY RESOLVED entry
+# path (`resolve_persistence_entry` probes `npm root -g` for both the
+# nested and npm-flat global layouts) and passed to node as its first
+# argument — no hard-coded global closure location.
 seed_session() {
   local project="$1" id="$2" preview="$3" size_bytes="${4:-}"
   local dir="$HOME/.dsh/sessions/$project/$id"
@@ -78,13 +129,17 @@ seed_session() {
   now_ms="$(date +%s)000"
   local target_bytes="${size_bytes:-0}"
   local final_size
-  final_size="$(node --input-type=module - "$out" "$id" "$preview" "$now_ms" "$target_bytes" <<'NODE'
+  final_size="$(node --input-type=module - "$PERSISTENCE_ENTRY" "$out" "$id" "$preview" "$now_ms" "$target_bytes" <<'NODE'
 import { writeFile, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import JsonlSessionPersistence from "/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js";
+import { pathToFileURL } from "node:url";
 
-const [outPath, id, preview, nowMs, targetBytesStr] = process.argv.slice(2);
+const [entryPath, outPath, id, preview, nowMs, targetBytesStr] = process.argv.slice(2);
 const targetBytes = Number(targetBytesStr) || 0;
+
+// Entry path resolved by resolve_persistence_entry() (nested-or-flat global
+// layout) and handed over as the first node argument.
+const { default: JsonlSessionPersistence } = await import(pathToFileURL(entryPath));
 
 const instance = Object.create(JsonlSessionPersistence.prototype);
 instance.packChunks = true;
@@ -173,6 +228,17 @@ if (targetBytes > 0) {
 process.stdout.write(String(onDisk));
 NODE
 )"
+  # Closes the last vacuous-pass channel: the entry file can exist and still
+  # break at RUNTIME (host API drift, a throwing import, an encoder signature
+  # change). Without this guard the seeder would fail silently, no session dir
+  # would ever be written, and Phase A's `[[ -d ]]` "removed" assertions would
+  # pass vacuously. Diagnostics go to stderr on purpose — every call site
+  # redirects stdout to /dev/null, which would swallow the verdict.
+  [[ -n "$final_size" ]] || {
+    bad "seeder failed to produce the zstd artifact for $id (check the node stack above) — this is a SEEDER fault, NOT the janitor wrongly removing anything" >&2
+    summary >&2
+    exit 1
+  }
   info "seeded $id: ${final_size} bytes on disk"
 }
 
