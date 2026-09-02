@@ -62,6 +62,13 @@ fi
 # STATS, and stops as soon as `stat().size >= targetBytes` (sessions.ts
 # reads that stat, never the decompressed body). The final on-disk size
 # is logged to stdout for the record.
+#
+# Host API contract (dsh 0.1.2-alpha.4): `encodeMaterialization(storage,
+# events)` takes a STORAGE DESCRIPTOR `{ meta, inheritedEventCount? }` —
+# NOT the raw header line object (alpha.3 and earlier took the meta
+# directly). `meta` stays the logical unseeded SessionHeader (isSeeded
+# absent); omitting inheritedEventCount mirrors the unseeded-creation
+# path (`toHeaderLine` requires cut === 0 for an unseeded header).
 seed_session() {
   local project="$1" id="$2" preview="$3" size_bytes="${4:-}"
   local dir="$HOME/.dsh/sessions/$project/$id"
@@ -139,7 +146,7 @@ const FILLER_TYPES = [
 let onDisk = 0;
 if (targetBytes > 0) {
   for (let iter = 0; iter < MAX_ITER; iter++) {
-    const content = await instance.encodeMaterialization(meta, events);
+    const content = await instance.encodeMaterialization({ meta }, events);
     await writeFile(outPath, content);
     const info = await stat(outPath);
     onDisk = info.size;
@@ -157,7 +164,7 @@ if (targetBytes > 0) {
     }
   }
 } else {
-  const content = await instance.encodeMaterialization(meta, events);
+  const content = await instance.encodeMaterialization({ meta }, events);
   await writeFile(outPath, content);
   const info = await stat(outPath);
   onDisk = info.size;
