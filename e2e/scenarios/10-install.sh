@@ -106,7 +106,17 @@ fi
 RESOLVE_JS='
 import { createRequire } from "node:module";
 const req = createRequire(process.argv[1] + "/");
-for (const name of ["@earendil-works/pi-tui", "@aiwayds/dsh-dcp", "@aiwayds/dsh-subagent-registry"]) {
+for (const name of [
+  "@earendil-works/pi-tui",
+  "@aiwayds/dsh-ask-router",
+  "@aiwayds/dsh-dcp",
+  "@aiwayds/dsh-llm-proxy",
+  "@aiwayds/dsh-llm-stats",
+  "@aiwayds/dsh-mcp-adapter",
+  "@aiwayds/dsh-model-sync",
+  "@aiwayds/dsh-subagent-registry",
+  "@aiwayds/dsh-web-search-anysearch",
+]) {
   try { req.resolve(name); console.log(name + " RESOLVED"); }
   catch (e) { console.log(name + " FAILED " + e.code); }
 }
@@ -115,9 +125,21 @@ RESOLVE_OUT="$(node --input-type=module -e "$RESOLVE_JS" "$TUI_PKG" 2>&1 || true
 printf '%s\n' "$RESOLVE_OUT" | sed 's/^/  [info] /'
 assert_contains '@earendil-works/pi-tui resolves from plugin dir' \
   '@earendil-works/pi-tui RESOLVED' "$RESOLVE_OUT"
+assert_contains '@aiwayds/dsh-ask-router resolves from plugin dir' \
+  '@aiwayds/dsh-ask-router RESOLVED' "$RESOLVE_OUT"
 assert_contains '@aiwayds/dsh-dcp resolves from plugin dir' \
   '@aiwayds/dsh-dcp RESOLVED' "$RESOLVE_OUT"
+assert_contains '@aiwayds/dsh-llm-proxy resolves from plugin dir' \
+  '@aiwayds/dsh-llm-proxy RESOLVED' "$RESOLVE_OUT"
+assert_contains '@aiwayds/dsh-llm-stats resolves from plugin dir' \
+  '@aiwayds/dsh-llm-stats RESOLVED' "$RESOLVE_OUT"
+assert_contains '@aiwayds/dsh-mcp-adapter resolves from plugin dir' \
+  '@aiwayds/dsh-mcp-adapter RESOLVED' "$RESOLVE_OUT"
+assert_contains '@aiwayds/dsh-model-sync resolves from plugin dir' \
+  '@aiwayds/dsh-model-sync RESOLVED' "$RESOLVE_OUT"
 assert_contains '@aiwayds/dsh-subagent-registry resolves from plugin dir' \
   '@aiwayds/dsh-subagent-registry RESOLVED' "$RESOLVE_OUT"
+assert_contains '@aiwayds/dsh-web-search-anysearch resolves from plugin dir' \
+  '@aiwayds/dsh-web-search-anysearch RESOLVED' "$RESOLVE_OUT"
 
 summary

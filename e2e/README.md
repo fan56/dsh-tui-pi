@@ -26,7 +26,7 @@
 
 | 场景 | 覆盖 |
 |------|------|
-| `10-install` | dsh CLI 就位；`dsh plugin --profile tui add <tarball>` 真实安装流；profile package.json 双键（bundle + loader）；`cordis.patch.yml` 注册 `tui-pi`；闭包契约：profile node_modules 里不得有 `@deepseek-ai` 物理副本（有则必须是软链——顶层 AGENTS.md 铁律 8）；插件自身的 npm 依赖（pi-tui / dcp / subagent-registry）从插件目录可解析 |
+| `10-install` | dsh CLI 就位；`dsh plugin --profile tui add <tarball>` 真实安装流；profile package.json 双键（bundle + loader）；`cordis.patch.yml` 注册 `tui-pi`；闭包契约：profile node_modules 里不得有 `@deepseek-ai` 物理副本（有则必须是软链——顶层 AGENTS.md 铁律 8）；插件自身的 npm 依赖（pi-tui + ask-router / dcp / llm-proxy / llm-stats / mcp-adapter / model-sync / subagent-registry / web-search-anysearch）从插件目录可解析 |
 | `20-start` | tmux 内启动 TUI：像素鲸鱼 banner + DSH 像素字标（140 列）、随机语录、编辑器 cwd 边框、footer（provider/model 段、快捷键提示行、时钟）、`DSH_TUI_THEME=dark` 深色画布 SGR 落屏、编辑器可输入/可退格 |
 | `30-commands` | `/` 自动补全弹出 + 前缀过滤（set/th/hot）+ Esc 关闭；`/think`（effort 选择器）、`/settings`、`/hotkeys`、`/permission` 各 overlay 打开（用 overlay 独有文案断言）、Esc 关闭、编辑器焦点恢复；`/resume` 无历史会话的错误路径；`/model` 对内置 provider 的 picker（只开取消，不选中） |
 | `40-theme` | `/theme` 选择器三行（auto/light/dark）；切 light → 画布 SGR `48;2;252;253;252`、切回 dark → `48;2;13;17;23`；选择通知文案；偏好写入容器内 `settings.yaml`；**重启后偏好持久**（无 env 时以持久化值为准） |

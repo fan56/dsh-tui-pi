@@ -35,8 +35,6 @@ https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 
 ```sh
 dsh plugin --profile tui add @aiwayds/dsh-tui-pi
-dsh plugin --profile tui add @aiwayds/dsh-subagent-registry   # optional
-dsh plugin --profile tui add @aiwayds/dsh-dcp                 # optional
 dsh --profile tui          # launch (or: dsh-tui-pi)
 ```
 
@@ -53,9 +51,24 @@ node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # preview the plan first
 
 ## Companion plugins
 
-- [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) — ships as a default dependency; fans every `ask_user_question` out to all answering surfaces (TUI panel, Feishu card) and the first answer wins. List it in the profile's `bundles` before the UI bundles to activate.
-- [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) — optional; drives the same dsh session from Feishu/Lark on your phone ([demo](docs/features/feishu-demo.md)).
-- [@aiwayds/dsh-mcp-adapter](https://github.com/fan56/dsh-mcp-adapter) — optional; folds MCP tool schemas out of every prompt and adds the `/mcp` command ([demo](docs/features/mcp-adapter.md)).
+**Default dependencies** — the eight plugins below ship with this package (installed into the profile's `node_modules`); activation still follows the profile's `bundles` list — list each one there to activate it.
+
+- [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) — fans every `ask_user_question` out to all answering surfaces (TUI panel, Feishu card); the first answer wins — list it in `bundles` before the UI bundles to activate.
+- [@aiwayds/dsh-dcp](https://github.com/fan56/dsh-dcp) — the deterministic zero-LLM compaction backend.
+- [@aiwayds/dsh-llm-proxy](https://github.com/fan56/dsh-llm-proxy) — SYSTEM proxy + per-host LLM outbound routing.
+- [@aiwayds/dsh-llm-stats](https://github.com/fan56/dsh-llm-stats) — the `/llm-stats` usage ledger.
+- [@aiwayds/dsh-mcp-adapter](https://github.com/fan56/dsh-mcp-adapter) — folds MCP tool schemas out of every prompt and adds the `/mcp` command ([demo](docs/features/mcp-adapter.md)).
+- [@aiwayds/dsh-model-sync](https://github.com/fan56/dsh-model-sync) — syncs provider routes with the pi.dev model catalog.
+- [@aiwayds/dsh-subagent-registry](https://github.com/fan56/dsh-subagent-registry) — registers `~/.dsh/agents/*.md` as `use_agent` subagents.
+- [@aiwayds/dsh-web-search-anysearch](https://github.com/fan56/dsh-web-search-anysearch) — the AnySearch web search provider.
+
+**Recommended install** — [@aiwayds/dsh-llmwiki-memory](https://github.com/fan56/dsh-llmwiki-memory), OKF topic memory for dsh (zero-LLM hot-path injection + a local git-tracked bundle):
+
+```sh
+dsh plugin --profile tui add @aiwayds/dsh-llmwiki-memory
+```
+
+**Optional** — [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) — drives the same dsh session from Feishu/Lark on your phone ([demo](docs/features/feishu-demo.md)).
 
 ---
 
@@ -102,7 +115,7 @@ Other knobs: `dsh-tui.panelHeight` (think/tool panel height), `dsh-tui.iconSet` 
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (pretest builds; 1020 tests across 55 files)
+pnpm test     # unit tests, node --test against lib/ (pretest builds; 1,100+ tests across 60+ files — see HANDOFF.md for the current baseline)
 ```
 
 `pi-tui` runs pristine from npm — no patches, no fork. See [AGENTS.md](AGENTS.md) for the iron rules and quality gates.

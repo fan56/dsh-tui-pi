@@ -35,8 +35,6 @@ https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 
 ```sh
 dsh plugin --profile tui add @aiwayds/dsh-tui-pi
-dsh plugin --profile tui add @aiwayds/dsh-subagent-registry   # optional
-dsh plugin --profile tui add @aiwayds/dsh-dcp                 # optional
 dsh --profile tui          # 启动（或：dsh-tui-pi）
 ```
 
@@ -51,9 +49,24 @@ node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # 先预览执行计划
 
 ## Companion plugins 伴生插件
 
-- [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) —— 作为默认依赖附带；把每个 `ask_user_question` 扇出到所有应答面（TUI 面板、飞书卡片），第一个答案获胜。把它加进 profile 的 `bundles`，放在任何 UI bundle 之前即可激活。
-- [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) —— 可选；用手机上的飞书/Lark 驱动同一个 dsh session（[演示](docs/features/feishu-demo.md)）。
-- [@aiwayds/dsh-mcp-adapter](https://github.com/fan56/dsh-mcp-adapter) —— 可选；把 MCP 工具 schema 折出每个请求，并提供 `/mcp` 命令（[演示](docs/features/mcp-adapter.md)）。
+**默认依赖** —— 以下 8 个插件随本包自带（安装进 profile 的 `node_modules`）；激活仍以 profile 的 `bundles` 列表为准——把要用的逐个列进去即可。
+
+- [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) —— 把每个 `ask_user_question` 扇出到所有应答面（TUI 面板、飞书卡片），第一个答案获胜；激活时在 `bundles` 里放在 UI bundle 之前。
+- [@aiwayds/dsh-dcp](https://github.com/fan56/dsh-dcp) —— 确定性零 LLM 压缩后端。
+- [@aiwayds/dsh-llm-proxy](https://github.com/fan56/dsh-llm-proxy) —— SYSTEM 代理 + 按 host 的 LLM 出站分流。
+- [@aiwayds/dsh-llm-stats](https://github.com/fan56/dsh-llm-stats) —— `/llm-stats` 用量台账。
+- [@aiwayds/dsh-mcp-adapter](https://github.com/fan56/dsh-mcp-adapter) —— 把 MCP 工具 schema 折出每个请求，并提供 `/mcp` 命令（[演示](docs/features/mcp-adapter.md)）。
+- [@aiwayds/dsh-model-sync](https://github.com/fan56/dsh-model-sync) —— pi.dev 模型目录同步进 provider 路由。
+- [@aiwayds/dsh-subagent-registry](https://github.com/fan56/dsh-subagent-registry) —— 把 `~/.dsh/agents/*.md` 注册成 `use_agent` 子代理。
+- [@aiwayds/dsh-web-search-anysearch](https://github.com/fan56/dsh-web-search-anysearch) —— AnySearch web 搜索 provider。
+
+**推荐安装** —— [@aiwayds/dsh-llmwiki-memory](https://github.com/fan56/dsh-llmwiki-memory)，dsh 的 OKF topic 记忆插件（零 LLM 热路径注入 + 本地 git 可追溯 bundle）：
+
+```sh
+dsh plugin --profile tui add @aiwayds/dsh-llmwiki-memory
+```
+
+**可选** —— [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) —— 用手机上的飞书/Lark 驱动同一个 dsh session（[演示](docs/features/feishu-demo.md)）。
 
 ---
 
@@ -100,7 +113,7 @@ dsh-tui:
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # 输出 lib/
-pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；55 个文件共 1020 个测试）
+pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；1100+ 测试、60+ 文件——当前基数见 HANDOFF.md）
 ```
 
 `pi-tui` 从 npm 原样运行——无补丁、无 fork。铁律与质量门禁见 [AGENTS.md](AGENTS.md)。
