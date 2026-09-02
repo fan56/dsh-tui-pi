@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-09-02
+
+### Fixed
+- **Boot crash on dsh 0.1.2-alpha.4 with legacy session_projcache records**: the `dsh-tui-pi` launcher now runs a preflight migration (`bin/preflight-projcache.mjs`) before `exec dsh`, backfilling `identity.isSeeded: false` and `identity.inheritedEventCount: 0` on every legacy record under `<DSH_HOME>/storages/session_projcache/sessions/` — alpha.4 fail-fasts on those fields at storage-open time and old records (0.1.1-rc.2 era) crashed the whole boot. Each rewrite is backed up next to the original and applied atomically; already-migrated records are left byte-identical; unparsable records are skipped with a warning; any preflight failure is swallowed so startup is never blocked.
+
 ## [Unreleased]
 
 ### Changed

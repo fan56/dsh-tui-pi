@@ -2,4 +2,6 @@
 # Convenience launcher: boots the dsh `tui` profile that mounts @aiwayds/dsh-tui-pi.
 # Requires the dsh CLI on PATH and @aiwayds/dsh-tui-pi installed into that profile
 # (dsh plugin --profile tui add @aiwayds/dsh-tui-pi).
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0" 2>/dev/null || echo "$0")")" && pwd)
+node "$SCRIPT_DIR/preflight-projcache.mjs" >/dev/null 2>&1 || true
 exec dsh --profile tui "$@"
