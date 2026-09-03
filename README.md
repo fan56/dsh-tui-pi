@@ -4,7 +4,7 @@
 
 pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a plugin suite that turns dsh into a pi-like coding-agent experience: pi-tui look & feel, dsh slash commands, GitHub light/dark themes and a powerline footer.
 
-**Requires dsh >= 0.1.2-alpha.4** — the plugin targets the 0.1.2-alpha host line only (the rc line is no longer supported; see [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)).
+**Requires dsh >= 0.1.2-alpha.4** — the plugin tracks the rolling `@alpha` host line (currently **0.1.2-alpha.5**); the 0.1.1-rc stable line is not supported (see [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)). A startup guard logs a one-line warning and exits cleanly when the host is older than the floor (opt out with `DSH_TUI_SKIP_HOST_CHECK=1`). The support strategy will move to stable-only once dsh ships a stable line past the alpha era.
 
 https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 

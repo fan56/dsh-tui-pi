@@ -102,6 +102,7 @@ import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.
 import { startTui, type TuiHandle } from './tui.ts'
 import { cyclePreset, currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, initialPresetIndex, type PresetState } from './preset.ts'
 import { registerAskUserProvider } from './ask-user.ts'
+import { checkHostSupport } from './host-version.ts'
 
 export const name = 'dsh-tui-pi'
 
@@ -133,6 +134,22 @@ const STOP_CONFIRM_MS = 200
 export const inject = ['agents', 'commands', 'userQuestions', 'systemPrompt']
 
 export function apply(ctx: Context): void {
+  // Host floor guard, before any side effect: a host older than the peer
+  // floor would only crash deeper in boot with raw TypeErrors (the rc-era
+  // and alpha-era host APIs diverged), so warn in plain language and exit
+  // cleanly instead. Exit code 1 (the boot did not happen) but no stack
+  // trace. The env opt-out exists for unit tests that drive apply() with a
+  // fake ctx; an unresolvable closure fails open inside checkHostSupport.
+  if (process.env.DSH_TUI_SKIP_HOST_CHECK !== '1') {
+    const check = checkHostSupport()
+    if (!check.ok) {
+      console.warn(check.message)
+      process.exit(1)
+    }
+    if (check.version === undefined) {
+      console.warn('[dsh-tui-pi] could not resolve the dsh host version next to the plugin; skipping the host floor check.')
+    }
+  }
   let handle: TuiHandle | undefined
   // Live-session handle for the startup janitor (assigned inside the
   // render effect below, where the bridge is constructed): retention
