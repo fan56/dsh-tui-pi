@@ -13,8 +13,9 @@
 ```
 
 - 镜像构建：Ubuntu 24.04 + Node 22（nodejs.org 官方二进制）+ tmux +
-  全局 `@deepseek-ai/dsh`（rolling `@alpha` dist-tag 解析，需钉版本做
-  确定性复现时用 `--build-arg DSH_VERSION=<version>` 覆盖）+ 本源码树
+  全局 `@deepseek-ai/dsh`（`run-e2e.sh` 运行时解析 `latest`/`next`
+  dist-tag 中更新者，与 ci.yml / release.yml 同规则，alpha 已退役；需钉
+  版本做确定性复现时用 `--build-arg DSH_VERSION=<version>` 覆盖）+ 本源码树
   `pnpm build && pnpm pack` 出的 tarball（放在镜像 `/dist/`）。
 - 场景执行：`e2e/` 以只读方式挂到容器 `/e2e`，因此改测试脚本不需要
   重建镜像；改 `src/` 或 `package.json` 才需要。

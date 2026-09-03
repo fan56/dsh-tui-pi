@@ -1,7 +1,8 @@
 /**
- * Host floor guard: this plugin compiles against a single dsh host line and
- * crashes deeper in boot with raw TypeErrors on older hosts (the rc and alpha
- * host APIs diverged — see docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md).
+ * Host floor guard: this plugin compiles against a single dsh host line
+ * (the rc/stable line) and crashes deeper in boot with raw TypeErrors on
+ * older hosts (the alpha-era and rc/stable-era host APIs diverged — see
+ * docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md).
  * This module resolves the @deepseek-ai closure version the plugin actually
  * loads against, judges it against the peer floor, and hands apply() a
  * one-line verdict so an unsupported host can be met with a plain-language
@@ -14,7 +15,7 @@ import { createRequire } from 'node:module'
  * Same floor as the peerDependencies range in package.json — keep the two in
  * lockstep (the package.json field stays the npm-facing source of truth).
  */
-export const HOST_FLOOR = '0.1.2-alpha.4'
+export const HOST_FLOOR = '0.1.2-rc.1'
 
 /**
  * The @deepseek-ai package the peer range is declared against; resolving its
@@ -95,8 +96,8 @@ export function checkHostSupport(readVersion: () => string | undefined = readHos
   if (version === undefined || !parseVersion(version)) return { ok: true, version: undefined }
   if (hostSupported(version)) return { ok: true, version }
   const message =
-    `[dsh-tui-pi] requires dsh >= ${HOST_FLOOR} (the rolling @alpha line) but found ${version}. ` +
-    `Upgrade with: npm install -g @deepseek-ai/dsh@alpha — exiting.`
+    `[dsh-tui-pi] requires dsh >= ${HOST_FLOOR} (the rc/stable line) but found ${version}. ` +
+    `Upgrade with: npm install -g @deepseek-ai/dsh@next — exiting.`
   return { ok: false, version, message }
 }
 

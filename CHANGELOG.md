@@ -4,6 +4,14 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-09-03
+
+### Changed
+- **companion plugins ride their rc/stable-line releases** — all eight bundled dependency floors move to the versions published alongside the dsh rc/stable policy change: `@aiwayds/dsh-ask-router ^0.4.0`, `@aiwayds/dsh-dcp ^0.7.0`, `@aiwayds/dsh-llm-proxy ^0.4.0`, `@aiwayds/dsh-llm-stats ^0.5.0`, `@aiwayds/dsh-mcp-adapter ^0.4.0`, `@aiwayds/dsh-model-sync ^0.3.0`, `@aiwayds/dsh-subagent-registry ^0.8.0`, `@aiwayds/dsh-web-search-anysearch ^0.3.0` (pnpm-lock converged in the same change)
+- **dsh host floor moves to the rc/stable line: `>= 0.1.2-rc.1`** — the peerDependencies range (`@deepseek-ai/dsh-user-questions`), the devDependencies pin, and the startup host-version guard's `HOST_FLOOR` all leave the alpha line (the guard's unsupported-host upgrade hint now reads `npm install -g @deepseek-ai/dsh@next`)
+- **CI, release and e2e retire the `@alpha` dist-tag** (policy 2026-09-03) — ci.yml, release.yml and e2e/run-e2e.sh resolve the newest of the `latest` (stable) and `next` (rc) dist-tags at runtime, never hand-pinned; when a stable 0.1.2+ lands on `latest` it wins over the rc by plain semver compare. The e2e Containerfile drops the `DSH_VERSION=alpha` default (empty default + an explicit required-build-arg guard; `run-e2e.sh` forwards the resolved version as `--build-arg`)
+- **README declares rc/stable-only support** — `Requires dsh >= 0.1.2-rc.1`; the alpha line is no longer supported (ADR 0002 marked superseded)
+
 ## [2.4.0] - 2026-09-03
 
 ### Added

@@ -4,7 +4,7 @@
 
 pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a plugin suite that turns dsh into a pi-like coding-agent experience: pi-tui look & feel, dsh slash commands, GitHub light/dark themes and a powerline footer.
 
-**Requires dsh >= 0.1.2-alpha.4** — the plugin tracks the rolling `@alpha` host line (currently **0.1.2-alpha.5**); the 0.1.1-rc stable line is not supported (see [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)). A startup guard logs a one-line warning and exits cleanly when the host is older than the floor (opt out with `DSH_TUI_SKIP_HOST_CHECK=1`). The support strategy will move to stable-only once dsh ships a stable line past the alpha era.
+**Requires dsh >= 0.1.2-rc.1** — this plugin targets the dsh RC/stable line only (CI and releases resolve the newest of the `latest`/`next` dist-tags at runtime). **The alpha line is no longer supported.** A startup guard logs a one-line warning and exits cleanly when the host is older than the floor (opt out with `DSH_TUI_SKIP_HOST_CHECK=1`). See [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md) for the now-superseded alpha single-target decision.
 
 https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 
@@ -38,7 +38,7 @@ dsh plugin --profile tui add @aiwayds/dsh-tui-pi
 dsh --profile tui          # launch (or: dsh-tui-pi)
 ```
 
-Legacy `session_projcache` records (missing `identity.isSeeded`/`identity.inheritedEventCount`, written before dsh 0.1.2-alpha.4) are migrated at the profile layer: the bundle patch replaces the stock `session-projection-cache` row with a wrapper (`@aiwayds/dsh-tui-pi/projcache`) that backfills the records while its module loads — strictly before the stock plugin could open the domain and crash the boot — so every `dsh --profile tui` start is covered, launcher or not. Migration is idempotent, backs up every rewritten file next to the original, and never blocks startup. The `dsh-tui-pi` launcher additionally runs the same migration as a CLI preflight before `exec dsh`.
+Legacy `session_projcache` records (missing `identity.isSeeded`/`identity.inheritedEventCount`, written before dsh 0.1.2-alpha.4 — predating the rc/stable floor of 0.1.2-rc.1 this plugin now targets) are migrated at the profile layer: the bundle patch replaces the stock `session-projection-cache` row with a wrapper (`@aiwayds/dsh-tui-pi/projcache`) that backfills the records while its module loads — strictly before the stock plugin could open the domain and crash the boot — so every `dsh --profile tui` start is covered, launcher or not. Migration is idempotent, backs up every rewritten file next to the original, and never blocks startup. The `dsh-tui-pi` launcher additionally runs the same migration as a CLI preflight before `exec dsh`.
 
 Everything that used to need manual patching — the canvas background, the `@deepseek-ai` module closure, the compaction backend — now happens automatically. Upgrade an existing profile after a release:
 

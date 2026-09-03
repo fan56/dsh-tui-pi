@@ -4,7 +4,7 @@
 
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的 pi 风格终端 UI——一套把 dsh 变成 pi 式编码代理体验的插件套件：pi-tui 的外观与交互、dsh 斜杠命令、GitHub 明/暗主题和 powerline 状态栏。
 
-**要求 dsh >= 0.1.2-alpha.4** —— 本插件跟随滚动的 `@alpha` 宿主线（当前为 **0.1.2-alpha.5**）；不支持 0.1.1-rc 稳定线（见 [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)）。宿主低于下限时，启动守卫会打一行 warning 并干净退出（可用 `DSH_TUI_SKIP_HOST_CHECK=1` 跳过）。待 dsh 发布越过 alpha 期的正式稳定版后，支持策略将调整为只支持稳定版。
+**要求 dsh >= 0.1.2-rc.1** —— 本插件只跟随 dsh RC/stable 线（CI 与发版在运行时解析 latest/next 中更新的 dist-tag）。**不再支持 alpha 线。**宿主低于下限时，启动守卫会打一行 warning 并干净退出（可用 `DSH_TUI_SKIP_HOST_CHECK=1` 跳过）。alpha 单目标决策的历史见 [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)（已被取代）。
 
 https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 

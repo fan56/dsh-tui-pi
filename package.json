@@ -58,18 +58,18 @@
     "smoke": "node scripts/smoke-boot.mjs"
   },
   "dependencies": {
-    "@aiwayds/dsh-ask-router": "^0.3.0",
-    "@aiwayds/dsh-dcp": "^0.6.0",
-    "@aiwayds/dsh-llm-proxy": "^0.3.0",
-    "@aiwayds/dsh-llm-stats": "^0.4.0",
-    "@aiwayds/dsh-mcp-adapter": "^0.3.0",
-    "@aiwayds/dsh-model-sync": "^0.2.1",
-    "@aiwayds/dsh-subagent-registry": "^0.7.0",
-    "@aiwayds/dsh-web-search-anysearch": "^0.2.0",
+    "@aiwayds/dsh-ask-router": "^0.4.0",
+    "@aiwayds/dsh-dcp": "^0.7.0",
+    "@aiwayds/dsh-llm-proxy": "^0.4.0",
+    "@aiwayds/dsh-llm-stats": "^0.5.0",
+    "@aiwayds/dsh-mcp-adapter": "^0.4.0",
+    "@aiwayds/dsh-model-sync": "^0.3.0",
+    "@aiwayds/dsh-subagent-registry": "^0.8.0",
+    "@aiwayds/dsh-web-search-anysearch": "^0.3.0",
     "@earendil-works/pi-tui": "0.84.4"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-user-questions": ">=0.1.2-alpha.4"
+    "@deepseek-ai/dsh-user-questions": ">=0.1.2-rc.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-user-questions": {
@@ -78,7 +78,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "@deepseek-ai/dsh-user-questions": "0.1.2-alpha.5",
+    "@deepseek-ai/dsh-user-questions": "0.1.2-rc.1",
     "typescript": "~5.9.0"
   },
   "dsh": {

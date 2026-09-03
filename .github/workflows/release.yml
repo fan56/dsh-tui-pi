@@ -48,14 +48,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install dsh CLI (rolling @alpha dist-tag, never hand-pinned)
-        # The plugin targets the 0.1.2-alpha line; `latest` still points at
-        # the rc line it dropped, so the release gate installs the rolling
-        # @alpha closure — the same host line a fresh install of this plugin
-        # line will run on. ci.yml adds a daily schedule so closure breakage
-        # surfaces before a release.
+      - name: Install dsh CLI (rolling rc/stable line — newest of latest/next, never alpha)
+        # Policy (2026-09-03): the alpha line is retired. The plugin targets
+        # the dsh rc/stable line; the release gate installs the newest of the
+        # `latest` (stable) and `next` (rc) dist-tags at runtime — the same
+        # host line a fresh install of this plugin line will run on. ci.yml
+        # adds a daily schedule so closure breakage surfaces before a release.
         run: |
-          DSH_VERSION="$(npm view @deepseek-ai/dsh@alpha version)"
+          # Policy (2026-09-03): the alpha line is retired for CI. Resolve the
+          # newest of the `latest` (stable) and `next` (rc) dist-tags at
+          # runtime, never hand-pinned — when a stable 0.1.2+ lands on
+          # `latest` it wins over the rc by plain semver compare.
+          STABLE="$(npm view @deepseek-ai/dsh@latest version)"
+          RC="$(npm view @deepseek-ai/dsh@next version 2>/dev/null || true)"
+          DSH_VERSION="$STABLE"
+          if [ -n "$RC" ] && [ "$(printf '%s\n' "$STABLE" "$RC" | sort -V | tail -1)" = "$RC" ]; then
+            DSH_VERSION="$RC"
+          fi
           echo "dsh closure: ${DSH_VERSION}"
           npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" --no-audit --no-fund
 

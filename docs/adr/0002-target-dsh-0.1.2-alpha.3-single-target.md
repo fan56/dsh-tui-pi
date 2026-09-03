@@ -1,5 +1,7 @@
 # 0002 — dsh 宿主线全面转进 0.1.2-alpha.3，放弃 rc.2 兼容
 
+> **Superseded (2026-09-03)**: the plugin targets the dsh 0.1.2-rc.1 rc/stable line; the alpha single-target decision is retired.
+
 本插件自 1.2.x 起同时支持两条宿主线：rc（`0.1.1-rc.2`，npm `latest` tag）与
 alpha（`0.1.2-alpha.1+`），以 ask-user 的 registerProvider 探测、preset root
 的 rc 目录探测、metadata.yml 旧版回退等「双路径 + feature-detect」维持兼容。

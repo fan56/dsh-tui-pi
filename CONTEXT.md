@@ -12,17 +12,19 @@ live in ARCHITECTURE.md / HANDOFF.md.
   `@deepseek-ai/*` import resolves through symlink to that one closure
   instance, so tsc sees exactly the type graph the host runs)
 - **Floor**: peer 声明中本插件要求的宿主最低版本，`>=` 语义——不精确钉，
-  随宿主滚动线向上（当前 `dsh-user-questions >= 0.1.2-alpha.4`）
+  随宿主滚动线向上（当前 `dsh-user-questions >= 0.1.2-rc.1`）
   (the minimum host version a peer declaration requires, `>=` semantics —
   deliberately not an exact pin; it only ratchets up along the host's
-  rolling line, currently `dsh-user-questions >= 0.1.2-alpha.4`)
+  rolling line, currently `dsh-user-questions >= 0.1.2-rc.1`)
 - **Era**: rc/alpha 双路径兼容模式——插件同时支撑两条宿主形状分支、运行时
-  feature-detect 选路。**已废弃**：2026-09-01 起 single-target，全仓只保留
-  alpha（`0.1.2-alpha.3+`）路径，双路径分支与其测试一并删除（ADR 0002）
+  feature-detect 选路。**已废弃**：2026-09-01 起 single-target，2026-09-03
+  起目标线为 rc/stable（`0.1.2-rc.1+`），alpha 路径退役，双路径分支与其测试
+  一并删除（ADR 0002，已被 rc/stable 目标取代）
   (the rc/alpha dual-path compatibility mode — supporting two host shapes
   with runtime feature-detection. **Deprecated**: single-target since
-  2026-09-01; only the alpha (`0.1.2-alpha.3+`) path remains and the dual
-  branches plus their tests are gone, see ADR 0002)
+  2026-09-01, retargeted to the rc/stable line (`0.1.2-rc.1+`) on
+  2026-09-03 — the alpha path is retired and the dual branches plus their
+  tests are gone, see ADR 0002)
 - **Favorite**: 用户标记为收藏的模型，以 provider/id 标识，持久意图，置顶显示
   (a model the user starred; identified by its provider/id composite key,
   persisted, pinned to the top of the picker)

@@ -14,11 +14,12 @@ ARG NODE_VERSION=22.23.2
 # On a clean network: --build-arg NODE_DIST_BASE=https://nodejs.org/dist
 ARG NODE_DIST_BASE=https://npmmirror.com/mirrors/node
 ARG PNPM_VERSION=10.33.0
-# DSH_VERSION is a rolling dist-tag, aligned with the "never hand-pinned"
-# policy of ci.yml / release.yml and always clearing the plugin's peer
-# floor (>= 0.1.2-alpha.4). Pin an exact version for a deterministic
-# rebuild with --build-arg DSH_VERSION=<version>.
-ARG DSH_VERSION=alpha
+# DSH_VERSION is resolved by e2e/run-e2e.sh with the same "newest of the
+# latest/next dist-tags" rule as ci.yml / release.yml (the alpha tag is
+# retired) and always clears the plugin's peer floor (>= 0.1.2-rc.1). Pin
+# an exact version for a deterministic rebuild with
+# --build-arg DSH_VERSION=<version>.
+ARG DSH_VERSION=
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TERM=xterm-256color
@@ -44,9 +45,11 @@ RUN case "$(uname -m)" in \
 # build: scripts/link-dsh-closure.mjs symlinks the @deepseek-ai/* closure
 # from the global dsh install into node_modules so tsc can resolve the
 # types (they are not on the public registry in a usable form).
-RUN npm install -g --no-fund --no-audit \
+RUN test -n "${DSH_VERSION}" \
+      || (echo "DSH_VERSION build arg is required (e.g. --build-arg DSH_VERSION=0.1.2-rc.1)" >&2; exit 1) \
+ && npm install -g --no-fund --no-audit \
       pnpm@${PNPM_VERSION} \
-      @deepseek-ai/dsh@${DSH_VERSION} \
+      "@deepseek-ai/dsh@${DSH_VERSION}" \
  && dsh --version || true
 
 WORKDIR /app

@@ -2,14 +2,15 @@
 # to main, every pull request, and a daily schedule.
 #
 # The dsh CLI version is resolved at runtime from the npm registry's rolling
-# `alpha` dist-tag — never hand-pinned (the rc lesson: `latest` still points
-# at the rc line the plugin dropped with 0.1.2-alpha.3, so installing
-# `latest` would typecheck and boot against a host the plugin no longer
-# supports). The daily schedule re-tests against whatever the closure has
-# become since the last push, so a new dsh alpha that breaks the plugin
-# surfaces as a red run within a day instead of at the next release. The
-# smoke boots a scratch profile with the plugin mounted via the real dsh CLI
-# (scripts/smoke-boot.mjs) so "loads under real cordis" is a gate, not a hope.
+# rc/stable line — the newest of the `latest` (stable) and `next` (rc)
+# dist-tags, never hand-pinned and never the retired `alpha` tag (policy
+# 2026-09-03). When a stable 0.1.2+ lands on `latest` it wins over the rc by
+# plain semver compare. The daily schedule re-tests against whatever the
+# closure has become since the last push, so a new dsh release that breaks
+# the plugin surfaces as a red run within a day instead of at the next
+# release. The smoke boots a scratch profile with the plugin mounted via the
+# real dsh CLI (scripts/smoke-boot.mjs) so "loads under real cordis" is a
+# gate, not a hope.
 name: CI
 
 on:
@@ -54,9 +55,18 @@ jobs:
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Install dsh CLI (rolling @alpha dist-tag, never hand-pinned)
+      - name: Install dsh CLI (rolling rc/stable line — newest of latest/next, never alpha)
         run: |
-          DSH_VERSION="$(npm view @deepseek-ai/dsh@alpha version)"
+          # Policy (2026-09-03): the alpha line is retired for CI. Resolve the
+          # newest of the `latest` (stable) and `next` (rc) dist-tags at
+          # runtime, never hand-pinned — when a stable 0.1.2+ lands on
+          # `latest` it wins over the rc by plain semver compare.
+          STABLE="$(npm view @deepseek-ai/dsh@latest version)"
+          RC="$(npm view @deepseek-ai/dsh@next version 2>/dev/null || true)"
+          DSH_VERSION="$STABLE"
+          if [ -n "$RC" ] && [ "$(printf '%s\n' "$STABLE" "$RC" | sort -V | tail -1)" = "$RC" ]; then
+            DSH_VERSION="$RC"
+          fi
           echo "dsh closure: ${DSH_VERSION}"
           npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" --no-audit --no-fund
 

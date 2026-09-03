@@ -135,11 +135,12 @@ export const inject = ['agents', 'commands', 'userQuestions', 'systemPrompt']
 
 export function apply(ctx: Context): void {
   // Host floor guard, before any side effect: a host older than the peer
-  // floor would only crash deeper in boot with raw TypeErrors (the rc-era
-  // and alpha-era host APIs diverged), so warn in plain language and exit
-  // cleanly instead. Exit code 1 (the boot did not happen) but no stack
-  // trace. The env opt-out exists for unit tests that drive apply() with a
-  // fake ctx; an unresolvable closure fails open inside checkHostSupport.
+  // floor would only crash deeper in boot with raw TypeErrors (the
+  // alpha-era and rc/stable-era host APIs diverged), so warn in plain
+  // language and exit cleanly instead. Exit code 1 (the boot did not
+  // happen) but no stack trace. The env opt-out exists for unit tests that
+  // drive apply() with a fake ctx; an unresolvable closure fails open
+  // inside checkHostSupport.
   if (process.env.DSH_TUI_SKIP_HOST_CHECK !== '1') {
     const check = checkHostSupport()
     if (!check.ok) {
