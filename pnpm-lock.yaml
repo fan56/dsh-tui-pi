@@ -27,8 +27,8 @@ importers:
         specifier: ^0.2.1
         version: 0.2.1(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-settings@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-brand@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/dsh-invariants@0.1.2-alpha.3(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/dsh-session@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-scope@0.1.2-alpha.3(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.2-alpha.3(@deepseek-ai/cordis@4.0.2))))(@deepseek-ai/schemastery@3.18.2))(@deepseek-ai/schemastery@3.18.2)
       '@aiwayds/dsh-subagent-registry':
-        specifier: ^0.6.0
-        version: 0.6.0(@deepseek-ai/dsh-agent@0.1.2-alpha.4(bc298e82b8f50ef1d80c3b29500f2575))(@deepseek-ai/dsh-llm@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/schemastery@3.18.2)
+        specifier: ^0.7.0
+        version: 0.7.0(@deepseek-ai/dsh-agent@0.1.2-alpha.4(bc298e82b8f50ef1d80c3b29500f2575))(@deepseek-ai/dsh-llm@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/schemastery@3.18.2)
       '@aiwayds/dsh-web-search-anysearch':
         specifier: ^0.2.0
         version: 0.2.0(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-credentials@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.2-alpha.3(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-launch-environment@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/dsh-web@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-llm@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/schemastery@3.18.2)
@@ -144,8 +144,8 @@ packages:
       '@deepseek-ai/schemastery':
         optional: true
 
-  '@aiwayds/dsh-subagent-registry@0.6.0':
-    resolution: {integrity: sha512-BsY8Ml5/jBXzlsbcWZsO/L52iSpIAWuOFbu1lnjy7agS8thcmUtC0sFhxJTk3GgqgRD0n3KEz1Oc8o152YVMTA==}
+  '@aiwayds/dsh-subagent-registry@0.7.0':
+    resolution: {integrity: sha512-lzNUVxKBkmCmERvqMUYT3JXCpRNjzylNvOkFOQdHAswjlENHem79nS3QkYuvtYloE6dPINMD3tmYZTQjR394fg==}
     engines: {node: '>=22.19.0'}
     peerDependencies:
       '@deepseek-ai/dsh-agent': '>=0.1.2-alpha.4'
@@ -368,7 +368,7 @@ snapshots:
       '@deepseek-ai/dsh-settings': 0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-brand@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/dsh-invariants@0.1.2-alpha.3(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/dsh-session@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-scope@0.1.2-alpha.3(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.2-alpha.3(@deepseek-ai/cordis@4.0.2))))(@deepseek-ai/schemastery@3.18.2)
       '@deepseek-ai/schemastery': 3.18.2
 
-  '@aiwayds/dsh-subagent-registry@0.6.0(@deepseek-ai/dsh-agent@0.1.2-alpha.4(bc298e82b8f50ef1d80c3b29500f2575))(@deepseek-ai/dsh-llm@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/schemastery@3.18.2)':
+  '@aiwayds/dsh-subagent-registry@0.7.0(@deepseek-ai/dsh-agent@0.1.2-alpha.4(bc298e82b8f50ef1d80c3b29500f2575))(@deepseek-ai/dsh-llm@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/schemastery@3.18.2)':
     optionalDependencies:
       '@deepseek-ai/dsh-agent': 0.1.2-alpha.4(bc298e82b8f50ef1d80c3b29500f2575)
       '@deepseek-ai/dsh-llm': 0.1.2-alpha.4(@deepseek-ai/cordis@4.0.2)
