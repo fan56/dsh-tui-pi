@@ -6,8 +6,13 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-03
+
 ### Added
 - **e2e: two scenarios close the biggest default-feature gaps in the podman suite** — `69-btw` drives `/btw` end-to-end offline over the 68 mock route (idle paths: bare `/btw` usage text, the idle-rejection notice, the `--model` argument error; busy paths under a ~42s mock main turn: the framed overlay with the side model label, `Thinking…` → streamed answer, `btw queued (position 1)` + the overlay's `· 1 queued` status, the `Not kept in the session` badge, the promote-under-overlay notice, the live reopen via bare `/btw`, the screen-level not-persisted proof after Esc, and the Last-btw review); `74-profiles` covers the 2.2.0 model-profiles surface with zero model traffic (`/profile-switch` seeded roster → apply + `.dsh-profile` binding → the `● work` marker → `p` unpin; `/agents` scope-aware edits land in `model-profiles.json` under the pin with the frontmatter untouched, and in the agent file itself without it). `lib/mock-llm.mjs` gains two body-keyed phases — `E2E_BTW_Q` (checked first: the side call's snapshot embeds the main prompt) and `E2E_BTW_MAIN`'s slow tick stream.
+
+### Changed
+- **dependency floor: `@aiwayds/dsh-subagent-registry ^0.7.0`** — 0.7.0 adds continuable background dispatch (`use_agent` gains `background: true`, returning a durable subagent id immediately) and the `ask_agent` follow-up tool (steer a running child or get the reply from a finished one; `askToolName` config, default `ask_agent`); pnpm-lock converged to the published 0.7.0 and the dev type closure moved to dsh 0.1.2-alpha.5 (the peer floor stays `>=0.1.2-alpha.4`)
 
 ## [2.2.0] - 2026-09-02
 
