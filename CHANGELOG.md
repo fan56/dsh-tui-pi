@@ -4,7 +4,10 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.4.0] - 2026-09-03
+
+### Added
+- **startup host-version guard** — `apply()` resolves the `@deepseek-ai` closure version the plugin actually loads against and compares it against the peer floor (`0.1.2-alpha.4`, kept in lockstep with the peerDependencies range); an older host (the shipped 0.1.1-rc.2 stable line included) gets a one-line warning with the found version and the `npm install -g @deepseek-ai/dsh@alpha` upgrade path, then a clean exit (code 1, no stack trace) instead of raw TypeErrors deeper in boot. An unresolvable or unparsable closure version fails open with a warning (the guard is a human-readable exit, not install validation); `DSH_TUI_SKIP_HOST_CHECK=1` opts out. New `src/host-version.ts` (parse/compare on the semver subset dsh ships) + `test/host-version.test.mjs` 7 cases.
 
 ## [2.3.0] - 2026-09-03
 
