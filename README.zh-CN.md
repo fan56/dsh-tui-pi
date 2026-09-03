@@ -60,10 +60,10 @@ node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # 先预览执行计划
 - [@aiwayds/dsh-subagent-registry](https://github.com/fan56/dsh-subagent-registry) —— 把 `~/.dsh/agents/*.md` 注册成 `use_agent` 子代理。
 - [@aiwayds/dsh-web-search-anysearch](https://github.com/fan56/dsh-web-search-anysearch) —— AnySearch web 搜索 provider。
 
-**推荐安装** —— [@aiwayds/dsh-llmwiki-memory](https://github.com/fan56/dsh-llmwiki-memory)，dsh 的 OKF topic 记忆插件（零 LLM 热路径注入 + 本地 git 可追溯 bundle）：
+**推荐安装** —— [@aiwayds/dsh-topics-memory](https://github.com/fan56/dsh-topics-memory)，dsh 的 OKF topic 记忆插件（零 LLM 热路径注入 + 本地 git 可追溯 bundle；原名 dsh-llmwiki-memory）：
 
 ```sh
-dsh plugin --profile tui add @aiwayds/dsh-llmwiki-memory
+dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 ```
 
 **可选** —— [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) —— 用手机上的飞书/Lark 驱动同一个 dsh session（[演示](docs/features/feishu-demo.md)）。

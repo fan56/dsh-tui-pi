@@ -62,10 +62,10 @@ node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # preview the plan first
 - [@aiwayds/dsh-subagent-registry](https://github.com/fan56/dsh-subagent-registry) — registers `~/.dsh/agents/*.md` as `use_agent` subagents.
 - [@aiwayds/dsh-web-search-anysearch](https://github.com/fan56/dsh-web-search-anysearch) — the AnySearch web search provider.
 
-**Recommended install** — [@aiwayds/dsh-llmwiki-memory](https://github.com/fan56/dsh-llmwiki-memory), OKF topic memory for dsh (zero-LLM hot-path injection + a local git-tracked bundle):
+**Recommended install** — [@aiwayds/dsh-topics-memory](https://github.com/fan56/dsh-topics-memory), OKF topic memory for dsh (zero-LLM hot-path injection + a local git-tracked bundle; formerly dsh-llmwiki-memory):
 
 ```sh
-dsh plugin --profile tui add @aiwayds/dsh-llmwiki-memory
+dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 ```
 
 **Optional** — [@aiwayds/dsh-feishu](https://github.com/fan56/dsh-feishu) — drives the same dsh session from Feishu/Lark on your phone ([demo](docs/features/feishu-demo.md)).
