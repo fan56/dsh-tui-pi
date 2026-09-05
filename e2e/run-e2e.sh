@@ -16,12 +16,17 @@ IMAGE="${IMAGE:-localhost/dsh-tui-pi-e2e:latest}"
 # Same resolution rule as ci.yml / release.yml: newest of the `latest`
 # (stable) and `next` (rc) dist-tags, never hand-pinned and never the
 # retired `alpha` tag.
-NPM_VIEW_REG=()
+# bash 3.2 (macOS) aborts on `"${arr[@]}"` for an empty array under `set -u`
+# (and `arr=()` leaves the variable unset), so carry the flag as a plain
+# string — value never contains spaces.
+NPM_VIEW_REG=""
 if ! npm view @deepseek-ai/dsh@latest version >/dev/null 2>&1; then
-  NPM_VIEW_REG=(--registry=https://registry.npmjs.org)
+  NPM_VIEW_REG="--registry=https://registry.npmjs.org"
 fi
-STABLE="$(npm view @deepseek-ai/dsh@latest version "${NPM_VIEW_REG[@]}")"
-RC="$(npm view @deepseek-ai/dsh@next version "${NPM_VIEW_REG[@]}" 2>/dev/null || true)"
+# shellcheck disable=SC2086
+STABLE="$(npm view @deepseek-ai/dsh@latest version $NPM_VIEW_REG)"
+# shellcheck disable=SC2086
+RC="$(npm view @deepseek-ai/dsh@next version $NPM_VIEW_REG 2>/dev/null || true)"
 DSH_VERSION="$STABLE"
 if [ -n "$RC" ] && [ "$(printf '%s\n' "$STABLE" "$RC" | sort -V | tail -1)" = "$RC" ]; then
   DSH_VERSION="$RC"
