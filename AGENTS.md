@@ -2,7 +2,8 @@
 
 For agents doing work in this repository. End-user docs live in
 [README.md](README.md); the full design in [ARCHITECTURE.md](ARCHITECTURE.md);
-session history and current state in [HANDOFF.md](HANDOFF.md).
+shared vocabulary in [CONTEXT.md](CONTEXT.md); decision records under
+[docs/adr/](docs/adr/).
 
 ## Architecture at a glance
 
@@ -256,12 +257,12 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` runs **1207 tests** across 69 files (verified by
+- `pnpm test` runs **1211 tests** across 69 files (verified by
   `node --test test/*.mjs`; per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
-  `lib/` (`node --test`, pretest builds). Update the totals in
-  HANDOFF.md. The suite is fully green.
+  `lib/` (`node --test`, pretest builds). Update the totals and the
+  per-file list here. The suite is fully green.
   - ask-user 119 + btw 45 + retention 39 + subagent-viewer 37 + skills 36 +
   - live 35 + sessions 35 + keymap 31 + model-profiles 31 + session-reconcile 30 +
   - usage 26 + subagent-policy 26 + pending-echo 26 + clipboard 26 + login 25 +
@@ -270,23 +271,22 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
     welcome 18 + provider-catalog 17 + hotkeys 16 + theme-canvas 16 +
     preset 15 + agent-runtime 16 +
   - text 15 + theme-settings 15 + agent-manager 14 + history 13 +
-    history-viewer 30 + image-blocks 12 + custom-provider 12 +
+    history-viewer 33 + image-blocks 12 + custom-provider 12 +
     theme-switch 11 + frame 11 + preflight-projcache 11 + footer-hints 10 +
-  - history-fork 8 + preset-dialog 11 + history-turns 9 + writer-lock 9 + permission 9 + commands 9 + append-system 9 +
+  - history-fork 9 + preset-dialog 11 + history-turns 9 + writer-lock 9 + permission 9 + commands 9 + append-system 9 +
     session-ch-cache 8 + notice-bridge 8 + font-detect 8 + dev-upgrade 8 +
     repair-session-log 7 + remote-tail 7 + quotes 7 + icons 7 + host-version 7 +
   - tokens 6 + reload 6 + queue-panel 6 + install-font 6 + selection-copy 5 +
     markdown-latex 5 + mouse-mode 5 + projcache 5 + transcript-search 4 +
     profile-apply 4 + schema-model 3 + plugin-inject 2.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
-  `dsh --profile tui`, drive keys, `capture-pane` for assertions (see HANDOFF
-  "验证命令速查"). Keep the 24-row terminal case in the matrix — overlay
-  maxHeights are tuned for it.
+  `dsh --profile tui`, drive keys, `capture-pane` for assertions (scenarios
+  under `e2e/scenarios/`). Keep the 24-row terminal case in the matrix —
+  overlay maxHeights are tuned for it.
 - Review cycle ("老法师"): findings are labeled by class — A (architecture /
   UX / focus), B (behavioral bugs), C (cosmetic). Fixes land with regression
-  tests where the finding is testable (see the O/P/Q/R rounds in HANDOFF).
-  Do not start a new feature before the review round on the current one is
-  closed.
+  tests where the finding is testable. Do not start a new feature before the
+  review round on the current one is closed.
 
 ## Config safety — read before any test or e2e
 

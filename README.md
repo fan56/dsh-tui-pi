@@ -115,7 +115,7 @@ Other knobs: `dsh-tui.panelHeight` (think/tool panel height), `dsh-tui.iconSet` 
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (pretest builds; 1,100+ tests across 60+ files — see HANDOFF.md for the current baseline)
+pnpm test     # unit tests, node --test against lib/ (pretest builds; 1,100+ tests across 60+ files — the current baseline lives in AGENTS.md)
 ```
 
 `pi-tui` runs pristine from npm — no patches, no fork. See [AGENTS.md](AGENTS.md) for the iron rules and quality gates.
@@ -126,7 +126,6 @@ pnpm test     # unit tests, node --test against lib/ (pretest builds; 1,100+ tes
 
 - [docs/features/](docs/features/) — one doc per feature, with demo videos.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — full design: process model, layers, data flow.
-- [HANDOFF.md](HANDOFF.md) — session history and current state (Chinese).
 - [CHANGELOG.md](CHANGELOG.md) — release history.
 - [AGENTS.md](AGENTS.md) — working conventions and quality gates for contributors.
 - [docs/](docs/) — design notes (steer/follow-up flow, showcase drafts, …).

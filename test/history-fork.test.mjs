@@ -10,7 +10,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { lightTheme } from '../lib/theme/index.js'
-import { turnSeedSlice } from '../lib/history-turns.js'
+import { groupHistoryTurns, turnSeedSlice } from '../lib/history-turns.js'
 import {
   forkAtTurnBody,
   forkAtTurnOptions,
@@ -54,7 +54,8 @@ function sampleEvents() {
 // ------------------------------------------------------------ turnSeedSlice --
 
 test('turnSeedSlice: the first turn slices through its turn/end (inclusive)', () => {
-  const seed = turnSeedSlice(sampleEvents(), 0)
+  const [turn0] = groupHistoryTurns(sampleEvents())
+  const seed = turnSeedSlice(sampleEvents(), turn0)
   assert.equal(seed.length, 3)
   assert.equal(seed[0].seq, 0)
   assert.equal(seed[2].type, 'turn/end')
@@ -62,7 +63,8 @@ test('turnSeedSlice: the first turn slices through its turn/end (inclusive)', ()
 })
 
 test('turnSeedSlice: a middle turn includes it and excludes everything after', () => {
-  const seed = turnSeedSlice(sampleEvents(), 1)
+  const turns = groupHistoryTurns(sampleEvents())
+  const seed = turnSeedSlice(sampleEvents(), turns[1])
   assert.equal(seed.length, 7)
   assert.equal(seed[6].type, 'turn/end')
   assert.equal(seed[6].data.turn, 1)
@@ -72,17 +74,39 @@ test('turnSeedSlice: a middle turn includes it and excludes everything after', (
 })
 
 test('turnSeedSlice: the last completed turn forks the whole completed log', () => {
-  const seed = turnSeedSlice(sampleEvents(), 2)
+  const turns = groupHistoryTurns(sampleEvents())
+  const seed = turnSeedSlice(sampleEvents(), turns[2])
   assert.equal(seed.length, 10)
   assert.equal(seed[9].type, 'turn/end')
   // The in-flight turn 3 (its start + user message) stays out.
   assert.ok(!seed.some(event => event.data.turn === 3))
 })
 
-test('turnSeedSlice: unknown or unclosed turns and empty logs yield an empty seed', () => {
-  assert.deepEqual(turnSeedSlice(sampleEvents(), 3), [], 'the in-flight turn is not forkable')
-  assert.deepEqual(turnSeedSlice(sampleEvents(), 99), [])
-  assert.deepEqual(turnSeedSlice([], 0), [])
+test('turnSeedSlice: duplicate turn numbers slice at the SELECTED fold, not the first match', () => {
+  // A damaged log with the same turn id twice: picking the second must cut
+  // at the SECOND turn/end — matching by number alone would truncate early.
+  const events = [
+    event('turn/start', 0, { turn: 5 }),
+    event('user/message', 1, { source: { kind: 'user' }, content: [{ type: 'text', text: 'a' }] }),
+    event('turn/end', 2, { turn: 5, reason: { kind: 'completed' } }),
+    event('turn/start', 3, { turn: 5 }),
+    event('user/message', 4, { source: { kind: 'user' }, content: [{ type: 'text', text: 'b' }] }),
+    event('turn/end', 5, { turn: 5, reason: { kind: 'completed' } }),
+  ]
+  const folds = groupHistoryTurns(events)
+  assert.equal(folds.length, 2)
+  const seed = turnSeedSlice(events, folds[1])
+  assert.equal(seed.length, 6, 'cut at the second fold\'s end, not the first')
+  assert.equal(seed[5].seq, 5)
+  assert.equal(turnSeedSlice(events, folds[0]).length, 3)
+})
+
+test('turnSeedSlice: clamps to the log length', () => {
+  const [turn] = groupHistoryTurns([
+    event('turn/start', 0, { turn: 0 }),
+    event('turn/end', 0, { turn: 0, reason: { kind: 'completed' } }),
+  ])
+  assert.deepEqual(turnSeedSlice([], turn), [])
 })
 
 // ------------------------------------------------------------------- dialog --

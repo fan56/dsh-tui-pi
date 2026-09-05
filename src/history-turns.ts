@@ -214,15 +214,16 @@ export function toolCallSummary(names: readonly string[]): string {
 /**
  * The fork-at-turn seed: the session events from seq 0 through the selected
  * turn's `turn/end` (inclusive) — the state as that turn finished; later
- * turns stay out of the new session. `seq === array index` holds for live
- * snapshots and persisted `inspect` events alike (restore validates the same
- * contiguity), so a plain slice is exact. Returns [] when the turn is
- * unknown or never closed — only completed turns are forkable. The same
- * balanced-prefix shape the host's fork subagent backend seeds with.
+ * turns stay out of the new session. The boundary comes from the
+ * HistoryTurn's OWN `seqEnd` (captured while folding) — never from a
+ * re-match on the turn NUMBER, which would silently cut at an earlier
+ * same-numbered turn in a damaged log with duplicate turn ids.
+ * `seq === array index` holds for live snapshots and persisted `inspect`
+ * events alike (restore validates the same contiguity), so a plain slice is
+ * exact. Only completed turns are forkable (a fold never produces an open
+ * one). The same balanced-prefix shape the host's fork subagent backend
+ * seeds with.
  */
-export function turnSeedSlice(events: readonly SessionEvent[], turn: number): readonly SessionEvent[] {
-  for (const grouped of groupHistoryTurns(events)) {
-    if (grouped.turn === turn) return events.slice(0, grouped.seqEnd + 1)
-  }
-  return []
+export function turnSeedSlice(events: readonly SessionEvent[], turn: HistoryTurn): readonly SessionEvent[] {
+  return events.slice(0, Math.min(turn.seqEnd + 1, events.length))
 }

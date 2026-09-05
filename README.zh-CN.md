@@ -112,7 +112,7 @@ dsh-tui:
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # 输出 lib/
-pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；1100+ 测试、60+ 文件——当前基数见 HANDOFF.md）
+pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；1100+ 测试、60+ 文件——当前基数见 AGENTS.md）
 ```
 
 `pi-tui` 从 npm 原样运行——无补丁、无 fork。铁律与质量门禁见 [AGENTS.md](AGENTS.md)。
@@ -123,7 +123,6 @@ pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；11
 
 - [docs/features/](docs/features/) —— 每个功能一篇独立文档，附演示视频（英文）。
 - [ARCHITECTURE.md](ARCHITECTURE.md) —— 完整设计：进程模型、分层、数据流。
-- [HANDOFF.md](HANDOFF.md) —— 会话历史与当前状态（中文）。
 - [CHANGELOG.md](CHANGELOG.md) —— 发布历史。
 - [AGENTS.md](AGENTS.md) —— 贡献者的工作约定与质量门禁。
 - [docs/](docs/) —— 设计笔记（steer/follow-up 流程、showcase 草稿……）。

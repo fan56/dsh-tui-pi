@@ -15,6 +15,7 @@ import os from 'node:os'
 import {
   buildTurnDetailContainer,
   DUAL_PANE_MIN_COLUMNS,
+  MAX_DETAIL_LINES,
   filterSessionPickRows,
   historyLoadErrorMessage,
   historyRows,
@@ -430,6 +431,7 @@ test('fixed geometry: every render is exactly the budget; resize re-derives it',
     long.panel.handleInput('/')
     long.panel.handleInput('l')
     assert.equal(long.panel.render(120).length, budget)
+    long.panel.handleInput('\x1b') // clear the (engaged) filter
     // Resize: the budget and the list re-derive for the new terminal; the
     // window follows the new budget and the list footer survives.
     process.stdout.rows = 18
@@ -439,7 +441,6 @@ test('fixed geometry: every render is exactly the budget; resize re-derives it',
     assert.equal(lines.length, shrunk)
     assert.ok(lines.map(stripAnsi).join('\n').includes('navigate · Enter/c copy'))
     // Scrolling still works at the new size…
-    long.panel.handleInput('\x1b')
     long.panel.handleInput('\x1b[C')
     for (let i = 0; i < 200; i++) long.panel.handleInput('\x1b[B')
     const bottom = detailWindow(long.panel, 120)
@@ -764,4 +765,60 @@ test('`f` inside the filter input types into the query and never opens the dialo
   const text = panel.render(120).map(stripAnsi).join('\n')
   assert.ok(text.includes('Filter: f'), text)
   assert.equal(state.closed, 0)
+})
+
+// --------------------------------------------------- detail line budget ----
+
+test('detail content: an oversized reply truncates at MAX_DETAIL_LINES with a /resume marker', () => {
+  const longReply = Array.from({ length: MAX_DETAIL_LINES + 100 }, (_, i) => `reply line ${i}`).join('\n')
+  const turns = groupHistoryTurns([
+    { type: 'turn/start', seq: 0, time: 0, data: { turn: 0 } },
+    { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'huge reply turn' }] } },
+    { type: 'assistant/message', seq: 2, time: 2, data: { turn: 0, step: 0, message: { role: 'assistant', content: [{ type: 'text', text: longReply }] } } },
+    { type: 'turn/end', seq: 3, time: 3, data: { turn: 0, reason: { kind: 'completed' } } },
+  ])
+  const container = buildTurnDetailContainer(turns[0], lightTheme, 'aaaaaaaa-1111')
+  const lines = container.render(90).map(stripAnsi)
+  const text = lines.join('\n')
+  // The budget holds and the marker names the escape hatch.
+  assert.ok(lines.length <= MAX_DETAIL_LINES + 50, `rendered lines stay bounded (${lines.length})`)
+  assert.ok(text.includes(`… 100 more lines truncated — /resume aaaaaaaa for the full turn`), text)
+  // The truncated tail is really gone.
+  assert.ok(!text.includes('reply line 4099'), text)
+  assert.ok(text.includes('reply line 0'), text)
+})
+
+test('detail content: a reply within the budget is never truncated', () => {
+  const turns = groupHistoryTurns(sampleEvents())
+  for (const turn of turns) {
+    const text = buildTurnDetailContainer(turn, lightTheme).render(90).map(stripAnsi).join('\n')
+    assert.ok(!text.includes('more lines truncated'), 'within-budget turns render whole')
+  }
+})
+
+// ----------------------------------------------- filter survives rebuilds --
+
+test('an ENGAGED filter survives a resize rebuild (still typing, query intact)', () => {
+  const prevRows = process.stdout.rows
+  const prevColumns = process.stdout.columns
+  process.stdout.rows = 30
+  process.stdout.columns = 120
+  try {
+    const { panel } = makePanel()
+    panel.handleInput('/') // engage the filter input
+    panel.handleInput('w')
+    panel.handleInput('e')
+    let view = panel.render(120).map(stripAnsi).join('\n')
+    assert.ok(view.includes('Filter: we_'), 'engaged input shows the live query')
+    assert.ok(view.includes('Enter apply · Esc clear filter'), 'input-mode footer is up')
+    // Resize: the budget re-derives and the list panel is rebuilt…
+    process.stdout.rows = 44
+    view = panel.render(120).map(stripAnsi).join('\n')
+    // …and the filter input is STILL engaged, query intact.
+    assert.ok(view.includes('Filter: we_'), 'engaged state survives the rebuild')
+    assert.ok(view.includes('Enter apply · Esc clear filter'), 'input-mode footer survives')
+  } finally {
+    process.stdout.rows = prevRows
+    process.stdout.columns = prevColumns
+  }
 })

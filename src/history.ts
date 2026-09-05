@@ -108,6 +108,19 @@ export const LEFT_PANE_MIN_COLUMNS = 30
 /** Rendered-line cap of one user bubble in the detail pane (spec: truncated). */
 export const MAX_USER_BUBBLE_LINES = 40
 
+/**
+ * Source-line budget for the ASSISTANT Markdown of one turn's detail pane
+ * (user bubbles carry their own per-bubble cap; the tool summary and end
+ * notice are one-liners). A pathological multi-thousand-line reply parses
+ * once at rebuild (an explicit action) and would otherwise dominate the
+ * width-cache line arrays for every frame — past the budget the tail is
+ * replaced by one dim truncation marker pointing at /resume. Source lines,
+ * not wrapped lines: the wrap factor is bounded by the terminal width and
+ * the budget exists to kill the parse, not to police layout. Within the
+ * budget nothing changes.
+ */
+export const MAX_DETAIL_LINES = 4000
+
 /** List footer hint (the detail pane carries the scroll hints). */
 const HISTORY_FOOTER = '↑↓ navigate · Enter/c copy · f fork · → detail · s session · / filter · Esc close'
 
@@ -205,20 +218,45 @@ function turnEndLine(turn: HistoryTurn, theme: TuiTheme): string | undefined {
  * The detail pane's content for one turn, as a fresh Container of the same
  * primitives the main transcript renders: user prompts as canvasSubtle
  * bubbles (Text + bg), replies as Markdown parsed once per rebuild, then the
- * `⚙` tool-count summary line and any turn-end notice. Exported for tests.
+ * `⚙` tool-count summary line and any turn-end notice. Assistant source
+ * lines are capped at MAX_DETAIL_LINES — the tail is replaced by one dim
+ * marker pointing at /resume (the truncation happens HERE, on the explicit
+ * rebuild path, never inside render()). `sessionId` (optional) only flavors
+ * that marker's short id. Exported for tests.
  */
-export function buildTurnDetailContainer(turn: HistoryTurn, theme: TuiTheme): Container {
+export function buildTurnDetailContainer(turn: HistoryTurn, theme: TuiTheme, sessionId?: string): Container {
   const doc = new Container()
   for (const text of turn.userTexts) {
     doc.addChild(new Text(userBubbleText(text, theme), 1, 0, theme.chat.userMessageBg))
     doc.addChild(new Spacer(1))
   }
   // The turn's replies, one Markdown per assembled message (steps), seq
-  // order — never assistant/chunk (iron rule 9).
+  // order — never assistant/chunk (iron rule 9). Budgeted: past
+  // MAX_DETAIL_LINES source lines the remaining replies fold into one
+  // truncation marker.
+  let budget = MAX_DETAIL_LINES
+  let truncated = 0
   for (const text of turn.assistantTexts) {
-    doc.addChild(new Markdown(text, 1, 0, theme.markdown, {
+    const sourceLines = text.split('\n').length
+    if (budget <= 0) {
+      truncated += sourceLines
+      continue
+    }
+    const keep = Math.min(sourceLines, budget)
+    truncated += sourceLines - keep
+    const body = keep === sourceLines ? text : text.split('\n').slice(0, keep).join('\n')
+    doc.addChild(new Markdown(body, 1, 0, theme.markdown, {
       color: line => ansiFg(theme.palette.fgDefault) + line + RESET,
     }))
+    doc.addChild(new Spacer(1))
+    budget -= keep
+  }
+  if (truncated > 0) {
+    const pointer = sessionId !== undefined ? `/resume ${clipToWidth(sessionId, 8)} ` : '/resume '
+    doc.addChild(new Text(
+      ansiFg(theme.palette.fgSubtle) + `… ${truncated} more lines truncated — ${pointer}for the full turn` + RESET,
+      1, 0,
+    ))
     doc.addChild(new Spacer(1))
   }
   if (turn.userTexts.length === 0 && turn.assistantTexts.length === 0) {
@@ -271,7 +309,7 @@ class TurnDetailPane implements Component {
   invalidate(): void {}
 
   /** Static rebuild: swap the content to `turn`'s events and reset to the top. */
-  setTurn(turn: HistoryTurn | undefined, live: boolean): void {
+  setTurn(turn: HistoryTurn | undefined, live: boolean, sessionId: string | undefined): void {
     this.scrollTop = 0
     const source = live ? ' · live snapshot' : ''
     this.headerTitle = turn === undefined
@@ -279,7 +317,7 @@ class TurnDetailPane implements Component {
       : `Turn ${String(turn.turn)}${turn.endReason === 'completed' ? '' : ` · ${turn.endReason}`}${turn.interrupted ? ' · interrupted' : ''}${source}`
     this.container = turn === undefined
       ? new Container()
-      : buildTurnDetailContainer(turn, this.theme)
+      : buildTurnDetailContainer(turn, this.theme, sessionId)
     this.widthCache.clear()
     this.requestRender()
   }
@@ -522,7 +560,7 @@ export class HistoryBrowserPanel implements Component {
     this.listMax = listMaxVisible()
     this.builtBudget = overlayContentBudget()
     this.detail = new TurnDetailPane(deps.theme, deps.requestRender)
-    this.detail.setTurn(this.rows[0]?.turn, loaded.live)
+    this.detail.setTurn(this.rows[0]?.turn, loaded.live, loaded.sessionId)
     this.rebuildListPanel(historyListTitle(loaded.sessionId, loaded.live), this.rows[0]?.turn)
   }
 
@@ -535,6 +573,11 @@ export class HistoryBrowserPanel implements Component {
    * swaps (`setQuery`) keep using the retained options object.
    */
   private rebuildListPanel(title: string, preselect: HistoryTurn | undefined): void {
+    // A mid-typing ENGAGED filter must survive the panel swap (a resize
+    // rebuild must not degrade it to a merely applied query): the query is
+    // caller-held and already in the rebuilt rows, only the input-mode flag
+    // needs carrying over.
+    const wasFiltering = this.list?.isFiltering() ?? false
     const columns = autoColumns(
       [
         { key: 'turnLabel', title: 'Turn', cap: 6, align: 'right' },
@@ -576,6 +619,7 @@ export class HistoryBrowserPanel implements Component {
       status: () => this.status,
     }
     this.list = new TablePanel<HistoryRow>(this.deps.theme, this.listOptions)
+    if (wasFiltering) this.list.beginFilterInput()
     const followed = preselect !== undefined && this.list.focusRow(row => row.turn === preselect)
     if (!followed) this.list.resyncCursor()
   }
@@ -662,7 +706,7 @@ export class HistoryBrowserPanel implements Component {
     this.list.handleInput(data)
     const selected = this.list.selectedRow()
     if (selected !== undefined && selected.turn !== before) {
-      this.detail.setTurn(selected.turn, this.live)
+      this.detail.setTurn(selected.turn, this.live, this.sessionId)
     }
   }
 
@@ -731,7 +775,7 @@ export class HistoryBrowserPanel implements Component {
     // against the new rows (a session with 3-digit turn numbers must not keep
     // a 1-digit-wide column) and the cursor starts at row 0.
     this.rebuildListPanel(historyListTitle(loaded.sessionId, loaded.live), this.rows[0]?.turn)
-    this.detail.setTurn(this.list.selectedRow()?.turn, loaded.live)
+    this.detail.setTurn(this.list.selectedRow()?.turn, loaded.live, loaded.sessionId)
     // Show the (re)built browser before the host hides the picker — the
     // PanelHost show-new-then-hide-old contract, no focus flash.
     this.host.open(this, '90%', '85%')
@@ -770,9 +814,9 @@ export class HistoryBrowserPanel implements Component {
       emptyHint: 'No matching sessions',
       onSelect: row => { void this.loadAndShow(row.id) },
       onCancel: () => {
-        // Back to the browser: show it, then the host hides the picker.
+        // Back to the browser: show it, then the host hides the picker. (A
+        // closed browser must not be resurrected — nothing to do.)
         if (!this.closed) this.host.open(this, '90%', '85%')
-        else this.finish('History closed.')
       },
       filter: {
         getQuery: () => query,
@@ -801,7 +845,7 @@ export class HistoryBrowserPanel implements Component {
     if (this.closed || this.forkInProgress) return
     const row = this.list.selectedRow()
     if (row === undefined) return
-    const seed = turnSeedSlice(this.events, row.turn.turn)
+    const seed = turnSeedSlice(this.events, row.turn)
     if (seed.length === 0) return
     this.forkInProgress = true
     try {

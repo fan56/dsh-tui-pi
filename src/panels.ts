@@ -396,6 +396,18 @@ export class TablePanel<T> implements Component {
   }
 
   /**
+   * Re-engage the filter input line programmatically — no keypress involved.
+   * For callers that rebuild the panel out-of-band (the history browser's
+   * resize rebuild swaps in a fresh TablePanel) and must not let a
+   * mid-typing ENGAGED filter silently degrade into a merely applied one:
+   * the query itself is caller-held and survives the rebuild, so re-engaging
+   * restores the exact input state.
+   */
+  beginFilterInput(): void {
+    this.filterInput = true
+  }
+
+  /**
    * Move the cursor onto the first row matching `predicate`. Returns whether
    * a row matched — callers use the miss to fall back to `resyncCursor`
    * (e.g. the toggled row vanished from the rebuilt list).

@@ -1587,6 +1587,12 @@ export class DshSessionBridge {
     const sessionId = crypto.randomUUID()
     const cwd = process.cwd()
     const lock = await this.acquireSessionLock(sessionId, cwd)
+    // A fork records ITS OWN preset (what the new session composes under —
+    // possibly none, keeping meta.agentPreset absent); a plain create
+    // records the current selection.
+    const presetMeta = fork !== undefined
+      ? fork.presetId !== undefined ? { agentPreset: fork.presetId } : {}
+      : this.agentPreset !== undefined ? { agentPreset: this.agentPreset } : {}
     const meta: {
       cwd: string
       agentPreset?: string
@@ -1594,12 +1600,8 @@ export class DshSessionBridge {
       isSeeded?: boolean
     } = {
       cwd,
-      ...this.agentPreset !== undefined ? { agentPreset: this.agentPreset } : {},
-    }
-    if (fork !== undefined) {
-      if (fork.presetId !== undefined) meta.agentPreset = fork.presetId
-      meta.parentSession = fork.parentSessionId
-      meta.isSeeded = true
+      ...presetMeta,
+      ...(fork !== undefined ? { parentSession: fork.parentSessionId, isSeeded: true } : {}),
     }
     let handle: AgentHandle
     try {
