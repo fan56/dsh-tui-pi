@@ -2,7 +2,7 @@
 
 # dsh-tui-pi
 
-面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的 pi 风格终端 UI——一套把 dsh 变成 pi 式编码代理体验的插件套件：pi-tui 的外观与交互、dsh 斜杠命令、GitHub 明/暗主题和 powerline 状态栏。
+面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的功能齐全的 pi 风格终端 UI——一套把 dsh 变成 pi 式编码代理体验的插件套件：/history 回看与任意轮分叉、确认式 preset 切换、subagent 实时操控、模型档案、GitHub 明/暗主题和 powerline 状态栏。
 
 **要求 dsh >= 0.1.2-rc.1** —— 本插件只跟随 dsh RC/stable 线（CI 与发版在运行时解析 latest/next 中更新的 dist-tag）。**不再支持 alpha 线。**宿主低于下限时，启动守卫会打一行 warning 并干净退出（可用 `DSH_TUI_SKIP_HOST_CHECK=1` 跳过）。alpha 单目标决策的历史见 [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)（已被取代）。
 
