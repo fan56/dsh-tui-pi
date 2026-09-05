@@ -4,6 +4,14 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-09-05
+
+### Added
+- **`/history` — the read-only two-pane history browser** (ADR 0003, CONTEXT.md "History browser"): the left pane lists the browsed session's completed turns (turn number + user-message preview, seq order — a list, not a tree), the right pane shows the selected turn's user prompts, step replies (Markdown) and per-tool call summary; `Enter`/`c` refills the editor with the turn's prompt (plain `setText`, never submitted), `s` swaps the browsed session through a `/resume`-style picker, `[`/`]` page the detail. Bare `/history` snapshots the current live session (no live updates while open); `/history <sessionId>` cold-reads any stored log via `sessionPersistence.inspect` — no writer lock, no resume, no agent activation. New `src/history.ts` (viewer + session picker) and `src/history-turns.ts` (pure `SessionEvent[] → completed Turn[]` fold), 33 tests.
+
+### Changed
+- **/history: fixed-window geometry + two-pane focus model** — the browser mounts at 90% × 85% of the terminal and renders exactly its line budget (short turns pad blank rows, long ones scroll; a selection change can no longer resize the window — only a terminal resize re-derives it), and the keyboard gains a focus model: `→` moves it to the detail pane (↑/↓ line-scroll, PgUp/PgDn or `[`/`]` page; `/`, `c`, `s`, Enter inert there), `←`/Esc steps back, Esc grades detail → list → applied-filter-clear → close, and focus is visible — the list's ▸ cursor demotes to `›`, the detail title turns accent bold with a `← list · ↑↓ scroll` footer hint.
+
 ## [2.5.0] - 2026-09-03
 
 ### Changed
