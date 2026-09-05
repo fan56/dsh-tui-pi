@@ -6,7 +6,7 @@
 
 **要求 dsh >= 0.1.2-rc.1** —— 本插件只跟随 dsh RC/stable 线（CI 与发版在运行时解析 latest/next 中更新的 dist-tag）。**不再支持 alpha 线。**宿主低于下限时，启动守卫会打一行 warning 并干净退出（可用 `DSH_TUI_SKIP_HOST_CHECK=1` 跳过）。alpha 单目标决策的历史见 [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)（已被取代）。
 
-https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
+https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 
 *一次真实 session 的实况录制（MP4，1.5× 速度）——todos、运行中的 subagents、think/tool 面板和 powerline footer 的实际效果。*
 
