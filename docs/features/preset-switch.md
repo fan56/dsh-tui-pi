@@ -1,16 +1,18 @@
 # Preset switching
 
-`Tab` cycles agent presets, `/preset` opens a picker, `/preset <name>` jumps straight to one (`/preset next` cycles forward). The footer brand segment always shows the current selection as `dsh(<name>)`. A preset is a dsh deployment concept: each one composes a session's agent from a different set of prompt sections and model-facing tools. The shipped roster is `standard` (the full coding agent), `minimal` (fixed one-line persona + persistent shell + editor — no delegation, skills, plan mode, compaction or web), `cordis` and `ptc` (PTC; `code` on older hosts). Drop your own under `~/.dsh/.agent-presets/<id>/agent.cordis.yml` and it appears in the roster at the next launch.
+`/preset` opens a picker, `/preset <name>` jumps straight to one (`/preset next` cycles forward). The footer brand segment shows the selection as `dsh(<name>)`. A preset is a dsh deployment concept: each one composes a session's agent from a different set of prompt sections and model-facing tools. The shipped roster is `standard` (the full coding agent), `minimal` (fixed one-line persona + persistent shell + editor — no delegation, skills, plan mode, compaction or web), `cordis` and `ptc` (PTC; `code` on older hosts). Drop your own under `~/.dsh/.agent-presets/<id>/agent.cordis.yml` and it appears in the roster at the next launch. There is no `Tab` binding — switching lives entirely in `/preset`.
 
 ## When a switch takes effect
 
-The selection is **local to the TUI** and is read exactly once — at the moment a session is **created**:
+A switch is an **explicit action that takes effect immediately**: it starts a **NEW session** on the chosen preset. With a live session, every switch path (picker `Enter`, `/preset <name>`, `/preset next`) first opens a confirmation dialog — *Switch preset to \<name\>?* (or *Restart session on \<name\>?* when the target is the current preset) — offering exactly three ways out:
 
-- A session with any content keeps its preset forever. Press `/new` first; the next submit creates the session on the new preset.
-- A fresh TUI that has not sent anything yet needs no `/new` — the first submit already picks the selection up.
-- `/resume` ignores the selection entirely: a resumed session rejoins the preset recorded in its session header at creation time.
+- **Fork & switch** — starts the new session on the preset **seeded with this conversation**: the full log up to the last completed turn is carried over (compaction included — the new session opens on the same compacted context), and the transcript replays it. The running turn is not carried (it belongs to the old session), and the old session stays resumable via `/resume`.
+- **Fresh start** — starts a new **empty** session on the preset (the same detach path as `/new`); the old session stays resumable.
+- **Cancel** (or Esc) — changes nothing: neither the selection nor the current session.
 
-The footer label reflects the selection, not the live session — until the next session is created the two can legitimately disagree. (And until you touch `Tab` or `/preset`, no preset is sent at session create at all: the server-side `agent-presets.default` setting governs, the label is just a preview.)
+Without a live session (a fresh TUI that has not sent anything yet) there is nothing to leave behind: the selection applies directly, no dialog — the first submit already creates the session on it. `/resume` ignores the selection entirely: a resumed session rejoins the preset recorded in its session header at creation time.
+
+Because a switch either starts the new session immediately (or, on a sessionless TUI, applies to the session that is about to be created), the footer label no longer drifts from the live session — there is no "selection ≠ live preset" window to fall into. (And until you touch `/preset` at all, no preset is sent at session create: the server-side `agent-presets.default` setting governs, the label is just a preview.)
 
 ## What a preset gates — and what it doesn't
 

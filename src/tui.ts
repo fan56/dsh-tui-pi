@@ -463,7 +463,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   const getRunningAgents = options.getRunningAgents ?? (() => 0)
   const hasSession = options.hasSession ?? (() => false)
   // Docked modal (ask-user panel): owns the keyboard like an open overlay, so
-  // the whole app-key chain (Esc stop, Ctrl+C, pickers, Tab) yields to it.
+  // the whole app-key chain (Esc stop, Ctrl+C, pickers) yields to it.
   const dockedModalActive = options.dockedModalActive ?? (() => false)
 
   tui.addInputListener((data: string) => {

@@ -4,8 +4,8 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  __setPresetRootOverride, cyclePreset, currentPreset, DEFAULT_PRESET_ID, fetchPresetRoster,
-  findPresetByName, formatPresetLabel, initialPresetIndex, resolvePresetRoots,
+  __setPresetRootOverride, currentPreset, DEFAULT_PRESET_ID, fetchPresetRoster,
+  findPresetByName, formatPresetLabel, initialPresetIndex, peekNextPreset, resolvePresetRoots,
 } from '../lib/preset.js'
 
 const roster = [
@@ -26,31 +26,18 @@ test('currentPreset returns undefined for empty roster', () => {
   assert.equal(currentPreset({ roster: [], index: 0 }), undefined)
 })
 
-test('cyclePreset advances forward and wraps', () => {
+test('peekNextPreset previews the next entry without mutating the index', () => {
   const state = { roster, index: 0 }
-  cyclePreset(state)
-  assert.equal(state.index, 1)
-  cyclePreset(state)
-  assert.equal(state.index, 2)
-  cyclePreset(state)
+  assert.equal(peekNextPreset(state).id, 'ptc')
+  assert.equal(state.index, 0, 'pure: the selection is untouched')
+  state.index = 3
+  assert.equal(peekNextPreset(state).id, 'standard') // wrap
   assert.equal(state.index, 3)
-  cyclePreset(state)
-  assert.equal(state.index, 0) // wrap
 })
 
-test('cyclePreset goes backward', () => {
-  const state = { roster, index: 0 }
-  cyclePreset(state, -1)
-  assert.equal(state.index, 3) // wrap backward
-})
-
-test('cyclePreset is a no-op for single-element or empty roster', () => {
-  const single = { roster: [roster[0]], index: 0 }
-  cyclePreset(single)
-  assert.equal(single.index, 0)
-  const empty = { roster: [], index: 0 }
-  cyclePreset(empty)
-  assert.equal(empty.index, 0)
+test('peekNextPreset returns undefined for single-element or empty roster', () => {
+  assert.equal(peekNextPreset({ roster: [roster[0]], index: 0 }), undefined)
+  assert.equal(peekNextPreset({ roster: [], index: 0 }), undefined)
 })
 
 test('findPresetByName matches id (case-insensitive)', () => {

@@ -197,14 +197,16 @@ test('unbound keys fall through to the focused component', () => {
   }
 })
 
-test('Tab cycles agent presets (overlay and autocomplete yield first)', () => {
+test('Tab is unbound (preset-cycle removed in 2.7.0) — it falls through, never cycles', () => {
+  // The old preset-cycle binding is gone: Tab yields a plain no-op. The
+  // editor has no tab semantics either (pi-tui ignores '\t'), so Tab is a
+  // pure no-op end to end.
   const tab = resolveKeyAction('\t', state(), 1000)
-  assert.equal(tab.kind, 'preset-cycle')
-  assert.equal(tab.consumes, true)
-  // Overlay open → Tab belongs to the popup.
-  assert.equal(resolveKeyAction('\t', state({ overlayOpen: true }), 1000).kind, 'overlay')
-  // Autocomplete open → Tab closes the list.
-  assert.equal(resolveKeyAction('\t', state({ autocompleteOpen: true }), 1000).kind, 'autocomplete-close')
+  assert.equal(tab.kind, 'noop')
+  assert.equal(tab.consumes, false)
+  // …with an overlay open and with autocomplete showing alike.
+  assert.equal(resolveKeyAction('\t', state({ overlayOpen: true }), 1000).kind, 'noop')
+  assert.equal(resolveKeyAction('\t', state({ autocompleteOpen: true }), 1000).kind, 'noop')
 })
 
 test('custom key bindings remap the app keys (future keybindings.json override)', () => {

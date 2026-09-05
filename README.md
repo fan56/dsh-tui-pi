@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/6a7e00bb-1fd0-4bc5-9070-457f1e9fa54d
 - [**Dynamic context pruning (DCP)**](docs/features/dcp.md) — context stays within limits automatically, with zero LLM calls.
 - [**Persistent context**](docs/features/persistent-context.md) — your ground rules ride along on every request, hot-applied with no restart.
 - [**Model profiles & favorites**](docs/features/model-profiles.md) — switch a whole model setup per project and keep the picker small.
-- [**Agent preset switching**](docs/features/preset-switch.md) — `Tab` / `/preset` between the shipped agent compositions (`standard`, `minimal`, …); what a preset really gates, and exactly when a switch takes effect.
+- [**Agent preset switching**](docs/features/preset-switch.md) — `/preset` between the shipped agent compositions (`standard`, `minimal`, …); a switch is confirmed and starts a NEW session on the preset (the current one stays resumable); what a preset really gates.
 - [**Sessions & resume**](docs/features/sessions-resume.md) — sessions stay tidy automatically and resume in a few keystrokes; a cross-process writer guard keeps the log single-writer.
 - [**History browser**](docs/features/history.md) — `/history` opens a fixed two-pane look-back over the session: completed turns on the left, the selected turn's replies on the right; copy a prompt back to the editor, or cold-read any stored session without resuming it (read-only, no writer lock).
 - [**Themes**](docs/features/themes.md) — GitHub light/dark palettes, hot-switchable; `auto` follows your terminal.
@@ -85,7 +85,6 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 | `Ctrl+G` | Open the subagent picker (viewer `Enter` opens steer) |
 | `Ctrl+O` | Pending-message queue (s steer now · d remove) |
 | `Ctrl+Shift+F` | Transcript search (`Enter`/`Ctrl+G` next · `Shift+Enter`/`Ctrl+Shift+G` previous · `Esc` close) |
-| `Tab` | Cycle agent presets |
 | `↑` / `↓` | Browse submitted-message history |
 
 Remap any app key through `~/.dsh/keybindings.json` (a partial JSON map, live-applied) or interactively with `/hotkeys`.

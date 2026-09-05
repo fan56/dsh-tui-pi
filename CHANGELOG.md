@@ -4,6 +4,12 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - Unreleased
+
+### Changed
+- **BREAKING: `Tab` no longer cycles agent presets** — the `preset-cycle` app binding is removed (Tab is unbound, with no replacement); an entry referencing `presetCycle` in `~/.dsh/keybindings.json` is ignored with a warning notice now. Preset switching is `/preset`'s explicit flow only.
+- **/preset switching is a confirmed action that takes effect immediately** — with a live session, every switch path (picker `Enter`, `/preset <name>`, `/preset next`) opens a confirmation dialog (*Switch preset to \<name\>?*; *Restart session on \<name\>?* when the target is already selected) with exactly three options: **Fork & switch** — the new session on the preset is SEEDED with this conversation (the log through the last completed turn, compaction included; the transcript replays it and the old session stays resumable via `/resume`); **Fresh start** — a new empty session on the preset (the same detach path as `/new`); **Cancel** — nothing changes. Without a live session the selection applies directly (the first submit already creates the session on it). This removes the old footgun where the footer's preset silently disagreed with the live session until the next session happened to be created. New `src/preset-dialog.ts` (pure reducer + panel, the fork seed slicer, and the injectable `performPresetSwitch`); bridge gains `forkCurrentSession` (seeded `agents.create` + rebind; the teardown runs first — the TUI surface service cannot host two live agents — so a failed fork leaves the old session detached but resumable via `/resume`); `cyclePreset` → pure `peekNextPreset`.
+
 ## [2.6.0] - 2026-09-05
 
 ### Added

@@ -34,8 +34,8 @@ export function keybindingsPath(home: string): string {
   return join(home, KEYBINDINGS_FILE)
 }
 
-/** The seven app-level bindings the file may remap (order = display order). */
-export const APP_KEY_FIELDS: readonly (keyof KeyBindings)[] = ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel', 'presetCycle']
+/** The six app-level bindings the file may remap (order = display order). */
+export const APP_KEY_FIELDS: readonly (keyof KeyBindings)[] = ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel']
 
 /** Action descriptions for the `/hotkeys` table. */
 const KEY_ACTIONS: Record<keyof KeyBindings, string> = {
@@ -45,7 +45,6 @@ const KEY_ACTIONS: Record<keyof KeyBindings, string> = {
   modelPicker: 'open the model / think picker',
   subagentViewer: 'open the subagent picker / viewer',
   queuePanel: 'open the pending-message queue (d remove · s steer now)',
-  presetCycle: 'cycle through agent presets',
 }
 
 // ------------------------------------------------------------- validation --

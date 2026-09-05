@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Scenario 6 — agent preset switch: Tab cycles through the deployment's agent
-# presets, the footer brand segment reflects the current selection as
-# `dsh(<name>)`, and `/preset` opens a picker overlay (when presets exist)
-# or reports an error (when the roster is empty).
+# Scenario 6 — agent preset switch: `/preset` opens the picker overlay (when
+# the deployment ships presets) or reports an error (when the roster is
+# empty); `/preset next` switches — with a live session it goes through the
+# confirmation dialog ("Switch preset to …?"), without one it applies
+# directly. There is no Tab binding anymore (removed in 2.7.0).
 #
 # The container's dsh installation may or may not ship presets — both paths
-# are tested. When presets exist the scenario exercises Tab cycling and the
-# `/preset` overlay; when absent it verifies the graceful degradation (Tab
-# is a no-op, `/preset` errors, footer shows plain "dsh").
+# are tested. When absent: `/preset` errors and the footer shows plain "dsh".
 set -u
 . "$(dirname "$0")/../lib/common.sh"
-scenario 'agent preset switch (Tab + /preset)'
+scenario 'agent preset switch (/preset + confirm dialog)'
 
 if ! tui_alive; then
   info 'TUI not running — starting fresh'
@@ -34,32 +33,16 @@ else
   info 'no presets detected — testing graceful degradation'
 fi
 
-# --- Tab cycling (when presets exist) ----------------------------------------
+# --- Tab must NOT cycle presets anymore (removed in 2.7.0) -------------------
 if (( HAS_PRESETS )); then
-  # Tab should cycle to the next preset; the footer label must change.
   send Tab
   sleep 1.5
   PANE="$(capture)"
   AFTER_TAB="$(printf '%s' "$PANE" | grep -oE 'dsh\([^)]+\)' | head -1)"
-  if [[ "$AFTER_TAB" != "$INITIAL_PRESET" ]]; then
-    ok "Tab cycles preset: $INITIAL_PRESET → $AFTER_TAB"
-  elif (( HAS_PRESETS == 1 )); then
-    # Single preset — Tab is a no-op, which is correct.
-    warn "Tab did not change preset (only one available: $INITIAL_PRESET)"
+  if [[ "$AFTER_TAB" == "$INITIAL_PRESET" ]]; then
+    ok "Tab is unbound: footer unchanged ($INITIAL_PRESET)"
   else
-    bad "Tab did not cycle preset (still $INITIAL_PRESET)"
-  fi
-
-  # Tab again should cycle further (or wrap).
-  PREV="$AFTER_TAB"
-  send Tab
-  sleep 1.5
-  PANE="$(capture)"
-  AFTER_TAB2="$(printf '%s' "$PANE" | grep -oE 'dsh\([^)]+\)' | head -1)"
-  if [[ "$AFTER_TAB2" != "$PREV" ]] || (( HAS_PRESETS <= 2 )); then
-    ok "second Tab cycles further: $PREV → $AFTER_TAB2"
-  else
-    bad "second Tab did not cycle (still $PREV)"
+    bad "Tab still cycles presets ($INITIAL_PRESET → $AFTER_TAB) — binding should be gone"
   fi
 fi
 
@@ -73,16 +56,43 @@ if (( HAS_PRESETS )); then
   # Close it.
   esc_until_gone 'preset picker closes on Esc' '● Agent preset'
 
-  # /preset next — should cycle like Tab.
+  # /preset next — with a live session this opens the confirmation dialog;
+  # without one it applies directly. Handle both shapes.
   ensure_editor_ready 'editor focused before /preset next' || true
   BEFORE="$(capture | grep -oE 'dsh\([^)]+\)' | head -1)"
   send '/preset next' Enter
   sleep 2
-  AFTER="$(capture | grep -oE 'dsh\([^)]+\)' | head -1)"
-  if [[ "$AFTER" != "$BEFORE" ]]; then
-    ok "/preset next cycles: $BEFORE → $AFTER"
+  PANE="$(capture)"
+  if printf '%s' "$PANE" | grep -q 'Switch preset to'; then
+    ok '/preset next opens the confirmation dialog (live session)'
+    # Cancel keeps everything as it was.
+    send Esc
+    sleep 1.5
+    AFTER_CANCEL="$(capture | grep -oE 'dsh\([^)]+\)' | head -1)"
+    if [[ "$AFTER_CANCEL" == "$BEFORE" ]]; then
+      ok "dialog Cancel keeps the preset ($BEFORE)"
+    else
+      bad "dialog Cancel changed the preset ($BEFORE → $AFTER_CANCEL)"
+    fi
+    # Re-run and confirm the switch this time.
+    ensure_editor_ready 'editor focused before confirmed switch' || true
+    send '/preset next' Enter
+    sleep 2
+    send Enter
+    sleep 2.5
+    AFTER="$(capture | grep -oE 'dsh\([^)]+\)' | head -1)"
+    if [[ "$AFTER" != "$BEFORE" ]]; then
+      ok "confirmed switch applies: $BEFORE → $AFTER"
+    else
+      warn "confirmed switch did not change the footer label (single preset?)"
+    fi
   else
-    warn "/preset next did not change preset (single preset or no-op)"
+    AFTER="$(printf '%s' "$PANE" | grep -oE 'dsh\([^)]+\)' | head -1)"
+    if [[ "$AFTER" != "$BEFORE" ]]; then
+      ok "/preset next applies directly (no live session): $BEFORE → $AFTER"
+    else
+      warn "/preset next did not change preset (single preset or no-op)"
+    fi
   fi
 else
   # No presets — /preset should report an error.

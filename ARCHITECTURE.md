@@ -304,6 +304,14 @@ ignores the convention.
   setup })`, serialized in-flight; the caller replays `events.filter(e =>
   e.seq < firstLiveSeq)` — live events arrive again through the subscription,
   replay would double-count; `assistant/chunk` is skipped in replay.
+- **Fork** (`/preset` confirm): `forkCurrentSession(seed, parentSessionId,
+  presetId)` — tears the live binding down FIRST (the TUI surface service
+  cannot host two live agents), then `agents.create` with a seed sliced to
+  the last completed turn and a user-level lineage meta (`parentSession` +
+  `isSeeded`, deliberately no subagent `origin`); the caller replays the
+  seed under the resume contract and records the preset only after the
+  create succeeded, so a failed fork leaves nothing to roll back but the
+  selection.
 - **Persist**: `persistDefaultModel()` prefers
   `agentDefaultModel.saveSelection` (a `settings.replace`, last-write-wins);
   falls back to `settings.mutate` with one `SettingsConflictError` retry.
@@ -355,6 +363,7 @@ call sites are wrapped:
 | sessions.ts `showSessionInfo` | SessionInfoPanel | 70% / 100% |
 | sessions.ts `pickPersistedSession` | TablePanel (sessions) | 80% / 75% |
 | history.ts `openHistoryBrowser` | HistoryBrowserPanel (turn list + turn detail) | 90% / 85% |
+| preset-dialog.ts `openPresetConfirmDialog` | PresetConfirmPanel (fork / fresh / cancel) | 70% / 75% |
 | login.ts logout picker | TablePanel (providers) | 80% / 75% |
 | settings.ts `SettingsBrowser.open` | SettingsListPanel (categories) | 80% / 80% |
 

@@ -101,7 +101,8 @@ import { clipToWidth } from './text.ts'
 import { type KeyAction } from './keymap.ts'
 import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.ts'
 import { startTui, type TuiHandle } from './tui.ts'
-import { cyclePreset, currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, initialPresetIndex, type PresetState } from './preset.ts'
+import { currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, initialPresetIndex, peekNextPreset, type PresetEntry, type PresetState } from './preset.ts'
+import { completedTurnSeed, openPresetConfirmDialog, performPresetSwitch } from './preset-dialog.ts'
 import { registerAskUserProvider } from './ask-user.ts'
 import { checkHostSupport } from './host-version.ts'
 
@@ -304,17 +305,17 @@ export function apply(ctx: Context): void {
     // it. Broken entries surface as notices instead of breaking startup.
     const keyFile = keybindingsPath(dshHome())
     const keyBindings = loadKeyBindings(keyFile)
-    // Preset state: Tab cycles through the roster; the footer reflects the
-    // current selection. The roster is fetched once at startup from the
-    // api-proxy service; an empty roster (no service / no presets) disables
-    // the feature gracefully (Tab is a no-op, footer shows plain "dsh").
-    // Out of the box the selection starts on the `standard` preset when the
-    // roster supplies one; otherwise it falls back to the first-scanned
-    // entry (initialPresetIndex). This is a local selection only: before the
-    // user interacts with /preset or presses Tab, NO `meta.agentPreset` is
-    // sent at session create, so the server-side default (`agent-presets.default`
-    // settings / deployment config) governs; the footer reflects the local
-    // selection only. We deliberately do NOT seed
+    // Preset state: /preset owns the selection (Tab is deliberately unbound —
+    // switching is an explicit, confirmed action). The roster is fetched once
+    // at startup from the api-proxy service; an empty roster (no service / no
+    // presets) disables the feature gracefully (/preset errors, footer shows
+    // plain "dsh"). Out of the box the selection starts on the `standard`
+    // preset when the roster supplies one; otherwise it falls back to the
+    // first-scanned entry (initialPresetIndex). This is a local selection
+    // only: before the user switches via /preset, NO `meta.agentPreset` is
+    // sent at session create, so the server-side default
+    // (`agent-presets.default` settings / deployment config) governs; the
+    // footer reflects the local selection only. We deliberately do NOT seed
     // `bridge.setAgentPreset(DEFAULT_PRESET_ID)` at init — that would override
     // the server-side default with a client-side assumption.
     const presetState: PresetState = { roster: presetRoster, index: initialPresetIndex(presetRoster) }
@@ -488,17 +489,6 @@ export function apply(ctx: Context): void {
             })
             break
           }
-          case 'preset-cycle':
-            // Tab: cycle through agent presets. The footer label updates
-            // immediately; the actual preset is applied on the next session
-            // creation (first submit or /new).
-            if (presetState.roster.length > 1) {
-              cyclePreset(presetState)
-              const preset = currentPreset(presetState)
-              if (preset) bridge.setAgentPreset(preset.id)
-              ui.requestRender()
-            }
-            break
           default:
             break
         }
@@ -1001,43 +991,106 @@ export function apply(ctx: Context): void {
       handler: invocation => thinkHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /think')
 
-    // /preset: cycle or select an agent preset. Bare `/preset` opens a picker
-    // overlay; `/preset <name>` switches directly; `/preset next` cycles forward.
-    // The preset is applied to the next blank session on first submit.
+    // /preset: switch the agent preset — an EXPLICIT action that takes effect
+    // immediately by starting a NEW session on the chosen preset. Every entry
+    // path (picker Enter, `/preset <name>`, `/preset next`) funnels into
+    // performPresetSwitch: with a live session a confirmation dialog gates the
+    // switch (the current session stays resumable via /resume; the dialog
+    // suggests /handoff for carry-over), without one the selection applies
+    // directly (the first submit already creates the session on it).
     const presetHandler: LocalCommandHandler = async rawInput => {
       if (presetState.roster.length === 0) {
         return { kind: 'error' as const, text: 'No agent presets available.' }
       }
       const arg = rawInput?.trim() ?? ''
-      if (arg !== '') {
-        if (arg.toLowerCase() === 'next') {
-          cyclePreset(presetState)
-          const preset = currentPreset(presetState)
-          if (preset) bridge.setAgentPreset(preset.id)
-          ui.requestRender()
-          return { kind: 'success' as const, text: `Preset → ${preset?.name}` }
-        }
-        const target = findPresetByName(presetState, arg)
+      let target: PresetEntry | undefined
+      if (arg === '') {
+        // Picker overlay — Enter leads into the confirmation flow below.
+        const picked = await pickPreset(ui.tui, ui.theme, presetState, refocusEditor)
+        if (picked !== undefined) target = presetState.roster.find(p => p.id === picked)
+      } else if (arg.toLowerCase() === 'next') {
+        // Nothing to rotate to on a single-entry roster (the switch would
+        // re-confirm the same preset) — keep that a quiet no-op.
+        target = presetState.roster.length > 1 ? peekNextPreset(presetState) : undefined
+      } else {
+        target = findPresetByName(presetState, arg)
         if (target === undefined) {
           return { kind: 'error' as const, text: `Unknown preset: ${arg}` }
         }
-        presetState.index = presetState.roster.indexOf(target)
-        bridge.setAgentPreset(target.id)
-        ui.requestRender()
-        return { kind: 'success' as const, text: `Preset → ${target.name}` }
       }
-      // Picker overlay
-      const picked = await pickPreset(ui.tui, ui.theme, presetState, refocusEditor)
-      if (picked === undefined) return { kind: 'success' as const, text: 'Preset unchanged.' }
-      presetState.index = presetState.roster.findIndex(p => p.id === picked)
-      bridge.setAgentPreset(picked)
-      ui.requestRender()
-      return { kind: 'success' as const, text: `Preset → ${currentPreset(presetState)?.name}` }
+      if (target === undefined) return { kind: 'success' as const, text: 'Preset unchanged.' }
+      const outcome = await performPresetSwitch(presetState, target, {
+        hasLiveSession: () => bridge.getAgent() !== undefined,
+        confirmSwitch: (name, restart) =>
+          openPresetConfirmDialog(ui.tui, ui.theme, name, restart, refocusEditor)
+            .then(outcome => (outcome === 'cancelled' ? 'cancel' : outcome)),
+        commit: async presetId => {
+          bridge.setAgentPreset(presetId)
+          await startNewSession()
+          ui.requestRender()
+        },
+        forkCommit: async presetId => {
+          const agent = bridge.getAgent()
+          if (agent === undefined) {
+            // Raced to no-session while the dialog was up: nothing to carry —
+            // degrade to the fresh path.
+            await startNewSession()
+            bridge.setAgentPreset(presetId)
+            ui.requestRender()
+            return
+          }
+          // Snapshot BEFORE anything tears the binding down — the in-memory
+          // log is the stable source (dispose drops the registry handle), and
+          // slicing here keeps the running turn out of the seed (the same
+          // completed-turn rule /new obeys by cancelling it).
+          const seed = completedTurnSeed(agent.session.snapshotEvents())
+          if (seed.length === 0) {
+            // No completed turn to carry — a fork is indistinguishable from a
+            // fresh start.
+            await startNewSession()
+            bridge.setAgentPreset(presetId)
+            ui.requestRender()
+            return
+          }
+          try {
+            // forkCurrentSession tears the old binding down BEFORE creating
+            // (the surface service cannot host two live agents) and records
+            // the preset only after the create succeeded: a fork failure
+            // leaves the old session DETACHED but fully resumable via
+            // /resume, the recorded agentPreset untouched, and the selection
+            // rolled back by performPresetSwitch.
+            const handle = await bridge.forkCurrentSession(seed, agent.session.id, presetId)
+            bridge.setAgentPreset(presetId)
+            // Switching sessions cancels any in-flight btw — same contract as
+            // /new and /resume (its snapshot belongs to the session left).
+            btwController.cancelAll()
+            refreshPermissionPreset()
+            renderer.clear()
+            liveWidgets.clear()
+            // Replay the carried history (the /resume contract): the fork's
+            // whole point is keeping the conversation visible — an echo line
+            // would make it indistinguishable from /new — and the stats
+            // rebuild rides the same replay. `firstLiveSeq` excludes nothing
+            // published (constructor seeds never emit).
+            const session = handle.agent.session
+            bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
+            ui.requestRender()
+          } catch (error) {
+            // The recorded-preset guarantee above holds through the create;
+            // a throw AFTER the bind (pure in-memory view work) may leave the
+            // fork session bound with a rolled-back selection — noted, not
+            // recoverable here.
+            ui.requestRender()
+            throw error
+          }
+        },
+      })
+      return { kind: 'success' as const, text: outcome.message }
     }
     commands.registerLocal('preset', presetHandler)
     ctx.effect(() => ctx.commands.register({
       name: 'preset',
-      description: 'Cycle or select an agent preset (Tab also cycles)',
+      description: 'Switch the agent preset (starts a new session on it; /preset next cycles)',
       handler: invocation => presetHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /preset')
 
@@ -1397,7 +1450,12 @@ export function apply(ctx: Context): void {
     // them" — and any other case where the user wants a clean slate.
     // detachCurrent keeps the event subscriptions alive (dispose() would
     // splice them away and no future message would ever render again).
-    const newHandler: LocalCommandHandler = async () => {
+    /**
+     * Detach the live session and reset the surfaces — the ONE body /new and
+     * the preset switch share (a preset applies only to a NEW session, so a
+     * confirmed switch runs the same detach/clear path; never a copy of it).
+     */
+    const startNewSession = async (): Promise<void> => {
       // A new session strands the btw context snapshot — cancel first (Q5b).
       btwController.cancelAll()
       try { await bridge.detachCurrent() } catch { /* contained */ }
@@ -1408,6 +1466,10 @@ export function apply(ctx: Context): void {
       // The widget's agents already cleared via the bridge's onLive([]); drop
       // the previous session's todos too.
       liveWidgets.clear()
+    }
+
+    const newHandler: LocalCommandHandler = async () => {
+      await startNewSession()
       return { kind: 'success' as const, text: 'New session started.' }
     }
     commands.registerLocal('new', newHandler)

@@ -108,8 +108,6 @@ export interface KeyBindings {
   subagentViewer: KeyId
   /** Open the pending-message queue panel (steer / follow-up management). */
   queuePanel: KeyId
-  /** Cycle through agent presets. */
-  presetCycle: KeyId
 }
 
 export const DEFAULT_KEYBINDINGS: KeyBindings = {
@@ -119,7 +117,6 @@ export const DEFAULT_KEYBINDINGS: KeyBindings = {
   modelPicker: 'ctrl+l',
   subagentViewer: 'ctrl+g',
   queuePanel: 'ctrl+o',
-  presetCycle: 'tab',
 }
 
 /** Live snapshot of everything the decision needs — composed by tui.ts. */
@@ -171,7 +168,6 @@ export type KeyAction =
   | { kind: 'model-picker'; consumes: true }         // Ctrl+L opens the picker
   | { kind: 'subagent-viewer'; consumes: true }      // Ctrl+G while subagents run
   | { kind: 'queue-panel'; consumes: true }          // Ctrl+O opens the pending queue
-  | { kind: 'preset-cycle'; consumes: true }         // Tab cycles agent presets
   /**
    * Esc handed to an open popup - the popup closes itself with it (the popup
    * branch of the Esc chain). Not consumed (the focused popup sees the key);
@@ -355,10 +351,8 @@ export function resolveKeyAction(
   if (matchesKey(data, bindings.modelPicker)) return resolveModelPicker(state)
   if (matchesKey(data, bindings.subagentViewer)) return resolveSubagentViewer(state)
   if (matchesKey(data, bindings.queuePanel)) return resolveQueuePanel(state)
-  if (matchesKey(data, bindings.presetCycle)) {
-    if (state.overlayOpen) return { kind: 'overlay', consumes: false }
-    if (state.autocompleteOpen) return { kind: 'autocomplete-close', consumes: false }
-    return { kind: 'preset-cycle', consumes: true }
-  }
+  // Tab is deliberately UNBOUND (the old preset-cycle action is gone —
+  // switching presets is /preset's explicit, confirmed flow now): an
+  // unbound key yields `noop` and the focused component processes it.
   return { kind: 'noop', consumes: false }
 }

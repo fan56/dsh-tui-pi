@@ -15,7 +15,7 @@ import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@dee
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type ReasoningEffortId, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
-import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
 import { join } from 'node:path'
 import type { AgentView } from './dsh-events.ts'
@@ -940,6 +940,61 @@ export class DshSessionBridge {
   }
 
   /**
+   * Tear down the current live binding — the shared prelude of every session
+   * switch (resume, fork): stop the remote watch, dispose the handle, clear
+   * the subagent tracker and re-seed the model selection (a live /model or
+   * /think choice survives the switch; otherwise the composed default
+   * applies). The renderer keeps its live snapshot across the teardown (it
+   * must survive theme-switch rebuilds), so an empty `onLive` emit is
+   * required to drop the previous session's agents block before the next
+   * session's events rebuild it.
+   */
+  private async teardownLiveBinding(): Promise<void> {
+    await this.stopRemoteWatch()
+    const handle = this.handle
+    this.handle = undefined
+    this.sessionId = undefined
+    this.running = false
+    this.agentViews.clear()
+    this.childSessions.clear()
+    this.trackedSessions.clear()
+    this.runSeqToChild.clear()
+    this.emitLive()
+    if (handle !== undefined) await handle.dispose()
+    this.seedSelectionFromDefault()
+  }
+
+  /**
+   * Fork-and-switch: create a NEW session seeded with a balanced
+   * completed-turn prefix of the current session's log, then rebind this
+   * bridge to it — the resume lifecycle (teardown, tracker clear, rebind)
+   * over `agents.create` instead of `agents.resume`. The new session carries
+   * durable fork lineage (`parentSession` + `isSeeded` + the inherited
+   * prefix length) and composes under `presetId` (`meta.agentPreset`) — a
+   * seeded USER session, deliberately NOT a subagent child (no
+   * `origin`/delegationDepth, so /resume keeps it and the tracker ignores
+   * it). The seed must be sliced from the live session BEFORE calling this —
+   * the in-memory snapshot is the stable source. The teardown runs FIRST:
+   * `markTuiSurface` provides a cordis service on the agent scope and two
+   * live agents cannot coexist on it (the /new cycle only works because
+   * dispose reclaims the service before the next create). A failed create
+   * therefore leaves the old session DETACHED but fully resumable.
+   * @param seed contiguous-from-0 events ending at a `turn/end` (non-empty).
+   * @param parentSessionId the session the seed came from (durable lineage).
+   * @param presetId the preset id the new session composes under.
+   */
+  async forkCurrentSession(seed: readonly SessionEvent[], parentSessionId: SessionId, presetId: string): Promise<AgentHandle> {
+    // Teardown FIRST (see docblock): the old agent's scope holds the TUI
+    // surface service the new agent's setup must provide.
+    await this.teardownLiveBinding()
+    const handle = await this.createSession({ seed, parentSessionId, presetId })
+    this.handle = handle
+    this.sessionId = handle.agent.session.id
+    this.trackedSessions.add(String(this.sessionId))
+    return handle
+  }
+
+  /**
    * Resume a persisted session: tear down the live agent (disposers are kept —
    * the session-id filter re-binds to the resumed id) and load the persisted
    * session in its place. The caller replays `handle.agent.session.snapshotEvents()`
@@ -958,24 +1013,7 @@ export class DshSessionBridge {
     // touching this field, so it always names the id actually loading.
     this.resumeTargetId = sessionId
     const task = (async () => {
-      await this.stopRemoteWatch()
-      const handle = this.handle
-      this.handle = undefined
-      this.sessionId = undefined
-      this.running = false
-      this.agentViews.clear()
-      this.childSessions.clear()
-      this.trackedSessions.clear()
-      this.runSeqToChild.clear()
-      // The renderer keeps its live snapshot across the resume teardown (it
-      // must survive theme-switch rebuilds), so an empty emit is required to
-      // drop the previous session's agents block before the resumed log's
-      // workflow events rebuild it.
-      this.emitLive()
-      if (handle !== undefined) await handle.dispose()
-      // Same seeding rule as createSession: a live /model or /think choice
-      // survives the resume; otherwise the composed default applies.
-      this.seedSelectionFromDefault()
+      await this.teardownLiveBinding()
       // Attach arm: the session may already be LIVE in this process — e.g.
       // created by the feishu bot's /new or resumed by it. agents.resume
       // refuses live sessions ("cannot prepare session while it is live"),
@@ -1532,21 +1570,46 @@ export class DshSessionBridge {
   }
 
   /** Create the agent with the composed default model selection. */
-  private async createSession(): Promise<AgentHandle> {
+  /**
+   * Create the agent with the composed default model selection. `fork`
+   * seeds the new session with a balanced completed-turn prefix of another
+   * session's log (the preset-switch "Fork & switch" path): durable lineage
+   * (`parentSession` + `isSeeded` + the inherited prefix length) plus the
+   * fork's own `agentPreset` — recording the preset is what keeps the
+   * session's history reconstructable (a cold read that dropped it would
+   * rebuild turns under the wrong composition, the same rule
+   * `childSessionMeta` documents for subagent children).
+   */
+  private async createSession(fork?: { seed: readonly SessionEvent[]; parentSessionId: SessionId; presetId: string }): Promise<AgentHandle> {
     this.seedSelectionFromDefault()
     // Mint the id HERE so the pre-create lock covers exactly the directory
     // agents.create is about to persist into (same cold-arm guard as resume).
     const sessionId = crypto.randomUUID()
     const cwd = process.cwd()
     const lock = await this.acquireSessionLock(sessionId, cwd)
+    const meta: {
+      cwd: string
+      agentPreset?: string
+      parentSession?: SessionId
+      isSeeded?: boolean
+    } = {
+      cwd,
+      ...this.agentPreset !== undefined ? { agentPreset: this.agentPreset } : {},
+    }
+    if (fork !== undefined) {
+      meta.agentPreset = fork.presetId
+      meta.parentSession = fork.parentSessionId
+      meta.isSeeded = true
+    }
     let handle: AgentHandle
     try {
       handle = await this.ctx.agents.create({
         sessionId: SessionId(sessionId),
-        meta: {
-          cwd,
-          ...this.agentPreset !== undefined ? { agentPreset: this.agentPreset } : {},
-        },
+        meta,
+        ...(fork === undefined ? {} : {
+          seed: fork.seed,
+          inheritedEventCount: SessionLogOffset(fork.seed.length),
+        }),
         agentOptions: this.selection ?? {},
         // Install the mutable selection so `/model` can live-switch the route,
         // the APPEND_SYSTEM.md section on this agent ONLY (never its

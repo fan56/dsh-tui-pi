@@ -13,7 +13,7 @@
 | `/export` | Write the current session log as JSONL. |
 | `/permission` | Permission-preset picker (read-only / workspace-write / danger-full-access). |
 | `/theme` | Color-scheme picker (`auto`/`light`/`dark`), applies immediately. |
-| `/preset` | Agent-preset picker; `<name>` switches directly, `next` cycles (same as `Tab`). |
+| `/preset` | Switch the agent preset (`<name>` direct, `next` cycles) — confirmed with a dialog and applied by starting a NEW session on it. |
 | `/profile-switch` | Apply a model profile to the live selection, the persisted default and the agent files; `p` pins the cwd. |
 | `/profile-cfg` | Manage profiles: edit default model / think / per-agent models, `s` save current, `n` new, `r` rename, `d` delete. |
 | `/agents` | Manage agent markdown files + subagent limits (`maxAgents`, `maxRounds`). |

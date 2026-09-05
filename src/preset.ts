@@ -1,16 +1,16 @@
 /**
  * Agent-preset state manager — scans the filesystem for preset directories
  * (same discovery logic as @deepseek-ai/dsh-agent-presets), tracks the user's
- * Tab selection, and formats the footer label.
+ * /preset selection, and formats the footer label.
  *
  * Presets are a dsh deployment concept: each preset composes a session's agent
  * from a different set of plugins/tools. The TUI scans the preset roots once
- * at startup and lets the user cycle through them with Tab; the chosen preset
- * is applied to the next blank session on first submit.
+ * at startup and lets the user switch through /preset; a switch is an explicit,
+ * confirmed action that starts a NEW session on the chosen preset (a fresh TUI
+ * without a live session applies the selection directly).
  *
- * The roster is O(1) to read (an in-memory array); cycle is O(1) mutation of
- * the index. The module is pure except for the async `fetchPresetRoster` which
- * scans the filesystem.
+ * The roster is O(1) to read (an in-memory array). The module is pure except
+ * for the async `fetchPresetRoster` which scans the filesystem.
  */
 
 import { access, readdir, readFile } from 'node:fs/promises'
@@ -174,10 +174,17 @@ export async function fetchPresetRoster(): Promise<PresetEntry[]> {
   return roster
 }
 
-/** Cycle the preset index forward (default) or backward, wrapping around. */
-export function cyclePreset(state: PresetState, direction: 1 | -1 = 1): void {
-  if (state.roster.length <= 1) return
-  state.index = (state.index + direction + state.roster.length) % state.roster.length
+/**
+ * The entry `/preset next` would switch to — the roster item after the
+ * current selection, wrapping around. PURE (no index mutation): the switch
+ * only commits through the confirmation flow, so `next` must be able to
+ * preview its target first. With 0 or 1 entries there is nothing to switch
+ * to (the caller short-circuits); with ≥2 the result always differs from
+ * the current selection.
+ */
+export function peekNextPreset(state: PresetState): PresetEntry | undefined {
+  if (state.roster.length <= 1) return undefined
+  return state.roster[(state.index + 1) % state.roster.length]
 }
 
 /** Return the currently selected preset, or undefined when the roster is empty. */
@@ -200,7 +207,7 @@ export function findPresetByName(state: PresetState, name: string): PresetEntry 
 
 /** The preset id selected out of the box when the roster supplies it. It
  *  mirrors the dsh shipped default, but there is no mechanical binding:
- *  until the user interacts with /preset or Tab, the server-side
+ *  until the user switches via /preset, the server-side
  *  `agent-presets.default` setting still governs session creation. */
 export const DEFAULT_PRESET_ID = 'standard'
 

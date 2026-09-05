@@ -76,6 +76,14 @@ custom-provider.ts /login "Custom provider…" entry: pure field parsers +
                   llm-pi-ai route (id/name/protocol/baseURL/models/key)
 selectors.ts      /model (2-stage, embeddable via PanelHost), /think, /theme
                   pickers
+preset-dialog.ts  /preset switch confirmation: the pure reducer + panel
+                  (repair-dialog.ts pattern) offering FORK & switch (new
+                  session seeded with the conversation — completedTurnSeed
+                  slices the balanced prefix) / FRESH start / CANCEL whenever
+                  a live session exists, plus performPresetSwitch — the
+                  injectable three-way flow (confirm → forkCommit via
+                  bridge.forkCurrentSession, or commit = selection + the
+                  /new detach path); no live session applies directly
 startup-info.ts   startup config readout under the welcome banner (mcp
                   count, skills installed/total, collapsed plugin tree) +
                   the exit-hint pure helpers (--profile/--resume parsing,
@@ -245,7 +253,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` runs **1183 tests** across 67 files (verified by
+- `pnpm test` runs **1193 tests** across 68 files (verified by
   `node --test test/*.mjs`; per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
@@ -257,11 +265,11 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
     log-repair 25 + startup-info 24 + skills-manager 24 + panels 24 +
   - steer-flow 22 + theme 21 + model-list 21 + messages 20 + settings 19 +
     welcome 18 + provider-catalog 17 + hotkeys 16 + theme-canvas 16 +
-    preset 16 + agent-runtime 16 +
+    preset 15 + agent-runtime 16 +
   - text 15 + theme-settings 15 + agent-manager 14 + history 13 +
     history-viewer 24 + image-blocks 12 + custom-provider 12 +
     theme-switch 11 + frame 11 + preflight-projcache 11 + footer-hints 10 +
-  - history-turns 9 + writer-lock 9 + permission 9 + commands 9 + append-system 9 +
+  - preset-dialog 11 + history-turns 9 + writer-lock 9 + permission 9 + commands 9 + append-system 9 +
     session-ch-cache 8 + notice-bridge 8 + font-detect 8 + dev-upgrade 8 +
     repair-session-log 7 + remote-tail 7 + quotes 7 + icons 7 + host-version 7 +
   - tokens 6 + reload 6 + queue-panel 6 + install-font 6 + selection-copy 5 +
