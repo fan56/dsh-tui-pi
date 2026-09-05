@@ -354,6 +354,7 @@ call sites are wrapped:
 | selectors.ts `pickModel` (stage 1) | TablePanel (models) | 80% / 75% |
 | sessions.ts `showSessionInfo` | SessionInfoPanel | 70% / 100% |
 | sessions.ts `pickPersistedSession` | TablePanel (sessions) | 80% / 75% |
+| history.ts `openHistoryBrowser` | HistoryBrowserPanel (turn list + turn detail) | 90% / 85% |
 | login.ts logout picker | TablePanel (providers) | 80% / 75% |
 | settings.ts `SettingsBrowser.open` | SettingsListPanel (categories) | 80% / 80% |
 
@@ -364,6 +365,23 @@ keymap treats it exactly like an open overlay (`dockedModalActive` feeds
 the `overlayOpen` composition in tui.ts); a capturing overlay open beneath
 is dismissed on open — the pending question outranks every panel. Focus
 returns to the current editor on close.
+
+The **history browser** (`/history`, src/history.ts) is the one composite
+overlay: at ≥100 columns its root renders a pi-tui `HStack` (left turn-list
+TablePanel on a ~40% basis with a 30-column floor, right turn-detail pane
+growing into the remainder), below that a `VStack` (list above, detail
+below) — the container chosen per render at the current width. The window
+is fixed geometry: the panel renders exactly its line budget (90% × 85%
+mount, short turns pad blank rows, only a terminal resize re-derives the
+budget), so selecting another turn never changes the window size. The
+keyboard follows a two-state focus model — `→` moves it from the list to
+the detail pane (↑/↓ line-scroll, PgUp/PgDn or `[`/`]` page, `←`/Esc back;
+Esc grades detail → list → filter-clear → close) — made visible by the
+list's ▸ cursor demoting to `›` and the detail pane's accent title. The
+detail pane manages its own scroll window: the overlay path composites
+`component.render(width)` lines directly and the layout engine never
+descends into overlays, so a `ScrollView` can never obtain a viewport there
+(the same limitation a nested ScrollView hits inside a plain Container).
 
 maxHeights are tuned so the bottom border survives on a 24-row terminal
 (13 list rows + 4 frame rows ≤ 18 at 75%; ~15 + 4 ≤ 19 at 80%; 19 + 4 at 100%).

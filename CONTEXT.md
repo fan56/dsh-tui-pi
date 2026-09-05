@@ -109,3 +109,16 @@ live in ARCHITECTURE.md / HANDOFF.md.
   (a btw submitted while another is in flight, queued behind it; a main-line
   disruption — session switch / `/new` / abort — cancels running and queued
   alike)
+- **History browser (/history)**: 只读回看器——左栏当前 session 的用户消息
+  线性列表（按 seq 序；是列表不是树，session 日志无消息级分支），右栏显示
+  选中轮的 LLM 回复；仅查看与 copy（回填编辑器），不重发、不分叉、不定位
+  主 transcript
+  (a read-only look-back viewer — left pane lists the current session's user
+  messages linearly in seq order (a list, not a tree: the session log has no
+  message-level branching), right pane renders the selected turn's LLM reply;
+  view and copy (refill the editor) only — no resend, no branching, no
+  transcript jump)
+- **Cold read (冷读)**: 经宿主 persistence API 只读查看未激活 session 的事件
+  日志——不取 writer-lock、不 resume、不激活 agent
+  (read-only viewing of an inactive session's event log through the host
+  persistence API — no writer-lock, no resume, no agent activation)

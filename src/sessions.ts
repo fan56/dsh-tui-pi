@@ -194,8 +194,12 @@ export async function showSessionInfo(
 // direct human prompt) so sessions are distinguishable without opening them;
 // fallback rows show the header label (cwd basename · short id).
 
-/** The `sessionPersistence` service surface we use (registered by the profile). */
-interface SessionPersistence {
+/**
+ * The `sessionPersistence` service surface we use (registered by the profile).
+ * Shared with the /history browser, whose session picker reuses the same
+ * list/inspect vocabulary.
+ */
+export interface SessionPersistence {
   /** Lightweight read of persisted session metadata (headers only). */
   list(signal?: AbortSignal): Promise<SessionHeader[]>
   /** Full event log of one persisted session (damaged tails repaired on load). */
@@ -205,9 +209,10 @@ interface SessionPersistence {
 /**
  * How many of the most recent candidates get a first-message preview before
  * the picker opens. Older sessions fall back to the header label, so the
- * picker stays fast even with a long history.
+ * picker stays fast even with a long history. Shared with the /history
+ * session picker (same enrichment vocabulary, same cap).
  */
-const PREVIEW_SESSION_CAP = 30
+export const PREVIEW_SESSION_CAP = 30
 
 /**
  * Visible-width cap for the DIR column. Fitted column widths scan EVERY
@@ -215,9 +220,10 @@ const PREVIEW_SESSION_CAP = 30
  * (measured over the local session store; the 67-char deep repo path blew
  * the column out to ~70 and starved the flex SESSION tail). 32 keeps the
  * 90th-percentile cwd (~31 chars) fully visible and clips only the deep
- * outliers — longer paths truncate with an ellipsis.
+ * outliers — longer paths truncate with an ellipsis. Shared with the
+ * /history session picker.
  */
-const RESUME_DIR_CAP = 32
+export const RESUME_DIR_CAP = 32
 
 /**
  * Only sessions with log activity inside this window appear in `/resume`
@@ -553,8 +559,10 @@ export function resumeRowTitle(header: SessionHeader, preview: string | undefine
  * undefined, and failures matching the corrupt-log fingerprint additionally
  * record the id in `corruptIds` — zero extra IO (the inspect calls already
  * ran for the previews), so the ⚠ rows stay a free byproduct of enrichment.
+ * Exported for the /history session picker, which reuses the exact same
+ * enrichment (same concurrency, same corrupt fingerprint).
  */
-async function loadSessionPreviews(
+export async function loadSessionPreviews(
   persistence: SessionPersistence,
   ids: readonly SessionId[],
 ): Promise<{ previews: Map<string, string | undefined>; corruptIds: Set<string> }> {

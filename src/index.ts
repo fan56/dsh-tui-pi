@@ -70,6 +70,7 @@ import { WriterLockedError } from './writer-lock.ts'
 import { emitNotice } from './notice-bridge.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
+import { openHistoryBrowser } from './history.ts'
 import { commandUsagePath, CommandUsageTracker } from './usage.ts'
 import {
   buildUserPrompt,
@@ -1281,6 +1282,41 @@ export function apply(ctx: Context): void {
       handler: invocation => resumeHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /resume')
 
+    // /history: the read-only two-pane look-back (ADR 0003) — left pane lists
+    // the browsed session's completed turns, right pane shows the selected
+    // turn's replies; Enter/c refills the editor with the turn's prompt (a
+    // plain setText, never submitted). Bare /history browses the CURRENT live
+    // session (snapshot at open — no live updates while it stays open);
+    // /history <sessionId> cold-reads a stored log (no writer lock). `s`
+    // swaps the browsed session through a /resume-style picker. Nothing here
+    // writes a session log or takes the writer lock.
+    const historyHandler: LocalCommandHandler = async rawInput => {
+      const arg = rawInput?.trim() ?? ''
+      const result = await openHistoryBrowser({
+        ctx,
+        tui: ui.tui,
+        theme: ui.theme,
+        getSessionId: () => {
+          const id = bridge.getSessionId()
+          return id === undefined ? undefined : String(id)
+        },
+        getLiveEvents: () => bridge.getAgent()?.session.snapshotEvents(),
+        copyToEditor: text => {
+          ui.editor.setText(text)
+          ui.requestRender()
+        },
+        restoreFocus: refocusEditor,
+        requestRender: () => ui.requestRender(),
+      }, arg === '' ? undefined : arg)
+      return { kind: result.error ? 'error' as const : 'success' as const, text: result.text }
+    }
+    commands.registerLocal('history', historyHandler)
+    ctx.effect(() => ctx.commands.register({
+      name: 'history',
+      description: 'Browse past turns of a session (read-only; /history <id> for a stored one)',
+      handler: invocation => historyHandler(invocation.rawInput, invocation.signal),
+    }), 'dsh-tui-pi: /history')
+
     // Auto-resume after a hot-reload: a `/reload` stashes the previously
     // current session id before this fiber's teardown, and the freshly
     // re-imported module consumes it best-effort here so the next prompt
@@ -1729,7 +1765,7 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'profile-switch', 'profile-cfg', 'wiki', 'vault'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'history', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'profile-switch', 'profile-cfg', 'wiki', 'vault'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {

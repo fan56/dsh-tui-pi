@@ -328,6 +328,12 @@ export interface TablePanelOptions<T> {
   /** Rows rendered in the dimmer subtle color instead of muted (e.g. hidden models). */
   dimRow?: (row: T) => boolean
   /**
+   * Row marker override — defaults to the ▸/spaces pair (`rowMarker`). Lets
+   * an embedding flow demote the cursor glyph while another pane owns the
+   * focus (the history browser: `▸` on the focused list, `›` otherwise).
+   */
+  marker?: (selected: boolean) => string
+  /**
    * Live substring filter owned by the caller: `/` engages a single-line
    * input inside the panel; every keystroke lands in `onQueryChange` (the
    * caller rebuilds `rows`), Enter confirms and leaves input mode, Esc clears
@@ -339,6 +345,8 @@ export interface TablePanelOptions<T> {
   }
   /** Live status line (attention-colored) shown above the footer. */
   status?: () => string | undefined
+  /** Hint line for an empty body (default 'No matching models'). */
+  emptyHint?: string
 }
 
 /**
@@ -375,6 +383,16 @@ export class TablePanel<T> implements Component {
   /** The row under the cursor (undefined on an empty table). */
   selectedRow(): T | undefined {
     return this.options.rows[this.controller.index]
+  }
+
+  /**
+   * Whether the filter input line currently owns the keyboard (the engaged
+   * state, not an applied query). Embedding flows check it before claiming
+   * printable-ish keys (the history browser's `→` hands focus to the detail
+   * pane only outside filter input).
+   */
+  isFiltering(): boolean {
+    return this.filterInput
   }
 
   /**
@@ -430,14 +448,16 @@ export class TablePanel<T> implements Component {
       const cells = columns
         .map((column, j) => padCell(renderCell(row, column), widths[j], column.align))
         .join(seps)
-      const line = clipToWidth(`${rowMarker(selected)}${cells}`, width)
+      const line = clipToWidth(`${(this.options.marker ?? rowMarker)(selected)}${cells}`, width)
       lines.push(selected
         ? fns.accent(BOLD + line + RESET)
         : dimRow?.(row) === true ? fns.subtle(line) : fns.muted(line))
     }
     // An empty body (e.g. an applied filter matching nothing) renders a hint
     // row between the rules instead of a blank gap.
-    if (rows.length === 0) lines.push(fns.muted(clipToWidth('  No matching models', width)))
+    if (rows.length === 0) {
+      lines.push(fns.muted(clipToWidth(`  ${this.options.emptyHint ?? 'No matching models'}`, width)))
+    }
     lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), width)))
 
     // Filter state: an engaged input line shows the live query; an applied

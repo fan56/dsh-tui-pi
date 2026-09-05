@@ -129,6 +129,32 @@ sessions.ts       /session panel + /resume picker (ordered by last update:
                   (USER layer via readSessionManagementExplicit) >
                   DSH_TUI_RESUME_MAX_AGE_DAYS/_MIN_BYTES env > defaults
                   7d/20KB, resolved per picker open by resolveResumeConfig)
+history.ts        /history browser (ADR 0003): the read-only two-pane
+                  look-back — left TablePanel of the browsed session's
+                  completed turns (live snapshot or sessionPersistence
+                  inspect cold read; snapshot at open, never live-updating),
+                  right pane rebuilt statically from the selected turn's
+                  events with a self-managed scroll window (overlays get no
+                  layout viewport, so pi-tui ScrollView cannot be used
+                  there); HStack ≥100 columns / VStack below, chosen per
+                  render; fixed-window geometry — exactly
+                  overlayContentBudget() lines, short turns pad blank, only
+                  a resize re-derives (mounted 90%×85%); a →/←/Esc focus
+                  model between the panes (detail: ↑↓ line-scroll,
+                  PgUp/PgDn or `[`/`]` page, other keys inert; Esc grades
+                  detail → list → filter-clear → close; list cursor ▸
+                  demotes to › while the detail is keyed); Enter/c refills
+                  the editor with the turn's user prompt (plain setText,
+                  never submitted; replaces any draft without confirmation —
+                  prompt-less turns decline); `s` swaps the browsed session
+                  through the /resume-style picker (`/` filters it); nothing
+                  writes a log or takes the writer-lock
+history-turns.ts  /history pure fold: SessionEvent[] → completed
+                  HistoryTurn[] (turn/start…turn/end brackets; unclosed
+                  turns excluded; per-turn user prompts — claimed steer/
+                  follow-up included, injected kinds not — step replies and
+                  the tool-name tally) + the row filter; unit-tested
+                  without a terminal
 skills-manager.ts /skills panel (standalone skill browser): ~/.agents/skills
                   → ~/.dsh/skills symlinks via an idempotent install chain
                   (skillSymlinkPaths + installSkillSymlink: same-source
@@ -219,29 +245,28 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` runs **1150 tests** across 65 files (verified by
+- `pnpm test` runs **1183 tests** across 67 files (verified by
   `node --test test/*.mjs`; per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals in
-  HANDOFF.md. 3 image-blocks failures (the pi-tui 0.84.4 Image
-  component's changed text fallback) are pre-existing baseline failures,
-  unrelated to new logic.
-  - ask-user 123 + btw 45 + retention 39 + subagent-viewer 37 + skills 36 +
-  - live 35 + sessions 35 + keymap 31 + session-reconcile 30 + model-profiles 31 +
+  HANDOFF.md. The suite is fully green.
+  - ask-user 119 + btw 45 + retention 39 + subagent-viewer 37 + skills 36 +
+  - live 35 + sessions 35 + keymap 31 + model-profiles 31 + session-reconcile 30 +
   - usage 26 + subagent-policy 26 + pending-echo 26 + clipboard 26 + login 25 +
     log-repair 25 + startup-info 24 + skills-manager 24 + panels 24 +
-  - steer-flow 22 + theme 21 + model-list 21 + settings 19 + welcome 18 +
-    provider-catalog 17 + theme-canvas 16 + preset 16 + messages 20 + hotkeys 16 +
-  - theme-settings 15 + text 15 + history 13 + agent-manager 14 +
-    agent-runtime 16 + profile-apply 4 + image-blocks 12 +
-    custom-provider 12 + theme-switch 11 + frame 11 + footer-hints 10 +
-  - writer-lock 9 + permission 9 + commands 9 + append-system 9 +
+  - steer-flow 22 + theme 21 + model-list 21 + messages 20 + settings 19 +
+    welcome 18 + provider-catalog 17 + hotkeys 16 + theme-canvas 16 +
+    preset 16 + agent-runtime 16 +
+  - text 15 + theme-settings 15 + agent-manager 14 + history 13 +
+    history-viewer 24 + image-blocks 12 + custom-provider 12 +
+    theme-switch 11 + frame 11 + preflight-projcache 11 + footer-hints 10 +
+  - history-turns 9 + writer-lock 9 + permission 9 + commands 9 + append-system 9 +
     session-ch-cache 8 + notice-bridge 8 + font-detect 8 + dev-upgrade 8 +
-    repair-session-log 7 + remote-tail 7 + quotes 7 + icons 7 + tokens 6 +
-    reload 6 + queue-panel 6 + install-font 6 + selection-copy 5 +
-    mouse-mode 5 + markdown-latex 5 + transcript-search 4 + schema-model 3 +
-    plugin-inject 2 + host-version 7.
+    repair-session-log 7 + remote-tail 7 + quotes 7 + icons 7 + host-version 7 +
+  - tokens 6 + reload 6 + queue-panel 6 + install-font 6 + selection-copy 5 +
+    markdown-latex 5 + mouse-mode 5 + projcache 5 + transcript-search 4 +
+    profile-apply 4 + schema-model 3 + plugin-inject 2.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
   `dsh --profile tui`, drive keys, `capture-pane` for assertions (see HANDOFF
   "验证命令速查"). Keep the 24-row terminal case in the matrix — overlay
