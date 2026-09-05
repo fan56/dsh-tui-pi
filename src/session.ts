@@ -983,7 +983,7 @@ export class DshSessionBridge {
    * @param parentSessionId the session the seed came from (durable lineage).
    * @param presetId the preset id the new session composes under.
    */
-  async forkCurrentSession(seed: readonly SessionEvent[], parentSessionId: SessionId, presetId: string): Promise<AgentHandle> {
+  async forkCurrentSession(seed: readonly SessionEvent[], parentSessionId: SessionId, presetId: string | undefined): Promise<AgentHandle> {
     // Teardown FIRST (see docblock): the old agent's scope holds the TUI
     // surface service the new agent's setup must provide.
     await this.teardownLiveBinding()
@@ -1580,7 +1580,7 @@ export class DshSessionBridge {
    * rebuild turns under the wrong composition, the same rule
    * `childSessionMeta` documents for subagent children).
    */
-  private async createSession(fork?: { seed: readonly SessionEvent[]; parentSessionId: SessionId; presetId: string }): Promise<AgentHandle> {
+  private async createSession(fork?: { seed: readonly SessionEvent[]; parentSessionId: SessionId; presetId: string | undefined }): Promise<AgentHandle> {
     this.seedSelectionFromDefault()
     // Mint the id HERE so the pre-create lock covers exactly the directory
     // agents.create is about to persist into (same cold-arm guard as resume).
@@ -1597,7 +1597,7 @@ export class DshSessionBridge {
       ...this.agentPreset !== undefined ? { agentPreset: this.agentPreset } : {},
     }
     if (fork !== undefined) {
-      meta.agentPreset = fork.presetId
+      if (fork.presetId !== undefined) meta.agentPreset = fork.presetId
       meta.parentSession = fork.parentSessionId
       meta.isSeeded = true
     }

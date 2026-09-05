@@ -78,6 +78,7 @@ import {
   matchesTurnFilter,
   toolCallSummary,
   turnPrimaryUserText,
+  turnSeedSlice,
   type HistoryTurn,
 } from './history-turns.ts'
 import { stopIcon } from './icons.ts'
@@ -108,7 +109,7 @@ export const LEFT_PANE_MIN_COLUMNS = 30
 export const MAX_USER_BUBBLE_LINES = 40
 
 /** List footer hint (the detail pane carries the scroll hints). */
-const HISTORY_FOOTER = '↑↓ navigate · Enter/c copy · → detail · s session · / filter · Esc close'
+const HISTORY_FOOTER = '↑↓ navigate · Enter/c copy · f fork · → detail · s session · / filter · Esc close'
 
 /**
  * Content-row budget inside the framed overlay: showOverlay slices the
@@ -351,6 +352,23 @@ export interface HistoryBrowserDeps {
   getLiveEvents(): readonly SessionEvent[] | undefined
   /** Copy target: a plain editor setText (never submitted). */
   copyToEditor(text: string): void
+  /**
+   * Show the fork-at-turn confirmation over the open browser; resolves true
+   * = fork now. `turnLabel` is the selected turn's number (as displayed),
+   * `totalTurns` the session's listed turn count; `cold` is true when the
+   * browsed session is not the live one — the fork then detaches the LIVE
+   * session, and the dialog must say so instead of hiding it.
+   */
+  confirmForkAtTurn(turnLabel: string, totalTurns: number, cold: boolean): Promise<boolean>
+  /**
+   * Fork-and-switch at the turn boundary: start a new session on the CURRENT
+   * preset selection seeded with `seed` (the browsed session's prefix), and
+   * switch to it. Resolves when the new session is live; a rejection leaves
+   * every existing binding untouched (the browser stays open).
+   */
+  forkAtTurn(seed: readonly SessionEvent[], parentSessionId: string): Promise<unknown>
+  /** Buffered channel for fork failures (a transcript notice). */
+  reportError(message: string): void
   restoreFocus(): void
   requestRender(): void
 }
@@ -470,11 +488,14 @@ export class HistoryBrowserPanel implements Component {
   private sessionId: string
   private live: boolean
   private turns: HistoryTurn[]
+  /** The browsed session's raw events — the fork-at-turn slice source. */
+  private events: readonly SessionEvent[]
   private query = ''
   private rows: HistoryRow[]
   private status: string | undefined
   private closed = false
   private pickerLoading = false
+  private forkInProgress = false
   /**
    * Where the keyboard lives: the left list (default) or the right detail
    * pane. `→` hands focus to the detail pane, `←`/Esc step back; only the
@@ -496,6 +517,7 @@ export class HistoryBrowserPanel implements Component {
     this.sessionId = loaded.sessionId
     this.live = loaded.live
     this.turns = groupHistoryTurns(loaded.events)
+    this.events = loaded.events
     this.rows = historyRows(this.turns, '')
     this.listMax = listMaxVisible()
     this.builtBudget = overlayContentBudget()
@@ -538,6 +560,8 @@ export class HistoryBrowserPanel implements Component {
       shortcuts: {
         c: () => this.copySelected(),
         s: () => { void this.openSessionPicker() },
+        // Fork at the selected turn (confirmed in a dialog over the browser).
+        f: () => { void this.forkAtSelectedTurn() },
         // Detail paging rides the list's shortcut map: the TablePanel checks
         // shortcuts only OUTSIDE filter-input mode (the engaged input returns
         // before the shortcut lookup), so `[`/`]` type into the query while
@@ -617,6 +641,9 @@ export class HistoryBrowserPanel implements Component {
       if (kb.matches(data, 'tui.select.down')) { this.detail.scrollByLines(1); return }
       if (kb.matches(data, 'tui.select.pageUp') || data === '[') { this.detail.scrollByPage(-1); return }
       if (kb.matches(data, 'tui.select.pageDown') || data === ']') { this.detail.scrollByPage(1); return }
+      // The selection is the same whichever pane is keyed: `f` forks at it
+      // from the detail focus too.
+      if (data === 'f') { void this.forkAtSelectedTurn(); return }
       return
     }
     // List focus: `→` hands focus to the detail pane — except while the
@@ -696,6 +723,7 @@ export class HistoryBrowserPanel implements Component {
     this.sessionId = loaded.sessionId
     this.live = loaded.live
     this.turns = groupHistoryTurns(loaded.events)
+    this.events = loaded.events
     this.query = ''
     this.status = undefined
     this.rows = historyRows(this.turns, '')
@@ -759,6 +787,36 @@ export class HistoryBrowserPanel implements Component {
     }
     picker = new TablePanel<SessionPickRow>(this.deps.theme, options)
     return picker
+  }
+
+  /**
+   * Fork at the selected turn (`f`): confirm over the open browser, then
+   * hand the turn-bounded seed to the fork-and-switch seam. The browsed
+   * session's events are the slice source — live snapshots and cold-read
+   * (`inspect`) events fork alike. Cancel or an empty slice (nothing
+   * completed to carry) changes nothing; a failed fork keeps the browser
+   * open with the failure on the status line plus a buffered notice.
+   */
+  private async forkAtSelectedTurn(): Promise<void> {
+    if (this.closed || this.forkInProgress) return
+    const row = this.list.selectedRow()
+    if (row === undefined) return
+    const seed = turnSeedSlice(this.events, row.turn.turn)
+    if (seed.length === 0) return
+    this.forkInProgress = true
+    try {
+      const outcome = await this.deps.confirmForkAtTurn(row.turnLabel, this.turns.length, !this.live)
+      if (outcome !== true) return
+      await this.deps.forkAtTurn(seed, this.sessionId)
+      this.finish(`Forked at turn ${row.turnLabel} — new session opened.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.status = `Fork failed: ${message}`
+      this.deps.reportError(`Fork at turn ${row.turnLabel} failed: ${message}`)
+      this.deps.requestRender()
+    } finally {
+      this.forkInProgress = false
+    }
   }
 
   /** Open the session picker overlay (the browser stays mounted underneath). */

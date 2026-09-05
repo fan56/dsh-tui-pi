@@ -48,11 +48,32 @@ below):*
   skips a level. Focus is visible: the list's ▸ cursor demotes to `›` while
   the detail is keyed, the detail title turns accent bold and its footer
   shows `← list · ↑↓ scroll`.
+- **`f` — Fork at turn**: branches a NEW session at the selected turn and
+  switches to it, after a confirmation dialog. The new session is seeded with
+  the browsed session's events **through the selected turn's `turn/end`
+  (inclusive)** — the state as that turn finished; later turns stay in the
+  current session (resumable via `/resume`), and the running turn, if any, is
+  not carried. The new session uses the **current preset selection** (the
+  preset never changes), and the transcript replays the carried history on
+  switch. Works from either pane (the selection is the same), on live
+  sessions and cold-read ones alike — that is the whole point: fork any
+  stored session at any turn without resuming it. A failed fork keeps the
+  browser open with the error on the status line; the original session is
+  never modified. When the browsed session is NOT the live one (a cold read),
+  the fork detaches the **live** session instead — the dialog names it, and
+  it stays resumable via `/resume`; the browsed session itself is never
+  touched. (Contrast `/preset`'s Fork & switch: there forking rides a preset
+  change — here the preset stays and the turn boundary is the point.) Known
+  trade-off: while the fork create runs, the keyboard is briefly back on the
+  browser — keys pressed in that window act on the view that is about to be
+  switched away; the in-progress guard just prevents double forking.
 - **Fixed window**: the browser opens at 90% × 85% of the terminal and its
   geometry never changes with the content — short turns pad blank rows, long
   ones scroll. Only a terminal resize re-derives the window.
 - **Read-only by construction**: nothing here writes a session log, takes the
-  writer lock, resends, branches, or jumps the main transcript.
+  writer lock, resends, or jumps the main transcript — the one deliberate
+  exception is fork at turn above (a session-level branch, never a
+  message-level tree; see ADR 0003).
 
 ## Snapshot semantics
 

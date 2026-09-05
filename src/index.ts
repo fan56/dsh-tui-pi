@@ -71,6 +71,7 @@ import { emitNotice } from './notice-bridge.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
 import { openHistoryBrowser } from './history.ts'
+import { openForkAtTurnDialog } from './history-fork.ts'
 import { commandUsagePath, CommandUsageTracker } from './usage.ts'
 import {
   buildUserPrompt,
@@ -1030,6 +1031,7 @@ export function apply(ctx: Context): void {
           ui.requestRender()
         },
         forkCommit: async presetId => {
+          const liveId = bridge.getSessionId()
           const agent = bridge.getAgent()
           if (agent === undefined) {
             // Raced to no-session while the dialog was up: nothing to carry —
@@ -1076,10 +1078,15 @@ export function apply(ctx: Context): void {
             bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
             ui.requestRender()
           } catch (error) {
-            // The recorded-preset guarantee above holds through the create;
-            // a throw AFTER the bind (pure in-memory view work) may leave the
-            // fork session bound with a rolled-back selection — noted, not
-            // recoverable here.
+            // The recorded-preset guarantee above holds through the create.
+            // A create failure leaves the old binding torn down (teardown
+            // precedes the create): re-attach the previously live session.
+            // A throw AFTER the bind (pure in-memory view work) keeps the
+            // healthy fork session — restoring the old one there would
+            // detach it; noted, not recoverable here.
+            if (liveId !== undefined && bridge.getSessionId() === undefined) {
+              await restoreLiveSession(liveId)
+            }
             ui.requestRender()
             throw error
           }
@@ -1358,6 +1365,46 @@ export function apply(ctx: Context): void {
           ui.editor.setText(text)
           ui.requestRender()
         },
+        confirmForkAtTurn: (turnLabel, totalTurns, cold) => {
+          // Cold browse: the fork detaches the LIVE session — the dialog must
+          // name it (short id) instead of hiding its fate.
+          const liveId = bridge.getSessionId()
+          return openForkAtTurnDialog(
+            ui.tui, ui.theme, turnLabel, totalTurns,
+            cold && liveId !== undefined ? clipToWidth(liveId, 8) : undefined,
+            refocusEditor,
+          ).then(outcome => outcome === 'fork')
+        },
+        forkAtTurn: async (seed, parentSessionId) => {
+          const liveId = bridge.getSessionId()
+          // Cancel the btw context snapshot first — the switch strands it
+          // (the /new contract).
+          btwController.cancelAll()
+          bridge.setAgentPreset(currentPreset(presetState)?.id)
+          try {
+            const handle = await bridge.forkCurrentSession(seed, SessionId(parentSessionId), currentPreset(presetState)?.id)
+            refreshPermissionPreset()
+            renderer.clear()
+            liveWidgets.clear()
+            // Replay the carried history (the /resume contract) — for a fork
+            // the seed IS the point, so it replays in full (`firstLiveSeq`
+            // covers seed + end-seed).
+            const session = handle.agent.session
+            bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
+            ui.requestRender()
+          } catch (error) {
+            // The bridge tears the live binding down BEFORE the create, so a
+            // failed create leaves no live session: re-attach the previously
+            // live one (a failing re-attach reports itself — never silent).
+            // The selection was never touched (fork keeps the current preset).
+            if (liveId !== undefined && bridge.getSessionId() === undefined) {
+              await restoreLiveSession(liveId)
+            }
+            ui.requestRender()
+            throw error
+          }
+        },
+        reportError: message => renderer.renderNotice(message, 'error'),
         restoreFocus: refocusEditor,
         requestRender: () => ui.requestRender(),
       }, arg === '' ? undefined : arg)
@@ -1466,6 +1513,35 @@ export function apply(ctx: Context): void {
       // The widget's agents already cleared via the bridge's onLive([]); drop
       // the previous session's todos too.
       liveWidgets.clear()
+    }
+
+    /**
+     * Best-effort re-attach of a previously live session after a FAILED
+     * fork: the bridge tears the live binding down before the seeded create
+     * (its setup must compose in a clean scope), so a failed fork leaves no
+     * live session. Rebuilds the transcript from the resumed log; a failing
+     * re-attach itself is reported through the buffered notice channel
+     * (never silently swallowed — the user must know the live session is
+     * gone from the keyboard) and resolves anyway: the next prompt starts a
+     * fresh session.
+     */
+    const restoreLiveSession = async (liveId: string): Promise<void> => {
+      try {
+        const restored = await bridge.resume(SessionId(liveId))
+        refreshPermissionPreset()
+        renderer.clear()
+        liveWidgets.clear()
+        const session = restored.agent.session
+        bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        renderer.renderNotice(
+          'could not re-attach the previous session — it stays resumable via /resume;'
+          + ` the next prompt starts a fresh one (${detail})`,
+          'error',
+        )
+      }
+      ui.requestRender()
     }
 
     const newHandler: LocalCommandHandler = async () => {

@@ -144,8 +144,11 @@ history.ts        /history browser (ADR 0003): the read-only two-pane
                   right pane rebuilt statically from the selected turn's
                   events with a self-managed scroll window (overlays get no
                   layout viewport, so pi-tui ScrollView cannot be used
-                  there); HStack ≥100 columns / VStack below, chosen per
-                  render; fixed-window geometry — exactly
+                  there); `f` forks at the selected turn (turnSeedSlice →
+                  confirmed dialog → bridge.forkCurrentSession on the CURRENT
+                  preset, live and cold sessions alike; dialog in
+                  history-fork.ts); HStack ≥100 columns / VStack below,
+                  chosen per render; fixed-window geometry — exactly
                   overlayContentBudget() lines, short turns pad blank, only
                   a resize re-derives (mounted 90%×85%); a →/←/Esc focus
                   model between the panes (detail: ↑↓ line-scroll,
@@ -253,7 +256,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` runs **1193 tests** across 68 files (verified by
+- `pnpm test` runs **1207 tests** across 69 files (verified by
   `node --test test/*.mjs`; per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
@@ -267,9 +270,9 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
     welcome 18 + provider-catalog 17 + hotkeys 16 + theme-canvas 16 +
     preset 15 + agent-runtime 16 +
   - text 15 + theme-settings 15 + agent-manager 14 + history 13 +
-    history-viewer 24 + image-blocks 12 + custom-provider 12 +
+    history-viewer 30 + image-blocks 12 + custom-provider 12 +
     theme-switch 11 + frame 11 + preflight-projcache 11 + footer-hints 10 +
-  - preset-dialog 11 + history-turns 9 + writer-lock 9 + permission 9 + commands 9 + append-system 9 +
+  - history-fork 8 + preset-dialog 11 + history-turns 9 + writer-lock 9 + permission 9 + commands 9 + append-system 9 +
     session-ch-cache 8 + notice-bridge 8 + font-detect 8 + dev-upgrade 8 +
     repair-session-log 7 + remote-tail 7 + quotes 7 + icons 7 + host-version 7 +
   - tokens 6 + reload 6 + queue-panel 6 + install-font 6 + selection-copy 5 +

@@ -111,13 +111,20 @@ live in ARCHITECTURE.md / HANDOFF.md.
   alike)
 - **History browser (/history)**: 只读回看器——左栏当前 session 的用户消息
   线性列表（按 seq 序；是列表不是树，session 日志无消息级分支），右栏显示
-  选中轮的 LLM 回复；仅查看与 copy（回填编辑器），不重发、不分叉、不定位
-  主 transcript
+  选中轮的 LLM 回复；查看与 copy（回填编辑器），不重发、不定位主
+  transcript；唯一例外是 fork at turn（`f`）：按选中轮分叉新 session 并
+  切换（仍为 session 级 fork，非消息级树）。live 浏览下原会话不动；
+  cold 浏览（被浏览 ≠ live）时被 detach 的是 live 会话（仍可 /resume），
+  被浏览会话本身永远不动
   (a read-only look-back viewer — left pane lists the current session's user
   messages linearly in seq order (a list, not a tree: the session log has no
   message-level branching), right pane renders the selected turn's LLM reply;
-  view and copy (refill the editor) only — no resend, no branching, no
-  transcript jump)
+  view and copy (refill the editor), no resend, no transcript jump — with
+  one exception, fork at turn (`f`): branch a new session at the selected
+  turn and switch to it (still a session-level fork, not a message-level
+  tree). Live browse: the original session is untouched. Cold browse (the
+  browsed session ≠ live): the LIVE session is the one detached, still
+  resumable via /resume; the browsed session is never touched)
 - **Cold read (冷读)**: 经宿主 persistence API 只读查看未激活 session 的事件
   日志——不取 writer-lock、不 resume、不激活 agent
   (read-only viewing of an inactive session's event log through the host

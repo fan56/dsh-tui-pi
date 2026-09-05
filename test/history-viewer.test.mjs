@@ -51,7 +51,10 @@ function sampleEvents() {
 
 /** Fake seams: no terminal, no ctx services, copied text captured. */
 function makePanel(events = sampleEvents(), overrides = {}) {
-  const state = { copied: undefined, closed: 0, refocused: 0, finished: undefined, opened: [] }
+  const state = {
+    copied: undefined, closed: 0, refocused: 0, finished: undefined, opened: [],
+    forkDialogs: [], forks: [], forkErrors: [], forkAnswer: false,
+  }
   const deps = {
     ctx: { get: () => undefined },
     tui: { requestRender() {} },
@@ -59,6 +62,15 @@ function makePanel(events = sampleEvents(), overrides = {}) {
     getSessionId: () => 'aaaaaaaa-1111-2222-3333-444444444444',
     getLiveEvents: () => events,
     copyToEditor: text => { state.copied = text },
+    confirmForkAtTurn: async (turnLabel, totalTurns, cold) => {
+      state.forkDialogs.push({ turnLabel, totalTurns, cold })
+      return state.forkAnswer
+    },
+    forkAtTurn: async (seed, parentSessionId) => {
+      state.forks.push({ seed, parentSessionId })
+      return {}
+    },
+    reportError: message => { state.forkErrors.push(message) },
     restoreFocus: () => { state.refocused += 1 },
     requestRender: () => {},
     ...overrides.deps,
@@ -67,7 +79,7 @@ function makePanel(events = sampleEvents(), overrides = {}) {
     open: component => { state.opened.push(component); return {} },
     close: () => { state.closed += 1 },
   }
-  const loaded = { sessionId: 'aaaaaaaa-1111', live: true, events }
+  const loaded = { sessionId: 'aaaaaaaa-1111', live: true, events, ...overrides.loaded }
   const panel = new HistoryBrowserPanel(deps, host, loaded)
   panel.onFinish = text => { state.finished = text }
   return { panel, state, deps }
@@ -666,4 +678,90 @@ test('historyLoadErrorMessage: corrupt logs get the ⚠ + repair pointer', () =>
   const plain = historyLoadErrorMessage('abcd1234-ef90', new Error('session/not-found'))
   assert.ok(plain.startsWith('Cannot read'))
   assert.ok(!plain.startsWith('⚠'))
+})
+
+// ------------------------------------------------------------ fork at turn --
+
+test('`f` forks at the selected turn from list focus: correct seed, parent id, close echo', async () => {
+  const { panel, state } = makePanel()
+  panel.handleInput('\x1b[B') // down → turn 1
+  state.forkAnswer = true
+  panel.handleInput('f')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(state.forkDialogs, [{ turnLabel: '1', totalTurns: 3, cold: false }])
+  assert.equal(state.forks.length, 1)
+  const { seed, parentSessionId } = state.forks[0]
+  // The seed runs from seq 0 through turn 1's turn/end (seq 10) — 11 events.
+  assert.equal(seed.length, 11)
+  assert.equal(seed[0].seq, 0)
+  assert.equal(seed[10].type, 'turn/end')
+  assert.equal(seed[10].data.turn, 1)
+  assert.equal(parentSessionId, 'aaaaaaaa-1111')
+  // Success closes the browser with the fork echo.
+  assert.equal(state.closed, 1)
+  assert.equal(state.finished, 'Forked at turn 1 — new session opened.')
+  assert.equal(state.refocused, 1)
+})
+
+test('`f` from detail focus targets the same selected turn', async () => {
+  const { panel, state } = makePanel()
+  panel.handleInput('\x1b[B') // down → turn 1
+  panel.handleInput('\x1b[C') // → detail focus
+  state.forkAnswer = true
+  panel.handleInput('f')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(state.forkDialogs, [{ turnLabel: '1', totalTurns: 3, cold: false }])
+  assert.equal(state.forks.length, 1)
+  assert.equal(state.forks[0].seed.length, 11)
+})
+
+test('`f` cancelled (Esc answer) changes nothing and keeps the browser open', () => {
+  const { panel, state } = makePanel()
+  panel.handleInput('f') // turn 0 selected; dialog answers cancel by default
+  assert.deepEqual(state.forkDialogs, [{ turnLabel: '0', totalTurns: 3, cold: false }])
+  assert.deepEqual(state.forks, [], 'no fork ran')
+  assert.equal(state.closed, 0)
+  const text = panel.render(120).map(stripAnsi).join('\n')
+  assert.ok(text.includes('Turn 0 · live snapshot'), 'the browser is still usable')
+})
+
+test('a failed fork keeps the browser open with the failure visible', async () => {
+  const { panel, state } = makePanel(sampleEvents(), {
+    deps: {
+      forkAtTurn: async () => { throw new Error('create refused') },
+    },
+  })
+  state.forkAnswer = true
+  panel.handleInput('f')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.closed, 0, 'the browser stays open')
+  assert.deepEqual(state.forkErrors, ['Fork at turn 0 failed: create refused'])
+  const text = panel.render(120).map(stripAnsi).join('\n')
+  assert.ok(text.includes('Fork failed: create refused'), text)
+  // The flow is retryable after a failure (the in-progress guard released).
+  panel.handleInput('f')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.forkErrors.length, 2)
+})
+
+test('`f` on a cold-read session flags cold and hands the seed to the fork seam', async () => {
+  // `loaded.live: false` is what a cold `s`-picker switch produces.
+  const { panel, state } = makePanel(sampleEvents(), { loaded: { live: false } })
+  state.forkAnswer = true
+  panel.handleInput('f')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(state.forkDialogs, [{ turnLabel: '0', totalTurns: 3, cold: true }])
+  assert.equal(state.forks[0].parentSessionId, 'aaaaaaaa-1111', 'the seed is sliced from the browsed session')
+  assert.equal(state.forks[0].seed.length, 4, 'seed through turn 0 (seqs 0–3)')
+  assert.equal(state.closed, 1)
+})
+
+test('`f` inside the filter input types into the query and never opens the dialog', () => {
+  const { panel, state } = makePanel()
+  panel.handleInput('/') // engage the filter input
+  panel.handleInput('f')
+  assert.deepEqual(state.forkDialogs, [], 'filter input owns the keyboard — no fork dialog')
+  const text = panel.render(120).map(stripAnsi).join('\n')
+  assert.ok(text.includes('Filter: f'), text)
+  assert.equal(state.closed, 0)
 })

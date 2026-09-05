@@ -19,3 +19,10 @@ seq 主键的线性 append-only log，**没有消息级 parent 指针**，pi 式
   这是「分叉」功能本身，超出回看范围；/history 的左列表右详情骨架是它的子集，
   未来若做分叉，左栏升级为谱系树、UI 骨架不变。术语见 CONTEXT.md
   History browser 条目。
+
+## Update (2026-09-05)
+
+/history 增加了 fork at turn（`f`）：按选中轮把当前会话前缀 seed 进新 session
+并切换——仍是一次 **session 级 fork**（seed 到选中轮 `turn/end`，宿主
+`agents.create({ seed })` 机制），不是 pi 式消息级树；本决策的核心（不做
+per-entry parent / 不升格式版本）不变，且当初推迟的「分叉」由此以子集形态落地。
