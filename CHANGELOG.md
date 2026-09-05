@@ -4,7 +4,7 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.7.0] - Unreleased
+## [2.7.0] - 2026-09-05
 
 ### Changed
 - **BREAKING: `Tab` no longer cycles agent presets** — the `preset-cycle` app binding is removed (Tab is unbound, with no replacement); an entry referencing `presetCycle` in `~/.dsh/keybindings.json` is ignored with a warning notice now. Preset switching is `/preset`'s explicit flow only.
