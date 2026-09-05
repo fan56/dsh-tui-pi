@@ -50,6 +50,33 @@ node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # preview the plan first
 
 ---
 
+## Uninstall
+
+```sh
+dsh plugin --profile <name> remove @aiwayds/dsh-tui-pi
+```
+
+The `dsh-tui-pi` bin shim is global and can stay; if you installed the package globally and want it gone too: `npm -g rm @aiwayds/dsh-tui-pi`.
+
+The host cleans up the profile automatically: the `dsh.profile.bundles` entry is spliced and the whole patch layer goes away with the package — the stock `session-projection-cache` row re-enables, and the projcache wrapper, the `tool-ask-user` insert and its disable row all vanish.
+
+What stays on disk on purpose (deleting user data is destructive; a reinstall reuses all of it):
+
+- `~/.dsh/APPEND_SYSTEM.md` — auto-seeded system-prompt appendix (plugin-owned; delete by hand if unwanted)
+- `~/.dsh/tui-command-usage.json` — slash-command usage ranking
+- `~/.dsh/model-profiles.json` — model profiles (SHARED with other plugins — dsh-subagent-registry reads it)
+- `~/.dsh/keybindings.json` — the dsh-tui app-key rows (host-shared file)
+- `~/.dsh/agents/*.md` and `~/.dsh/skills/` — user-editable agents/skills (shared with other plugins)
+- `.dsh-profile` pin files in project workspaces (written by /model profile pinning)
+- the `dsh-tui:` section of `~/.dsh/settings.yaml` — theme/panel/footer/retention/subagent limits
+- `~/.dsh/storages/session_projcache/` — the session projection cache, incl. `.bak-preflight-*` migration backups
+
+While the plugin runs, the retention janitor (default `maxCount: 100` / `maxAgeDays: 7`, configurable in the `dsh-tui` settings) deletes old session logs — uninstalling stops that, but already-deleted logs are gone.
+
+`scripts/install-font.mjs` mutates OS font/terminal state and has a documented backup; uninstall doesn't touch it.
+
+---
+
 ## Companion plugins
 
 **Default dependencies** — the eight plugins below ship with this package (installed into the profile's `node_modules`); activation still follows the profile's `bundles` list — list each one there to activate it.

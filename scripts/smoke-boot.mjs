@@ -17,13 +17,17 @@
 //      loader error (a healthy boot is silent and survives to the kill
 //      signal; a broken plugin dies within ~1s with the loader error), and
 //      the seeded record must come out backfilled + backed up
+//   7. `dsh plugin --profile smoke remove` must reconcile the profile back
+//      to stock: the bundles entry spliced and the patch layer dropped —
+//      the post-removal dump shows no tui-pi entries and the stock
+//      projection-cache row re-enabled
 //
 // The boot runs piped (no TTY). Verified empirically: the TUI plugin's
 // apply() tolerates a non-terminal (pi-tui guards raw mode), so the piped
 // boot is a valid load proof without dragging a pty shim into CI.
 //
-// Exit 0 = mounted and boots clean. Temp dir is kept and printed on failure,
-// removed on success.
+// Exit 0 = mounted, boots and removes clean. Temp dir is kept and printed on
+// failure, removed on success.
 
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -163,5 +167,28 @@ if (migrated.identity?.isSeeded !== false || migrated.identity?.inheritedEventCo
   fail('the seeded legacy record survived the boot without being backfilled', JSON.stringify(migrated.identity))
 }
 
-console.log(`smoke-boot: PASS — ${ownName} composed into the scratch profile tree and booted clean in real dsh (${survived ? `survived the ${bootSeconds}s boot window` : `exited ${boot.status}`}); the seeded legacy projection-cache record was migrated with a backup`)
+// Phase 4 — uninstall proof: `dsh plugin remove` must reconcile the profile
+// back to stock — the bundles entry spliced and every patch effect gone (the
+// stock projection-cache row re-enabled, the wrapper and tool inserts
+// dropped).
+const remove = spawnSync('dsh', ['plugin', '--profile', 'smoke', 'remove', ownName], { cwd: profile, encoding: 'utf8', env: dshEnv })
+if (remove.status !== 0 || remove.error) fail('dsh plugin remove failed', `${remove.stdout}\n${remove.stderr}`)
+const dumpAfter = spawnSync('dsh', ['--profile', 'smoke', '--dump-config'], { cwd: profile, encoding: 'utf8', env: dshEnv })
+if (dumpAfter.status !== 0 || dumpAfter.error) fail('dsh --dump-config failed after removal', `${dumpAfter.stdout}\n${dumpAfter.stderr}`)
+if (dumpAfter.stdout.includes('tui-pi')) {
+  fail('the composed tree still contains tui-pi entries after removal (bundles entry not spliced / patch layer not dropped)', dumpAfter.stdout)
+}
+// The stock row must still be composed (it comes from dsh-base) but enabled
+// again — `disabled: true` may not appear anywhere inside its own entry
+// block (the row carries indented config fields, so the check is scoped to
+// the block ending at the next top-level entry).
+const stockRowAfter = /- id: session-projection-cache[\s\S]*?(?=\n- id:|\n#|$)/.exec(dumpAfter.stdout)?.[0] ?? ''
+if (!stockRowAfter) {
+  fail('the stock session-projection-cache row vanished from the composed tree after removal', dumpAfter.stdout)
+}
+if (stockRowAfter.includes('disabled: true')) {
+  fail('the stock session-projection-cache row is still disabled after removal', stockRowAfter)
+}
+
+console.log(`smoke-boot: PASS — ${ownName} composed into the scratch profile tree and booted clean in real dsh (${survived ? `survived the ${bootSeconds}s boot window` : `exited ${boot.status}`}); the seeded legacy projection-cache record was migrated with a backup; removal restored the stock tree`)
 rmSync(work, { recursive: true, force: true })

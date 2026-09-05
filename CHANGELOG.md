@@ -4,11 +4,12 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.7.1] - Unreleased
+## [2.7.1] - 2026-09-05
 
 ### Changed
 - **/history: oversized turns truncate instead of stalling** — a turn whose assistant content exceeds `MAX_DETAIL_LINES` (4000 source lines) builds only the budgeted prefix and ends with a dim `… <N> more lines truncated — /resume <short-id> for the full turn` marker; selection of pathological turns no longer freezes the panel on a full Markdown parse.
 - **a resize no longer kicks the /history list out of filter input** — `rebuildListPanel` re-engages the engaged filter on the rebuilt TablePanel (query, cursor and input mode all survive; new public `TablePanel.beginFilterInput()`).
+- **Clean-uninstall documentation and coverage** — README/README.zh-CN gain an Uninstall section (removal steps + the full on-disk artifact inventory), and the boot smoke gains an uninstall leg asserting `dsh plugin remove` reconciles the profile tree back to stock.
 
 ### Fixed
 - `turnSeedSlice` now slices at the SELECTED fold's own end seq — a damaged log with duplicate turn numbers no longer cuts a fork short at the first match.

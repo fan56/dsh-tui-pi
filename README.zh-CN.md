@@ -47,6 +47,33 @@ node scripts/dev-upgrade.mjs 1.0.5 --dry-run  # 先预览执行计划
 
 ---
 
+## 卸载
+
+```sh
+dsh plugin --profile <name> remove @aiwayds/dsh-tui-pi
+```
+
+`dsh-tui-pi` 启动器是全局 bin shim，留着无妨；若还全局安装过本包，用 `npm -g rm @aiwayds/dsh-tui-pi` 一并移除。
+
+宿主会自动清理 profile：`dsh.profile.bundles` 条目被剪除，整层 patch 随包一起消失——原生的 `session-projection-cache` 行恢复启用，projcache wrapper、`tool-ask-user` 插入及其禁用行全部随之消失。
+
+以下内容刻意留在磁盘上（删用户数据是破坏性的；重装会全部复用）：
+
+- `~/.dsh/APPEND_SYSTEM.md` —— 自动播种的系统提示词附录（插件所有；不想要就手动删除）
+- `~/.dsh/tui-command-usage.json` —— 斜杠命令使用排行
+- `~/.dsh/model-profiles.json` —— 模型档案（与其他插件共享——dsh-subagent-registry 也读它）
+- `~/.dsh/keybindings.json` —— dsh-tui 的 app 按键行（宿主共享文件）
+- `~/.dsh/agents/*.md` 与 `~/.dsh/skills/` —— 用户可编辑的 agents/skills（与其他插件共享）
+- 项目工作区里的 `.dsh-profile` 固定文件（由 /model profile 固定时写入）
+- `~/.dsh/settings.yaml` 的 `dsh-tui:` 段 —— 主题/面板/footer/保留策略/subagent 限制
+- `~/.dsh/storages/session_projcache/` —— 会话投影缓存，含 `.bak-preflight-*` 迁移备份
+
+插件运行期间，保留清理器（默认 `maxCount: 100` / `maxAgeDays: 7`，可在 `dsh-tui` 设置中调整）会删除旧会话日志——卸载后即停止，但已删除的日志找不回来。
+
+`scripts/install-font.mjs` 会改动 OS 字体/终端状态且有文档化的备份；卸载不会碰它。
+
+---
+
 ## Companion plugins 伴生插件
 
 **默认依赖** —— 以下 8 个插件随本包自带（安装进 profile 的 `node_modules`）；激活仍以 profile 的 `bundles` 列表为准——把要用的逐个列进去即可。
