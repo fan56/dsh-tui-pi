@@ -204,6 +204,15 @@ export interface BridgeStats {
   /** Per-route cache-hit rate: cacheReadTokens ÷ billed input (input + cacheRead + cacheWrite) accumulated within the current provider/model segment; reset when the route changes. */
   cacheHitRate?: number
   /**
+   * Cache-hit rate of the LATEST assistant/message's own usage —
+   * cacheReadTokens ÷ billed input of that single request (input +
+   * cacheRead + cacheWrite), the pi-powerline-footer / pi-tui footer
+   * semantics. `undefined` until the first usage-bearing assistant/message;
+   * never session-cumulative, so a route change shows up on the next message
+   * without an explicit reset.
+   */
+  lastMessageCacheHitRate?: number
+  /**
    * Current context occupancy estimate — the value the footer's Context
    * segment divides by the model window: the latest assistant/message's
    * billed input + output plus a CJK estimate of every message appended
@@ -850,6 +859,7 @@ export class DshSessionBridge {
     this.stats.msgCount = 0
     this.stats.toolCallCount = 0
     this.stats.cacheHitRate = undefined
+    this.stats.lastMessageCacheHitRate = undefined
     this.stats.contextTokens = 0
     this.lastUsage = undefined
     this.pendingTokens = 0
@@ -1099,6 +1109,7 @@ export class DshSessionBridge {
     this.stats.msgCount = 0
     this.stats.toolCallCount = 0
     this.stats.cacheHitRate = undefined
+    this.stats.lastMessageCacheHitRate = undefined
     this.stats.contextTokens = 0
     this.lastUsage = undefined
     this.pendingTokens = 0
@@ -1153,6 +1164,13 @@ export class DshSessionBridge {
           const billedInput = this.stats.inputTokens + this.stats.cacheReadTokens + this.stats.cacheWriteTokens
           this.stats.cacheHitRate = billedInput > 0
             ? (this.stats.cacheReadTokens / billedInput) * 100
+            : undefined
+          // The per-message companion: the same formula over THIS request's
+          // usage only (pi-tui footer semantics). A message without usage
+          // leaves the previous snapshot standing, mirroring lastUsage.
+          const latestPromptTokens = usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+          this.stats.lastMessageCacheHitRate = latestPromptTokens > 0
+            ? ((usage.cacheReadTokens ?? 0) / latestPromptTokens) * 100
             : undefined
         }
         this.stats.contextTokens = this.contextTokens()

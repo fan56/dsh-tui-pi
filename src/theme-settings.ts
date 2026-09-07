@@ -48,6 +48,21 @@ import type { ThemePreference } from './theme/index.ts'
  */
 export const THEME_SETTINGS_NAMESPACE = 'dsh-tui'
 
+/**
+ * Which usage sample the footer's CH segment reports: the LATEST assistant
+ * message's own hit rate (the pi-tui / pi-powerline-footer semantics) or the
+ * session-cumulative rate over the whole session's input traffic.
+ */
+export type CacheHitMode = 'lastMessage' | 'session'
+
+/** The footer CH default: per-message, matching the pi-tui footer. */
+export const DEFAULT_CACHE_HIT_MODE: CacheHitMode = 'lastMessage'
+
+/** Validate an unknown `cacheHitMode` value (anything else narrows to the default). */
+export function narrowCacheHitMode(value: unknown): CacheHitMode {
+  return value === 'session' ? 'session' : DEFAULT_CACHE_HIT_MODE
+}
+
 /** Subagent concurrency/rounds/tool knobs read by the subagent policy. */
 export interface SubagentLimits {
   /** Concurrent live children allowed; 0 lifts the cap (the guard stays off). */
@@ -127,6 +142,14 @@ const THEME_SETTINGS_SCHEMA = z.object({
     })
     .default({ ...DEFAULT_FOOTER_HINTS })
     .description('Footer shortcut hints to display (toggle each one on/off)'),
+  cacheHitMode: z
+    .union(['lastMessage', 'session'])
+    .default(DEFAULT_CACHE_HIT_MODE)
+    .description(
+      "Footer CH segment scope: 'lastMessage' = hit rate of the latest assistant message "
+      + "(matches the pi-tui footer); 'session' = cumulative over the whole session's input traffic. "
+      + 'Applies on the next footer repaint',
+    ),
   iconSet: z
     .union(['auto', 'nerdfont', 'plain'])
     .default('auto')
@@ -210,6 +233,7 @@ const THEME_SETTINGS_ENTRY: {
   maxRounds: number
   disableSubagent: boolean
   footerHints: FooterHints
+  cacheHitMode: CacheHitMode
   iconSet: IconSet
   favoriteModels: string[]
   hiddenModels: string[]
@@ -222,6 +246,7 @@ const THEME_SETTINGS_ENTRY: {
   maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
   disableSubagent: DEFAULT_SUBAGENT_LIMITS.disableSubagent,
   footerHints: { ...DEFAULT_FOOTER_HINTS },
+  cacheHitMode: DEFAULT_CACHE_HIT_MODE,
   iconSet: 'auto',
   favoriteModels: [],
   hiddenModels: [],
@@ -504,6 +529,24 @@ export function currentFooterHints(ctx: Context): FooterHints {
     | { footerHints?: unknown }
     | undefined)?.footerHints
   return narrowFooterHints(hints)
+}
+
+/**
+ * Read the currently persisted footer CH mode, synchronously. Unlike a
+ * startup snapshot, this describes whatever the settings service exposes
+ * right now — the footer calls it on every render, so a committed change
+ * (the /settings browser, an external edit) applies on the next repaint.
+ * @returns DEFAULT_CACHE_HIT_MODE when the service, namespace, or value is absent.
+ */
+export function currentCacheHitMode(ctx: Context): CacheHitMode {
+  const settings = ctx.get('settings') as SettingsProvider | undefined
+  if (settings === undefined) return DEFAULT_CACHE_HIT_MODE
+  const mode = (settings
+    .describe()
+    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
+    | { cacheHitMode?: unknown }
+    | undefined)?.cacheHitMode
+  return narrowCacheHitMode(mode)
 }
 
 /**

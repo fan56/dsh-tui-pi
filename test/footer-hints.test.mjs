@@ -91,8 +91,52 @@ function footerSource(overrides = {}) {
     getContextWindow: () => overrides.contextWindow ?? 1000,
     getBranch: () => undefined,
     getPreset: () => undefined,
+    getCacheHitMode: () => overrides.cacheHitMode ?? 'lastMessage',
   }
 }
+
+test('the CH segment reports the latest message rate by default (pi-tui semantics)', () => {
+  // Cumulative says 90%, but the LATEST message only hit 50% — the default
+  // mode shows the per-message sample.
+  const footer = new PowerlineFooter(footerSource({
+    cacheHitMode: 'lastMessage',
+    stats: {
+      cacheReadTokens: 1800,
+      cacheWriteTokens: 0,
+      cacheHitRate: 90,
+      lastMessageCacheHitRate: 50,
+    },
+  }), () => darkTheme)
+  const row = stripAnsi(footer.render(200)[0])
+  assert.ok(row.includes('⚡ CH50.0%'), `per-message rate shown (${row})`)
+  assert.ok(!row.includes('CH90.0%'), 'the cumulative rate must not leak into the default mode')
+})
+
+test("the CH segment reports the session-cumulative rate in 'session' mode", () => {
+  const footer = new PowerlineFooter(footerSource({
+    cacheHitMode: 'session',
+    stats: {
+      cacheReadTokens: 1800,
+      cacheWriteTokens: 0,
+      cacheHitRate: 90,
+      lastMessageCacheHitRate: 50,
+    },
+  }), () => darkTheme)
+  const row = stripAnsi(footer.render(200)[0])
+  assert.ok(row.includes('⚡ CH90.0%'), `session rate shown (${row})`)
+  assert.ok(!row.includes('CH50.0%'), 'the per-message rate must not leak into session mode')
+})
+
+test('the CH segment hides while the selected mode has no sample yet', () => {
+  // Session traffic exists, but no usage-bearing assistant message arrived in
+  // this binding (e.g. right after /new) — lastMessage mode has nothing to show.
+  const footer = new PowerlineFooter(footerSource({
+    cacheHitMode: 'lastMessage',
+    stats: { cacheReadTokens: 1800, cacheWriteTokens: 0, cacheHitRate: 90 },
+  }), () => darkTheme)
+  const row = stripAnsi(footer.render(200)[0])
+  assert.ok(!row.includes('⚡ CH'), `no per-message sample → no CH segment (${row})`)
+})
 
 test('PowerlineFooter styles the clock with the palette foreground (never terminal-default black)', () => {
   for (const theme of [darkTheme, lightTheme]) {

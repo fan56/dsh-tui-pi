@@ -15,6 +15,7 @@
 
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import type { BridgeStats } from './session.ts'
+import type { CacheHitMode } from './theme-settings.ts'
 import { ansiBg, ansiFg, BOLD, POWERLINE, RESET, type TuiTheme } from './theme/index.ts'
 import { hexIsLight } from './theme/palette.ts'
 import { clipToWidth } from './text.ts'
@@ -133,6 +134,12 @@ export interface FooterDataSource {
   getBranch(): string | undefined
   /** Current agent preset short label (e.g. "Standard"), or undefined. */
   getPreset(): string | undefined
+  /**
+   * Which usage sample the CH segment reports — the latest assistant
+   * message's hit rate or the session-cumulative one. Read live on every
+   * render so a /settings change applies on the next repaint.
+   */
+  getCacheHitMode(): CacheHitMode
 }
 
 export function fmtNum(n: number): string {
@@ -230,8 +237,18 @@ export class PowerlineFooter implements Component {
       segs.push({ label: `🧠 ${fmtNum(used)}`, bgHex: POWERLINE.contextOk })
     }
 
-    if ((stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) && stats.cacheHitRate !== undefined) {
-      segs.push({ label: `⚡ CH${stats.cacheHitRate.toFixed(1)}%`, bgHex: POWERLINE.cache })
+    // CH: the mode picks which usage sample the rate describes — the latest
+    // assistant message's own hit rate (the pi-tui / pi-powerline-footer
+    // semantics, the default) or the session-cumulative one over the whole
+    // session's input traffic. The visibility gate stays session-scope in
+    // both modes (any cache traffic this session), matching pi-powerline-
+    // footer's gate; the per-message rate is undefined until the first
+    // usage-bearing assistant message arrives.
+    const rate = this.source.getCacheHitMode() === 'session'
+      ? stats.cacheHitRate
+      : stats.lastMessageCacheHitRate
+    if ((stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) && rate !== undefined) {
+      segs.push({ label: `⚡ CH${rate.toFixed(1)}%`, bgHex: POWERLINE.cache })
     }
     segs.push({ label: `💬 ${stats.msgCount} msgs`, bgHex: POWERLINE.messages })
     segs.push({ label: `🔧 ${stats.toolCallCount} tools`, bgHex: POWERLINE.tools })

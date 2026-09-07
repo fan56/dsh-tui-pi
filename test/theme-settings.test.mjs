@@ -14,8 +14,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import {
+  DEFAULT_CACHE_HIT_MODE,
   DEFAULT_SUBAGENT_LIMITS,
   THEME_SETTINGS_NAMESPACE,
+  currentCacheHitMode,
+  narrowCacheHitMode,
   readFooterHintsPreference,
   readPanelHeightPreference,
   readSessionManagementExplicit,
@@ -381,6 +384,37 @@ test('committed footerHints changes flow register → watch → sink with per-ke
 
   // The live value is readable back through the startup reader.
   assert.deepEqual(await readFooterHintsPreference(ctx), { ...DEFAULT_FOOTER_HINTS }, 'live value read back')
+})
+
+test('cacheHitMode defaults to lastMessage, round-trips, and narrows garbage', async () => {
+  const ctx = new Context()
+  const settings = makeSettings()
+  ctx.provide('settings', settings)
+  registerThemeSettings(ctx)
+  await settle()
+
+  // The base entry seeds the pi-tui-compatible default.
+  assert.equal(DEFAULT_CACHE_HIT_MODE, 'lastMessage')
+  assert.equal(currentCacheHitMode(ctx), 'lastMessage', 'base entry = per-message CH')
+
+  // A committed change (a /settings browser write → mutate) is readable
+  // back synchronously — the footer re-reads this on every render.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [
+    { op: 'set', path: ['cacheHitMode'], value: 'session' },
+  ])
+  assert.equal(currentCacheHitMode(ctx), 'session', 'committed session mode read back')
+
+  // Narrowing: anything that is not exactly 'session' falls to the default —
+  // a garbage value can never crash the footer render path.
+  assert.equal(narrowCacheHitMode('session'), 'session')
+  assert.equal(narrowCacheHitMode('lastMessage'), 'lastMessage')
+  assert.equal(narrowCacheHitMode('bogus'), 'lastMessage')
+  assert.equal(narrowCacheHitMode(undefined), 'lastMessage')
+  assert.equal(narrowCacheHitMode(42), 'lastMessage')
+
+  // An out-of-union value on the live descriptor narrows the same way.
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['cacheHitMode'] }])
+  assert.equal(currentCacheHitMode(ctx), 'lastMessage', 'missing key narrows to the default')
 })
 
 // ------------------------------------------------- session-management user layer --

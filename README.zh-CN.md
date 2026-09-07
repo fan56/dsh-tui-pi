@@ -130,7 +130,7 @@ dsh-tui:
     minBytes: 20480
 ```
 
-其他旋钮：`dsh-tui.panelHeight`（think/tool 面板高度）、`dsh-tui.iconSet`（`auto`/`nerdfont`/`plain`——powerline 字形自适应你的字体；用 `node scripts/install-font.mjs` 安装 Nerd Font）、`~/.dsh/keybindings.json`（按键重映射）。
+其他旋钮：`dsh-tui.panelHeight`（think/tool 面板高度）、`dsh-tui.iconSet`（`auto`/`nerdfont`/`plain`——powerline 字形自适应你的字体；用 `node scripts/install-font.mjs` 安装 Nerd Font）、`dsh-tui.cacheHitMode`（footer CH 段的口径：`lastMessage`——显示最新一条 assistant 消息的缓存命中率，与 pi-tui footer 一致，默认；`session`——全会话累计）、`~/.dsh/keybindings.json`（按键重映射）。
 
 ---
 

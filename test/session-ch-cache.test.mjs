@@ -130,6 +130,86 @@ test('a provider/model value change does NOT reset the session totals', async ()
   await bridge.dispose()
 })
 
+test('usage accumulates normally; the rate is read ÷ billed input', async () => {
+  const h = makeHarness()
+  const bridge = await makeBridge(h)
+  emit(h, headerEvent(1, 10, 'deepseek', 'deepseek-chat', 'initial'))
+  emit(h, assistantMessage(2, 20, { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900, cacheWriteTokens: 0 }))
+  let s = bridge.getStats()
+  assert.equal(s.inputTokens, 100)
+  assert.equal(s.cacheReadTokens, 900)
+  assert.equal(s.cacheHitRate, 90) // 900 / (100+900+0)
+  // The per-message companion matches here: this IS the latest message.
+  assert.equal(s.lastMessageCacheHitRate, 90)
+  // A second message keeps accumulating.
+  emit(h, assistantMessage(3, 30, { inputTokens: 50, outputTokens: 5, cacheReadTokens: 950, cacheWriteTokens: 0 }))
+  s = bridge.getStats()
+  assert.equal(s.inputTokens, 150)
+  assert.equal(s.cacheReadTokens, 1850)
+  assert.equal(s.cacheHitRate, (1850 / 2000) * 100)
+  // lastMessage stays per-message: the latest request's own ratio, not Σ.
+  assert.equal(s.lastMessageCacheHitRate, (950 / 1000) * 100)
+  await bridge.dispose()
+})
+
+test('lastMessageCacheHitRate tracks only the latest usage-bearing message', async () => {
+  const h = makeHarness()
+  const bridge = await makeBridge(h)
+  // First message: 900/1000 = 90%.
+  emit(h, assistantMessage(1, 10, { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900, cacheWriteTokens: 0 }))
+  let s = bridge.getStats()
+  assert.equal(s.lastMessageCacheHitRate, 90)
+  // Second message with a much lower ratio — the per-message rate follows it
+  // (the cumulative rate would stay much higher).
+  emit(h, assistantMessage(2, 20, { inputTokens: 800, outputTokens: 10, cacheReadTokens: 100, cacheWriteTokens: 100 }))
+  s = bridge.getStats()
+  assert.equal(s.lastMessageCacheHitRate, (100 / 1000) * 100)
+  assert.notEqual(s.cacheHitRate, s.lastMessageCacheHitRate, 'the cumulative rate is a different metric')
+  // A usage-less message leaves the previous snapshot standing (mirrors lastUsage).
+  emit(h, assistantMessage(3, 30, undefined))
+  s = bridge.getStats()
+  assert.equal(s.lastMessageCacheHitRate, (100 / 1000) * 100)
+  await bridge.dispose()
+})
+
+test('a route change never resets lastMessageCacheHitRate — it is the latest message, not a route total', async () => {
+  const h = makeHarness()
+  const bridge = await makeBridge(h)
+  emit(h, headerEvent(1, 10, 'deepseek', 'deepseek-chat', 'initial'))
+  emit(h, assistantMessage(2, 20, { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900, cacheWriteTokens: 0 }))
+  emit(h, headerEvent(3, 30, 'minimax-cn', 'MiniMax-M3', 'change'))
+  let s = bridge.getStats()
+  assert.equal(s.lastMessageCacheHitRate, 90, 'headers touch nothing')
+  emit(h, assistantMessage(4, 40, { inputTokens: 200, outputTokens: 20, cacheReadTokens: 600, cacheWriteTokens: 200 }))
+  s = bridge.getStats()
+  assert.equal(s.lastMessageCacheHitRate, (600 / 1000) * 100, 'the new route message becomes the sample')
+  await bridge.dispose()
+})
+
+test('detachCurrent and replay reset the per-message rate like the cumulative one', async () => {
+  const h = makeHarness()
+  const bridge = await makeBridge(h)
+  emit(h, assistantMessage(1, 10, { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900, cacheWriteTokens: 0 }))
+  await bridge.detachCurrent()
+  assert.equal(bridge.getStats().lastMessageCacheHitRate, undefined, '/new starts with no CH sample')
+
+  const log = [
+    headerEvent(1, 10, 'deepseek', 'deepseek-chat', 'initial'),
+    assistantMessage(2, 20, { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900, cacheWriteTokens: 0 }),
+    headerEvent(3, 30, 'minimax-cn', 'MiniMax-M3', 'change'),
+    assistantMessage(4, 40, { inputTokens: 200, outputTokens: 20, cacheReadTokens: 800, cacheWriteTokens: 0 }),
+  ]
+  bridge.replay(log)
+  const replayed = bridge.getStats()
+  assert.equal(replayed.lastMessageCacheHitRate, (800 / 1000) * 100, 'replay lands on the latest message')
+  const liveH = makeHarness()
+  const liveBridge = await makeBridge(liveH)
+  for (const e of log) emit(liveH, e)
+  assert.equal(replayed.lastMessageCacheHitRate, liveBridge.getStats().lastMessageCacheHitRate, 'replay === live fold')
+  await liveBridge.dispose()
+  await bridge.dispose()
+})
+
 test('usage before the first header simply accumulates', async () => {
   const h = makeHarness()
   const bridge = await makeBridge(h)

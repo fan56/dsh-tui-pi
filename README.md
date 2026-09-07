@@ -133,7 +133,7 @@ dsh-tui:
     minBytes: 20480
 ```
 
-Other knobs: `dsh-tui.panelHeight` (think/tool panel height), `dsh-tui.iconSet` (`auto`/`nerdfont`/`plain` — powerline glyphs adapt to your font; install a Nerd Font with `node scripts/install-font.mjs`), `dsh-tui.footerHints` (toggle each footer hint segment, incl. `search`), `DSH_TUI_COPY_ON_SELECT=0` (keep drag-selection visual-only), `~/.dsh/keybindings.json` (key remaps).
+Other knobs: `dsh-tui.panelHeight` (think/tool panel height), `dsh-tui.iconSet` (`auto`/`nerdfont`/`plain` — powerline glyphs adapt to your font; install a Nerd Font with `node scripts/install-font.mjs`), `dsh-tui.footerHints` (toggle each footer hint segment, incl. `search`), `dsh-tui.cacheHitMode` (`lastMessage` — the footer CH segment shows the latest assistant message's cache-hit rate, matching the pi-tui footer (default); `session` — cumulative over the whole session), `DSH_TUI_COPY_ON_SELECT=0` (keep drag-selection visual-only), `~/.dsh/keybindings.json` (key remaps).
 
 ---
 

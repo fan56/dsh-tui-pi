@@ -31,6 +31,7 @@ import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickPreset, pickTheme } from './selectors.ts'
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
 import {
+  currentCacheHitMode,
   currentThemePreference,
   readFooterHintsPreference,
   readIconSetPreference,
@@ -1791,6 +1792,9 @@ export function apply(ctx: Context): void {
       getSelection: () => bridge.getSelection(),
       getBranch: () => git.getBranch(),
       getPreset: () => formatPresetLabel(currentPreset(presetState)),
+      // Live read per render (like FooterHint's hints getter): a committed
+      // cacheHitMode change shows on the next repaint, no watch plumbing.
+      getCacheHitMode: () => currentCacheHitMode(ctx),
       getContextWindow: () => {
         const selection = bridge.getSelection()
         if (selection === undefined) return undefined
