@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] - 2026-09-07
+
+### Fixed
+- **Shipped presets are discovered from the running dsh install, not from hard-coded global prefixes** — `resolvePresetRoots()` probed exactly four absolute paths (homebrew / `/usr/local`), so on any other install layout (nvm-managed node, a custom npm prefix, pnpm global) the `/preset` roster went silent: only user presets from `~/.dsh/.agent-presets/` showed and every dsh-shipped preset (standard / minimal / cordis / ptc) vanished (#3). The `--profile tui` in the report was context, not cause — a profile changes which plugins load, never where the host's presets package lives. The shipped root now resolves dynamically: walk up from the running dsh entry script (real path'd past the bin shim) probing `<dir>/node_modules/@deepseek-ai/dsh-agent-presets/presets` — the same physical copy the host itself composes sessions from, so the roster always matches the ids a `/preset` switch can apply; then a module-closure resolve from the plugin (monorepo dev runs); then the old four-path probe as a last-resort fallback. Reconstruction of the reporter's nvm-style off-prefix install is covered end to end in `test/preset.test.mjs`.
+
 ## [2.8.0] - 2026-09-07
 
 ### Added

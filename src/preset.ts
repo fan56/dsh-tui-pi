@@ -13,8 +13,10 @@
  * for the async `fetchPresetRoster` which scans the filesystem.
  */
 
+import { existsSync, realpathSync } from 'node:fs'
 import { access, readdir, readFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
 import { dshHome } from './append-system.ts'
 
 /** One preset entry from the deployment roster. */
@@ -52,34 +54,104 @@ export function __setPresetRootOverride(roots: PresetRoot[] | undefined): void {
  * (alpha.3: shipped presets are bundled inside the `@deepseek-ai/dsh-agent-presets`
  * package; locally authored presets live under the Harness home):
  *   1. shipped root: the `presets/` dir inside the `@deepseek-ai/dsh-agent-presets`
- *      package
+ *      package, located dynamically (see below)
  *   2. user root: `~/.dsh/.agent-presets/`
- * The shipped root is located by probing the known install layouts; the user
- * root is the conventional `~/.dsh/.agent-presets/`.
  *
- * Nonexistent roots scan to an empty roster, so every candidate is probed
- * in order — the dsh-agent-presets package nested under the dsh install
- * first, then the flat global-root variant (npm hoisting).
+ * The shipped root must track the RUNNING HOST's copy of the package — the
+ * `/preset` switch sends the preset id to the host, which composes sessions
+ * from its own install, so a roster listing presets the host cannot see is
+ * worse than an empty one. Three strategies, first hit wins per id:
+ *   a. walk up from the running dsh entry script (`process.argv[1]`, real
+ *      path'd past the bin shim) probing `<dir>/node_modules/…` — the
+ *      presets ship nested inside the dsh host package, so this finds the
+ *      host's own copy at ANY install prefix (homebrew, nvm, a custom npm
+ *      prefix, pnpm global); issue #3 shipped presets went missing on
+ *      installs outside the probed prefixes
+ *   b. resolve through this plugin's own module closure — covers monorepo
+ *      dev runs and hoisted layouts where the package is reachable from the
+ *      plugin even though the entry walk missed
+ *   c. the known global prefixes as a static last-resort fallback
+ * The user root is the conventional `~/.dsh/.agent-presets/`.
+ *
+ * Nonexistent roots scan to an empty roster, so every candidate is probed.
  */
 export function resolvePresetRoots(): PresetRoot[] {
   const roots: PresetRoot[] = []
-  // Shipped root probes. The dsh binary is at `/usr/local/bin/dsh` or
-  // `/opt/homebrew/bin/dsh`; the shipped presets are bundled inside
-  // `@deepseek-ai/dsh-agent-presets` (observed nested under the dsh package;
-  // flat at the global root when npm hoists).
-  const shippedPaths = [
-    '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets',
-    '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets',
-    '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets',
-    '/usr/local/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets',
-  ]
-  for (const p of shippedPaths) {
-    roots.push({ path: p, trust: 'system' })
+  const seen = new Set<string>()
+  const pushShipped = (path: string): void => {
+    if (seen.has(path)) return
+    seen.add(path)
+    roots.push({ path, trust: 'system' })
   }
+  for (const path of shippedRootsFromEntry()) pushShipped(path)
+  for (const path of shippedRootsFromClosure()) pushShipped(path)
+  for (const path of SHIPPED_FALLBACK_PREFIXES) pushShipped(path)
   // User root: $DSH_HOME/.agent-presets/
   const userRoot = resolve(join(dshHome(), '.agent-presets'))
   roots.push({ path: userRoot, trust: 'user' })
   return roots
+}
+
+/** The npm package that carries the shipped presets. */
+const SHIPPED_PACKAGE = '@deepseek-ai/dsh-agent-presets'
+
+/**
+ * The known global-prefix layouts, kept as the static last-resort fallback
+ * for the dynamic probes above (e.g. an embedded host without `argv[1]`).
+ */
+const SHIPPED_FALLBACK_PREFIXES = [
+  '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets',
+  '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-agent-presets/presets',
+  '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets',
+  '/usr/local/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets',
+]
+
+/**
+ * Walk up from `startDir` probing `<dir>/node_modules/@deepseek-ai/dsh-agent-presets/presets`.
+ * Exposed (with an injectable probe) for hermetic tests of the walk itself;
+ * `shippedRootsFromEntry` is the runtime wrapper that starts the walk from
+ * the running dsh entry script.
+ */
+export function shippedRootsFromEntryDir(
+  startDir: string,
+  probe: (path: string) => boolean = existsSync,
+): string[] {
+  const roots: string[] = []
+  let dir = startDir
+  for (;;) {
+    const candidate = join(dir, 'node_modules', SHIPPED_PACKAGE, 'presets')
+    if (probe(candidate)) roots.push(candidate)
+    const parent = dirname(dir)
+    if (parent === dir) return roots
+    dir = parent
+  }
+}
+
+/** Start the entry walk from `process.argv[1]`, real path'd past bin shims. */
+function shippedRootsFromEntry(): string[] {
+  const entry = process.argv[1]
+  if (entry === undefined || entry === '') return []
+  let start: string
+  try {
+    start = dirname(realpathSync(entry))
+  } catch {
+    return []
+  }
+  return shippedRootsFromEntryDir(start)
+}
+
+/**
+ * Resolve the shipped package through this plugin's own module closure (the
+ * same `createRequire(import.meta.url)` idiom the host-floor guard uses, so
+ * it behaves identically under the profile loader).
+ */
+function shippedRootsFromClosure(): string[] {
+  try {
+    const req = createRequire(import.meta.url)
+    return [join(dirname(req.resolve(join(SHIPPED_PACKAGE, 'package.json'))), 'presets')]
+  } catch {
+    return [] // not reachable from the plugin — the other strategies cover it
+  }
 }
 
 /**

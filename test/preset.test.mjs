@@ -1,11 +1,13 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   __setPresetRootOverride, currentPreset, DEFAULT_PRESET_ID, fetchPresetRoster,
   findPresetByName, formatPresetLabel, initialPresetIndex, peekNextPreset, resolvePresetRoots,
+  shippedRootsFromEntryDir,
 } from '../lib/preset.js'
 
 const roster = [
@@ -101,6 +103,99 @@ test('resolvePresetRoots probes the dsh-agent-presets shipped layouts plus the u
   assert.ok(paths.includes('/opt/homebrew/lib/node_modules/@deepseek-ai/dsh-agent-presets/presets'), 'flat layout probed')
   assert.ok(paths.some(p => p.endsWith('.dsh/.agent-presets')), 'user root probed')
   assert.ok(paths.every(p => !p.includes('/config/agent-presets')), 'the pre-alpha config-dir layout is no longer probed')
+})
+
+// ------------------------------------- shipped-root discovery (issue #3) --
+
+test('shippedRootsFromEntryDir walks up from the entry and finds the nested presets package', async () => {
+  // Fake install — presets nested at <root>/node_modules/@deepseek-ai/dsh-agent-presets/presets
+  // with the entry script at <root>/lib/bin.js: the shape of ANY global npm
+  // prefix (homebrew, nvm, a custom prefix), which the static fallback list
+  // never covered (issue #3: shipped presets invisible off the known prefixes).
+  const root = await mkdtemp(join(tmpdir(), 'dsh-tui-preset-roots-'))
+  try {
+    const shipped = join(root, 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets')
+    await mkdir(join(shipped, 'standard'), { recursive: true })
+    await writeFile(join(shipped, 'standard', 'agent.cordis.yml'), '')
+    await mkdir(join(root, 'lib'), { recursive: true })
+    await writeFile(join(root, 'lib', 'bin.js'), '')
+    assert.deepEqual(shippedRootsFromEntryDir(join(root, 'lib')), [shipped])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('shippedRootsFromEntryDir returns [] when no ancestor carries the package', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-tui-preset-roots-'))
+  try {
+    assert.deepEqual(shippedRootsFromEntryDir(root), [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('resolvePresetRoots dedups shipped roots across the discovery strategies', () => {
+  // On a dsh machine the entry walk and the closure probe typically resolve
+  // to the SAME physical dir — it must be probed once, not twice.
+  const paths = resolvePresetRoots().map(r => r.path)
+  assert.equal(new Set(paths).size, paths.length)
+})
+
+test('resolvePresetRoots: every system root is a dsh-agent-presets presets dir', () => {
+  for (const root of resolvePresetRoots().filter(r => r.trust === 'system')) {
+    assert.ok(
+      root.path.endsWith(join('@deepseek-ai', 'dsh-agent-presets', 'presets')),
+      `unexpected shipped root: ${root.path}`,
+    )
+  }
+})
+
+test('issue #3 case: an off-prefix install (nvm-style, profile launch) lists the shipped presets', async () => {
+  // The reporter's environment, reconstructed: dsh lives under an nvm-managed
+  // node — nowhere near the four hard-coded global prefixes — and is launched
+  // as `dsh --profile tui` (the profile only changes which PLUGINS load; the
+  // host entry — and therefore the host's own presets package — stays put).
+  // Symptom on the old discovery: the roster showed only the user root's
+  // custom presets, every shipped preset invisible. Reconstruction asserts the
+  // full path: resolvePresetRoots() (argv[1] pointed at the nvm bin shim)
+  // → fetchPresetRoster() finds `standard` with system trust.
+  const root = await mkdtemp(join(tmpdir(), 'dsh-tui-issue3-'))
+  const savedArgv1 = process.argv[1]
+  try {
+    const nodeDir = join(root, 'users', 'someone', '.nvm', 'versions', 'node', 'v22')
+    const shipped = join(nodeDir, 'lib', 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets')
+    for (const id of ['standard', 'minimal', 'cordis', 'ptc']) {
+      await mkdir(join(shipped, id), { recursive: true })
+      await writeFile(join(shipped, id, 'agent.cordis.yml'), '')
+    }
+    // The dsh package nests its presets copy; the bin is the usual symlink shim.
+    const hostLib = join(nodeDir, 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'lib')
+    await mkdir(hostLib, { recursive: true })
+    await writeFile(join(hostLib, 'bin.js'), '')
+    await mkdir(join(nodeDir, 'bin'), { recursive: true })
+    await symlink(join(hostLib, 'bin.js'), join(nodeDir, 'bin', 'dsh'))
+    process.argv[1] = join(nodeDir, 'bin', 'dsh')
+
+    // macOS /tmp is a symlink (/var → /private/var): the discovered root is
+    // the entry's REAL path, so compare against the real path of the tree.
+    const realRoot = realpathSync(root)
+    const roots = resolvePresetRoots()
+    const discovered = roots.find(r => r.trust === 'system' && r.path.startsWith(realRoot))
+    assert.ok(discovered, 'the nvm-nested shipped root is discovered dynamically')
+    // The old logic equals probing only the static fallback list — assert it
+    // genuinely misses this layout, so the test cannot silently regress into it.
+    assert.ok(roots[0].path.startsWith(realRoot), 'the dynamic hit outranks the static fallbacks')
+
+    const roster = await fetchPresetRoster()
+    for (const id of ['standard', 'minimal', 'cordis', 'ptc']) {
+      const entry = roster.find(p => p.id === id)
+      assert.ok(entry, `shipped preset "${id}" is listed`)
+      assert.equal(entry.trust, 'system')
+    }
+  } finally {
+    process.argv[1] = savedArgv1
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('fetchPresetRoster: shipped ids get English names (official string kept); unmapped ids fall back to official string', async () => {
