@@ -4,10 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.8.0] - 2026-09-07
 
 ### Added
 - **`dsh-tui.cacheHitMode` — choose what the footer CH segment reports** — `lastMessage` (the new default): the latest assistant message's own cache-hit rate (cacheRead ÷ (input + cacheRead + cacheWrite) of that single request), matching the pi-tui / pi-powerline-footer footer semantics; `session`: the previous session-cumulative rate over the whole session's input traffic. The mode is read live on every footer render, so a `/settings` change applies on the next repaint; the CH segment hides until the selected mode has a sample. Bridge stats gain `lastMessageCacheHitRate` (per-message rate; reset on `/new`, rebuilt by replay, untouched by route changes — a usage-less message leaves the previous sample standing).
+- **e2e `71-cache-hit` scenario** — the footer CH mode verified end-to-end in the container: the mock LLM gains `E2E_CH_TRIGGER` phases whose usage carries OpenAI `prompt_tokens_details.cached_tokens` (mapped to cacheRead by pi-ai's adapter); two scripted turns bill 90% / 20% per-message (55% cumulative over the fresh session), and the scenario asserts no CH before usage → `CH90.0%` after turn one → `CH20.0%` in the default lastMessage mode (stale 90% and cumulative 55% both absent) → an external `cacheHitMode: session` settings.yaml edit flips the same segment to `CH55.0%` live, no restart.
 
 ## [2.7.1] - 2026-09-05
 

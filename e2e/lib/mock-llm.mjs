@@ -61,6 +61,29 @@ const BTW_Q_ANSWERS = [
 const BTW_FIRST_CHUNK_DELAY_MS = 6000
 const BTW_CHUNK_DELAY_MS = 400
 
+// 71-cache-hit phases: two scripted turns with DIFFERENT cache ratios so the
+// footer's CH mode is observable — turn one bills 900/1000 cached (CH 90%),
+// turn two 200/1000 (CH 20%), making the session-cumulative rate over both
+// turns (55%) differ from the latest message's own rate. The usage shape
+// follows the OpenAI prompt_tokens_details contract that pi-ai's
+// openai-completions adapter maps to cacheRead/cacheWrite tokens; input =
+// prompt_tokens - cached (800 of turn two's 1000), output never enters the
+// CH formula. Detection keys on the request body: the trigger marker flags
+// the scenario's turns, and the turn-one REPLY TEXT in the conversation
+// snapshot distinguishes the second request.
+const CH_TRIGGER = 'E2E_CH_TRIGGER'
+const CH_TURN_ONE_MARKER = 'E2E-CH-TURN-ONE'
+const CH_TURN_ONE_TEXT = 'E2E-CH-TURN-ONE — first turn billed with a warm cache.'
+const CH_TURN_TWO_TEXT = 'E2E-CH-TURN-TWO — second turn billed with a cold cache.'
+const CH_USAGE_WARM = {
+  prompt_tokens: 1000, completion_tokens: 24, total_tokens: 1024,
+  prompt_tokens_details: { cached_tokens: 900 },
+}
+const CH_USAGE_COLD = {
+  prompt_tokens: 1000, completion_tokens: 24, total_tokens: 1024,
+  prompt_tokens_details: { cached_tokens: 200 },
+}
+
 // The three questions handed to ask_user_question: two single-select (auto-
 // advance applies) and one multiSelect (stays put), matching the assertions
 // in 68-ask-user.sh.
@@ -110,13 +133,15 @@ const sseChunk = (delta, finishReason) => JSON.stringify({
   choices: [{ index: 0, delta, finish_reason: finishReason }],
 })
 
-const usageChunk = () => JSON.stringify({
+const DEFAULT_USAGE = { prompt_tokens: 64, completion_tokens: 24, total_tokens: 88 }
+
+const usageChunk = (usage = DEFAULT_USAGE) => JSON.stringify({
   id: `chatcmpl-mock-${++requestCount}`,
   object: 'chat.completion.chunk',
   created: Math.floor(Date.now() / 1000),
   model: MODEL,
   choices: [],
-  usage: { prompt_tokens: 64, completion_tokens: 24, total_tokens: 88 },
+  usage,
 })
 
 const completionMessage = (delta, finishReason) => ({
@@ -134,6 +159,12 @@ function decidePhase(bodyText) {
   // btw request body contains BOTH markers.
   if (bodyText.includes('E2E_BTW_Q')) return 'btw'
   if (bodyText.includes(BTW_MAIN_KEY)) return 'main-slow'
+  // CH turns: the turn-one reply text in the history snapshot marks the
+  // second request (checked before the ask keys — disjoint triggers, but the
+  // later scenario phases read top-down).
+  if (bodyText.includes(CH_TRIGGER)) {
+    return bodyText.includes(CH_TURN_ONE_MARKER) ? 'ch-cold' : 'ch-warm'
+  }
   const hasTrigger = bodyText.includes(TRIGGER)
   // The openai SDK serializes without spaces; be lenient about formatting.
   const hasToolResult = bodyText.includes('"role":"tool"') || bodyText.includes('"role": "tool"')
@@ -238,6 +269,7 @@ function handleChat(req, res, body) {
     'Cache-Control': 'no-cache',
   })
   const events = []
+  let usage
   if (phase === 'ask') {
     events.push(sseChunk({
       role: 'assistant',
@@ -250,15 +282,23 @@ function handleChat(req, res, body) {
     }, null))
     events.push(sseChunk({}, 'tool_calls'))
   } else {
-    const text = phase === 'final' ? FINAL_TEXT : IGNORE_TEXT
+    const text = phase === 'final' ? FINAL_TEXT
+      : phase === 'ch-warm' ? CH_TURN_ONE_TEXT
+      : phase === 'ch-cold' ? CH_TURN_TWO_TEXT
+      : IGNORE_TEXT
     events.push(sseChunk({ role: 'assistant', content: text }, null))
     events.push(sseChunk({}, 'stop'))
+    // The CH phases exist to bill specific cache ratios — their usage always
+    // ships (the scenario's assertions read the footer's CH segment), while
+    // every other phase keeps the include_usage-gated default.
+    if (phase === 'ch-warm') usage = CH_USAGE_WARM
+    else if (phase === 'ch-cold') usage = CH_USAGE_COLD
   }
   for (const event of events) {
     res.write(`data: ${event}\n\n`)
   }
-  if (wantsUsage) {
-    res.write(`data: ${usageChunk()}\n\n`)
+  if (usage !== undefined || wantsUsage) {
+    res.write(`data: ${usageChunk(usage)}\n\n`)
   }
   res.write('data: [DONE]\n\n')
   res.end()
