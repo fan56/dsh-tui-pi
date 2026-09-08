@@ -257,7 +257,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` runs **1219 tests** across 69 files (verified by
+- `pnpm test` runs **1231 tests** across 70 files (verified by
   `node --test test/*.mjs`; per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
@@ -278,7 +278,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
     repair-session-log 7 + remote-tail 7 + quotes 7 + icons 7 + host-version 7 +
   - tokens 6 + reload 6 + queue-panel 6 + install-font 6 + selection-copy 5 +
     markdown-latex 5 + mouse-mode 5 + projcache 5 + transcript-search 4 +
-    profile-apply 4 + schema-model 3 + plugin-inject 2.
+    profile-apply 4 + schema-model 3 + plugin-inject 2 + skill 4.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
   `dsh --profile tui`, drive keys, `capture-pane` for assertions (scenarios
   under `e2e/scenarios/`). Keep the 24-row terminal case in the matrix —

@@ -120,7 +120,22 @@ Remap any app key through `~/.dsh/keybindings.json` (a partial JSON map, live-ap
 
 ## Configuration
 
-Session-store knobs under the `dsh-tui` settings namespace in `~/.dsh/settings.yaml` (each also has an env override, `DSH_TUI_RETENTION_*` / `DSH_TUI_RESUME_*`; precedence: settings.yaml > env > default):
+Every knob lives under the `dsh-tui` settings namespace in `~/.dsh/settings.yaml` (note the section name: `dsh-tui`). Theme / panel height / footer hints / icon set are `applies: 'live'` — a committed change hot-applies to the running TUI, no restart:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `theme` | `auto` | Color scheme: `auto` (follow the terminal) / `light` / `dark`; `/theme` writes back to the same key |
+| `panelHeight` | `'1'` | Think/tool panel height: `'1'` / `'5'` / `'7'` / `'10'` / `'all'` (full content) |
+| `maxAgents` | `4` | Max concurrently running subagents, `0` = unlimited (hot-tunable in `/agents → l` limits) |
+| `maxRounds` | `75` | Max assistant messages per subagent before a wrap-up request is injected; `0` = unlimited |
+| `disableSubagent` | `true` | Disable the native `subagent` tool; delegation goes through registered agents (`~/.dsh/agents/*.md`); `subagent_fork`/`workflow`/`ralph` stay available |
+| `footerHints` | all `true` | Per-segment footer hint toggles: `send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
+| `cacheHitMode` | `lastMessage` | Footer CH segment scope: `lastMessage` — the latest assistant message's cache-hit rate, matching the pi-tui footer (default); `session` — cumulative over the whole session |
+| `iconSet` | `auto` | `auto`/`nerdfont`/`plain` — powerline glyphs adapt to your font; install a Nerd Font with `node scripts/install-font.mjs` |
+| `favoriteModels` | `[]` | Favorite models (`provider/id`), pinned to the top of the `/model` picker |
+| `hiddenModels` | `[]` | Hidden models (`provider/id`), moved to the picker's Hidden section (`f` favorites / `h` hides inside the picker — both persist to these keys) |
+
+Session-store knobs (env overrides `DSH_TUI_RETENTION_*` / `DSH_TUI_RESUME_*`; precedence: settings.yaml > env > default):
 
 ```yaml
 dsh-tui:
@@ -133,7 +148,9 @@ dsh-tui:
     minBytes: 20480
 ```
 
-Other knobs: `dsh-tui.panelHeight` (think/tool panel height), `dsh-tui.iconSet` (`auto`/`nerdfont`/`plain` — powerline glyphs adapt to your font; install a Nerd Font with `node scripts/install-font.mjs`), `dsh-tui.footerHints` (toggle each footer hint segment, incl. `search`), `dsh-tui.cacheHitMode` (`lastMessage` — the footer CH segment shows the latest assistant message's cache-hit rate, matching the pi-tui footer (default); `session` — cumulative over the whole session), `DSH_TUI_COPY_ON_SELECT=0` (keep drag-selection visual-only), `~/.dsh/keybindings.json` (key remaps).
+Key remaps live in `~/.dsh/keybindings.json` (keyboard section above); `DSH_TUI_COPY_ON_SELECT=0` keeps drag-selection visual-only.
+
+The plugin ships a bundled skill (`dsh-tui-pi`): ask the agent to "configure the TUI" and the guide loads automatically — it collects your choices interactively via ask_user_question (theme, panel height, subagent concurrency) and writes the `dsh-tui:` section for you. The full key table and the `DSH_TUI_*` env var list live in `skills/dsh-tui-pi/SKILL.md`.
 
 ---
 

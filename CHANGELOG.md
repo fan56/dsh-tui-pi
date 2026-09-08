@@ -4,6 +4,13 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] - 2026-09-08
+
+### Added
+- **内置技能（bundled skill）**：插件随包注册 `dsh-tui-pi` skill（`skills/dsh-tui-pi/SKILL.md`，经 `ctx.skills.registerProvider`，与 dsh-vault / dsh-llm-proxy 同款机制；顶层 `inject` 相应加入 `'skills'`）。用户在会话里问 TUI 主题/面板/footer、子代理并发与轮数、模型收藏与隐藏、会话保留清理或 `/resume` 过滤时，agent 自动加载指南；指南核心是一段 ask_user_question 交互式配置向导——只问三题（主题 auto/light/dark、面板高度 `'1'`/`'5'`/`'7'`/`'10'`/`'all'`、并发 `maxAgents` 4/8/0），代写 settings.yaml 顶层 `dsh-tui:` 段（只写问过的键），细调项指向全键表（12 键 / 15 叶子值 + 全部 `DSH_TUI_*` 环境变量，retention/resume 组优先级 settings.yaml 显式值 > env > 默认）与排障条目。包随 `files` 新增 `skills/` 发布；`@deepseek-ai/dsh-skill` 以 peer（`>=0.1.2-rc.1`，optional）+ dev（`0.1.2-rc.1`）声明。
+- **README（en/zh-CN）「配置 / Configuration」一节补全**：此前沿用段落只覆盖 retention/resume 加 panelHeight/iconSet/cacheHitMode 一笔带过——`theme`、`maxAgents`、`maxRounds`、`disableSubagent`、`footerHints`、`favoriteModels`、`hiddenModels` 七个键从未文档化，现以全键表补齐（含默认值与作用），并指向内置 skill。
+- 新增 `test/skill.test.mjs`：provider 注册、候选元数据（500 字符路由预算、resourceBase 指向打包的 skills/ 目录）、get() 去除 frontmatter、硬编码 description 与 SKILL.md frontmatter 反漂移断言、`stripFrontmatter` 边界。
+
 ## [2.8.3] - 2026-09-08
 
 ### Fixed

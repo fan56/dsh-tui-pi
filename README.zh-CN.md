@@ -117,7 +117,22 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 
 ## 配置
 
-会话存储相关的旋钮位于 `~/.dsh/settings.yaml` 的 `dsh-tui` settings 命名空间下（每个也都有环境变量覆盖，`DSH_TUI_RETENTION_*` / `DSH_TUI_RESUME_*`；优先级：settings.yaml > env > 默认值）：
+全部旋钮都在 `~/.dsh/settings.yaml` 的 `dsh-tui` settings 命名空间下（注意段名是 `dsh-tui`）。主题 / 面板高度 / footer 提示 / 图标集为 `applies: 'live'`——保存提交即热生效，无需重启：
+
+| 键 | 默认 | 作用 |
+|---|---|---|
+| `theme` | `auto` | 配色：`auto`（跟随终端）/`light`/`dark`；`/theme` 写回同一段 |
+| `panelHeight` | `'1'` | think/tool 面板高度：`'1'`/`'5'`/`'7'`/`'10'`/`'all'`（完整内容） |
+| `maxAgents` | `4` | 并发子代理上限，`0` = 不限（`/agents → l` limits 面板可热调） |
+| `maxRounds` | `75` | 每个子代理的 assistant 消息数上限，到达后注入收尾请求；`0` = 不限 |
+| `disableSubagent` | `true` | 禁原生 `subagent` 工具，委派改走 `~/.dsh/agents/*.md` 注册代理；`subagent_fork`/`workflow`/`ralph` 不受影响 |
+| `footerHints` | 全 `true` | footer 快捷键提示分段开关：`send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
+| `cacheHitMode` | `lastMessage` | footer CH 段口径：`lastMessage`——最新一条 assistant 消息的缓存命中率（与 pi-tui footer 一致，默认）；`session`——全会话累计 |
+| `iconSet` | `auto` | `auto`/`nerdfont`/`plain`——powerline 字形自适应你的字体；用 `node scripts/install-font.mjs` 安装 Nerd Font |
+| `favoriteModels` | `[]` | 收藏模型（`provider/id`），钉在 `/model` 选择器顶部 |
+| `hiddenModels` | `[]` | 隐藏模型（`provider/id`），移入 `/model` 的 Hidden 区（选择器内 `f` 收藏 / `h` 隐藏，即写这两个键） |
+
+会话存储相关的旋钮（env 覆盖 `DSH_TUI_RETENTION_*` / `DSH_TUI_RESUME_*`；优先级：settings.yaml > env > 默认值）：
 
 ```yaml
 dsh-tui:
@@ -130,7 +145,9 @@ dsh-tui:
     minBytes: 20480
 ```
 
-其他旋钮：`dsh-tui.panelHeight`（think/tool 面板高度）、`dsh-tui.iconSet`（`auto`/`nerdfont`/`plain`——powerline 字形自适应你的字体；用 `node scripts/install-font.mjs` 安装 Nerd Font）、`dsh-tui.cacheHitMode`（footer CH 段的口径：`lastMessage`——显示最新一条 assistant 消息的缓存命中率，与 pi-tui footer 一致，默认；`session`——全会话累计）、`~/.dsh/keybindings.json`（按键重映射）。
+按键重映射见 `~/.dsh/keybindings.json`（上文键盘一节）。
+
+插件内置了一个 skill（`dsh-tui-pi`）：直接让 agent「帮我配置 TUI」，指南会自动加载——以 ask_user_question 问答方式逐项收集（主题、面板高度、子代理并发）并代写 `dsh-tui:` 段；全键表与 `DSH_TUI_*` 环境变量清单见 `skills/dsh-tui-pi/SKILL.md`。
 
 ---
 

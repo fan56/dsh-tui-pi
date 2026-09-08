@@ -10,9 +10,22 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+// Types only (erased at emit). The runtime import is deliberately avoided:
+// the registry-published dsh-skill lib imports host-closure siblings
+// (@deepseek-ai/dsh-scope, dsh-llm — peers of it, but absent from a plugin
+// repo's own dependency graph), which dies under pnpm's isolated layout.
+// The host injects the real service at runtime; these types only shape the
+// provider object this plugin hands it.
+import type { SkillCandidate, SkillDefinition, SkillProvider } from '@deepseek-ai/dsh-skill'
+
+/** Mirrors dsh-skill's bundled-skill rank (a non-load-bearing ordering hint;
+ *  the constant is hardcoded there too). Local copy — see the type-import
+ *  note above for why dsh-skill is not loaded at runtime here. */
+const BUNDLED_SKILL_RANK = 600
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 // Loads dsh-tool-todo's SessionEventMap augmentation, which adds the
 // 'todo/write' whole-list snapshot to the host's session event union
@@ -131,11 +144,85 @@ const STOP_CONFIRM_MS = 200
 /**
  * The TUI drives the agent factory and registers slash commands. The render
  * effect also touches `ctx.systemPrompt` (ask-user guidance section) and the
- * ask-user provider effect touches `ctx.userQuestions` — cordis throws on
- * property access for services missing from this list (not undefined), so
- * every `ctx.<service>` access anywhere in this plugin must be declared here.
+ * ask-user provider effect touches `ctx.userQuestions`; `ctx.skills` serves
+ * the bundled usage/config guide (registered at the top of apply) — cordis
+ * throws on property access for services missing from this list (not
+ * undefined), so every `ctx.<service>` access anywhere in this plugin must be
+ * declared here.
  */
-export const inject = ['agents', 'commands', 'userQuestions', 'systemPrompt']
+export const inject = ['agents', 'commands', 'skills', 'userQuestions', 'systemPrompt']
+
+// --- Bundled skill -----------------------------------------------------------
+
+/** Provider name under `ctx.skills`; doubles as the skill name. */
+const SKILL_PROVIDER_NAME = 'dsh-tui-pi'
+
+/** Packaged skill body; `../skills/` resolves to the package root from both lib/ and src/. */
+const SKILL_BODY_URL = new URL('../skills/dsh-tui-pi/SKILL.md', import.meta.url)
+
+/** Resource base served with the skill so its relative links resolve. */
+const SKILL_RESOURCE_BASE = {
+  kind: 'directory',
+  path: fileURLToPath(new URL('../skills/dsh-tui-pi/', import.meta.url)),
+} as const
+
+const SKILL_INVOCATION = { modelInvocable: true, userInvocable: true } as const
+
+/** Routing description; must stay identical to the SKILL.md frontmatter (asserted in tests). */
+const SKILL_DESCRIPTION = 'dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 12 键（theme/panelHeight/maxAgents/maxRounds/disableSubagent/footerHints/cacheHitMode/iconSet/favoriteModels/hiddenModels/retention/resume）、DSH_TUI_* 环境变量、ask_user_question 快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume。'
+
+const SKILL_CANDIDATE: SkillCandidate = {
+  name: SKILL_PROVIDER_NAME,
+  description: SKILL_DESCRIPTION,
+  invocation: SKILL_INVOCATION,
+  provider: SKILL_PROVIDER_NAME,
+  source: 'bundled',
+  resourceBase: SKILL_RESOURCE_BASE,
+  rank: BUNDLED_SKILL_RANK,
+  locator: SKILL_BODY_URL,
+}
+
+const skillProvider: SkillProvider = {
+  name: SKILL_PROVIDER_NAME,
+  list: () => Promise.resolve([SKILL_CANDIDATE]),
+  async get(_candidate): Promise<SkillDefinition> {
+    return {
+      name: SKILL_CANDIDATE.name,
+      description: SKILL_CANDIDATE.description,
+      invocation: SKILL_CANDIDATE.invocation,
+      provider: SKILL_CANDIDATE.provider,
+      source: SKILL_CANDIDATE.source,
+      resourceBase: SKILL_RESOURCE_BASE,
+      content: stripFrontmatter(await readFile(SKILL_BODY_URL, 'utf8')),
+    }
+  },
+}
+
+/**
+ * Strip a leading YAML frontmatter block (`---` / body / `---`) from a skill
+ * markdown file. `SkillDefinition.content` must be the instruction body after
+ * metadata removal — the same shape the filesystem provider serves — so the
+ * bundled SKILL.md, which keeps its frontmatter for the GitHub/manual install
+ * paths, has the block removed when served through {@link skillProvider.get}.
+ * Tolerant by design: input that does not open with a `---` line, or whose
+ * frontmatter block is never closed, is returned unchanged. Mirrors the
+ * delimiter semantics of the upstream skill-filesystem provider.
+ */
+export function stripFrontmatter(raw: string): string {
+  const firstLineEnd = raw.indexOf('\n')
+  if (firstLineEnd < 0 || raw.slice(0, firstLineEnd).replace(/\r$/, '') !== '---') return raw
+  let lineStart = firstLineEnd + 1
+  while (lineStart <= raw.length) {
+    const nextNewline = raw.indexOf('\n', lineStart)
+    const lineEnd = nextNewline < 0 ? raw.length : nextNewline
+    if (raw.slice(lineStart, lineEnd).replace(/\r$/, '') === '---') {
+      return raw.slice(nextNewline < 0 ? raw.length : nextNewline + 1).trim()
+    }
+    if (nextNewline < 0) return raw
+    lineStart = nextNewline + 1
+  }
+  return raw
+}
 
 export function apply(ctx: Context): void {
   // Host floor guard, before any side effect: a host older than the peer
@@ -155,6 +242,10 @@ export function apply(ctx: Context): void {
       console.warn('[dsh-tui-pi] could not resolve the dsh host version next to the plugin; skipping the host floor check.')
     }
   }
+  // `inject = ['skills']` guarantees the service exists on every real host;
+  // register unconditionally so a missing service fails loud instead of
+  // silently dropping the bundled usage/config guide.
+  ctx.skills.registerProvider(() => skillProvider)
   let handle: TuiHandle | undefined
   // Live-session handle for the startup janitor (assigned inside the
   // render effect below, where the bridge is constructed): retention
