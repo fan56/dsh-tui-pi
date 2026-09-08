@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.3] - 2026-09-08
+
+### Fixed
+- **Background subagent runs now show their registered nickname instead of a permanent `subagent <id8>`** — a background continuable child (dsh-subagent-registry's `use_agent` background leg, any native continuable spawn) gets its identity `subagent/descriptor` written as part of the child's **constructor seed**, and constructor seeds do not emit on the `session/event` firehose (dsh-session's `firstLiveSeq` contract). The bridge's label refinement lives on the firehose path, so it never fired for exactly the runs users need named: the live Agents board and Ctrl+G kept the anonymous discovery label forever, making a registered agent's background run indistinguishable from an anonymous spawn. Foreground one-shot children were unaffected — their descriptor is appended at runtime and streams fine. The fix routes the refinement through `reconcileChildRounds`, whose incremental scan of the child's authoritative in-process log already runs every 600ms and sees seed events: it now folds the descriptor with the same rules as the event path (provider/mode always; label only when present, so anonymous native spawns keep their honest `subagent <id8>`), gated on an actual change (already-refined views are a no-op, no extra `onLive`), and re-emits the live board once per tick when something changed. Children recovered after a TUI restart refine the same way.
+
 ## [2.8.2] - 2026-09-07
 
 ### Fixed

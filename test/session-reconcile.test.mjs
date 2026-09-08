@@ -888,3 +888,99 @@ test('resume: a concurrent resume(other) shares the in-flight load and the gette
   assert.equal(bridge.getResumingSessionId(), undefined, 'cleared after the shared load settles')
   await bridge.dispose()
 })
+
+// ---------------------------------------------------------------------------
+// Seed descriptor refinement (the "background agent shows `subagent <id8>`
+// instead of its nickname" bug). A BACKGROUND continuable child's
+// `subagent/descriptor` is written as part of the child's constructor seed —
+// and constructor seeds do not emit `session/event` (dsh-session's
+// firstLiveSeq contract). The firehose refinement therefore never fires for
+// exactly the runs users care about naming (dsh-subagent-registry's
+// background use_agent leg), and the view keeps its discovery label forever.
+// The reconcile reads the authoritative in-process log (seeds included), so
+// it picks the descriptor up and applies the same refinement rules as the
+// event path.
+
+/** One descriptor event as the continuable seed writes it (label = nickname). */
+function seedDescriptor(seq, time, data) {
+  return {
+    type: 'subagent/descriptor', seq, time,
+    data: { version: 3, mode: 'continuable', provider: 'spawn', ...data },
+  }
+}
+
+test('the reconcile refines a background child label from its seed-written descriptor', async () => {
+  const { ctx, handlers, childEvents } = makeHarness()
+  let liveCount = 0
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => { liveCount += 1 }, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  // The child is discovered by its header on its FIRST streamed event. The
+  // descriptor never streams (constructor seed) — only ordinary turn events
+  // do — so the view is born with the anonymous discovery label.
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+  emit(handlers, childSession, { type: 'turn/start', seq: 1, time: 10, data: { turn: 1 } })
+  let view = bridge.getAgentViews()[0]
+  assert.equal(view.label, 'subagent child-1', 'precondition: the discovery label is anonymous')
+  assert.equal(view.provider, undefined, 'precondition: no provider without a streamed descriptor')
+
+  // The descriptor sits in the child's persisted log (the seed), invisible
+  // to the firehose. The next reconcile tick must recover the identity:
+  // label = the registry nickname the start request carried, plus the
+  // provider/mode the event path would have folded.
+  childEvents.push(seedDescriptor(0, 1, { label: '牛马狗' }))
+  bridge.reconcileChildRounds()
+  view = bridge.getAgentViews()[0]
+  assert.equal(view.label, '牛马狗', 'the nickname replaces the anonymous discovery label')
+  assert.equal(view.provider, 'spawn', 'provider folded from the seed descriptor')
+  assert.equal(view.mode, 'continuable', 'mode folded from the seed descriptor')
+  assert.ok(liveCount > 0, 'the refinement emitted onLive so the board re-renders')
+
+  // Idempotent: further ticks see no change (no extra onLive, same label).
+  const liveAfterFirst = liveCount
+  bridge.reconcileChildRounds()
+  assert.equal(bridge.getAgentViews()[0].label, '牛马狗', 'label stable across ticks')
+  assert.equal(liveCount, liveAfterFirst, 'a no-op tick does not re-emit onLive')
+  await bridge.dispose()
+})
+
+test('a seed descriptor without a label keeps the discovery label (anonymous native spawn)', async () => {
+  const { ctx, handlers, childEvents } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+  emit(handlers, childSession, { type: 'turn/start', seq: 1, time: 10, data: { turn: 1 } })
+  assert.equal(bridge.getAgentViews()[0].label, 'subagent child-1')
+
+  // Native spawns carry no label — provider/mode still refine, the label
+  // honestly stays `subagent <id8>` (there is no nickname to show).
+  childEvents.push(seedDescriptor(0, 1))
+  bridge.reconcileChildRounds()
+  const view = bridge.getAgentViews()[0]
+  assert.equal(view.label, 'subagent child-1', 'no label on the descriptor means no label change')
+  assert.equal(view.provider, 'spawn', 'provider still folds')
+  assert.equal(view.mode, 'continuable', 'mode still folds')
+  await bridge.dispose()
+})
+
+test('the reconcile does not disturb a child the firehose already refined', async () => {
+  // Healthy path: the descriptor streamed (foreground one-shot), foldTracked
+  // refined the view, and the log holds the same event. The reconcile's
+  // change gate must see no delta — same label, no duplicate work.
+  const { ctx, handlers, childEvents } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+  emit(handlers, childSession, seedDescriptor(0, 1, { mode: 'one-shot', label: '牛马狗' }))
+  assert.equal(bridge.getAgentViews()[0].label, '牛马狗', 'precondition: the firehose refined the label')
+  childEvents.push(seedDescriptor(0, 1, { mode: 'one-shot', label: '牛马狗' }))
+  bridge.reconcileChildRounds()
+  assert.equal(bridge.getAgentViews()[0].label, '牛马狗', 'label unchanged by the reconcile')
+  assert.equal(bridge.getAgentViews()[0].mode, 'one-shot', 'one-shot mode preserved')
+  await bridge.dispose()
+})

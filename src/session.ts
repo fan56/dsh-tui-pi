@@ -18,7 +18,7 @@ import { SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-set
 import { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
 import { join } from 'node:path'
-import type { AgentView } from './dsh-events.ts'
+import type { AgentView, SubagentDescriptorData } from './dsh-events.ts'
 import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor, isTuiPluginInjection } from './dsh-events.ts'
 import { loadModelProfiles, modelProfilesPath, resolvePinnedProfile } from './model-profiles.ts'
 import { installSpawnToolFence, markTuiSurface } from './subagent-policy.ts'
@@ -480,6 +480,7 @@ export class DshSessionBridge {
       | { get(id: SessionId): Session | undefined }
       | undefined
     if (sessions === undefined) return
+    let viewsChanged = false
     for (const childId of this.childSessions) {
       const session = sessions.get(SessionId(childId))
       if (session === undefined) continue
@@ -494,8 +495,11 @@ export class DshSessionBridge {
       }
       if (from >= len) continue
       let added = 0
+      let descriptor: SessionEvent & { type: 'subagent/descriptor'; data: SubagentDescriptorData } | undefined
       for (let i = from; i < len; i++) {
-        if (events[i]!.type === 'assistant/message') added += 1
+        const event = events[i]!
+        if (event.type === 'assistant/message') added += 1
+        else if (isSubagentDescriptor(event)) descriptor = event
       }
       const absolute = (this.reconciledCount.get(childId) ?? 0) + added
       this.reconciledLen.set(childId, len)
@@ -505,7 +509,37 @@ export class DshSessionBridge {
         this.roundCounts.set(childId, absolute)
         this.callbacks.onRoundCount?.(childId, absolute)
       }
+      // Label refinement for children whose descriptor never reaches the
+      // firehose. A BACKGROUND continuable child (dsh-subagent-registry's
+      // use_agent background leg, any native continuable spawn) gets its
+      // descriptor written as part of the child's constructor seed — and
+      // constructor seeds do not emit `session/event` (dsh-session's
+      // firstLiveSeq contract), so the foldTracked refinement at the
+      // `subagent/descriptor` case never fires and the view keeps the
+      // discovery label `subagent <id8>` forever. The user then cannot tell
+      // a registered agent's background run from an anonymous spawn. The
+      // in-process log here is authoritative (seeds included), so the scan
+      // above picks the descriptor up and the same refinement rules as the
+      // event path apply: provider/mode always, label only when present.
+      // Foreground one-shot children already refined over the firehose are
+      // a no-op (the change gate below compares before setting).
+      if (descriptor !== undefined) {
+        const view = this.agentViews.get(childId)
+        if (view !== undefined
+          && (view.provider !== descriptor.data.provider
+            || view.mode !== descriptor.data.mode
+            || (descriptor.data.label !== undefined && view.label !== descriptor.data.label))) {
+          this.agentViews.set(childId, {
+            ...view,
+            provider: descriptor.data.provider,
+            mode: descriptor.data.mode,
+            ...(descriptor.data.label === undefined ? {} : { label: descriptor.data.label }),
+          })
+          viewsChanged = true
+        }
+      }
     }
+    if (viewsChanged) this.emitLive()
   }
 
   /** Snapshot of the incremental stats (footer reads this O(1)). */
