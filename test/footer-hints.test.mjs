@@ -27,7 +27,7 @@ test('buildFooterHint with the default selection equals the legacy FOOTER_HINT',
 test('buildFooterHint keeps only the selected segments, in the fixed display order', () => {
   const shown = { ...DEFAULT_FOOTER_HINTS, send: false, subagents: false, search: false }
   const hint = buildFooterHint(shown)
-  assert.equal(hint, '⌨ Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Tab: preset · ↑↓: history')
+  assert.equal(hint, '⌨ Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · /preset: switch · ↑↓: history')
   assert.ok(!hint.includes('Enter: send'))
   assert.ok(!hint.includes('Ctrl+G: subagents'))
   assert.ok(!hint.includes('Ctrl+Shift+F: search'))
@@ -47,8 +47,10 @@ test('DEFAULT_FOOTER_HINTS covers exactly the eight FOOTER_HINT_ITEMS keys, all 
 test('the default hint width matches the current segment set', () => {
   // Width guard: record the current width so future edits notice growth.
   // The hint bar clips to terminal width, so growth is safe. Grew from 117
-  // to 140 when the Ctrl+Shift+F search segment joined (transcript search).
-  assert.equal(visibleWidth(FOOTER_HINT), 140)
+  // to 140 when the Ctrl+Shift+F search segment joined (transcript search),
+  // to 144 when the preset segment switched from the removed Tab binding
+  // to the /preset command.
+  assert.equal(visibleWidth(FOOTER_HINT), 144)
 })
 
 test('FooterHint renders one clipped row at any width - never a wrap', () => {
@@ -59,7 +61,7 @@ test('FooterHint renders one clipped row at any width - never a wrap', () => {
     const plain = stripAnsi(rows[0])
     assert.ok(visibleWidth(plain) <= width, `row fits ${width} (${visibleWidth(plain)})`)
   }
-  // Narrow widths clip the tail (the hint is 103 cols); wide widths show it all.
+  // Narrow widths clip the tail; wide widths show it all.
   const narrow = stripAnsi(hint.render(60)[0])
   assert.ok(!narrow.includes('↑↓: history'), 'narrow row clips the trailing segment')
   const wide = stripAnsi(hint.render(200)[0])

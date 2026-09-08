@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.2] - 2026-09-07
+
+### Fixed
+- **The footer hint no longer advertises the removed `Tab` preset binding** — the hint bar's preset segment still read `Tab: preset` after 2.7.0 unbound the key (a deliberate no-op since the confirmed three-way switch landed), so the footer told every user to press a dead key. The segment now reads `/preset: switch`, pointing at the only switching path; the width guards and the stale 103-column comments were brought along.
+
 ## [2.8.1] - 2026-09-07
 
 ### Fixed

@@ -6,7 +6,7 @@
  * reseedHistory/getBrowseState/restoreBrowseState for mid-browse rebuild
  * survival. Browsing itself is the pi-tui Editor native
  * cursorUp/cursorDown → navigateHistory path. Also guards the exported
- * FOOTER_HINT constant's 103-column width (the pre-feature width).
+ * FOOTER_HINT constant's width (see the single-line budget test below).
  * Runs against the built lib/ (pnpm build && pnpm test).
  */
 
@@ -207,7 +207,9 @@ test('FOOTER_HINT width is within a single-line budget', () => {
   // width-clipping component (see test/footer-hints.test.mjs) so a longer
   // default is safe — it clips cleanly on narrow terminals. Record the
   // current width so a future edit notices the growth. Cap raised from 130
-  // to 145 when the Ctrl+Shift+F search segment joined (width now 140).
+  // to 145 when the Ctrl+Shift+F search segment joined; the default grew to
+  // 144 when the preset segment switched from the removed Tab binding to
+  // the /preset command.
   const width = visibleWidth(FOOTER_HINT)
   assert.ok(width <= 145, `FOOTER_HINT is ${width} columns`)
 })

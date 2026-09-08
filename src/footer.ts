@@ -24,14 +24,14 @@ import { arrowRight } from './icons.ts'
 /**
  * The footer keybinding hint, assembled from the user's `dsh-tui.footerHints`
  * selection (see buildFooterHint) - the pre-feature full string is what the
- * all-true default produces, and stays exactly 103 visible columns. The
- * no-wrap rendering lives in `FooterHint` (a width-clipping component, not a
- * word-wrapping Text). The unit test in test/history.test.mjs guards the
- * default against future length regressions (a longer hint word-wraps on
- * 105-118-column terminals and hides its suffix on <=104).
+ * all-true default produces. The no-wrap rendering lives in `FooterHint` (a
+ * width-clipping component, not a word-wrapping Text). The unit test in
+ * test/history.test.mjs guards the default against future length regressions
+ * (a longer hint word-wraps on 105-118-column terminals and hides its suffix
+ * on <=104).
  */
 export const FOOTER_HINT =
-  '⌨ Enter: send · Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents · Ctrl+Shift+F: search · Tab: preset · ↑↓: history'
+  '⌨ Enter: send · Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents · Ctrl+Shift+F: search · /preset: switch · ↑↓: history'
 
 /** The toggleable footer hint segments, keyed as in the `dsh-tui` settings. */
 export interface FooterHints {
@@ -65,7 +65,7 @@ export const FOOTER_HINT_ITEMS: ReadonlyArray<{ id: keyof FooterHints; label: st
   { id: 'quitEmpty', label: 'Ctrl+D: quit (empty)' },
   { id: 'subagents', label: 'Ctrl+G: subagents' },
   { id: 'search', label: 'Ctrl+Shift+F: search' },
-  { id: 'preset', label: 'Tab: preset' },
+  { id: 'preset', label: '/preset: switch' },
   { id: 'history', label: '↑↓: history' },
 ]
 
