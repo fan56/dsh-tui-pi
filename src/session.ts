@@ -845,6 +845,63 @@ export class DshSessionBridge {
     }
   }
 
+  /**
+   * Abort ONE live child subagent mid-turn. The structural face is the same
+   * `cancel(cause, options)` the parent path uses; the handle comes from the
+   * agents registry by the child's session id — the exact idiom the maxAgents
+   * prune backstop uses (src/subagent-policy.ts), because the wire-level
+   * `session.cancel` refuses subagent-owned sessions ("use subagent delivery")
+   * and a BACKGROUND/continuable child otherwise survives the parent turn's
+   * cancel outright (dsh-subagent owns the child's handle; the parent's
+   * AbortSignal only binds it until inbox acceptance). `keepInbox` preserves
+   * a continuable child's queued work — this stops the running turn, it does
+   * not evict the child.
+   * @returns false when the child is not live in this process or the cancel
+   *   call threw; true once the cancellation was issued.
+   */
+  cancelChild(childId: string): boolean {
+    let agent: { cancel(cause: unknown, options?: { keepInbox?: boolean }): void } | undefined
+    try {
+      agent = this.ctx.agents.get(SessionId(childId))
+    } catch {
+      return false // foreign/missing registry — nothing to stop
+    }
+    if (agent === undefined) return false
+    try {
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Abort EVERY live (not settled) child. The everything-stop's subagent leg:
+   * cancelling the parent only kills FOREGROUND children (they ride the tool
+   * call's abort signal) — background/continuable children keep burning LLM
+   * rounds after the parent turn is gone, so the stop enumerates them from
+   * the tracker and cancels each one.
+   * @returns how many children a cancellation was issued for.
+   */
+  cancelAllChildren(): number {
+    let stopped = 0
+    for (const view of this.getLiveChildren()) {
+      if (this.cancelChild(view.childId)) stopped += 1
+    }
+    return stopped
+  }
+
+  /**
+   * Whether ANY LLM work is in flight: the bridge's own mid-turn status OR
+   * at least one live child. The keymap's running gate reads this — with
+   * background children keeping the lights on after the parent turn ended,
+   * the Esc stop must still arm (previously it went blind exactly when only
+   * subagents were running).
+   */
+  hasRunningWork(): boolean {
+    return this.running || this.getLiveChildren().length > 0
+  }
+
   /** Dispose the live agent (if any) and stop event subscriptions. */
   async dispose(): Promise<void> {
     if (this.idleReleaseTimer !== undefined) clearTimeout(this.idleReleaseTimer)

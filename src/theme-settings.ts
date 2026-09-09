@@ -159,6 +159,14 @@ const THEME_SETTINGS_SCHEMA = z.object({
       + 'glyphs (U+E0B0 separator, stop, heavy circle); plain = safe Unicode '
       + 'stand-ins (▸ ■ ●) — auto is the recommended default)',
     ),
+  rememberPreset: z
+    .boolean()
+    .default(true)
+    .description(
+      'Remember the last /preset selection per workspace and start the next '
+      + 'launch in the same directory on it (instead of the server default). '
+      + 'false always starts on the server-side default preset',
+    ),
   favoriteModels: z
     .array(z.string())
     .default([])
@@ -235,6 +243,7 @@ const THEME_SETTINGS_ENTRY: {
   footerHints: FooterHints
   cacheHitMode: CacheHitMode
   iconSet: IconSet
+  rememberPreset: boolean
   favoriteModels: string[]
   hiddenModels: string[]
   retention: { maxCount: number; maxAgeDays: number; minIdleHours: number }
@@ -248,6 +257,7 @@ const THEME_SETTINGS_ENTRY: {
   footerHints: { ...DEFAULT_FOOTER_HINTS },
   cacheHitMode: DEFAULT_CACHE_HIT_MODE,
   iconSet: 'auto',
+  rememberPreset: true,
   favoriteModels: [],
   hiddenModels: [],
   retention: {
@@ -355,6 +365,11 @@ function narrowIconSet(value: unknown): IconSet {
   return value === 'nerdfont' || value === 'plain' ? value : 'auto'
 }
 
+/** Validate an unknown `rememberPreset` value (anything else narrows to true). */
+function narrowRememberPreset(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : true
+}
+
 /**
  * The `dsh-tui` namespace descriptor, after waiting for the in-flight
  * registration — the shared plumbing of every async reader below.
@@ -395,6 +410,7 @@ async function readResolvedSection(ctx: Context): Promise<{
   panelHeight?: unknown
   footerHints?: unknown
   iconSet?: unknown
+  rememberPreset?: unknown
   favoriteModels?: unknown
   hiddenModels?: unknown
 } | undefined> {
@@ -407,6 +423,7 @@ async function readResolvedSection(ctx: Context): Promise<{
         panelHeight?: unknown
         footerHints?: unknown
         iconSet?: unknown
+        rememberPreset?: unknown
         favoriteModels?: unknown
         hiddenModels?: unknown
       }
@@ -459,6 +476,36 @@ export async function readFooterHintsPreference(ctx: Context): Promise<FooterHin
  */
 export async function readIconSetPreference(ctx: Context): Promise<IconSet> {
   return narrowIconSet((await readResolvedSection(ctx))?.iconSet)
+}
+
+/**
+ * Read the persisted preset-memory toggle (the startup snapshot). Default
+ * TRUE: remembering is the out-of-the-box behavior; only an explicit
+ * `dsh-tui.rememberPreset: false` turns it off.
+ *
+ * @param ctx - plugin context.
+ * @returns the resolved boolean, or `true` when the settings service is
+ * absent or the namespace/value cannot be read.
+ */
+export async function readRememberPreset(ctx: Context): Promise<boolean> {
+  return narrowRememberPreset((await readResolvedSection(ctx))?.rememberPreset)
+}
+
+/**
+ * Read the currently persisted preset-memory toggle, synchronously. Unlike
+ * `readRememberPreset` (the startup snapshot), this describes whatever the
+ * settings service exposes right now — the /preset switch path calls it at
+ * every commit, so a `/settings` toggle applies without a restart.
+ * @returns `true` when the service, namespace, or value is absent.
+ */
+export function currentRememberPreset(ctx: Context): boolean {
+  const settings = ctx.get('settings') as SettingsProvider | undefined
+  if (settings === undefined) return true
+  return narrowRememberPreset((settings
+    .describe()
+    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
+    | { rememberPreset?: unknown }
+    | undefined)?.rememberPreset)
 }
 
 /**

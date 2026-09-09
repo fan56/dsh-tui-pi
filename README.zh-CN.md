@@ -102,11 +102,11 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 | 按键 | 功能 |
 |---|---|
 | `Enter` | 发送 prompt |
-| `Esc` | **双击停止**（单击进入待发状态；有 popup 打开时改为关闭它） |
-| `Ctrl+C` | 对话中：第一次取消当前轮次，第二次退出；空闲时：清空编辑器 / 退出。长按自动重复绝不会触发退出。 |
+| `Esc` | **双击停止一切 LLM 工作**——第一击进入待发状态，第二击弹出确认框（列明正在运行的主 turn 与子代理数）；`Enter` 确认后停止主 turn **和**所有运行中的子代理，`Esc` 维持运行。仅有后台子代理在跑时同样有效。有 popup 打开时双击改为关闭它 |
+| `Ctrl+C` | 任务中：第一次停止（同一"停止一切"，无确认框），第二次退出；空闲时：清空编辑器 / 退出。长按自动重复绝不会触发退出。 |
 | `Ctrl+D` | 退出（仅在编辑器为空时） |
 | `Ctrl+L` | 打开 model/think 选择器 |
-| `Ctrl+G` | 打开 subagent 选择器（查看器内 `Enter` 打开 steer） |
+| `Ctrl+G` | 打开 subagent 选择器（查看器内 `Enter` 打开 steer；子代理运行中 `x ×2` 停止它，已结束后 `x ×2` 关闭面板） |
 | `Ctrl+O` | 待发消息队列（`s` 立即 steer · `d` 移除） |
 | `Ctrl+Shift+F` | 全文搜索（`Enter`/`Ctrl+G` 下一个 · `Shift+Enter`/`Ctrl+Shift+G` 上一个 · `Esc` 关闭） |
 | `↑` / `↓` | 浏览已提交消息历史 |
@@ -129,6 +129,7 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 | `footerHints` | 全 `true` | footer 快捷键提示分段开关：`send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
 | `cacheHitMode` | `lastMessage` | footer CH 段口径：`lastMessage`——最新一条 assistant 消息的缓存命中率（与 pi-tui footer 一致，默认）；`session`——全会话累计 |
 | `iconSet` | `auto` | `auto`/`nerdfont`/`plain`——powerline 字形自适应你的字体；用 `node scripts/install-font.mjs` 安装 Nerd Font |
+| `rememberPreset` | `true` | 按**工作区**（目录）记住最后一次 `/preset` 的选择，下次同目录启动直接用它——首个会话按它组合，而不是服务端默认。`false` 则始终用服务端默认。记忆本体存于 `$DSH_HOME/workspace-presets.json` |
 | `favoriteModels` | `[]` | 收藏模型（`provider/id`），钉在 `/model` 选择器顶部 |
 | `hiddenModels` | `[]` | 隐藏模型（`provider/id`），移入 `/model` 的 Hidden 区（选择器内 `f` 收藏 / `h` 隐藏，即写这两个键） |
 

@@ -14,10 +14,17 @@
  *                                     viewer, pickers and dialogs close
  *                                     themselves and leave the turn alone)
  *   2. editor autocomplete showing  → let the editor close the list only
- *   3. agent mid-turn (running)     → 1st press arms the stop window, 2nd
- *                                     press within `DOUBLE_PRESS_MS` cancels
- *                                     the whole task (parent + subagents) —
- *                                     stopping is a deliberate double-press
+ *   3. LLM work in flight (running) → 1st press arms the stop window, 2nd
+ *                                     press within `DOUBLE_PRESS_MS` opens
+ *                                     the stop-everything CONFIRMATION
+ *                                     dialog (src/stop-dialog.ts) — the
+ *                                     confirmed stop cancels the parent
+ *                                     turn AND every live subagent.
+ *                                     "Running" is the caller's widened
+ *                                     gate (bridge.hasRunningWork): live
+ *                                     background children count even after
+ *                                     the parent turn ended, which is
+ *                                     exactly when the stop must still arm.
  *   4. editor non-empty or empty (idle) → NO-OP — pi's anti-misfire core.
  *                                     (pi's empty-editor double-Esc opens
  *                                     /tree; dsh deliberately does NOT map
@@ -228,11 +235,15 @@ function resolveEscape(state: KeyPressState, now: number): KeyAction {
   if (insideOverlayEscGuard(state.lastOverlayEscPress, now)) {
     return { kind: 'esc-after-overlay', consumes: true }
   }
-  // 2. Agent mid-turn: stopping the whole task (parent + subagents) is a
-  //    deliberate double-press - the first Esc only arms the stop window, so
-  //    a stray Esc (e.g. one aimed at a just-closed popup) can never kill a
-  //    running turn. Its clock is the separate `lastRunningEscPress`; held
-  //    auto-repeat never arms or fires it.
+  // 2. LLM work in flight: stopping everything (parent turn + every live
+  //    subagent) is a deliberate double-press - the first Esc only arms the
+  //    stop window, so a stray Esc (e.g. one aimed at a just-closed popup)
+  //    can never kill a running task, and the SECOND Esc opens the stop
+  //    confirmation dialog rather than firing (the executor turns
+  //    `interrupt-cancel` into openStopConfirmDialog). Its clock is the
+  //    separate `lastRunningEscPress`; held auto-repeat never arms or fires
+  //    it. `running` is the caller's widened gate - live background children
+  //    count even after the parent turn ended.
   if (state.running) {
     if (isGapRepeat(state.lastRunningEscPress, now)) return { kind: 'key-repeat', key: 'escape', consumes: true }
     return isDoublePress(state.lastRunningEscPress, now)

@@ -80,8 +80,21 @@ const CHILD_LOG_CAP = 2000
 export const STEER_SENT_NOTICE = 'Steer message sent'
 /** Notice shown when the target child can no longer receive steering. */
 export const STEER_ENDED_NOTICE = 'This subagent has ended — steering unavailable'
-/** Transcript footer: hardcoded like every other in-panel key hint. */
-export const VIEWER_FOOTER = '↑↓ scroll · Esc close · x ×2 close · Enter steer'
+/** Transcript footer for a RUNNING child: x ×2 stops it. */
+export const VIEWER_FOOTER_RUNNING = '↑↓ scroll · Esc close · x ×2 stop · Enter steer'
+/** Transcript footer for a SETTLED child: nothing to stop, x ×2 closes. */
+export const VIEWER_FOOTER_SETTLED = '↑↓ scroll · Esc close · x ×2 close · Enter steer'
+
+/**
+ * The transcript footer for one child state. The x ×2 semantics flipped with
+ * the everything-stop work: on a running child the double press is the
+ * per-subagent STOP (cancel this child), on a settled one — nothing left to
+ * stop — it keeps its old close shortcut. The footer always names which one
+ * a press will do.
+ */
+export function viewerFooter(running: boolean): string {
+  return running ? VIEWER_FOOTER_RUNNING : VIEWER_FOOTER_SETTLED
+}
 /** Steer input footer: hardcoded like every other in-panel key hint. */
 export const STEER_FOOTER = 'Enter send · Shift+Enter newline · Esc cancel'
 
@@ -488,9 +501,11 @@ class LiveSubagentTable implements Component {
  * rounds · tokens) over a scrollable window of the child's event lines. A
  * ~300ms timer re-reads the bridge log and re-renders; the view follows the
  * tail until the user scrolls up (re-detached on reaching the bottom again).
- * Esc closes; a double-`x` within `DOUBLE_PRESS_MS` closes too (single `x`
- * only arms the window); Enter requests the steer flow (the owner decides
- * between opening the input box and an ended-notice).
+ * Esc closes; a double-`x` within `DOUBLE_PRESS_MS` STOPS a running child
+ * (cancels it; the panel stays open and the footer's `x ×2 stop` names the
+ * action) and closes a settled one (single `x` only arms the window); Enter
+ * requests the steer flow (the owner decides between opening the input box
+ * and an ended-notice).
  * Exported for the regression tests.
  */
 export class SubagentViewerPanel implements Component {
@@ -582,7 +597,7 @@ export class SubagentViewerPanel implements Component {
     }
     out.push('')
     if (this.notice !== undefined) out.push(fns.subtle(clipToWidth(this.notice, wrap)))
-    out.push(fns.subtle(VIEWER_FOOTER))
+    out.push(fns.subtle(clipToWidth(viewerFooter(view?.outcome === undefined), wrap)))
     return out
   }
 
@@ -597,10 +612,25 @@ export class SubagentViewerPanel implements Component {
     if (data.toLowerCase() === 'x') {
       const now = Date.now()
       // Auto-repeat of a held x (~30-50ms gaps) never completes the double
-      // press — only a deliberate second press within the window closes.
+      // press — only a deliberate second press within the window acts.
       if (this.lastXPress !== 0 && now - this.lastXPress < MIN_DOUBLE_PRESS_GAP_MS) return
       if (this.lastXPress !== 0 && now - this.lastXPress <= DOUBLE_PRESS_MS) {
-        this.onClose()
+        this.lastXPress = 0
+        // The double press is the per-subagent STOP: cancel THIS child (the
+        // panel stays open — its status flips as the cancellation settles).
+        // A settled child has nothing to stop; there the double press keeps
+        // its close shortcut. A cancel that found nothing to stop (the child
+        // raced to idle-and-settled between the render and the press, or its
+        // handle is not in this process) closes too — a dead key would feel
+        // broken.
+        const running = this.bridge.getAgentViews().some(
+          view => view.childId === this.childId && view.outcome === undefined,
+        )
+        if (running && this.bridge.cancelChild(this.childId)) {
+          this.showNotice('⏹ canceling this subagent…')
+        } else {
+          this.onClose()
+        }
       } else {
         this.lastXPress = now
       }

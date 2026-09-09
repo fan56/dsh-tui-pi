@@ -45,16 +45,25 @@ import { pickEffort, pickModel, pickPermission, pickPreset, pickTheme } from './
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
 import {
   currentCacheHitMode,
+  currentRememberPreset,
   currentThemePreference,
   readFooterHintsPreference,
   readIconSetPreference,
   readPanelHeightPreference,
+  readRememberPreset,
   readSessionManagementExplicit,
   readSubagentLimits,
   readThemePreference,
   registerThemeSettings,
   writeThemePreference,
 } from './theme-settings.ts'
+import {
+  loadWorkspacePresets,
+  rememberedPresetFor,
+  saveWorkspacePresets,
+  withRememberedPreset,
+  workspacePresetsPath,
+} from './workspace-presets.ts'
 import { applyIconSet, resolveIconSet, stopIcon, type IconSet } from './icons.ts'
 import { detectNerdFontAvailable } from './font-detect.ts'
 import { openAgentManager } from './agents.ts'
@@ -80,7 +89,7 @@ import {
   repairSessionLog,
 } from './log-repair.ts'
 import { openRepairConfirmDialog } from './repair-dialog.ts'
-import { WriterLockedError } from './writer-lock.ts'
+import { WriterLockedError, projectKeyFor } from './writer-lock.ts'
 import { emitNotice } from './notice-bridge.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
@@ -118,6 +127,7 @@ import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.
 import { startTui, type TuiHandle } from './tui.ts'
 import { currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, initialPresetIndex, peekNextPreset, type PresetEntry, type PresetState } from './preset.ts'
 import { completedTurnSeed, openPresetConfirmDialog, performPresetSwitch } from './preset-dialog.ts'
+import { openStopConfirmDialog } from './stop-dialog.ts'
 import { registerAskUserProvider } from './ask-user.ts'
 import { checkHostSupport } from './host-version.ts'
 
@@ -130,16 +140,6 @@ export const name = 'dsh-tui-pi'
  * ~30-50ms) aborts the quit before this timer ever fires.
  */
 const QUIT_CONFIRM_MS = 200
-
-/**
- * Delay (ms) before the double-Esc stop actually fires — the same held-key
- * defence as the Ctrl+C quit: the OS repeat delay (~183ms-2s) puts the first
- * auto-repeat of a held Esc exactly at the 500ms stop-window boundary; the
- * stop is confirmed for this long and a follow-up `key-repeat` (betraying
- * the held key) aborts it. A second HUMAN-speed press during the window
- * fires the stop immediately (see `interrupt-cancel`).
- */
-const STOP_CONFIRM_MS = 200
 
 /**
  * The TUI drives the agent factory and registers slash commands. The render
@@ -169,7 +169,7 @@ const SKILL_RESOURCE_BASE = {
 const SKILL_INVOCATION = { modelInvocable: true, userInvocable: true } as const
 
 /** Routing description; must stay identical to the SKILL.md frontmatter (asserted in tests). */
-const SKILL_DESCRIPTION = 'dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 12 键（theme/panelHeight/maxAgents/maxRounds/disableSubagent/footerHints/cacheHitMode/iconSet/favoriteModels/hiddenModels/retention/resume）、DSH_TUI_* 环境变量、ask_user_question 快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume。'
+const SKILL_DESCRIPTION = 'dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 13 键（theme/panelHeight/maxAgents/maxRounds/disableSubagent/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume）、DSH_TUI_* 环境变量、ask_user_question 快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。'
 
 const SKILL_CANDIDATE: SkillCandidate = {
   name: SKILL_PROVIDER_NAME,
@@ -359,6 +359,17 @@ export function apply(ctx: Context): void {
     const nerdfontAvailable = await detectNerdFontAvailable()
     applyIconSet(resolveIconSet(iconSetPreference, nerdfontAvailable))
     const presetRoster = await fetchPresetRoster()
+    // Preset memory (`dsh-tui.rememberPreset`, default ON): the last /preset
+    // selection committed in THIS workspace (keyed by the session backend's
+    // project key of the cwd) becomes the launch selection — runTui seeds it
+    // into both the footer state AND `bridge.setAgentPreset`, so the FIRST
+    // session of the day composes under the remembered preset instead of the
+    // server default. A stale id (preset renamed/removed upstream) degrades
+    // to the stock default-selection behavior; memory off skips the read
+    // entirely.
+    const rememberedPresetId = (await readRememberPreset(ctx))
+      ? rememberedPresetFor(loadWorkspacePresets(workspacePresetsPath()), projectKeyFor(process.cwd()))
+      : undefined
     // Startup configuration snapshot (mcp/skills/plugins readout under the
     // welcome banner): best-effort by contract — no loader service or a
     // throwing entry walk degrades to undefined and the banner renders
@@ -371,7 +382,7 @@ export function apply(ctx: Context): void {
     const cmdlineArgs = (ctx.get('cmdlineArgs') as { get(): readonly string[] } | undefined)?.get()
     let disposer: (() => void) | undefined
     try {
-      disposer = runTui(themePreference, panelHeight, footerHints, nerdfontAvailable, presetRoster, startupInfo, cmdlineArgs)
+      disposer = runTui(themePreference, panelHeight, footerHints, nerdfontAvailable, presetRoster, startupInfo, cmdlineArgs, rememberedPresetId)
     } catch (error) {
       // An async-effect failure after startTui would otherwise orphan the
       // terminal in raw mode — the disposer never registers, so nothing ever
@@ -392,7 +403,7 @@ export function apply(ctx: Context): void {
    * reaches cordis. Returns the effect disposer handed back to cordis on
    * teardown.
    */
-  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, nerdfontAvailable: boolean, presetRoster: import('./preset.ts').PresetEntry[], startupInfo: StartupSummary | undefined, cmdlineArgs: readonly string[] | undefined): () => void {
+  function runTui(themePreference: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, nerdfontAvailable: boolean, presetRoster: import('./preset.ts').PresetEntry[], startupInfo: StartupSummary | undefined, cmdlineArgs: readonly string[] | undefined, rememberedPresetId: string | undefined): () => void {
     // User keybindings (`~/.dsh/keybindings.json`): a partial map of the app
     // keys, read once per TUI start — `/reload` re-runs apply() and re-reads
     // it. Broken entries surface as notices instead of breaking startup.
@@ -402,16 +413,23 @@ export function apply(ctx: Context): void {
     // switching is an explicit, confirmed action). The roster is fetched once
     // at startup from the api-proxy service; an empty roster (no service / no
     // presets) disables the feature gracefully (/preset errors, footer shows
-    // plain "dsh"). Out of the box the selection starts on the `standard`
-    // preset when the roster supplies one; otherwise it falls back to the
-    // first-scanned entry (initialPresetIndex). This is a local selection
-    // only: before the user switches via /preset, NO `meta.agentPreset` is
-    // sent at session create, so the server-side default
-    // (`agent-presets.default` settings / deployment config) governs; the
-    // footer reflects the local selection only. We deliberately do NOT seed
-    // `bridge.setAgentPreset(DEFAULT_PRESET_ID)` at init — that would override
-    // the server-side default with a client-side assumption.
-    const presetState: PresetState = { roster: presetRoster, index: initialPresetIndex(presetRoster) }
+    // plain "dsh"). The initial selection is the workspace's REMEMBERED
+    // preset when preset memory is on and the id is still on the roster
+    // (initialPresetIndex prefers it), else the `standard` entry, else the
+    // first-scanned one. Without memory the launch selection is a local
+    // display only: before the user switches via /preset, NO
+    // `meta.agentPreset` is sent at session create, so the server-side
+    // default (`agent-presets.default` settings / deployment config)
+    // governs. WITH memory the remembered id is ALSO seeded into the bridge
+    // below (bridge.setAgentPreset), which is the point: the first session
+    // of the launch composes under the remembered preset, not the server
+    // default. We deliberately seed ONLY a remembered id, never
+    // DEFAULT_PRESET_ID — that would override the server-side default with
+    // a client-side assumption.
+    const rememberedPresetEntry = rememberedPresetId !== undefined
+      ? presetRoster.find(preset => preset.id === rememberedPresetId)
+      : undefined
+    const presetState: PresetState = { roster: presetRoster, index: initialPresetIndex(presetRoster, rememberedPresetEntry?.id) }
     // Docked-modal liveness (the ask-user questions panel): while a question
     // is pending the panel owns the keyboard — the keymap treats it like an
     // open overlay (see tui.ts), and refocusEditor must not steal focus from
@@ -422,51 +440,44 @@ export function apply(ctx: Context): void {
         void submit(text)
       },
       keyBindings: keyBindings.bindings,
-      // App-level keys (pi interrupt chain): Esc on a running task is a
+      // App-level keys (pi interrupt chain): Esc while LLM work runs is a
       // deliberate double-press — the first press arms the window (with
-      // feedback), the second within 500ms stops the whole task (parent +
-      // subagents); popup/autocomplete first, and an idle Esc (any editor)
-      // is an anti-misfire no-op.
-      // Ctrl+C cancels a running turn or clears the editor — a second press
+      // feedback), the second within 500ms opens the stop-everything
+      // CONFIRMATION dialog (main turn + every running subagent); stopping
+      // everything is a read-before-confirm action, not a timer race.
+      // popup/autocomplete first, and an idle Esc (any editor) is an
+      // anti-misfire no-op. "Running" covers background subagents too —
+      // children keep working after the parent turn ends, and the stop must
+      // still reach them (bridge.hasRunningWork).
+      // Ctrl+C cancels a running task or clears the editor — a second press
       // within 500ms quits — and Ctrl+D quits only on an empty editor.
       // Ctrl+G opens the subagent picker while children run. All decisions
       // live in keymap.ts.
-      isRunning: () => bridge.isRunning(),
+      isRunning: () => bridge.hasRunningWork(),
       getRunningAgents: () => bridge.getLiveChildren().length,
       hasSession: () => bridge.getSessionId() !== undefined,
       dockedModalActive: () => askUserActive,
       onKeyAction: (action: KeyAction) => {
         switch (action.kind) {
           case 'interrupt-arm-stop':
-            // First Esc while the task runs: the stop is ARMED, not fired —
-            // a second Esc within the window confirms it, so a stray Esc can
-            // never kill a running turn. The notice keeps the armed first
-            // press from feeling dead and states the contract explicitly.
-            renderer.renderNotice('Press Esc again to stop the current task', 'info')
+            // First Esc while LLM work runs: the stop is ARMED, not fired —
+            // a second Esc within the window opens the confirmation dialog,
+            // so a stray Esc can never kill a running task. The notice keeps
+            // the armed first press from feeling dead and states the
+            // contract explicitly.
+            renderer.renderNotice('Press Esc again to stop all LLM work', 'info')
             break
           case 'interrupt-cancel': {
-            // Second Esc while the task runs (parent + subagents). Like the
-            // Ctrl+C quit, the stop is CONFIRMED, not immediate: a held
-            // Esc's FIRST auto-repeat lands at the OS repeat delay (right at
-            // the 500ms window boundary) looking exactly like a deliberate
-            // second press. The stop fires after STOP_CONFIRM_MS unless a
-            // follow-up `key-repeat` aborts it (a repeat betrays a held key),
-            // while another HUMAN-speed press during the window stops right
-            // away. The '⏹ stopping…' notice renders now, so the visible
-            // feedback is immediate even though the cancellation (and its
-            // '⏹ canceling current turn…' notice inside `stopTask`) is
-            // deferred by the confirm window.
-            if (stopConfirmTimer !== undefined) {
-              clearTimeout(stopConfirmTimer)
-              stopConfirmTimer = undefined
-              void stopTask()
-              break
-            }
-            renderer.renderNotice(`${stopIcon()} stopping — Esc was double-pressed`, 'info')
-            stopConfirmTimer = setTimeout(() => {
-              stopConfirmTimer = undefined
-              void stopTask()
-            }, STOP_CONFIRM_MS)
+            // Second Esc while LLM work runs (main turn and/or subagents):
+            // open the stop-everything CONFIRMATION dialog. The old flow
+            // auto-fired the stop after a 200ms window — that confirmed the
+            // press timing, never the intent, and the gesture's reach had
+            // grown to every running subagent. The dialog states the blast
+            // radius (what is running right now) and waits for Enter; Esc
+            // inside it cancels and keeps everything running. While the
+            // overlay is up the keymap yields it every app key, so further
+            // Esc presses land in the dialog, never straight at the task.
+            void confirmAndStop()
             break
           }
           case 'ctrl-c-cancel': {
@@ -506,17 +517,13 @@ export function apply(ctx: Context): void {
           }
           case 'key-repeat':
             // Auto-repeat of a held key — betrays a hold, never a double:
-            // abort a pending Ctrl+C quit confirmation and/or a pending
-            // double-Esc stop confirmation.
+            // abort a pending Ctrl+C quit confirmation. (The double-Esc stop
+            // has no timer anymore — its confirmation is the dialog, which
+            // ignores held keys through the keymap's repeat filter.)
             if (action.key === 'ctrl-c' && quitConfirmTimer !== undefined) {
               clearTimeout(quitConfirmTimer)
               quitConfirmTimer = undefined
               renderer.renderNotice('quit aborted — Ctrl+C was held, not double-pressed', 'info')
-            }
-            if (action.key === 'escape' && stopConfirmTimer !== undefined) {
-              clearTimeout(stopConfirmTimer)
-              stopConfirmTimer = undefined
-              renderer.renderNotice('stop aborted — Esc was held, not double-pressed', 'info')
             }
             break
           case 'ctrl-d-quit':
@@ -528,7 +535,8 @@ export function apply(ctx: Context): void {
             break
           case 'subagent-viewer':
             // Ctrl+G: open the subagent picker → transcript viewer while
-            // children run (modal overlay; Esc / double-x closes).
+            // children run (modal overlay; Esc closes, x ×2 stops the child
+            // while it runs / closes when settled).
             void openSubagentViewer(ctx, ui.tui, ui.theme, bridge, refocusEditor)
             break
           case 'queue-panel': {
@@ -615,27 +623,40 @@ export function apply(ctx: Context): void {
      */
     let quitConfirmTimer: ReturnType<typeof setTimeout> | undefined
     /**
-     * Pending double-Esc stop confirmation (see the `interrupt-cancel` case):
-     * armed by the second Esc while running, fired after STOP_CONFIRM_MS,
-     * aborted by a `key-repeat` (held key) or torn down with the TUI. The
-     * Ctrl+C quit and the Esc stop never share a timer — distinct keys, both
-     * could theoretically be in flight.
+     * The double-Esc stop flow: the confirmation dialog first (it states
+     * what is running and waits for Enter), then the everything-stop. The
+     * dialog is modal, so a mashing user cannot double-commit — every key
+     * while it is up goes to the dialog, and a cancel simply returns.
      */
-    let stopConfirmTimer: ReturnType<typeof setTimeout> | undefined
+    const confirmAndStop = async (): Promise<void> => {
+      const outcome = await openStopConfirmDialog(
+        ui.tui,
+        ui.theme,
+        bridge.isRunning(),
+        bridge.getLiveChildren().length,
+        refocusEditor,
+      )
+      if (outcome === 'stop') await stopTask()
+    }
     /**
-     * Stop the whole task (parent turn + subagents), mirroring the web
-     * client's stop button: `agent.cancel({ kind: 'user' }, { keepInbox:
-     * true })` via the bridge. Deferred by the confirm windows above (the
-     * ESC/Ctrl+C double-press guards); the notice renders immediately.
+     * Stop the whole task — the everything-stop: the main turn (mirroring
+     * the web client's stop button, `agent.cancel({ kind: 'user' }, {
+     * keepInbox: true })` via the bridge), btw side calls, AND every live
+     * subagent. The children leg is what makes this "everything": cancelling
+     * the parent only kills foreground children (they ride the tool call's
+     * abort signal) — background/continuable children survive it and would
+     * keep burning LLM rounds (bridge.cancelAllChildren). Fired by the
+     * dialog's Stop choice (double-Esc) and the first Ctrl+C mid-task.
      */
     const stopTask = async (): Promise<void> => {
-      renderer.renderNotice(`${stopIcon()} canceling current turn…`, 'info')
+      renderer.renderNotice(`${stopIcon()} stopping all LLM work…`, 'info')
       // The stop gesture is the everything-stop: side calls die with the turn.
       btwController.cancelAll()
       const cancelled = await bridge.cancelActiveTurn()
-      // State raced idle between the decision and the cancel call — nothing
-      // to cancel (e.g. the turn settled inside the confirm window).
-      if (!cancelled) renderer.renderNotice('Nothing running to cancel.', 'info')
+      const stoppedChildren = bridge.cancelAllChildren()
+      // State raced idle between the decision and the cancel calls — nothing
+      // to cancel (e.g. the task settled while the dialog was up).
+      if (!cancelled && stoppedChildren === 0) renderer.renderNotice('Nothing running to cancel.', 'info')
     }
     // Arm the settings watch sink now that the renderer exists (see apply()).
     applyThemeRef = (pref: ThemePreference): void => {
@@ -787,6 +808,12 @@ export function apply(ctx: Context): void {
     }
     const bridge = new DshSessionBridge(ctx, bridgeCallbacksWithTakeover)
     bridgeRef = bridge
+    // Preset memory's creation-time leg: seed the remembered selection so the
+    // FIRST session creation (the lazy create on the first submitted prompt)
+    // records `meta.agentPreset` — without this the launch selection would be
+    // footer cosmetics while the server default composed the session. Only a
+    // roster-validated id is ever seeded (see presetState above).
+    if (rememberedPresetEntry !== undefined) bridge.setAgentPreset(rememberedPresetEntry.id)
     // Subagent fine-grained control, all in-process (see subagent-policy.ts):
     // a tools.guard denies spawn-tool calls once `maxAgents` children run
     // (workflow fan-out, which bypasses the tool pipeline, is pruned on
@@ -1084,6 +1111,27 @@ export function apply(ctx: Context): void {
       handler: invocation => thinkHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /think')
 
+    /**
+     * Record one committed preset as THIS workspace's remembered selection
+     * (`$DSH_HOME/workspace-presets.json`, keyed by the session backend's
+     * project key of the cwd — the same grouping /resume and the writer lock
+     * use). Honors the LIVE `dsh-tui.rememberPreset` toggle (off = no read at
+     * startup, no write here; the file is kept so flipping back restores the
+     * last choices). Never throws: memory is best-effort, a failed save is a
+     * notice.
+     */
+    const persistRememberedPreset = (presetId: string): void => {
+      try {
+        if (!currentRememberPreset(ctx)) return
+        const path = workspacePresetsPath()
+        const doc = withRememberedPreset(loadWorkspacePresets(path), projectKeyFor(process.cwd()), presetId)
+        const error = saveWorkspacePresets(path, doc)
+        if (error !== undefined) renderer.renderNotice(`preset memory not saved: ${error}`, 'error')
+      } catch {
+        // A broken store must never fail the switch itself.
+      }
+    }
+
     // /preset: switch the agent preset — an EXPLICIT action that takes effect
     // immediately by starting a NEW session on the chosen preset. Every entry
     // path (picker Enter, `/preset <name>`, `/preset next`) funnels into
@@ -1112,8 +1160,7 @@ export function apply(ctx: Context): void {
         }
       }
       if (target === undefined) return { kind: 'success' as const, text: 'Preset unchanged.' }
-      const outcome = await performPresetSwitch(presetState, target, {
-        hasLiveSession: () => bridge.getAgent() !== undefined,
+      const outcome = await performPresetSwitch(presetState, target, {        hasLiveSession: () => bridge.getAgent() !== undefined,
         confirmSwitch: (name, restart) =>
           openPresetConfirmDialog(ui.tui, ui.theme, name, restart, refocusEditor)
             .then(outcome => (outcome === 'cancelled' ? 'cancel' : outcome)),
@@ -1184,6 +1231,13 @@ export function apply(ctx: Context): void {
           }
         },
       })
+      // Preset memory's recording leg: a COMMITTED switch (fresh, fork, or a
+      // degraded fork — every switched path above seeds the same id) is the
+      // moment the workspace's memory is written. Lives AFTER the switch so
+      // a failed commit never records; the toggle is read LIVE, so a
+      // /settings change applies without a restart. Best-effort: a failed
+      // save is a notice, never a failed switch.
+      if (outcome.switched) persistRememberedPreset(target.id)
       return { kind: 'success' as const, text: outcome.message }
     }
     commands.registerLocal('preset', presetHandler)
@@ -2197,7 +2251,6 @@ export function apply(ctx: Context): void {
       // (harmless) — only /reload in the same process consumes it.
       stashSessionIdForReload(bridge.getSessionId())
       if (quitConfirmTimer !== undefined) clearTimeout(quitConfirmTimer)
-      if (stopConfirmTimer !== undefined) clearTimeout(stopConfirmTimer)
       subagentPolicy.dispose()
       try { await bridge.dispose() } catch { /* contained */ }
     }

@@ -284,12 +284,22 @@ export function findPresetByName(state: PresetState, name: string): PresetEntry 
 export const DEFAULT_PRESET_ID = 'standard'
 
 /**
- * Initial selection index for a freshly scanned roster: the DEFAULT_PRESET_ID
- * entry when present, otherwise 0 (the first-scanned entry). Deployments
- * without a `standard` preset keep the previous first-entry behaviour instead
- * of failing — the default is a preference, never a requirement.
+ * Initial selection index for a freshly scanned roster. With a remembered
+ * selection (`rememberedId` — the workspace's last committed preset, when
+ * `dsh-tui.rememberPreset` is on) present in the roster, its index WINS:
+ * the launch resumes exactly where the last session in this directory left
+ * off. Without one (memory off, first launch here, or a stale id — preset
+ * renamed or removed upstream) the stock behavior applies: the
+ * DEFAULT_PRESET_ID entry when present, otherwise 0 (the first-scanned
+ * entry). Deployments without a `standard` preset keep the previous
+ * first-entry behaviour instead of failing — the default is a preference,
+ * never a requirement.
  */
-export function initialPresetIndex(roster: readonly PresetEntry[]): number {
+export function initialPresetIndex(roster: readonly PresetEntry[], rememberedId?: string): number {
+  if (rememberedId !== undefined && rememberedId !== '') {
+    const remembered = roster.findIndex(p => p.id === rememberedId)
+    if (remembered >= 0) return remembered
+  }
   const i = roster.findIndex(p => p.id === DEFAULT_PRESET_ID)
   return i < 0 ? 0 : i
 }

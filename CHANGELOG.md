@@ -4,6 +4,19 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] - 2026-09-09
+
+### Added
+- **Preset memory, per workspace**: the last `/preset` selection committed in a directory is remembered and becomes the next launch's selection in that directory — including the session-composition leg (`bridge.setAgentPreset` is seeded at startup, so the FIRST session of the day records `meta.agentPreset` and composes under the remembered preset instead of silently falling back to the server-side default). The toggle is `dsh-tui.rememberPreset` (default **on**; `false` in settings.yaml restores always-server-default); the toggle is read live, so a `/settings` change applies without a restart, and the store itself lives plugin-side at `$DSH_HOME/workspace-presets.json` (keyed by the session backend's project key — the model-profiles.json precedent: atomic tmp+rename writes, self-healing normalize, never fatal; a stale id whose preset was renamed/removed degrades to the stock default-selection behavior). Committed switches record (fresh, fork, and degraded-fork paths alike); a failed commit never records.
+- **Stop-everything confirmation dialog**: the double-Esc stop no longer auto-fires after a 200ms window — that confirmed the press *timing*, never the *intent*, and the gesture's reach had grown to every running subagent. The second Esc now opens a dialog that states the blast radius (main turn generating? N subagents running?) with `Stop everything` (preselected; `1`/`Enter`) and `Cancel — keep everything running` (`2`/`Esc`). While the overlay is up the keymap yields it every app key, so a mashing user cannot double-commit. Replaces the old STOP_CONFIRM_MS timer, the held-key abort notice and the third-press fast path.
+
+### Fixed
+- **The Esc stop went blind exactly when only subagents were running**: the keymap's running gate read only the parent agent's mid-turn status, so with background/continuable children keeping the LLM busy after the parent turn ended, double-Esc resolved to a no-op and Ctrl+C cleared the editor — nothing could stop the burn. The gate now reads `bridge.hasRunningWork()` (parent status OR any live child), and the stop itself enumerates: `cancelAllChildren()` cancels every live child through the in-process registry handle (`ctx.agents.get(id)?.cancel({kind:'user'}, {keepInbox:true})` — the same idiom the maxAgents prune uses, since the wire `session.cancel` refuses subagent-owned sessions and a plain parent cancel only kills foreground children riding the tool-call abort signal). The Ctrl+C stop rides the same everything-stop.
+- **The subagent viewer's `x ×2` never stopped anything** — it closed the panel (the footer honestly said `x ×2 close`, but with the stop paths above dead it read as a broken stop). It is now the per-subagent stop: on a RUNNING child the double press cancels that child (registry handle, `keepInbox`), shows a `⏹ canceling this subagent…` notice and keeps the panel open so the status flip is visible; on a settled child it keeps the close shortcut; when the cancel finds nothing live (a raced/vanished handle) it closes rather than dead-keying. The footer is now state-dependent (`viewerFooter`): `x ×2 stop` while running, `x ×2 close` when settled.
+
+### Changed
+- The bundled `dsh-tui-pi-config` skill's key table grows the `rememberPreset` row (13 keys) and gains troubleshooting entries for the stop dialog and preset memory; README (en/zh-CN) keyboard and configuration sections document the new stop semantics and the preset memory.
+
 ## [2.9.1] - 2026-09-09
 
 ### Changed

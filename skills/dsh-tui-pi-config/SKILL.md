@@ -1,6 +1,6 @@
 ---
 name: dsh-tui-pi-config
-description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 12 键（theme/panelHeight/maxAgents/maxRounds/disableSubagent/footerHints/cacheHitMode/iconSet/favoriteModels/hiddenModels/retention/resume）、DSH_TUI_* 环境变量、ask_user_question 快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume。"
+description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 13 键（theme/panelHeight/maxAgents/maxRounds/disableSubagent/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume）、DSH_TUI_* 环境变量、ask_user_question 快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。"
 ---
 
 # dsh-tui-pi 使用指南（TUI 主题 / 子代理治理 / 会话管理）
@@ -24,6 +24,7 @@ description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南
 | `footerHints` | 7 个布尔 | 全 `true` | footer 快捷键提示分段开关：`send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
 | `cacheHitMode` | `'lastMessage'\|'session'` | `lastMessage` | footer CH 段口径：最新一条消息的命中率（pi-tui 语义）或全会话累计 |
 | `iconSet` | `'auto'\|'nerdfont'\|'plain'` | `auto` | 风险字形集；`auto` 按启动时字体探测选 nerdfont/plain |
+| `rememberPreset` | 布尔 | `true` | 记住每个工作区（目录）最后一次 `/preset` 的选择，下次在同目录启动直接用它（替代服务端默认）；`false` 恢复始终用服务端默认。记忆存 `$DSH_HOME/workspace-presets.json` |
 | `favoriteModels` | string[] | `[]` | 收藏模型（`provider/id` 键），钉在 `/model` 选择器顶部 |
 | `hiddenModels` | string[] | `[]` | 隐藏模型（`provider/id` 键），移入 `/model` 的 Hidden 区 |
 | `retention.maxCount` | 数字 | `100` | 启动清理器：最多保留这么多会话日志，`<= 0` 关闭清理器；下次启动生效 |
@@ -68,7 +69,7 @@ favoriteModels/hiddenModels、retention/resume。
 | `/theme` | 选配色，写入 `dsh-tui.theme` 并即时生效 |
 | `/hotkeys` | 按键重映射浏览器，写 `~/.dsh/keybindings.json`（部分 JSON 映射，实时应用） |
 | `/model` | 模型/think 选择器；`f` 收藏、`h` 隐藏即写 `favoriteModels`/`hiddenModels`（收藏行拒绝 `h`，先取消收藏） |
-| `/preset` | 切换 agent preset（确认对话框：fork 携带历史 / 全新开始 / 取消；`/preset next` 循环） |
+| `/preset` | 切换 agent preset（确认对话框：fork 携带历史 / 全新开始 / 取消；`/preset next` 循环）；默认按工作区记忆上次选择（`rememberPreset`） |
 | `/history` | 只读回看会话逐轮历史；`f` 在选中轮 fork 新会话，`/history <id>` 冷读任意存档 |
 | `/resume` | 恢复持久会话（受 `resume.*` 显示窗口过滤；`--resume <id>` 启动参数同源） |
 | `/agents` | 管理 `~/.dsh/agents/*.md`；`l` 进 limits 面板热调 `maxAgents`/`maxRounds`/`disableSubagent` |
@@ -84,3 +85,8 @@ favoriteModels/hiddenModels、retention/resume。
    与 resume 的"只隐藏"是两回事。
 4. **/model 选择器太长** → 把不用的挑进 `hiddenModels`；常用的钉顶 `favoriteModels`。
 5. **footer 提示太多/太少** → `footerHints` 七段各自独立开关。
+6. **双 Esc 后还在烧 token** → 双 Esc 现弹"停止一切"确认框（列明正在跑的主 turn 与子代理数），
+   Enter 才真停，Esc 维持运行；后台子代理会被逐个取消。单个子代理的停止入口在
+   Ctrl+G 查看器里按 `x ×2`。
+7. **/preset 每次启动都回到默认** → 检查 `rememberPreset` 是否被设为 `false`；记忆按工作区
+   目录各自独立，存于 `$DSH_HOME/workspace-presets.json`，关掉再开不会丢。

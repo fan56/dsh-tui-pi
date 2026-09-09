@@ -95,6 +95,25 @@ test('initialPresetIndex returns 0 for an empty roster', () => {
   assert.equal(initialPresetIndex([]), 0)
 })
 
+test('initialPresetIndex prefers the remembered selection over the default', () => {
+  // Preset memory: a remembered id present in the roster WINS — even when
+  // the default `standard` entry exists (the whole point is not falling
+  // back to the default on launch).
+  assert.equal(initialPresetIndex(roster, 'creative'), 3)
+  assert.equal(initialPresetIndex(roster, 'standard'), 0)
+  assert.equal(initialPresetIndex(roster, 'ptc'), 1)
+})
+
+test('initialPresetIndex ignores a stale remembered id', () => {
+  // A preset renamed/removed upstream must not break the launch — fall back
+  // to the stock default-selection behavior.
+  assert.equal(initialPresetIndex(roster, 'gone-preset'), 0)
+  assert.equal(initialPresetIndex([], 'gone-preset'), 0)
+  // An empty/absent id behaves like no memory at all.
+  assert.equal(initialPresetIndex(roster, ''), 0)
+  assert.equal(initialPresetIndex(roster, undefined), 0)
+})
+
 // --------------------------------------------- filesystem roster scan --
 
 test('resolvePresetRoots probes the dsh-agent-presets shipped layouts plus the user root', () => {

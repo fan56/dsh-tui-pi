@@ -13,14 +13,13 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { pickerItems, nextSelectedIndex, eventLine, eventLines } from '../lib/subagent-viewer.js'
+import { pickerItems, nextSelectedIndex, eventLine, eventLines, viewerFooter } from '../lib/subagent-viewer.js'
 import {
   STEER_ENDED_NOTICE,
   STEER_FOOTER,
   STEER_SENT_NOTICE,
   SteerInputPanel,
   SubagentViewerPanel,
-  VIEWER_FOOTER,
   buildSteerMessage,
   deliverSubagentSteer,
   resolveInjectionRoute,
@@ -484,10 +483,108 @@ test('SubagentViewerPanel Enter requests the steer flow and the footer advertise
     () => tui.requestRender(),
     () => { requested += 1 },
   )
-  assert.ok(panel.render(80).some(line => line.includes(VIEWER_FOOTER)))
-  assert.match(VIEWER_FOOTER, /Enter steer/)
+  // Running child: the footer names x ×2 as the stop; settled: close.
+  assert.ok(panel.render(80).some(line => line.includes(viewerFooter(true))))
+  assert.match(viewerFooter(true), /x ×2 stop/)
+  assert.match(viewerFooter(false), /x ×2 close/)
+  assert.match(viewerFooter(true), /Enter steer/)
   panel.handleInput('\r')
   assert.equal(requested, 1)
+})
+
+const PRESS_GAP_MS = 90
+
+/** Two deliberate x presses, past the auto-repeat floor, inside the window. */
+async function doubleX(panel) {
+  panel.handleInput('x')
+  await new Promise(resolve => setTimeout(resolve, PRESS_GAP_MS))
+  panel.handleInput('x')
+  await new Promise(resolve => setTimeout(resolve, PRESS_GAP_MS))
+}
+
+test('SubagentViewerPanel x ×2 cancels a RUNNING child and keeps the panel open', async () => {
+  const tui = makeTui()
+  const cancelled = []
+  const bridge = {
+    ...makeBridge([liveView('a')]),
+    cancelChild: childId => { cancelled.push(childId); return true },
+  }
+  let closed = 0
+  const panel = new SubagentViewerPanel(
+    makeTheme(), bridge, 'a',
+    () => 0,
+    () => { closed += 1 },
+    () => tui.requestRender(),
+    () => {},
+  )
+  await doubleX(panel)
+  assert.deepEqual(cancelled, ['a'], 'the running child is cancelled by its id')
+  assert.equal(closed, 0, 'the panel stays open so the status flip is visible')
+  assert.ok(panel.render(80).some(line => line.includes('canceling this subagent')), 'a notice confirms the cancel')
+})
+
+test('SubagentViewerPanel x ×2 on a SETTLED child keeps its close shortcut', async () => {
+  const tui = makeTui()
+  const cancelled = []
+  const bridge = {
+    ...makeBridge([settled('a')]),
+    cancelChild: childId => { cancelled.push(childId); return true },
+  }
+  let closed = 0
+  const panel = new SubagentViewerPanel(
+    makeTheme(), bridge, 'a',
+    () => 0,
+    () => { closed += 1 },
+    () => tui.requestRender(),
+    () => {},
+  )
+  await doubleX(panel)
+  assert.deepEqual(cancelled, [], 'nothing to stop — the cancel path never fires')
+  assert.equal(closed, 1, 'the settled child has nothing to stop, so x ×2 closes')
+})
+
+test('SubagentViewerPanel x ×2 closes when the cancel finds nothing live (raced child)', async () => {
+  // The view still says running, but the child's handle vanished from the
+  // registry between the render and the press — a dead key would feel
+  // broken, so the double press falls back to closing.
+  const tui = makeTui()
+  const bridge = {
+    ...makeBridge([liveView('a')]),
+    cancelChild: () => false,
+  }
+  let closed = 0
+  const panel = new SubagentViewerPanel(
+    makeTheme(), bridge, 'a',
+    () => 0,
+    () => { closed += 1 },
+    () => tui.requestRender(),
+    () => {},
+  )
+  await doubleX(panel)
+  assert.equal(closed, 1)
+})
+
+test('SubagentViewerPanel a fast x x (auto-repeat gap) never acts', async () => {
+  // Two presses inside MIN_DOUBLE_PRESS_GAP_MS read as a held key — neither
+  // the cancel nor the close may fire.
+  const tui = makeTui()
+  const cancelled = []
+  const bridge = {
+    ...makeBridge([liveView('a')]),
+    cancelChild: childId => { cancelled.push(childId); return true },
+  }
+  let closed = 0
+  const panel = new SubagentViewerPanel(
+    makeTheme(), bridge, 'a',
+    () => 0,
+    () => { closed += 1 },
+    () => tui.requestRender(),
+    () => {},
+  )
+  panel.handleInput('x')
+  panel.handleInput('x')
+  assert.equal(cancelled.length, 0)
+  assert.equal(closed, 0)
 })
 
 test('SubagentViewerPanel shows a transient notice and retires it on the next keypress', () => {
@@ -536,7 +633,7 @@ test('SubagentViewerPanel initial notice renders and the notice steals a body ro
   assert.equal(rendered.length, plainRows.length, 'the notice must not grow the overlay (24-row budget)')
 })
 
-test('SubagentViewerPanel Esc still closes and x still double-press closes', () => {
+test('SubagentViewerPanel Esc closes the panel', () => {
   const tui = makeTui()
   let closed = 0
   const panel = new SubagentViewerPanel(
