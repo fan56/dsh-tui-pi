@@ -147,7 +147,7 @@ dsh-tui:
 
 按键重映射见 `~/.dsh/keybindings.json`（上文键盘一节）。
 
-插件内置了一个 skill（`dsh-tui-pi`）：直接让 agent「帮我配置 TUI」，指南会自动加载——以 ask_user_question 问答方式逐项收集（主题、面板高度、子代理并发）并代写 `dsh-tui:` 段；全键表与 `DSH_TUI_*` 环境变量清单见 `skills/dsh-tui-pi/SKILL.md`。
+插件内置了一个 skill（`dsh-tui-pi-config`）：直接让 agent「帮我配置 TUI」，指南会自动加载——以 ask_user_question 问答方式逐项收集（主题、面板高度、子代理并发）并代写 `dsh-tui:` 段；全键表与 `DSH_TUI_*` 环境变量清单见 `skills/dsh-tui-pi-config/SKILL.md`。
 
 ---
 

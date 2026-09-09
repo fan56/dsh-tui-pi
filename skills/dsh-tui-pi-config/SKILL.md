@@ -1,5 +1,5 @@
 ---
-name: dsh-tui-pi
+name: dsh-tui-pi-config
 description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 12 键（theme/panelHeight/maxAgents/maxRounds/disableSubagent/footerHints/cacheHitMode/iconSet/favoriteModels/hiddenModels/retention/resume）、DSH_TUI_* 环境变量、ask_user_question 快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume。"
 ---
 

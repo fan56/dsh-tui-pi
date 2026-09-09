@@ -150,7 +150,7 @@ dsh-tui:
 
 Key remaps live in `~/.dsh/keybindings.json` (keyboard section above); `DSH_TUI_COPY_ON_SELECT=0` keeps drag-selection visual-only.
 
-The plugin ships a bundled skill (`dsh-tui-pi`): ask the agent to "configure the TUI" and the guide loads automatically — it collects your choices interactively via ask_user_question (theme, panel height, subagent concurrency) and writes the `dsh-tui:` section for you. The full key table and the `DSH_TUI_*` env var list live in `skills/dsh-tui-pi/SKILL.md`.
+The plugin ships a bundled skill (`dsh-tui-pi-config`): ask the agent to "configure the TUI" and the guide loads automatically — it collects your choices interactively via ask_user_question (theme, panel height, subagent concurrency) and writes the `dsh-tui:` section for you. The full key table and the `DSH_TUI_*` env var list live in `skills/dsh-tui-pi-config/SKILL.md`.
 
 ---
 

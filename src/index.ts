@@ -155,15 +155,15 @@ export const inject = ['agents', 'commands', 'skills', 'userQuestions', 'systemP
 // --- Bundled skill -----------------------------------------------------------
 
 /** Provider name under `ctx.skills`; doubles as the skill name. */
-const SKILL_PROVIDER_NAME = 'dsh-tui-pi'
+const SKILL_PROVIDER_NAME = 'dsh-tui-pi-config'
 
 /** Packaged skill body; `../skills/` resolves to the package root from both lib/ and src/. */
-const SKILL_BODY_URL = new URL('../skills/dsh-tui-pi/SKILL.md', import.meta.url)
+const SKILL_BODY_URL = new URL('../skills/dsh-tui-pi-config/SKILL.md', import.meta.url)
 
 /** Resource base served with the skill so its relative links resolve. */
 const SKILL_RESOURCE_BASE = {
   kind: 'directory',
-  path: fileURLToPath(new URL('../skills/dsh-tui-pi/', import.meta.url)),
+  path: fileURLToPath(new URL('../skills/dsh-tui-pi-config/', import.meta.url)),
 } as const
 
 const SKILL_INVOCATION = { modelInvocable: true, userInvocable: true } as const
