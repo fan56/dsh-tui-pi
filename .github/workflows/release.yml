@@ -106,12 +106,23 @@ jobs:
         #    overwrite), so degrade-to-warning is the only correct outcome.
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
+          # Prerelease tags publish on a side dist-tag — a test version never
+          # moves `latest`. Default-deny: any hyphen-suffixed tag is a
+          # prerelease. v2.10.0 → latest · v2.10.0-rc.1 → next ·
+          # v2.10.0-alpha.1 → alpha. Release policy: main carries no tag by
+          # default; a deliberate v* tag is the only path to npm.
+          case "$TAG_VERSION" in
+            *-alpha.*) NPM_TAG="alpha" ;;
+            *-*) NPM_TAG="next" ;;
+            *) NPM_TAG="latest" ;;
+          esac
+          echo "npm dist-tag: ${NPM_TAG}"
           if npm view "@aiwayds/dsh-tui-pi@${TAG_VERSION}" version >/dev/null 2>&1; then
             echo "::warning::@aiwayds/dsh-tui-pi@${TAG_VERSION} is already on npm — skipping publish"
             exit 0
           fi
           set +e
-          PUB_OUT="$(npm publish --access public --provenance 2>&1)"
+          PUB_OUT="$(npm publish --access public --provenance --tag "$NPM_TAG" 2>&1)"
           PUB_RC=$?
           set -e
           printf '%s\n' "$PUB_OUT"
@@ -171,3 +182,4 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.tag_message.outputs.BODY }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
