@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.1] - 2026-09-09
+
+### Fixed
+- The `@aiwayds/dsh-subagent-registry` dependency floor moves `^0.8.0` → `^0.10.0`: the per-agent round-cap tier needs the registry's `readAgentMaxRounds` contract export (introduced in registry 0.10.0), and a `^0.8.0` range can never resolve a 0.x minor beyond 0.9 — under it the probe silently degraded every dispatch to the global cap. The degradation path itself stays: an older registry (or a failed probe) still means the global cap, never a crash.
+
 ## [2.11.0] - 2026-09-09
 
 ### Added
