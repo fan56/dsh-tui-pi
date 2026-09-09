@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.4] - 2026-09-10
+
+### Changed
+- The `@aiwayds/dsh-dcp` dependency floor moves `^0.7.0` → `^0.10.0` to pick up dsh-dcp 0.10.0 (the model-switch token-size gate for compaction notices) — same 0.x caret-boundary trap as the registry floor in 2.11.3: `^0.7.0` could never resolve past 0.9, so freshly installed profiles kept running dcp 0.9.x. The profile-side pin (`tui` profile) tracks the release per the rolling-latest policy.
+
 ## [2.11.3] - 2026-09-09
 
 ### Fixed
