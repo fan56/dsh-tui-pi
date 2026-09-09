@@ -61,8 +61,20 @@ const BTW_Q_ANSWERS = [
 const BTW_FIRST_CHUNK_DELAY_MS = 6000
 const BTW_CHUNK_DELAY_MS = 400
 
-// 71-cache-hit phases: two scripted turns with DIFFERENT cache ratios so the
-// footer's CH mode is observable — turn one bills 900/1000 cached (CH 90%),
+// 75-hard-stop phases: the parent key makes the MAIN agent dispatch the
+// looper child through use_agent (and, once the tool result returns — the
+// child hard-stopped — finish with the done text); the CHILD key lives in
+// the looper agent's persona, so EVERY child request loops one more bash
+// tool call, ignoring the maxRounds wrap-up exactly like the runaway the
+// hard-stop ladder exists for. Checked before the btw keys (disjoint
+// triggers, but the ladder scenario wants priority if a stray marker ever
+// co-occurs).
+const HS_PARENT_KEY = 'E2E_HS_PARENT'
+const HS_CHILD_KEY = 'E2E_HS_CHILD'
+const HS_DONE = 'E2E-HS-LADDER-DONE — the looper child was hard-stopped by the maxRounds policy and its result came back.'
+let hsLoopSeq = 0
+
+// 71-cache-hit phases: two scripted turns with DIFFERENT cache ratios so the// footer's CH mode is observable — turn one bills 900/1000 cached (CH 90%),
 // turn two 200/1000 (CH 20%), making the session-cumulative rate over both
 // turns (55%) differ from the latest message's own rate. The usage shape
 // follows the OpenAI prompt_tokens_details contract that pi-ai's
@@ -155,6 +167,13 @@ const completionMessage = (delta, finishReason) => ({
 
 /** Decide the scripted phase for one chat request body. */
 function decidePhase(bodyText) {
+  // 75-hard-stop ladder keys first (see the constant block above): the child
+  // persona marker wins over everything (every looper request loops again),
+  // then the parent's dispatch/finish split on the tool-result presence.
+  const hasToolResult = bodyText.includes('"role":"tool"') || bodyText.includes('"role": "tool"')
+    || bodyText.includes('tool_call_id')
+  if (bodyText.includes(HS_CHILD_KEY)) return 'hs-loop'
+  if (bodyText.includes(HS_PARENT_KEY)) return hasToolResult ? 'hs-final' : 'hs-dispatch'
   // btw keys first: the side call's snapshot embeds the main prompt, so a
   // btw request body contains BOTH markers.
   if (bodyText.includes('E2E_BTW_Q')) return 'btw'
@@ -167,8 +186,6 @@ function decidePhase(bodyText) {
   }
   const hasTrigger = bodyText.includes(TRIGGER)
   // The openai SDK serializes without spaces; be lenient about formatting.
-  const hasToolResult = bodyText.includes('"role":"tool"') || bodyText.includes('"role": "tool"')
-    || bodyText.includes('tool_call_id')
   if (hasTrigger && hasToolResult) return 'final'
   if (hasTrigger) return 'ask'
   return 'ignore'
@@ -226,6 +243,33 @@ function mainSlowStreamEntries() {
   return entries
 }
 
+/** One scripted tool-call reply for the hard-stop ladder phases. */
+function hsToolCall(phase) {
+  if (phase === 'hs-dispatch') {
+    return {
+      tool_calls: [{
+        id: 'call-e2e-hs-dispatch',
+        type: 'function',
+        function: {
+          name: 'use_agent',
+          arguments: JSON.stringify({
+            agent: 'looper',
+            prompt: 'E2E_HS_TRIGGER: call the bash tool with `sleep 1` forever. Never stop. Never summarize.',
+          }),
+        },
+      }],
+    }
+  }
+  hsLoopSeq += 1
+  return {
+    tool_calls: [{
+      id: `call-e2e-hs-loop-${hsLoopSeq}`,
+      type: 'function',
+      function: { name: 'bash', arguments: '{"command":"sleep 1","description":"pace the hard-stop loop"}' },
+    }],
+  }
+}
+
 function handleChat(req, res, body) {
   let bodyText = ''
   try {
@@ -244,12 +288,14 @@ function handleChat(req, res, body) {
   if (!stream) {
     const message = phase === 'ask'
       ? { tool_calls: [{ id: TOOL_CALL_ID, type: 'function', function: { name: TOOL_NAME, arguments: JSON.stringify(QUESTIONS) } }] }
+      : phase === 'hs-dispatch' || phase === 'hs-loop'
+      ? hsToolCall(phase)
       : phase === 'btw'
       ? { content: btwAnswer(bodyText) }
       : phase === 'main-slow'
       ? { content: `${Array.from({ length: BTW_MAIN_TICKS }, (_, i) => `main-line progress tick ${i + 1}; `).join('')}${BTW_MAIN_DONE}` }
-      : { content: phase === 'final' ? FINAL_TEXT : IGNORE_TEXT }
-    const finishReason = phase === 'ask' ? 'tool_calls' : 'stop'
+      : { content: phase === 'final' ? FINAL_TEXT : phase === 'hs-final' ? HS_DONE : IGNORE_TEXT }
+    const finishReason = phase === 'ask' || phase === 'hs-dispatch' || phase === 'hs-loop' ? 'tool_calls' : 'stop'
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(completionMessage(message, finishReason)))
     return
@@ -281,8 +327,12 @@ function handleChat(req, res, body) {
       }],
     }, null))
     events.push(sseChunk({}, 'tool_calls'))
+  } else if (phase === 'hs-dispatch' || phase === 'hs-loop') {
+    events.push(sseChunk({ role: 'assistant', tool_calls: [{ index: 0, ...hsToolCall(phase).tool_calls[0] }] }, null))
+    events.push(sseChunk({}, 'tool_calls'))
   } else {
     const text = phase === 'final' ? FINAL_TEXT
+      : phase === 'hs-final' ? HS_DONE
       : phase === 'ch-warm' ? CH_TURN_ONE_TEXT
       : phase === 'ch-cold' ? CH_TURN_TWO_TEXT
       : IGNORE_TEXT

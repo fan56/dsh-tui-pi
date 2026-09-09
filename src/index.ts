@@ -829,12 +829,17 @@ export function apply(ctx: Context): void {
       isSettled: childId => bridge.isChildSettled(childId),
       cancelChild: childId => bridge.cancelChild(childId),
     }, readAgentMaxRounds)
-    bridgeCallbacks.onRoundCount = (childId, count) => subagentPolicy.onRoundCount(childId, count)
+    // Wire the policy into the callback object the bridge ACTUALLY holds:
+    // `bridgeCallbacksWithTakeover` is a spread copy taken before this point,
+    // so assigning on `bridgeCallbacks` would write to an object the bridge
+    // never reads — the round ladder would silently never run (this exact
+    // disconnect was the real "maxRounds is ignored" bug).
+    bridgeCallbacksWithTakeover.onRoundCount = (childId, count) => subagentPolicy.onRoundCount(childId, count)
     // The `⏻` marker fold: a force-stopped child is policy enforcement, and
-    // every render surface shows it as such.
-    if (subagentPolicy.onHardStop !== undefined) {
-      subagentPolicy.onHardStop = ({ childId, round, cap }) => bridge.markChildHardStopped(childId, round, cap)
-    }
+    // every render surface shows it as such. Assigned unconditionally — a
+    // definedness check here would skip the wiring forever (the sink starts
+    // unset by definition).
+    subagentPolicy.onHardStop = ({ childId, round, cap }) => bridge.markChildHardStopped(childId, round, cap)
 
     // Ask-user-question provider: the upstream `dsh-tool-ask-user` tool calls
     // `ctx.userQuestions.ask()` while its tool call is pending, and the

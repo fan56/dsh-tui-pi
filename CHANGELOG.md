@@ -4,6 +4,15 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.3] - 2026-09-09
+
+### Fixed
+- **The round ladder was never wired** — THE "maxRounds is ignored" root cause: `bridgeCallbacks.onRoundCount` was assigned after `bridgeCallbacksWithTakeover` (a spread copy) had already been handed to the bridge, so the bridge held a callback object whose `onRoundCount` stayed `undefined` and the policy never saw a single round — no wrap-up injection ever fired, in any surface, since the knob shipped. The assignment now targets the object the bridge actually holds. Found by the new container e2e (scenario 75), not by unit tests (they call the policy directly).
+- **`⏻` hard-stop records no longer race event folds** — the record moved from the view object (whose snapshot-spread updates raced the cancel's own `turn/end` and observably lost the field) to an authoritative per-bridge map, composed onto `getAgentViews()` output at read time.
+
+### Added
+- **Scenario 75-hard-stop** (container-only, offline via the mock LLM): dispatches a `deep: 0` agent whose frontmatter `maxRounds: 5` overrides the global `3 + grace 2`, whose mock persona never complies with the wrap-up, and asserts the full ladder end to end — wrap-up injected at 5 (⚡), force-stopped at 7 (⏻ stopped on the picker row, marker row `round 7 + grace exhausted, cap 5` in the viewer transcript, `⏻ hard-stopped @7` on the header), parent turn completing with the cancelled child's result. Also exercises the per-agent cap tier through the registry contract and the `/subagents` picker path.
+
 ## [2.11.1] - 2026-09-09
 
 ### Fixed

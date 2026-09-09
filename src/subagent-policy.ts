@@ -549,6 +549,9 @@ export function applySubagentPolicy(
 
   return {
     onRoundCount,
+    get onHardStop(): ((record: HardStopRecord) => void) | undefined {
+      return onHardStopSink
+    },
     set onHardStop(sink: ((record: HardStopRecord) => void) | undefined) {
       onHardStopSink = sink
     },

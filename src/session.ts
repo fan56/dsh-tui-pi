@@ -659,11 +659,16 @@ export class DshSessionBridge {
     return this.resumeTargetId
   }
 
-  /** Sorted snapshot of every tracked child (running and settled). */
+  /** Sorted snapshot of every tracked child (running and settled), with the
+   *  policy's hard-stop records composed in (they live off-view — see
+   *  markChildHardStopped). */
   getAgentViews(): readonly AgentView[] {
     return [...this.agentViews.values()].sort(
       (a, b) => a.startedAt - b.startedAt || a.childId.localeCompare(b.childId),
-    )
+    ).map(view => {
+      const hs = this.hardStopRecords.get(view.childId)
+      return hs === undefined || view.hardStop !== undefined ? view : { ...view, hardStop: hs }
+    })
   }
 
   /** Children still running (`outcome` unset) — the live count the guard caps. */
@@ -995,11 +1000,17 @@ export class DshSessionBridge {
    * deliberately not recorded (the child settled on its own in time).
    */
   markChildHardStopped(childId: string, round: number, cap: number): void {
-    const view = this.agentViews.get(childId)
-    if (view === undefined) return
-    this.agentViews.set(childId, { ...view, hardStop: { round, cap } })
+    // The record lives in its OWN map, not on the view: fold updates spread
+    // the view snapshot captured at their own event-dispatch time, and the
+    // cancel races those events — a hardStop folded onto the view object was
+    // observably overwritten by the in-flight `turn/end` spread. The map is
+    // authoritative; getAgentViews composes it onto the returned views.
+    this.hardStopRecords.set(childId, { round, cap })
     this.emitLive()
   }
+
+  /** Hard stops the maxRounds policy executed, keyed by child session id. */
+  private readonly hardStopRecords = new Map<string, { round: number; cap: number }>()
 
   /**
    * Whether ANY LLM work is in flight: the bridge's own mid-turn status OR

@@ -378,7 +378,7 @@ export function pickerItems(
     const stopped = view.hardStop !== undefined ? ' ⏻ stopped' : ''
     return {
       value: view.childId,
-      label: `${statusGlyph(view)} ${view.label}${mode}: ${roundsText}${injected}${stopped}${modelShort !== undefined ? ` · ${modelShort}` : ''}`,
+      label: `${statusGlyph(view)} ${view.label}${mode}: ${roundsText}${stopped}${injected}${modelShort !== undefined ? ` · ${modelShort}` : ''}`,
       ...(description !== '' ? { description } : {}),
     }
   })
