@@ -73,6 +73,13 @@ export interface SubagentLimits {
    */
   maxRounds: number
   /**
+   * Rounds a child may keep burning AFTER the wrap-up injection before the
+   * policy hard-stops it (code-forced cancel — no further consent asked from
+   * the child LLM); 0 disables the hard stop (pure-soft mode, the historical
+   * wrap-up-only behavior).
+   */
+  maxRoundsGrace: number
+  /**
    * Disable the native `subagent` tool for every agent in the process, so
    * plain ad-hoc delegation goes through a registered agent definition
    * (`~/.dsh/agents/*.md` via `use_agent`) instead. Deliberately narrow:
@@ -94,6 +101,7 @@ export interface SubagentLimits {
 export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({
   maxAgents: 4,
   maxRounds: 75,
+  maxRoundsGrace: 7,
   disableSubagent: true,
 })
 
@@ -122,6 +130,13 @@ const THEME_SETTINGS_SCHEMA = z.object({
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxRounds)
     .description('Max assistant messages per subagent before the TUI sends a summary request (0 = unlimited)'),
+  maxRoundsGrace: z
+    .natural()
+    .default(DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace)
+    .description(
+      'Rounds a subagent may keep running after the summary request before the '
+      + 'TUI force-stops it (0 = warn only, never force-stop)',
+    ),
   disableSubagent: z
     .boolean()
     .default(DEFAULT_SUBAGENT_LIMITS.disableSubagent)
@@ -239,6 +254,7 @@ const THEME_SETTINGS_ENTRY: {
   panelHeight: PanelHeight
   maxAgents: number
   maxRounds: number
+  maxRoundsGrace: number
   disableSubagent: boolean
   footerHints: FooterHints
   cacheHitMode: CacheHitMode
@@ -253,6 +269,7 @@ const THEME_SETTINGS_ENTRY: {
   panelHeight: DEFAULT_PANEL_HEIGHT,
   maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,
   maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
+  maxRoundsGrace: DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace,
   disableSubagent: DEFAULT_SUBAGENT_LIMITS.disableSubagent,
   footerHints: { ...DEFAULT_FOOTER_HINTS },
   cacheHitMode: DEFAULT_CACHE_HIT_MODE,
@@ -629,7 +646,7 @@ export function currentThemePreference(ctx: Context): ThemePreference {
  */
 async function writeDshTuiPreference(
   ctx: Context,
-  key: 'theme' | 'panelHeight' | 'maxAgents' | 'maxRounds' | 'disableSubagent'
+  key: 'theme' | 'panelHeight' | 'maxAgents' | 'maxRounds' | 'maxRoundsGrace' | 'disableSubagent'
     | 'favoriteModels' | 'hiddenModels',
   value: string | number | boolean | string[],
 ): Promise<string | undefined> {
@@ -682,13 +699,14 @@ export function readSubagentLimits(ctx: Context): SubagentLimits {
   const section = settings
     .describe()
     .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { maxAgents?: unknown; maxRounds?: unknown; disableSubagent?: unknown }
+    | { maxAgents?: unknown; maxRounds?: unknown; maxRoundsGrace?: unknown; disableSubagent?: unknown }
     | undefined
   const natural = (value: unknown, fallback: number): number =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
   return {
     maxAgents: natural(section?.maxAgents, DEFAULT_SUBAGENT_LIMITS.maxAgents),
     maxRounds: natural(section?.maxRounds, DEFAULT_SUBAGENT_LIMITS.maxRounds),
+    maxRoundsGrace: natural(section?.maxRoundsGrace, DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace),
     disableSubagent: typeof section?.disableSubagent === 'boolean'
       ? section.disableSubagent
       : DEFAULT_SUBAGENT_LIMITS.disableSubagent,
@@ -706,7 +724,7 @@ export function readSubagentLimits(ctx: Context): SubagentLimits {
  */
 export async function writeSubagentLimit(
   ctx: Context,
-  key: 'maxAgents' | 'maxRounds' | 'disableSubagent',
+  key: 'maxAgents' | 'maxRounds' | 'maxRoundsGrace' | 'disableSubagent',
   value: number | boolean,
 ): Promise<string | undefined> {
   return writeDshTuiPreference(ctx, key, value)

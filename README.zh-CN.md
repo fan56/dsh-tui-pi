@@ -125,6 +125,7 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 | `panelHeight` | `'1'` | think/tool 面板高度：`'1'`/`'5'`/`'7'`/`'10'`/`'all'`（完整内容） |
 | `maxAgents` | `4` | 并发子代理上限，`0` = 不限（`/agents → l` limits 面板可热调） |
 | `maxRounds` | `75` | 每个子代理的 assistant 消息数上限，到达后注入收尾请求；`0` = 不限 |
+| `maxRoundsGrace` | `7` | 收尾请求后的宽限轮数，超出即强制终止该子代理（会话保留可续聊/续跑）；`0` = 仅警告不终止 |
 | `disableSubagent` | `true` | 禁原生 `subagent` 工具，委派改走 `~/.dsh/agents/*.md` 注册代理；`subagent_fork`/`workflow`/`ralph` 不受影响 |
 | `footerHints` | 全 `true` | footer 快捷键提示分段开关：`send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
 | `cacheHitMode` | `lastMessage` | footer CH 段口径：`lastMessage`——最新一条 assistant 消息的缓存命中率（与 pi-tui footer 一致，默认）；`session`——全会话累计 |

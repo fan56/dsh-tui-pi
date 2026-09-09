@@ -7,28 +7,32 @@
  * - `maxAgents` caps concurrent live children. A `tools.guard` registered on
  *   the plugin root ctx denies model-facing spawn tools once the bridge's
  *   live child count meets the cap. The live-child COUNT covers every child
- *   in the process, but like `disableSubagent` the DENIAL is scoped to
- *   sessions this bridge created or resumed (`TUI_SURFACE_KEY`): unmarked
- *   callers fail open. The workflow/ralph fan-out bypasses the tool pipeline (its worker thread
- *   spawns through the subagent provider directly), so a `subagent/start`
- *   listener prunes any newcomer that slips past the guard.
+ *   in the process, but the DENIAL scope is "belongs to this TUI": a caller
+ *   carrying the surface marker, or any live descendant of a marked root
+ *   (the ancestor walk closes the host-created-children hole). Foreign
+ *   roots fail open. The workflow/ralph fan-out bypasses the tool pipeline
+ *   (its worker thread spawns through the subagent provider directly), so a
+ *   `subagent/start` listener prunes any newcomer that slips past the guard
+ *   — same ownership scope, decided by the child's parent ancestry.
  * - `disableSubagent` disables the plain native `subagent` tool: its calls
- *   are denied for every TUI session (and it is hidden from the main
+ *   are denied for every TUI-scoped caller (and it is hidden from the main
  *   agent's catalog), so delegation goes through registered agent
  *   definitions (`~/.dsh/agents/*.md` via the registry's `use_agent`).
- *   `subagent_fork`, `workflow` and `ralph` stay available. Enforcement is
- *   scoped to sessions this bridge created or resumed (see
- *   `TUI_SURFACE_KEY`): the guard reads the calling agent's surface marker
- *   and FAILS OPEN for everything else, so a future web-profile deployment
- *   of this plugin never disables the native tool inside Web UI sessions.
+ *   `subagent_fork`, `workflow` and `ralph` stay available.
  * - `maxRounds` caps a child's assistant messages (each LLM round-trip is
- *   one "round"): on the bridge's `onRoundCount` the policy injects one
- *   plugin-sourced user message telling the child to wrap up — via `steer()`
- *   while the child runs (consumed at the next STEP boundary, the very next
- *   LLM round-trip) or `followup()` when idle, mirroring the Ctrl+G steer
- *   routing. The child's log shows the injection with a `⚡` marker on the
- *   compact line and in the subagent viewer, so an ignored wrap-up is
- *   visible, not silent.
+ *   one "round") through a TWO-STAGE ladder. Stage 1: at the cap — the
+ *   per-agent tier when the child's label resolves to an agent .md
+ *   `maxRounds` frontmatter key, else the global setting — the policy
+ *   injects one plugin-sourced user message telling the child to wrap up
+ *   (`steer()` while running, `followup()` when idle). Stage 2: after
+ *   `maxRoundsGrace` further rounds, `state.cancelChild` force-stops the
+ *   run — code, not persuasion; a one-shot run settles `aborted` with its
+ *   partial output in the parent's tool result, a continuable child's
+ *   session and inbox survive for resume. `grace: 0` collapses the ladder
+ *   to the historical warn-only behavior. Every injection carries a `⚡`
+ *   marker in the compact line and the subagent viewer; every hard stop is
+ *   reported to the bridge for the `⏻` marker — an ignored wrap-up is
+ *   visible, and so is its enforcement.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -137,17 +141,108 @@ function isTuiSurfaceAgent(agent: unknown): boolean {
   }
 }
 
+/** Structural slice of a session header the ancestor walk reads. */
+interface HeaderSlice {
+  readonly parentSession?: unknown
+}
+
+/** Structural slice of a live agent the ancestor walk reads. */
+interface WalkableAgent {
+  readonly session?: { readonly header?: HeaderSlice }
+}
+
+/**
+ * The id string of one live agent, when it exposes one.
+ */
+
+/**
+ * Whether the caller belongs to THIS TUI, directly (a surface-marked scope)
+ * or through descent from a marked root — the ancestor walk.
+ *
+ * The marker is only provided on the session setups the TUI itself runs
+ * (create and resume): child agents are created by the HOST's subagent
+ * materialization, whose setup is fixed and carries no marker, so a child
+ * delegating further (a `deep >= 1` agent spawning grandchildren, or any
+ * spawn tool call made from inside a child) read as unmarked and failed
+ * open. The walk closes that hole along live parentage: starting from the
+ * caller's `session.header.parentSession`, it steps through the in-process
+ * agent registry (`ctx.agents.get`) and checks each ancestor for the
+ * marker.
+ *
+ * Bounded and defensive: at most {@link ANCESTOR_WALK_MAX_DEPTH} hops
+ * (real delegation chains are shallow — dsh's own native `maxDepth` default
+ * is 3), a visited set guards against corrupt/cyclic headers, and every
+ * structural read is try-guarded. Any miss (absent parent header, a parent
+ * not live in this process, a thrown registry access) terminates the walk
+ * as NOT TUI-owned — fail-open preserved for foreign roots (a feishu-created
+ * session and its subtree never became enforceable here).
+ */
+function callerBelongsToTui(ctx: Context, agent: unknown): boolean {
+  if (isTuiSurfaceAgent(agent)) return true
+  // The walk needs the caller's session header; read it defensively.
+  let header: HeaderSlice | undefined
+  try {
+    header = (agent as WalkableAgent | undefined)?.session?.header
+  } catch {
+    return false
+  }
+  const visited = new Set<string>()
+  let parentId = header?.parentSession
+  for (let depth = 0; depth < ANCESTOR_WALK_MAX_DEPTH && parentId !== undefined; depth += 1) {
+    const key = String(parentId)
+    if (visited.has(key)) return false
+    visited.add(key)
+    let ancestor: WalkableAgent | undefined
+    try {
+      ancestor = ctx.agents.get(SessionId(parentId as string)) as WalkableAgent | undefined
+    } catch {
+      return false
+    }
+    if (ancestor === undefined) return false
+    if (isTuiSurfaceAgent(ancestor)) return true
+    // Step up: the ancestor's own header (its parentSession is another
+    // agent's session id), never the caller's again — the visited set makes
+    // that case unreachable anyway.
+    let next: unknown
+    try {
+      next = ancestor.session?.header?.parentSession
+    } catch {
+      return false
+    }
+    if (next === undefined || String(next) === key) return false
+    parentId = next
+  }
+  return false
+}
+
+/** Walk depth cap: dsh's native depth default is 3; 4 hops cover it with room. */
+const ANCESTOR_WALK_MAX_DEPTH = 4
+
 /**
  * The wrap-up message injected into a child that reached `maxRounds`.
  * English and directive on purpose: it is a policy instruction to the child
  * LLM, and a soft "please summarize" (the earlier one-line Chinese request)
  * was routinely ignored while the child kept calling tools. It names the
- * limit, forbids further tool calls, and demands a final-answer summary.
+ * limit, forbids further tool calls, and demands a final-answer summary —
+ * and, with a positive grace window, warns that the run is force-stopped
+ * if the summary does not land within it.
  */
-export function wrapupMessage(maxRounds: number): string {
-  return `Round limit reached (${maxRounds} LLM round-trips, set by the dsh-tui maxRounds policy). `
+export function wrapupMessage(maxRounds: number, grace: number): string {
+  const base = `Round limit reached (${maxRounds} LLM round-trips, set by the dsh-tui maxRounds policy). `
     + 'Do NOT call any more tools. Finish this task NOW: summarize what you have accomplished so far, '
     + 'state clearly what remains undone, and return that summary as your final answer.'
+  return grace > 0
+    ? `${base} You have ${grace} more round${grace === 1 ? '' : 's'} before this run is force-stopped.`
+    : base
+}
+
+/**
+ * One child's cap resolution, cached at the first cap crossing: the
+ * effective round cap and the grace window that follows the wrap-up.
+ */
+interface ResolvedCaps {
+  readonly cap: number
+  readonly grace: number
 }
 
 /** The `subagent/start` payload's shape — the declaring package is not installed. */
@@ -170,12 +265,40 @@ export interface SubagentPolicyState {
   getRoundCount(childId: string): number
   /** Whether one child already settled — a settled child is never re-awakened. */
   isSettled(childId: string): boolean
+  /**
+   * Forcibly stop one live child (the everything-stop's per-child idiom,
+   * `cancel({kind:'user'}, {keepInbox:true})`): a one-shot run settles
+   * `aborted` (the parent's tool call reports the cancellation with the
+   * partial output), a continuable child's run stops while its session and
+   * inbox survive for later resume. `false` when nothing live was found.
+   */
+  cancelChild(childId: string): boolean
+}
+
+/**
+ * A hard stop the policy executed on one child, surfaced through the policy
+ * handle for the bridge to fold into the child's view (the `⏻` marker).
+ */
+export interface HardStopRecord {
+  /** The child session id the stop was issued to. */
+  readonly childId: string
+  /** Round count at which the stop fired (`cap + grace`). */
+  readonly round: number
+  /** The cap that was exceeded (per-agent when one resolved, else global). */
+  readonly cap: number
+  /** The grace window that was exhausted. */
+  readonly grace: number
 }
 
 /** The running policy: the bridge's `onRoundCount` sink plus the teardown. */
 export interface SubagentPolicy {
   /** Called by the bridge whenever one child produced another assistant message. */
   onRoundCount(childId: string, count: number): void
+  /**
+   * Report sink for hard stops: wired by the host to the bridge's fold so a
+   * force-stopped child shows its `⏻` marker everywhere the view renders.
+   */
+  onHardStop?(record: HardStopRecord): void
   /** Unwind the guard and event listeners. */
   dispose(): void
 }
@@ -187,11 +310,19 @@ export interface SubagentPolicy {
  * is defensive: a settings-less deployment resolves the defaults, so the
  * policy still enforces its documented caps.
  * @param state - the host's live view (bridge.getLiveChildren /
- * bridge.getRoundCount). The guard and the round injection read it at every
+ * bridge.getRoundCount). The guard and the round ladder read it at every
  * decision — no snapshot, no watch.
+ * @param resolveAgentCap - the per-agent round cap lookup (agent .md
+ * frontmatter `maxRounds` via the registry contract). `undefined`/throwing
+ * resolutions fall back to the global cap, never widen it. Omitted = the
+ * global cap always applies.
  * @returns the policy handle wired to the bridge's `onRoundCount`.
  */
-export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): SubagentPolicy {
+export function applySubagentPolicy(
+  ctx: Context,
+  state: SubagentPolicyState,
+  resolveAgentCap?: (label: string) => number | undefined,
+): SubagentPolicy {
   const disposers: Array<() => void> = []
   const injected = new Set<string>()
   /** Set by dispose: a pending deferred injection must not fire afterwards. */
@@ -225,7 +356,11 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
   if (tools?.guard !== undefined) {
     disposers.push(tools.guard((exec) => {
       if (!SPAWN_TOOLS.includes(exec.name)) return undefined
-      if (!isTuiSurfaceAgent(exec.agent)) return undefined
+      // Enforcement scope: the caller carries the surface marker OR descends
+      // from a marked root (the ancestor walk closes the child-delegation
+      // hole — host-created children carry no marker of their own). Foreign
+      // roots still fail open.
+      if (!callerBelongsToTui(ctx, exec.agent)) return undefined
       if (readSubagentLimits(ctx).disableSubagent && NATIVE_SPAWN_TOOLS.includes(exec.name)) {
         return `Tool "subagent" is disabled here - delegation goes through registered agents. `
           + 'Dispatch the work through the use_agent tool with one of the registered agent names instead.'
@@ -235,7 +370,7 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
       const live = state.getLive()
       if (live.length < maxAgents) return undefined
       const running = live.map((agent) => agent.label).join(', ')
-      return `Agent limit reached (${live.length}/${maxAgents}): ${running} still running — wait for one to finish or use list_agents before spawning more.`
+      return `Agent limit reached (${live.length}/${maxAgents}): ${running} still running — wait for them to finish before spawning more.`
     }))
   }
 
@@ -245,6 +380,12 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
   // foreign to this bundle's type environment (`@deepseek-ai/dsh-subagent` is
   // not installed), so the subscription rides the base event bus rather than
   // the typed `ctx.on`.
+  //
+  // Scope: the event payload names only the child, no caller, so TUI
+  // ownership is decided by the child's own ancestry — a child whose live
+  // parent chain roots at a marked TUI session is prunable; a foreign root
+  // (feishu, web) never is. The walk runs on the child's PARENT, which is
+  // exactly the surface the guard caller would have been — one hop saved.
   const eventDisposer = ctx.events.on('subagent/start', (info: SubagentStartInfo) => {
     if (info?.id === undefined) return
     const maxAgents = readSubagentLimits(ctx).maxAgents
@@ -256,6 +397,14 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
     // Nth-at-cap child is never cancelled on either ordering.
     const live = state.getLive().filter(view => view.childId !== String(info.id))
     if (live.length < maxAgents) return
+    // Ownership check AFTER the cheap count gate: only an overshooting
+    // newcomer whose tree roots here gets cancelled.
+    const child = ctx.agents.get(info.id) as WalkableAgent | undefined
+    const parentSession = child?.session?.header?.parentSession
+    const parent = typeof parentSession !== 'string' || parentSession === ''
+      ? undefined
+      : (ctx.agents.get(SessionId(parentSession)) as WalkableAgent | undefined)
+    if (parent === undefined || !callerBelongsToTui(ctx, parent)) return
     ctx.agents.get(info.id)?.cancel({
       kind: 'hook',
       reason: 'over the dsh-tui maxAgents policy cap — prune a fan-out child',
@@ -264,16 +413,21 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
   disposers.push(eventDisposer)
 
   /**
-   * Bridge round-count sink: inject the summary message exactly once per
-   * child, at the first message count that reaches a positive `maxRounds`. A
-   * missing agent (cold, or transiently unregistered) is skipped silently; a
-   * settled child is skipped too — injecting into a finished one would wake
-   * it for a pointless wrap-up round (continuable children that resume later
-   * get their chance on the next counted round). Repeated injections are
-   * impossible by construction (the `injected` set is only written once per
-   * child, and only after a successful send) — including the wrap-up's
-   * OWN assistant message, which pushes the count past `maxRounds` and must
-   * not re-trigger.
+   * Bridge round-count sink, driving the two-stage ladder:
+   *
+   * Stage 1 — wrap-up injection at the first count reaching the cap
+   * (per-agent when one resolves for this child's label, else the global
+   * `maxRounds`): exactly one plugin-sourced message telling the child to
+   * finish now. Most children comply here; the ladder ends for them.
+   *
+   * Stage 2 — hard stop at `cap + grace` when the child kept burning rounds
+   * past the wrap-up: `state.cancelChild` force-stops the run (code, not
+   * persuasion), the stop is reported through `onHardStop` for the `⏻`
+   * marker, and the child's stage state is cleared (a continuable child
+   * resumed later re-enters the ladder at its next counted round).
+   *
+   * `grace: 0` collapses the ladder to stage 1 only — the historical
+   * pure-soft behavior.
    *
    * Delivery is ROUTED by the child's live status (the same split the Ctrl+G
    * steer flow uses): a RUNNING child takes `steer()` — consumed at the next
@@ -284,10 +438,39 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
    * (its own ordinary turn).
    */
   function onRoundCount(childId: string, count: number): void {
-    if (injected.has(childId)) return
-    const maxRounds = readSubagentLimits(ctx).maxRounds
-    if (maxRounds <= 0) return
-    if (count < maxRounds) return
+    if (disposed) return
+    const label = state.getLive().find(view => view.childId === childId)?.label
+      ?? injectedLabel.get(childId)
+    const caps = resolveCaps(childId, label)
+    if (caps === undefined) return
+    const { cap, grace } = caps
+    if (count < cap) return
+    // Stage 2: grace exhausted past a delivered wrap-up — force-stop.
+    if (injected.has(childId)) {
+      if (grace <= 0) return // pure-soft mode: warn only, never stop
+      if (count < cap + grace) return
+      // Already stopped for this stage (the stop's own settlement events
+      // can re-enter onRoundCount before the view settles): no-op.
+      if (hardStopped.has(childId)) return
+      if (state.isSettled(childId)) return // self-completed in time: leave it
+      hardStopped.add(childId)
+      const stopped = state.cancelChild(childId)
+      if (stopped) {
+        try {
+          onHardStopSink?.({ childId, round: count, cap, grace })
+        } catch {
+          // A reporting failure must not touch the stop itself.
+        }
+      } else {
+        // Nothing live to stop (a raced settle/vanished handle) — keep the
+        // stage marker so later counts of the same ladder cannot re-arm.
+      }
+      return
+    }
+    // Stage 1 gate order: settle check BEFORE agent lookup (a finished child
+    // must not be woken for a pointless wrap-up), agent lookup before the
+    // defer (a missing handle is skipped silently — cold or transiently
+    // unregistered).
     if (state.isSettled(childId)) return
     const agent = ctx.agents.get(SessionId(childId)) as SteerableAgent | undefined
     if (agent === undefined) return
@@ -308,7 +491,7 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
       if (ctx.agents.get(SessionId(childId)) !== agent || state.isSettled(childId)) return
       try {
         const message = createUserMessage({
-          content: [{ type: 'text', text: wrapupMessage(maxRounds) }],
+          content: [{ type: 'text', text: wrapupMessage(cap, grace) }],
           source: { kind: 'plugin', plugin: 'dsh-tui-pi' },
         })
         if (agent.status === 'running') agent.steer(message)
@@ -320,11 +503,55 @@ export function applySubagentPolicy(ctx: Context, state: SubagentPolicyState): S
         return
       }
       injected.add(childId)
+      // Remember the label the cap was resolved from: stage 2 counts arrive
+      // after the child may have dropped off the live board.
+      if (label !== undefined) injectedLabel.set(childId, label)
     })
+  }
+
+  /** Per-child resolved caps, frozen at the first crossing (stage 1 or 2). */
+  const resolvedCaps = new Map<string, ResolvedCaps>()
+  /** Labels remembered at wrap-up time, for stage-2 resolution after settle-off. */
+  const injectedLabel = new Map<string, string>()
+  /** Children whose stage-2 hard stop already fired (or found nothing to stop). */
+  const hardStopped = new Set<string>()
+  /** Optional host sink for hard-stop records (the `⏻` marker fold). */
+  let onHardStopSink: ((record: HardStopRecord) => void) | undefined
+
+  /**
+   * Resolve one child's effective caps. Per-agent first (the label→cap
+   * lookup through the registry contract — an agent without a frontmatter
+   * `maxRounds`, an ambiguous display name, or any lookup failure falls
+   * back to the global cap), grace always from the live settings. Resolved
+   * once per child and cached: the ladder's stage 2 must not shift its cap
+   * mid-flight (a settings edit mid-run would otherwise move the goalposts
+   * between warn and stop).
+   */
+  function resolveCaps(childId: string, label: string | undefined): ResolvedCaps | undefined {
+    const cached = resolvedCaps.get(childId)
+    if (cached !== undefined) return cached
+    const limits = readSubagentLimits(ctx)
+    const globalCap = limits.maxRounds
+    if (globalCap <= 0) return undefined
+    let cap = globalCap
+    if (label !== undefined && resolveAgentCap !== undefined) {
+      try {
+        const perAgent = resolveAgentCap(label)
+        if (perAgent !== undefined && perAgent > 0) cap = perAgent
+      } catch {
+        // A throwing lookup is a global-cap lookup.
+      }
+    }
+    const caps: ResolvedCaps = { cap, grace: limits.maxRoundsGrace }
+    resolvedCaps.set(childId, caps)
+    return caps
   }
 
   return {
     onRoundCount,
+    set onHardStop(sink: ((record: HardStopRecord) => void) | undefined) {
+      onHardStopSink = sink
+    },
     dispose() {
       disposed = true
       for (const dispose of disposers.splice(0)) {

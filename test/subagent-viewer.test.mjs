@@ -485,7 +485,7 @@ test('SubagentViewerPanel Enter requests the steer flow and the footer advertise
   )
   // Running child: the footer names x ×2 as the stop; settled: close.
   assert.ok(panel.render(80).some(line => line.includes(viewerFooter(true))))
-  assert.match(viewerFooter(true), /x ×2 stop/)
+  assert.match(viewerFooter(true), /x ×2 \/ k ×2 stop/)
   assert.match(viewerFooter(false), /x ×2 close/)
   assert.match(viewerFooter(true), /Enter steer/)
   panel.handleInput('\r')

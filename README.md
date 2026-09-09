@@ -128,6 +128,7 @@ Every knob lives under the `dsh-tui` settings namespace in `~/.dsh/settings.yaml
 | `panelHeight` | `'1'` | Think/tool panel height: `'1'` / `'5'` / `'7'` / `'10'` / `'all'` (full content) |
 | `maxAgents` | `4` | Max concurrently running subagents, `0` = unlimited (hot-tunable in `/agents → l` limits) |
 | `maxRounds` | `75` | Max assistant messages per subagent before a wrap-up request is injected; `0` = unlimited |
+| `maxRoundsGrace` | `7` | Grace rounds after the wrap-up before the child is force-stopped (session preserved, resumable); `0` = warn only |
 | `disableSubagent` | `true` | Disable the native `subagent` tool; delegation goes through registered agents (`~/.dsh/agents/*.md`); `subagent_fork`/`workflow`/`ralph` stay available |
 | `footerHints` | all `true` | Per-segment footer hint toggles: `send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
 | `cacheHitMode` | `lastMessage` | Footer CH segment scope: `lastMessage` — the latest assistant message's cache-hit rate, matching the pi-tui footer (default); `session` — cumulative over the whole session |

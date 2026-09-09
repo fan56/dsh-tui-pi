@@ -504,6 +504,7 @@ export async function openAgentManager(
       const fields = [
         { key: 'maxAgents', value: `${limits.maxAgents} · concurrent live children (0 = unlimited)`, editable: true },
         { key: 'maxRounds', value: `${limits.maxRounds} · assistant messages before wrap-up (0 = unlimited)`, editable: true },
+        { key: 'maxRoundsGrace', value: `${limits.maxRoundsGrace} · wrap-up rounds before force-stop (0 = warn only)`, editable: true },
         { key: 'disableSubagent', value: `${limits.disableSubagent ? 'on' : 'off'} · native subagent tool`, editable: true },
       ]
       const content: string[] = [
@@ -520,8 +521,8 @@ export async function openAgentManager(
         footer: '↑↓ field · Enter edit (0 = unlimited) · d toggle subagent · Esc back',
         shortcuts: { d: () => void toggleDisableSubagent() },
         onEdit: index => {
-          if (index === 2) toggleDisableSubagent()
-          else editLimit(index === 0 ? 'maxAgents' : 'maxRounds')
+          if (index === 3) toggleDisableSubagent()
+          else editLimit(index === 0 ? 'maxAgents' : index === 1 ? 'maxRounds' : 'maxRoundsGrace')
         },
         // With no agent files the table has nothing to go back to — Esc then
         // closes the whole manager (mirroring the old empty-directory reply).
@@ -535,7 +536,7 @@ export async function openAgentManager(
      * empty keeps the current value. A commit writes the setting live — the
      * policy reads `readSubagentLimits` at its next decision point.
      */
-    const editLimit = (key: 'maxAgents' | 'maxRounds'): void => {
+    const editLimit = (key: 'maxAgents' | 'maxRounds' | 'maxRoundsGrace'): void => {
       const current = readSubagentLimits(ctx)[key]
       let committed = false
       const field = new EditField(tui, {

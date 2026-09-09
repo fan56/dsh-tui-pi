@@ -54,6 +54,23 @@ export interface SubagentDescriptorData {
   readonly mode: 'one-shot' | 'continuable'
   readonly provider: string
   readonly label?: string
+  /** Host descriptor v3 (continuable only): the declared child LLM provider. */
+  readonly agentProvider?: string
+  /** Host descriptor v3 (continuable only): the declared child model id. */
+  readonly agentModel?: string
+  /** Host descriptor v3 (continuable only): the declared child reasoning effort. */
+  readonly agentReasoningEffort?: string
+}
+
+/**
+ * The `provider/model` route a descriptor declares, when both halves are
+ * present (continuable descriptors v3+; one-shot descriptors carry none —
+ * their route comes from the child's `request/header`).
+ */
+export function descriptorModelRoute(data: SubagentDescriptorData): string | undefined {
+  return data.agentProvider !== undefined && data.agentModel !== undefined
+    ? `${data.agentProvider}/${data.agentModel}`
+    : undefined
 }
 
 /** `llm/retry`: one provider-routed retry scheduled after a failed request attempt. */
@@ -131,6 +148,19 @@ export interface AgentView {
   readonly provider?: string
   /** Delegation label from `tool-workflow/agent-start` or the child's descriptor. */
   readonly label: string
+  /**
+   * The child's effective LLM route (`provider/model`) from its session
+   * log's `request/header` config (all children write one at their first
+   * request) or the continuable descriptor's `agentProvider`/`agentModel` —
+   * NOT the `provider` field above, which is the subagent transport (the
+   * `spawn` provider name). Absent until the first header/descriptor fold.
+   */
+  readonly modelRoute?: string
+  /**
+   * The child's reasoning-effort id, same sources as `modelRoute`
+   * (`request/header` config or the continuable descriptor).
+   */
+  readonly thinking?: string
   /** Unix epoch ms when the child was first observed — the elapsed baseline. */
   readonly startedAt: number
   /**
@@ -182,6 +212,14 @@ export interface AgentView {
    * row and the viewer header so a silently-ignored injection is visible.
    */
   readonly injectedAt?: number
+  /**
+   * Set when the maxRounds policy HARD-STOPPED this child (the wrap-up's
+   * grace window exhausted): the round count at the stop and the cap it
+   * exceeded. Surfaced as the `⏻` marker on the compact line, the picker row
+   * and the viewer transcript (a marker row) — a force-stop is policy, not a
+   * failure, and must be visible as such.
+   */
+  readonly hardStop?: { readonly round: number; readonly cap: number }
   /**
    * Latest visible last line of the child's own CONTENT output (the tail the
    * compact activity row shows so the user knows it is alive). Maintained

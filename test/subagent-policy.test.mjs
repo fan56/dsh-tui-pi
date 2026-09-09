@@ -57,6 +57,8 @@ function foreignAgent() {
  */
 function makeCtx(overrides = {}) {
   const settings = overrides.settings
+  /** The in-process agent registry: id → fake agent (for the ancestor walk). */
+  const agentsById = overrides.agentsById ?? {}
   const captured = {
     guard: undefined,
     guardDispose: undefined,
@@ -79,7 +81,11 @@ function makeCtx(overrides = {}) {
       return undefined
     },
     agents: {
-      get() { return captured.agent },
+      get(id) {
+        const key = typeof id === 'string' ? id : String(id ?? '')
+        if (key in agentsById) return agentsById[key]
+        return captured.agent
+      },
     },
     events: {
       on(name, listener) { captured.events.push({ name, listener }); return () => {} },
@@ -294,7 +300,7 @@ test('onRoundCount injects the summary request exactly once at the round cap', a
   assert.equal(followups.length, 1, 'at the cap: one summary request')
   const message = followups[0]
   assert.equal(message.content[0].type, 'text')
-  assert.equal(message.content[0].text, wrapupMessage(3), 'the summary message text names the cap')
+  assert.equal(message.content[0].text, wrapupMessage(3, 7), 'the summary message text names the cap')
   assert.equal(message.source.kind, 'plugin', 'message is plugin-sourced')
   assert.equal(message.source.plugin, 'dsh-tui-pi', 'message carries the plugin name')
 
@@ -470,7 +476,7 @@ test('a failed followup leaves the cap unarmed — the next counted round retrie
   policy.onRoundCount('child-1', 4)
   await microtaskFlush()
   assert.equal(followups.length, 1, 'the next round retries and lands the wrap-up')
-  assert.equal(followups[0].content[0].text, wrapupMessage(3), 'the retry carries the summary message')
+  assert.equal(followups[0].content[0].text, wrapupMessage(3, 7), 'the retry carries the summary message')
 
   // After the successful retry the once-per-child cap holds again.
   policy.onRoundCount('child-1', 5)
@@ -526,9 +532,13 @@ function fireSubagentStart(captured, id) {
 
 test('the subagent/start backstop cancels a fan-out child when the others fill the cap', () => {
   const cancels = []
+  // The newcomer's parent chain roots at a marked TUI session (the walk:
+  // child → parent agent → marked scope) — TUI-owned, prunable.
+  const parent = tuiAgent()
+  const newcomer = { session: { header: { parentSession: 'parent-1' } }, cancel: (cause) => cancels.push(cause) }
   const { ctx, captured } = makeCtx({
     settings: makeSettings({ maxAgents: 2, maxRounds: 50 }),
-    agent: { cancel: (cause) => cancels.push(cause) },
+    agentsById: { newcomer, 'parent-1': parent },
   })
   // Two other live children fill the cap; the workflow newcomer overshoots.
   const policy = applySubagentPolicy(ctx, makeState({ live: [
@@ -537,6 +547,23 @@ test('the subagent/start backstop cancels a fan-out child when the others fill t
   fireSubagentStart(captured, 'newcomer')
   assert.equal(cancels.length, 1, 'over the cap: the newcomer is pruned')
   assert.equal(cancels[0].kind, 'hook', 'pruned with a hook cause')
+  policy.dispose()
+})
+
+test('the subagent/start backstop never prunes a foreign-rooted child', () => {
+  const cancels = []
+  // The newcomer descends from an UNMARKED root (a feishu-created session):
+  // over the cap or not, the backstop must leave it alone.
+  const newcomer = { session: { header: { parentSession: 'foreign-root' } }, cancel: () => cancels.push('pruned!') }
+  const { ctx, captured } = makeCtx({
+    settings: makeSettings({ maxAgents: 2, maxRounds: 50 }),
+    agentsById: { newcomer, 'foreign-root': { ctx: { get() { return undefined } } } },
+  })
+  const policy = applySubagentPolicy(ctx, makeState({ live: [
+    { label: 'a' }, { label: 'b' },
+  ] }))
+  fireSubagentStart(captured, 'newcomer')
+  assert.deepEqual(cancels, [], 'a foreign-rooted newcomer is never pruned')
   policy.dispose()
 })
 
@@ -619,7 +646,7 @@ test('a RUNNING child is wrapped up through steer — the next step boundary, no
   await microtaskFlush()
   assert.equal(steers.length, 1, 'running child receives the wrap-up through steer')
   assert.equal(followups.length, 0, 'no next-turn followup for a running child')
-  assert.equal(steers[0].content[0].text, wrapupMessage(3))
+  assert.equal(steers[0].content[0].text, wrapupMessage(3, 7))
   policy.dispose()
 })
 
@@ -647,4 +674,184 @@ test('wrapupMessage is a directive that forbids further tool calls and names the
   assert.ok(text.includes('12'), 'names the round limit')
   assert.ok(/Do NOT call any more tools/i.test(text), 'forbids further tool calls')
   assert.ok(/final answer/i.test(text), 'demands a final answer')
+})
+
+// ------------------------------------------------------- hard-stop ladder --
+
+/**
+ * A RUNNING fake child agent (the steer recipient at stage 1) plus a cancel
+ * sink for stage 2, wired through the state's cancelChild.
+ */
+function ladderCtx({ cap, grace, status = 'running' } = {}) {
+  const steers = []
+  const followups = []
+  const cancels = []
+  const agent = {
+    status,
+    steer: msg => steers.push(msg),
+    followup: msg => followups.push(msg),
+  }
+  const { ctx, captured } = makeCtx({
+    settings: makeSettings({ maxAgents: cap, maxRounds: cap, ...(grace !== undefined ? { maxRoundsGrace: grace } : {}) }),
+    agent,
+  })
+  return { ctx, steers, followups, cancels, agent }
+}
+
+test('hard-stop ladder: cancel fires at cap+grace and reports onHardStop', async () => {
+  const grace = 2
+  const { ctx, steers } = ladderCtx({ cap: 3, grace })
+  const cancels = []
+  const stops = []
+  const policy = applySubagentPolicy(
+    ctx,
+    {
+      ...makeState({}),
+      cancelChild: (id) => { cancels.push(id); return true },
+    },
+  )
+  policy.onHardStop = record => stops.push(record)
+  policy.onRoundCount('c1', 3)
+  await microtaskFlush()
+  assert.equal(steers.length, 1, 'stage 1 landed')
+  policy.onRoundCount('c1', 4)
+  assert.deepEqual(cancels, [], 'grace round 1: no stop yet')
+  policy.onRoundCount('c1', 5) // cap(3) + grace(2) = 5
+  assert.deepEqual(cancels, ['c1'], 'stage 2: force-stopped at cap+grace')
+  assert.deepEqual(stops, [{ childId: 'c1', round: 5, cap: 3, grace: 2 }], 'the stop is reported with cap facts')
+  policy.onRoundCount('c1', 6)
+  assert.equal(cancels.length, 1, 'no double stop')
+  policy.dispose()
+})
+
+test('hard-stop ladder: a child that settles inside grace is never stopped', async () => {
+  const { ctx } = ladderCtx({ cap: 3, grace: 1 })
+  const cancels = []
+  const settled = []
+  const policy = applySubagentPolicy(ctx, {
+    getLive: () => [],
+    getRoundCount: () => 0,
+    isSettled: () => true, // settled by the time stage 2 counts arrive
+    cancelChild: (id) => { cancels.push(id); return true },
+  })
+  policy.onRoundCount('c1', 3)
+  await microtaskFlush()
+  policy.onRoundCount('c1', 4)
+  assert.deepEqual(cancels, [], 'a self-completed child is left alone')
+  policy.dispose()
+})
+
+test('hard-stop ladder: grace 0 collapses to the historical warn-only behavior', async () => {
+  const { ctx, steers } = ladderCtx({ cap: 3, grace: 0 })
+  const cancels = []
+  const policy = applySubagentPolicy(ctx, {
+    ...makeState({}),
+    cancelChild: (id) => { cancels.push(id); return true },
+  })
+  for (const count of [3, 4, 5, 6, 10, 20]) {
+    policy.onRoundCount('c1', count)
+    await microtaskFlush()
+  }
+  assert.equal(steers.length, 1, 'the wrap-up landed once')
+  assert.deepEqual(cancels, [], 'grace 0: never force-stopped')
+  policy.dispose()
+})
+
+test('per-agent cap: the resolver overrides the global cap for a labeled child', async () => {
+  const { ctx, steers } = ladderCtx({ cap: 100, grace: 2 })
+  const resolved = []
+  const policy = applySubagentPolicy(
+    ctx,
+    { ...makeState({ live: [{ childId: 'c1', label: 'workhorse' }] }) },
+    label => { resolved.push(label); return label === 'workhorse' ? 5 : undefined },
+  )
+  policy.onRoundCount('c1', 4)
+  await microtaskFlush()
+  assert.deepEqual(steers, [], 'below the per-agent cap: nothing')
+  policy.onRoundCount('c1', 5)
+  await microtaskFlush()
+  assert.equal(steers.length, 1, 'the per-agent cap (5) fired before the global (100)')
+  assert.ok(steers[0].content[0].text.includes('5'), 'the wrap-up names the per-agent cap')
+  policy.dispose()
+})
+
+test('per-agent cap: a resolver miss falls back to the global cap', async () => {
+  const { ctx, steers } = ladderCtx({ cap: 4, grace: 1 })
+  const policy = applySubagentPolicy(ctx, makeState({ live: [{ childId: 'c1', label: 'unknown-agent' }] }), () => undefined)
+  policy.onRoundCount('c1', 3)
+  await microtaskFlush()
+  assert.deepEqual(steers, [], 'below the global cap: nothing')
+  policy.onRoundCount('c1', 4)
+  await microtaskFlush()
+  assert.equal(steers.length, 1, 'the global cap applies on a resolver miss')
+  policy.dispose()
+})
+
+test('per-agent cap: caps resolve once per child and stay frozen across stages', async () => {
+  const { ctx } = ladderCtx({ cap: 3, grace: 1 })
+  let resolveCount = 0
+  const policy = applySubagentPolicy(ctx, {
+    ...makeState({ live: [{ childId: 'c1', label: 'x' }] }),
+    cancelChild: () => true,
+  }, () => { resolveCount += 1; return 2 })
+  policy.onRoundCount('c1', 2) // resolves (cap 2) → stage 1
+  await microtaskFlush()
+  policy.onRoundCount('c1', 3) // stage 2 at 2+1: must reuse the frozen cap
+  policy.onRoundCount('c1', 4)
+  assert.equal(resolveCount, 1, 'one resolution per child, cached')
+  policy.dispose()
+})
+
+// ---------------------------------------------------------- ancestor walk --
+
+test('ancestor walk: a child caller descending from a marked root is enforced', () => {
+  const { ctx, captured } = makeCtx({
+    settings: makeSettings({ maxAgents: 1, maxRounds: 50 }),
+    agentsById: {
+      // The calling child's parent chain: child → mid (unmarked) → root (marked).
+      mid: { session: { header: { parentSession: 'root-1' } } },
+      'root-1': tuiAgent(),
+    },
+  })
+  const live = [{ label: 'a' }]
+  const policy = applySubagentPolicy(ctx, makeState({ live }))
+  const childCaller = { session: { header: { parentSession: 'mid' } } }
+  const denial = captured.guard({ name: 'use_agent', agent: childCaller })
+  assert.ok(typeof denial === 'string', 'a TUI-descended grandchild caller IS capped')
+  policy.dispose()
+})
+
+test('ancestor walk: a foreign root stays fail-open', () => {
+  const { ctx, captured } = makeCtx({
+    settings: makeSettings({ maxAgents: 1, maxRounds: 50 }),
+    agentsById: {
+      mid: { session: { header: { parentSession: 'feishu-root' } } },
+      'feishu-root': { ctx: { get() { return undefined } } },
+    },
+  })
+  const live = [{ label: 'a' }]
+  const policy = applySubagentPolicy(ctx, makeState({ live }))
+  const childCaller = { session: { header: { parentSession: 'mid' } } }
+  assert.equal(captured.guard({ name: 'use_agent', agent: childCaller }), undefined, 'a foreign-descended caller passes')
+  policy.dispose()
+})
+
+test('ancestor walk: a broken chain (absent parent) fails open, cyclic headers terminate', () => {
+  const { ctx, captured } = makeCtx({
+    settings: makeSettings({ maxAgents: 1, maxRounds: 50 }),
+    agentsById: {
+      orphan: undefined, // get() returns undefined — chain dead end
+      cyc_a: { session: { header: { parentSession: 'cyc_b' } } },
+      cyc_b: { session: { header: { parentSession: 'cyc_a' } } },
+    },
+  })
+  const live = [{ label: 'a' }, { label: 'b' }]
+  const policy = applySubagentPolicy(ctx, makeState({ live }))
+  // Over the cap either way — the assertion is the DECISION, not the scope:
+  // both unmarked callers must pass (fail open), never throw.
+  assert.equal(captured.guard({ name: 'use_agent', agent: { session: { header: { parentSession: 'orphan' } } } }), undefined)
+  assert.equal(captured.guard({ name: 'use_agent', agent: { session: { header: { parentSession: 'cyc_a' } } } }), undefined)
+  assert.equal(captured.guard({ name: 'use_agent', agent: { session: {} } }), undefined, 'no header: fail open')
+  assert.equal(captured.guard({ name: 'use_agent', agent: undefined }), undefined, 'no agent: fail open')
+  policy.dispose()
 })

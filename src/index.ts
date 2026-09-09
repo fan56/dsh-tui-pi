@@ -65,6 +65,7 @@ import {
   workspacePresetsPath,
 } from './workspace-presets.ts'
 import { applyIconSet, resolveIconSet, stopIcon, type IconSet } from './icons.ts'
+import { readAgentMaxRounds } from './agent-runtime.ts'
 import { detectNerdFontAvailable } from './font-detect.ts'
 import { openAgentManager } from './agents.ts'
 import { openProfileManager, openProfileSwitcher, type ProfileDeps } from './profile.ts'
@@ -169,7 +170,7 @@ const SKILL_RESOURCE_BASE = {
 const SKILL_INVOCATION = { modelInvocable: true, userInvocable: true } as const
 
 /** Routing description; must stay identical to the SKILL.md frontmatter (asserted in tests). */
-const SKILL_DESCRIPTION = 'dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 13 键（theme/panelHeight/maxAgents/maxRounds/disableSubagent/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume）、DSH_TUI_* 环境变量、ask_user_question 快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。'
+const SKILL_DESCRIPTION = 'dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 14 键（theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume）、DSH_TUI_* 环境变量、ask_user_question 快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。'
 
 const SKILL_CANDIDATE: SkillCandidate = {
   name: SKILL_PROVIDER_NAME,
@@ -817,16 +818,23 @@ export function apply(ctx: Context): void {
     // Subagent fine-grained control, all in-process (see subagent-policy.ts):
     // a tools.guard denies spawn-tool calls once `maxAgents` children run
     // (workflow fan-out, which bypasses the tool pipeline, is pruned on
-    // `subagent/start`), and when a child's assistant-message count reaches
-    // `maxRounds` the policy queues one wrap-up message into its next turn.
-    // Limits are read live from the `dsh-tui` settings namespace
-    // (/agents → l limits).
+    // `subagent/start`), and the round ladder injects one wrap-up at a
+    // child's cap and hard-stops it after the grace window — the per-agent
+    // tier reads the agent file's frontmatter `maxRounds` through the
+    // registry contract. Limits are read live from the `dsh-tui` settings
+    // namespace (/agents → l limits).
     const subagentPolicy = applySubagentPolicy(ctx, {
       getLive: () => bridge.getLiveChildren(),
       getRoundCount: childId => bridge.getRoundCount(childId),
       isSettled: childId => bridge.isChildSettled(childId),
-    })
+      cancelChild: childId => bridge.cancelChild(childId),
+    }, readAgentMaxRounds)
     bridgeCallbacks.onRoundCount = (childId, count) => subagentPolicy.onRoundCount(childId, count)
+    // The `⏻` marker fold: a force-stopped child is policy enforcement, and
+    // every render surface shows it as such.
+    if (subagentPolicy.onHardStop !== undefined) {
+      subagentPolicy.onHardStop = ({ childId, round, cap }) => bridge.markChildHardStopped(childId, round, cap)
+    }
 
     // Ask-user-question provider: the upstream `dsh-tool-ask-user` tool calls
     // `ctx.userQuestions.ask()` while its tool call is pending, and the

@@ -29,6 +29,7 @@
  */
 
 import { dshHome } from './append-system.ts'
+import { agentsDir } from './agent-manager.ts'
 import {
   loadModelProfiles,
   modelProfilesPath,
@@ -60,6 +61,13 @@ interface RegistryRuntime {
     opts?: { startDir?: string },
   ): AgentRuntimeValues
   readModelProfilesDoc(): unknown | null
+  /**
+   * Per-agent round cap from the agent file's frontmatter (`maxRounds`):
+   * the label→cap lookup behind the hard-stop ladder's per-agent tier.
+   * Optional: registries older than the key's introduction resolve to
+   * `undefined` (the global cap applies) without failing the probe.
+   */
+  readAgentMaxRounds?(label: string, dir: string): number | undefined
 }
 
 /** Probe the registry once; the result is cached for the process lifetime.
@@ -76,6 +84,9 @@ async function probeRegistryRuntime(): Promise<RegistryRuntime | null> {
       || typeof mod['workspaceProfileName'] !== 'function'
       || typeof mod['readModelProfilesDoc'] !== 'function'
     ) return null
+    // readAgentMaxRounds is deliberately NOT required by the probe: an older
+    // registry without the per-agent cap export still serves the profile
+    // contract, and the cap lookup then just reports undefined (global cap).
     return mod as unknown as RegistryRuntime
   } catch {
     return null
@@ -203,4 +214,25 @@ export function commitAgentModelEdit(
     thinking: edit.thinking ?? null,
   })
   return { target: { kind: 'frontmatter' }, ...(error !== undefined ? { error } : {}) }
+}
+
+/**
+ * The per-agent round cap declared on one agent's frontmatter `maxRounds`
+ * key, resolved through the registry's label→cap lookup (exact agent name
+ * first, then a unique display name; any ambiguity or absence →
+ * `undefined`).
+ *
+ * Consumed by the subagent policy's hard-stop ladder at a child's first cap
+ * crossing. Every failure mode — the registry not shipped, an older
+ * registry without the export, an unknown label, a read error — resolves to
+ * `undefined`, and the caller (the policy) then applies the global cap:
+ * fail-closed to the documented default, never to a wider limit.
+ */
+export function readAgentMaxRounds(label: string): number | undefined {
+  if (registryRuntime?.readAgentMaxRounds === undefined) return undefined
+  try {
+    return registryRuntime.readAgentMaxRounds(label, agentsDir())
+  } catch {
+    return undefined
+  }
 }

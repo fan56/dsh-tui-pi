@@ -80,8 +80,8 @@ const CHILD_LOG_CAP = 2000
 export const STEER_SENT_NOTICE = 'Steer message sent'
 /** Notice shown when the target child can no longer receive steering. */
 export const STEER_ENDED_NOTICE = 'This subagent has ended — steering unavailable'
-/** Transcript footer for a RUNNING child: x ×2 stops it. */
-export const VIEWER_FOOTER_RUNNING = '↑↓ scroll · Esc close · x ×2 stop · Enter steer'
+/** Transcript footer for a RUNNING child: x ×2 or k ×2 stops it. */
+export const VIEWER_FOOTER_RUNNING = '↑↓ scroll · Esc close · x ×2 / k ×2 stop · Enter steer'
 /** Transcript footer for a SETTLED child: nothing to stop, x ×2 closes. */
 export const VIEWER_FOOTER_SETTLED = '↑↓ scroll · Esc close · x ×2 close · Enter steer'
 
@@ -221,6 +221,13 @@ function formatTokens(tokens: number): string {
   return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k tok` : `${tokens} tok`
 }
 
+/** Human elapsed display: under a minute as `42.1s`, then `3m12s`. */
+export function formatElapsed(ms: number): string {
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  const total = Math.floor(ms / 1000)
+  return `${Math.floor(total / 60)}m${String(total % 60).padStart(2, '0')}s`
+}
+
 /** Status glyph for one child view: running / completed / failed / cancelled. */
 function statusGlyph(view: AgentView): string {
   if (view.outcome === undefined) return RUNNING_GLYPH
@@ -332,9 +339,9 @@ export function eventLines(events: readonly SessionEvent[]): string[] {
 /**
  * The picker rows: running children first (the live items the key is for),
  * then the five most recent settled ones (newest settle first). Each row
- * reads `⠋ label [mode] · rounds N[/max]` with the token spend, the dsh-dcp
- * compaction count (when > 0) and elapsed seconds in the muted description
- * column.
+ * reads `⠋ label [mode] · rounds N[/max] · model` with the token spend, the
+ * dsh-dcp compaction count (when > 0) and elapsed seconds in the muted
+ * description column.
  */
 export function pickerItems(
   views: readonly AgentView[],
@@ -352,6 +359,11 @@ export function pickerItems(
     const rounds = getRoundCount(view.childId)
     const roundsText = maxRounds > 0 ? `rounds ${rounds}/${maxRounds}` : `rounds ${rounds}`
     const mode = view.mode === undefined ? '' : ` [${view.mode}]`
+    // Model short name — the route's model tail (the segment after the
+    // provider slash; a slash-less route shows whole). List rows scan, so
+    // the provider half is deliberately dropped here (the viewer header
+    // carries the full route).
+    const modelShort = shortModelName(view.modelRoute)
     const elapsedMs = (view.outcome === undefined ? Date.now() : view.endedAt ?? Date.now()) - view.startedAt
     const compactions = getCompactionCount(view.childId)
     const description = [
@@ -361,13 +373,27 @@ export function pickerItems(
     ].join(' · ')
     // `⚡ injected` — a policy wrap-up (or steer) reached this child; shows
     // the injection landed even when the child LLM then ignored it.
+    // `⏻ stopped` — the policy FORCE-stopped it (grace exhausted).
     const injected = view.injectedAt !== undefined ? ' ⚡ injected' : ''
+    const stopped = view.hardStop !== undefined ? ' ⏻ stopped' : ''
     return {
       value: view.childId,
-      label: `${statusGlyph(view)} ${view.label}${mode}: ${roundsText}${injected}`,
+      label: `${statusGlyph(view)} ${view.label}${mode}: ${roundsText}${injected}${stopped}${modelShort !== undefined ? ` · ${modelShort}` : ''}`,
       ...(description !== '' ? { description } : {}),
     }
   })
+}
+
+/**
+ * The model tail of a `provider/model` route (`opencode-go/hy3` → `hy3`),
+ * for scan-friendly list rows; `undefined` for an unknown route or a
+ * slash-less one (nothing meaningful to shorten).
+ */
+export function shortModelName(route: string | undefined): string | undefined {
+  if (route === undefined) return undefined
+  const slash = route.indexOf('/')
+  if (slash < 0) return undefined
+  return route.slice(slash + 1)
 }
 
 /**
@@ -405,6 +431,13 @@ class LiveSubagentTable implements Component {
   private readonly onEmpty: () => void
   private readonly onSelectItem: (item: SelectItem) => void
   private readonly onCancelPicker: () => void
+  /**
+   * Extra picker keys (`s` sort toggle, `K` stop-all): return true when the
+   * key was handled and the rows need a rebuild/render.
+   */
+  private readonly onKey?: (key: string) => boolean
+  /** Transient one-line notice over the table footer; retired by the next tick. */
+  private notice: string | undefined
   private timer: ReturnType<typeof setInterval> | undefined
 
   constructor(
@@ -415,6 +448,7 @@ class LiveSubagentTable implements Component {
     onEmpty: () => void,
     onSelectItem: (item: SelectItem) => void,
     onCancelPicker: () => void,
+    onKey?: (key: string) => boolean,
   ) {
     this.theme = theme
     this.buildItems = buildItems
@@ -422,6 +456,7 @@ class LiveSubagentTable implements Component {
     this.onEmpty = onEmpty
     this.onSelectItem = onSelectItem
     this.onCancelPicker = onCancelPicker
+    this.onKey = onKey
     this.list = this.buildList(items, 0)
   }
 
@@ -463,7 +498,7 @@ class LiveSubagentTable implements Component {
       renderCell: (item, column) => (column.key === 'description' ? item.description ?? '' : item.label),
       maxVisible: PICKER_MAX_VISIBLE,
       preselect,
-      footer: '↑↓ navigate · Enter open · Esc close',
+      footer: '↑↓ navigate · Enter open · s sort · K stop all · Esc close',
       onSelect: item => this.onSelectItem(item),
       onCancel: () => this.onCancelPicker(),
     })
@@ -487,11 +522,29 @@ class LiveSubagentTable implements Component {
     this.requestRender()
   }
 
+  /** Show a transient notice above the table footer (until the next tick). */
+  showNotice(text: string): void {
+    this.notice = text
+    this.requestRender()
+  }
+
   render(width: number): string[] {
     return this.list.render(width)
   }
 
   handleInput(data: string): void {
+    // A table keypress retires the notice (feedback, not state).
+    this.notice = undefined
+    // Picker-scoped keys first: the sort toggle and stop-all never reach the
+    // table's own navigation.
+    if (data === 's' && this.onKey?.('s') === true) {
+      this.refresh()
+      return
+    }
+    if (data === 'K' && this.onKey?.('K') === true) {
+      this.refresh()
+      return
+    }
     this.list.handleInput(data)
   }
 }
@@ -523,6 +576,8 @@ export class SubagentViewerPanel implements Component {
   private timer: ReturnType<typeof setInterval> | undefined
   /** Timestamp of the last handled `x` press; 0 = none (the double-press arm). */
   private lastXPress = 0
+  /** Timestamp of the last handled `k` press; 0 = none (the double-press arm). */
+  private lastKPress = 0
   /** Current scroll offset into the transcript lines. */
   private scrollTop = 0
   /** Whether the view is pinned to the log tail (default, re-set on the bottom). */
@@ -587,8 +642,19 @@ export class SubagentViewerPanel implements Component {
     this.scrollTop = this.followEnd ? maxScroll : Math.max(0, Math.min(this.scrollTop, maxScroll))
 
     const wrap = Math.max(2, width - 2)
-    const out: string[] = [this.headerLine(view)]
+    const out: string[] = [...this.headerLines(view)]
     if (truncated) out.push(fns.subtle(`…history truncated (${CHILD_LOG_CAP} event cap)`))
+    // The `⏻` marker row: the maxRounds policy hard-stopped this child — a
+    // synthetic in-transcript line (render-layer composition, the same shape
+    // as the dsh-dcp compaction marker), NOT a log event. It states the
+    // round it fired at and the cap it enforced so the stop reads as policy,
+    // never as a mysterious failure.
+    if (view?.hardStop !== undefined) {
+      out.push(fns.subtle(clipToWidth(
+        `⏻ hard-stopped by maxRounds policy (round ${view.hardStop.round} + grace exhausted, cap ${view.hardStop.cap})`,
+        wrap,
+      )))
+    }
     const slice = lines.slice(this.scrollTop, this.scrollTop + this.bodyRows)
     if (slice.length === 0) {
       out.push(fns.subtle('  — no events yet —'))
@@ -640,6 +706,29 @@ export class SubagentViewerPanel implements Component {
       this.onSteerRequested()
       return
     }
+    // `k` — arm/confirm the per-child stop with an explicit second press
+    // (same double-press arm the `x` stop uses, a distinct key so a user who
+    // has learned `x ×2` keeps it and a user who wants a mnemonic gets one).
+    // The notice names the target so the confirm is unambiguous.
+    if (data.toLowerCase() === 'k') {
+      const now = Date.now()
+      if (this.lastKPress !== 0 && now - this.lastKPress < MIN_DOUBLE_PRESS_GAP_MS) return
+      if (this.lastKPress !== 0 && now - this.lastKPress <= DOUBLE_PRESS_MS) {
+        this.lastKPress = 0
+        const running = this.bridge.getAgentViews().some(
+          view => view.childId === this.childId && view.outcome === undefined,
+        )
+        if (running && this.bridge.cancelChild(this.childId)) {
+          this.showNotice('⏹ canceling this subagent…')
+        } else {
+          this.showNotice('nothing running to stop')
+        }
+      } else {
+        this.lastKPress = now
+        this.showNotice('press k again to stop this subagent')
+      }
+      return
+    }
     if (kb.matches(data, 'tui.select.up')) this.scrollBy(-1)
     else if (kb.matches(data, 'tui.select.down')) this.scrollBy(1)
   }
@@ -660,11 +749,18 @@ export class SubagentViewerPanel implements Component {
     this.requestRender()
   }
 
-  /** One-line child summary: colored status, the rest in the accent bold. */
-  private headerLine(view: AgentView | undefined): string {
+  /**
+   * The three-line header (layout A): identity + status, the model route
+   * line, the activity/budget line. The route line puts the child's LLM
+   * route (`provider/model` + thinking) first and demotes the subagent
+   * transport (`spawn` — near-zero information) to the tail; the old single
+   * line conflated the two under one `provider` field. Narrow terminals
+   * truncate in a fixed order: transport first, then elapsed, route last.
+   */
+  private headerLines(view: AgentView | undefined): string[] {
     const p = this.theme.palette
     if (view === undefined) {
-      return ansiFg(p.accent) + BOLD + `ⓘ subagent ${clipToWidth(this.childId, 8)}` + RESET
+      return [ansiFg(p.accent) + BOLD + `ⓘ subagent ${clipToWidth(this.childId, 8)}` + RESET]
     }
     const status = view.outcome === undefined ? 'running'
       : view.outcome === 'completed' ? 'completed'
@@ -674,31 +770,54 @@ export class SubagentViewerPanel implements Component {
       : view.outcome === 'completed' ? p.success
       : view.outcome === 'failed' ? p.danger
       : p.fgMuted
-    const tail: string[] = [view.label]
-    if (view.provider !== undefined) tail.push(view.provider)
-    if (view.mode !== undefined) tail.push(view.mode)
+    // Line 1 — identity + status (accent bold, status in its own color).
+    const statusBudget = Math.max(20, 140 - status.length - 3)
+    const line1 = clipToWidth(view.label, statusBudget)
+    const identity = ansiFg(p.accent) + BOLD + line1 + RESET + ' · ' + ansiFg(statusColor) + status + RESET
+    // Line 2 — the model route + composition. Order: route · thinking ·
+    // mode · transport(only when it is NOT the default spawn — a spawn-less
+    // deployment is the only place it carries information).
+    const routeParts: string[] = []
+    if (view.modelRoute !== undefined) routeParts.push(view.modelRoute)
+    if (view.thinking !== undefined) routeParts.push(`think ${view.thinking}`)
+    if (view.mode !== undefined) routeParts.push(view.mode)
+    if (view.provider !== undefined && view.provider !== 'spawn') routeParts.push(view.provider)
+    const hasRoute = routeParts.length > 0
+    const line2 = hasRoute ? ansiFg(p.fgMuted) + clipToWidth(routeParts.join(' · '), Math.max(20, 140)) + RESET : undefined
+    // Line 3 — the activity/budget indicators (the old header tail).
     const maxRounds = this.readMaxRounds()
-    tail.push(`rounds ${this.bridge.getRoundCount(this.childId)}${maxRounds > 0 ? `/${maxRounds}` : ''}`)
+    const rounds = this.bridge.getRoundCount(this.childId)
+    const tail: string[] = [`rounds ${rounds}${maxRounds > 0 ? `/${maxRounds}` : ''}`]
+    if (view.hardStop !== undefined) tail.push(`⏻ hard-stopped @${view.hardStop.round}`)
     if (view.injectedAt !== undefined) tail.push('⚡ injected')
     if (view.tokens > 0) tail.push(formatTokens(view.tokens))
-    // Budget the plain text so the status suffix (its own color) still fits.
-    const budget = Math.max(20, 140 - status.length - 3)
-    const base = clipToWidth(tail.join(' · '), budget)
-    return ansiFg(p.accent) + BOLD + base + RESET + ' · ' + ansiFg(statusColor) + status + RESET
+    const elapsed = (view.outcome === undefined ? Date.now() : view.endedAt ?? Date.now()) - view.startedAt
+    tail.push(formatElapsed(elapsed))
+    if (view.lastTool !== undefined) tail.push(view.lastTool)
+    const line3 = clipToWidth(tail.join(' · '), Math.max(20, 140))
+    return line2 !== undefined
+      ? [identity, line2, ansiFg(p.fgMuted) + line3 + RESET]
+      : [identity, ansiFg(p.fgMuted) + line3 + RESET]
   }
 }
 
 /**
  * Body-window rows for the transcript panel: the framed overlay adds 4 rows
  * of chrome and slices anything taller, so the rendered child budget is 80%
- * of the terminal minus the frame; the header, footer and the optional
- * truncation hint / transient notice take theirs, everything else is the
- * transcript window.
+ * of the terminal minus the frame; the (two-to-three-line) header, footer and
+ * the optional truncation hint / transient notice take theirs, everything
+ * else is the transcript window. The header costs one more row than the old
+ * single-line version (the model-route line) and the route line only appears
+ * once a `request/header`/descriptor folded — the budget reserves for the
+ * full three-line shape, so a route-less child just gets one spare row.
  */
 function bodyRowsFor(truncated: boolean, notice = false): number {
   const childBudget = Math.max(1, Math.floor((process.stdout.rows ?? 24) * 0.8) - 4)
-  return Math.max(1, childBudget - 3 - (truncated ? 1 : 0) - (notice ? 1 : 0))
+  return Math.max(1, childBudget - 3 - HEADER_ROUTE_ROW - (truncated ? 1 : 0) - (notice ? 1 : 0))
 }
+
+/** Extra header rows over the old one-line header (the model-route line). */
+const HEADER_ROUTE_ROW = 1
 
 // ---------------------------------------------------------- the steer box --
 
@@ -859,12 +978,27 @@ export async function openSubagentViewer(
     // the unbound method through to the pure item builder. `buildItems`
     // re-reads the limits live on every tick, so a maxRounds change
     // hot-applies while the picker stays open (no more open-time snapshot).
-    const buildItems = (): SelectItem[] => pickerItems(
-      bridge.getAgentViews(),
-      childId => bridge.getRoundCount(childId),
-      readSubagentLimits(ctx).maxRounds,
-      childId => bridge.getChildCompactionCount(childId),
-    )
+    // `sortByRounds` (the `s` toggle) flips the row order to rounds
+    // descending — the "which child burns hottest" view.
+    let sortByRounds = false
+    const buildItems = (): SelectItem[] => {
+      const views = [...bridge.getAgentViews()]
+      if (sortByRounds) {
+        views.sort((a, b) => bridge.getRoundCount(b.childId) - bridge.getRoundCount(a.childId))
+        return pickerItems(
+          views,
+          childId => bridge.getRoundCount(childId),
+          readSubagentLimits(ctx).maxRounds,
+          childId => bridge.getChildCompactionCount(childId),
+        )
+      }
+      return pickerItems(
+        views,
+        childId => bridge.getRoundCount(childId),
+        readSubagentLimits(ctx).maxRounds,
+        childId => bridge.getChildCompactionCount(childId),
+      )
+    }
     const items = buildItems()
     if (items.length === 0) {
       finish()
@@ -882,6 +1016,19 @@ export async function openSubagentViewer(
       () => {
         panel.dispose()
         finish()
+      },
+      key => {
+        if (key === 's') {
+          sortByRounds = !sortByRounds
+          return true // rebuilt on the next tick; render immediately
+        }
+        if (key === 'K') {
+          const stopped = bridge.cancelAllChildren()
+          // Feedback rides the same toast channel as the per-viewer stop.
+          panel.showNotice?.(`⏹ stop-all: ${stopped} subagent${stopped === 1 ? '' : 's'} canceled`)
+          return true
+        }
+        return false
       },
     )
     // Tick only when the overlay mounted: a failed showOverlay already fired

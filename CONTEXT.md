@@ -129,3 +129,65 @@ live in ARCHITECTURE.md / HANDOFF.md.
   日志——不取 writer-lock、不 resume、不激活 agent
   (read-only viewing of an inactive session's event log through the host
   persistence API — no writer-lock, no resume, no agent activation)
+- **Wrap-up 注入（wrap-up injection）**: 子代理到达轮数上限时 policy 注入的一条
+  插件源 user 消息，要求立即收尾不再调工具。软限制——child LLM 可以无视；每个
+  child 只注入一次，全程以 `⚡` 标记可见
+  (the plugin-sourced user message the policy injects when a child reaches its
+  round cap, demanding an immediate finish with no further tool calls. Soft —
+  the child LLM may ignore it; exactly one per child, always visible as the
+  `⚡` marker)
+- **宽限（grace）**: wrap-up 注入后允许 child 继续烧的轮数；默认 7，`0` = 关闭
+  硬停退回纯软模式（历史行为）
+  (rounds a child may keep burning after the wrap-up injection before the
+  policy stops asking; default 7, `0` disables hard stop entirely — pure-soft
+  mode, the historical behavior)
+- **硬停（hard stop）**: 达 `cap + grace` 轮时代码强制终止 child，不再请求
+  child LLM 同意。child 转录以 `⏻` 标记。不是处决：会话保留，continuable
+  child 可 Ctrl+G 查看、可续聊；one-shot child 同名下次派发自动 resume 续跑
+  (at `cap + grace` rounds the code forcibly stops the child — no consent
+  asked from the child LLM. Marked `⏻` in the child transcript. Not an
+  execution: the session persists; a continuable child stays inspectable
+  (Ctrl+G) and resumable; a one-shot child's next same-name dispatch resumes
+  its partial work)
+- **Prune**: 超员兜底——live children 已占满 cap 时新到达的 child 被 cancel
+  （杀最新）。被杀 child 的部分工作持久可 resume，prune 是回收不是浪费
+  (the over-cap backstop at `subagent/start`: a newcomer arriving while live
+  children fill the cap is cancelled — kill the newest. Its partial work
+  persists and is resumable; pruning is recovery, not waste)
+- **Surface 标记（surface marker）**: cordis scope 键，标记本 TUI 创建/恢复的
+  agent；一切 enforcement 判定的锚点；无标记 caller fail-open，祖先链回溯除外
+  (the cordis scope key marking an agent as created/resumed by this TUI; the
+  anchor for every enforcement decision; unmarked callers fail open, except
+  through the ancestor walk)
+- **祖先链回溯（ancestor walk）**: spawn caller 无标记时，guard 沿
+  `parentSession` header 逐级查进程内活祖先的标记——链上任一级带标记，整棵
+  TUI 派生树纳入 enforcement；外来根会话（如 feishu 创建）维持 fail-open
+  (when a spawn caller carries no marker, the guard walks `parentSession`
+  headers through live agents — any marked ancestor puts the whole
+  TUI-descended tree under enforcement; a foreign root (e.g. a feishu-created
+  session) stays fail-open)
+- **对账（reconcile-projection）**: 用宿主权威后代清单周期性校正 firehose 折叠
+  的 live 视图——同治 burst 欠账与"child 事件不上浮"的计数死 0；校正值只上
+  不下（双账本 max 合并）
+  (periodically correcting the firehose-folded live view against the host's
+  authoritative descendant listing — fixes burst under-counting and the
+  dead-at-zero count of children whose events never bubble up; corrections
+  only move counts up, dual-ledger max-merge)
+- **模型路线（model route）**: child 的生效 LLM 路线——`provider/model` +
+  thinking 等级，派发时合成（frontmatter 基线 + profile pin 覆盖）。与
+  **subagent provider**（传输层，如 `spawn`）是两个概念：旧 UI 曾混用同一
+  `provider` 字段，viewer 现分开呈现（路线行 vs. 行尾 `spawn`）
+  (the child's effective LLM route: `provider/model` + thinking level,
+  composed at dispatch (frontmatter baseline, profile pin override). Distinct
+  from the subagent provider (the transport, e.g. `spawn`) — the old UI
+  conflated the two under one `provider` field; the viewer now names them
+  separately)
+- **Per-agent cap**: agent 文件 frontmatter 的 `maxRounds` 键，覆盖全局
+  `dsh-tui.maxRounds` 对该 agent 派发 children 的适用；解析惰性（首次触顶时
+  label→roster 反查）且 fail-closed 到全局——任何查找失败都落到全局值。
+  `maxAgents` 恒为全局——并发是整棵树的预算，永不 per-agent 化
+  (a `maxRounds` frontmatter key on an agent file overriding the global
+  `dsh-tui.maxRounds` for children dispatched under that agent; resolution is
+  lazy (label→roster lookup at first cap crossing) and fails closed to the
+  global cap. `maxAgents` stays global-only — concurrency is a whole-tree
+  budget, never per-agent)

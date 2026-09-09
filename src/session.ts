@@ -19,7 +19,7 @@ import { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@d
 import { readAppendSystem } from './append-system.ts'
 import { join } from 'node:path'
 import type { AgentView, SubagentDescriptorData } from './dsh-events.ts'
-import { isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor, isTuiPluginInjection } from './dsh-events.ts'
+import { descriptorModelRoute, isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor, isTuiPluginInjection } from './dsh-events.ts'
 import { loadModelProfiles, modelProfilesPath, resolvePinnedProfile } from './model-profiles.ts'
 import { installSpawnToolFence, markTuiSurface } from './subagent-policy.ts'
 import type { PendingPromptView } from './steer-flow.ts'
@@ -449,12 +449,107 @@ export class DshSessionBridge {
     const reconcile = setInterval(() => {
       try {
         this.reconcileChildRounds()
+        // The projection-backed reconciliation rides the same cadence but is
+        // async and self-guarded (never overlaps itself).
+        void this.reconcileLiveWithProjection()
       } catch {
         // A throwing reconcile must never take the process down.
       }
     }, ROUND_RECONCILE_MS)
     reconcile.unref?.()
     this.disposers.push(() => clearInterval(reconcile))
+  }
+
+  /** Whether a `reconcileLiveWithProjection` pass is already in flight. */
+  private projectionReconcileInFlight = false
+
+  /**
+   * Correct the live view against the host's authoritative descendant
+   * listing (`SubagentRuntime.listDescendants`, projection-backed — no
+   * firehose dependency). Two failure shapes this fixes:
+   *
+   * 1. Burst under-count: parallel spawns all pass the guard before their
+   *    events reach the firehose fold, so `getLiveChildren` reads low and
+   *    the maxAgents cap overshoots until events catch up. The authoritative
+   *    `activity: 'running'` list re-adds the missing children (as
+   *    header-discovery-shaped views) within one reconcile tick.
+   * 2. The dead-at-zero counts of children whose own events never bubble to
+   *    this plugin: a discovered-but-eventless child still gets its view
+   *    (rounds then come from `reconcileChildRounds`' log scan, which needs
+   *    the child IN `childSessions` — this pass is what adds it).
+   *
+   * Merge discipline: only ADD missing live children and only SETTLE views
+   * the listing reports inactive-and-one-shot — never remove, never
+   * resurrect a settled continuable (its listing row is `inactive` while it
+   * idles between turns). Runs best-effort: an absent/unshaped subagents
+   * service or a throwing listing is silently skipped.
+   */
+  private async reconcileLiveWithProjection(): Promise<void> {
+    if (this.projectionReconcileInFlight) return
+    const root = this.sessionId
+    if (root === undefined) return
+    // ctx.get (NOT property access) — see the sessions accessor note above.
+    const subagents = this.ctx.get('subagents') as
+      | {
+          listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<
+            readonly {
+              readonly id: SessionId
+              readonly activity: 'running' | 'inactive'
+              readonly mode?: 'one-shot' | 'continuable'
+              readonly label?: string
+              readonly parentId?: SessionId
+            }[]
+          >
+        }
+      | undefined
+    if (subagents?.listDescendants === undefined) return
+    this.projectionReconcileInFlight = true
+    try {
+      const entries = await subagents.listDescendants(root)
+      const rootKey = String(root)
+      let changed = false
+      for (const entry of entries) {
+        const childKey = String(entry.id)
+        if (childKey === rootKey || this.agentViews.has(childKey)) continue
+        // A running child this bridge never discovered (burst, or its events
+        // never bubbled). Register it header-discovery-shaped; descriptor
+        // refinement (label/mode/route) follows from the listing itself.
+        if (entry.activity === 'running') {
+          this.agentViews.set(childKey, {
+            childId: childKey,
+            parentSession: entry.parentId !== undefined ? String(entry.parentId) : undefined,
+            ...(entry.mode !== undefined ? { mode: entry.mode } : {}),
+            ...(entry.label !== undefined ? { label: entry.label } : { label: `subagent ${childKey.slice(0, 8)}` }),
+            startedAt: Date.now(),
+            tokens: 0,
+            rounds: 0,
+            retries: 0,
+            contextTokens: 0,
+          })
+          this.childSessions.add(childKey)
+          this.trackedSessions.add(childKey)
+          changed = true
+        }
+        // Settle a one-shot child the listing reports inactive: its listing
+        // row is authoritative (a missed `turn/end` fold would otherwise
+        // keep it on the live board forever, holding a maxAgents slot).
+        else if (entry.mode === 'one-shot') {
+          const view = this.agentViews.get(childKey)
+          if (view !== undefined && view.outcome === undefined && view.injectedAt === undefined) {
+            this.agentViews.set(childKey, { ...view, outcome: 'completed', endedAt: Date.now() })
+            changed = true
+          }
+        }
+        // Inactive continuable: idling between turns — deliberately left
+        // live. Its turn-end fold (or a later pass) settles it.
+      }
+      if (changed) this.emitLive()
+    } catch {
+      // Projection unavailable or the listing threw — firehose fold remains
+      // the source of truth for this tick.
+    } finally {
+      this.projectionReconcileInFlight = false
+    }
   }
 
   /**
@@ -889,6 +984,21 @@ export class DshSessionBridge {
       if (this.cancelChild(view.childId)) stopped += 1
     }
     return stopped
+  }
+
+  /**
+   * Record that the maxRounds policy hard-stopped one child (the `⏻`
+   * marker): folded into the child's view so every render surface — the
+   * compact line, the picker row, the viewer transcript marker row — shows
+   * the stop as policy, not a failure. Called by the policy's host wiring
+   * after a successful `cancelChild`; a stop that found nothing live is
+   * deliberately not recorded (the child settled on its own in time).
+   */
+  markChildHardStopped(childId: string, round: number, cap: number): void {
+    const view = this.agentViews.get(childId)
+    if (view === undefined) return
+    this.agentViews.set(childId, { ...view, hardStop: { round, cap } })
+    this.emitLive()
   }
 
   /**
@@ -1370,14 +1480,49 @@ export class DshSessionBridge {
       const view = this.agentViews.get(sessionId)
       if (view !== undefined) {
         if (isSubagentDescriptor(event)) {
+          // The continuable descriptor carries the declared child route
+          // (agentProvider/agentModel/agentReasoningEffort); one-shot
+          // descriptors don't — their route lands via `request/header`
+          // below. `view.provider` stays the subagent transport name.
+          const route = descriptorModelRoute(event.data)
+          const routeChanged = (route !== undefined && route !== view.modelRoute)
+            || (event.data.mode === 'continuable'
+              && event.data.agentReasoningEffort !== undefined
+              && view.thinking !== event.data.agentReasoningEffort)
           if (view.provider !== event.data.provider
             || view.mode !== event.data.mode
-            || (event.data.label !== undefined && view.label !== event.data.label)) {
+            || (event.data.label !== undefined && view.label !== event.data.label)
+            || routeChanged) {
             this.agentViews.set(sessionId, {
               ...view,
               provider: event.data.provider,
               mode: event.data.mode,
               ...(event.data.label === undefined ? {} : { label: event.data.label }),
+              ...(route !== undefined ? { modelRoute: route } : {}),
+              ...(event.data.mode === 'continuable' && event.data.agentReasoningEffort !== undefined
+                ? { thinking: event.data.agentReasoningEffort }
+                : {}),
+            })
+            changed = true
+          }
+        } else if (event.type === 'request/header') {
+          // The child's effective LLM call config (provider/model +
+          // reasoning effort) — the ONE-SHOT route source (one-shot
+          // descriptors carry no route; every child writes its first
+          // `request/header` before its first request). Overwrites the
+          // descriptor-derived route on later header changes (/model inside
+          // a continuable child) — the latest snapshot is the truth.
+          const config = (event.data as { header?: { config?: { provider?: unknown; model?: unknown; reasoningEffort?: unknown } } }).header?.config
+          const provider = typeof config?.provider === 'string' ? config.provider : undefined
+          const model = typeof config?.model === 'string' ? config.model : undefined
+          const route = provider !== undefined && model !== undefined ? `${provider}/${model}` : undefined
+          const effort = typeof config?.reasoningEffort === 'string' ? config.reasoningEffort : undefined
+          if ((route !== undefined && route !== view.modelRoute)
+            || (effort !== undefined && effort !== view.thinking)) {
+            this.agentViews.set(sessionId, {
+              ...view,
+              ...(route !== undefined ? { modelRoute: route } : {}),
+              ...(effort !== undefined ? { thinking: effort } : {}),
             })
             changed = true
           }
