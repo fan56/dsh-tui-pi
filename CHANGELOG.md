@@ -4,7 +4,7 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.11.0] - 2026-09-09
 
 ### Added
 - **The maxRounds hard-stop ladder** — the wrap-up injection is now stage 1 of a two-stage ladder, not a plea that can be ignored forever: a child that keeps burning rounds past `maxRoundsGrace` further rounds (default **7**, `dsh-tui.maxRoundsGrace`, `0` = warn-only, the historical behavior) is force-stopped by code — `cancel({kind:'user'}, {keepInbox:true})`, so a one-shot run settles `aborted` with its partial output in the parent's tool result while a continuable child's session and inbox survive for resume. Not an execution: a hard-stopped child is inspectable (Ctrl+G) and resumable, and its stop is reported through a new `⏻` marker on the compact line, the picker row, and a synthetic in-transcript marker row (`⏻ hard-stopped by maxRounds policy (round N + grace exhausted, cap M)`). The wrap-up message now warns the child about the grace window. Per-child caps resolve once and freeze (a mid-run settings edit never moves the goalposts between warn and stop).
