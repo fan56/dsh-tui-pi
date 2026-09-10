@@ -4,6 +4,18 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **dsh closure moved to 0.1.5-rc.1** (dev pins, overrides, peer floors).
+- **Live streaming rides `agent/assistant-stream` frames.** The 0.1.5 firehose delivers settlements only (`assistant/chunk` is gone). Start frames pin the attempt's turn/step; chunk frames drive the transcript typewriter, the think/tool phase machine, the occupancy estimate, and the child rows' live tail. A `streamDelta` replay op keeps the in-flight typewriter across theme/relayout rebuilds.
+- **V3 session artifacts**: log discovery (`SESSION_LOG_FILE_NAMES`, remote-watch candidates) knows `session.v3.jsonl[.zstd]` and prefers the current generation over preserved legacy files.
+- **Persistence seam normalization**: `list()` now returns `{header, revision, sizeBytes}` snapshots (`headerOf()` accepts both shapes); the removed one-shot `inspect` is replaced by `readPersistedSession` draining `open(id, 'read')` handles — /resume previews, /session info and the resume pre-check work on 0.1.5.
+
+### Fixed
+- e2e: default-model marker renamed `deepseek-flash`; the 66 seeder writes V3 headers via the new `encodeMaterialization` signature with audited-clean filler rows; `wait_pane` dumps the pane on timeout; the version assertion is generic semver.
+
+
 ## [2.12.0] - 2026-09-10
 
 ### Added
