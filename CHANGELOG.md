@@ -4,6 +4,17 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.12.0] - 2026-09-10
+
+### Added
+- **Synchronous spawn admission ledger — the maxAgents burst hole is closed.** The guard used to read the bridge's *async discovery* count, so every spawn call inside ONE assistant message read the same stale `live` value: a burst of six background `use_agent` calls defeated a cap of two, all six answering "Started background agent" (found live, session 9c777e88). Every allowance now records an in-flight ledger entry at grant time, and every newly discovered child consumes exactly one, so same-step bursts see each other and deny at the cap exactly. Credited-id reconciliation handles settle/discovery interleaving without phantom slots (a live-count delta would double-hold on a net-zero swap); a 30s TTL releases the slot of a spawn that failed after admission; children the guard never admitted (workflow/ralph provider spawns, foreign surfaces) can only consume a phantom entry — the estimate errs conservative, never above the cap.
+- **The `subagent_status` model-facing board tool** — a read-only live board served straight from the bridge's real-time views and the policy's admission counters: cap headroom, per-child progress (rounds, tokens, context %, last tool, elapsed, retries), recent settles with outcomes, and the admitted/denied/pruned/in-flight counters. One call replaces probing spawn tools or re-deriving state from transcripts; registered host-level, so it is visible on every preset.
+- **The `dsh-tui.registeredOnly` fence (the 15th settings key, default off)** — denies EVERY spawn tool except `use_agent` for TUI-scoped callers, so a child can only ever be backed by a registered agent definition (`~/.dsh/agents/*.md`). This closes the ad-hoc "implement \<task description\>" children that rode the native tools (found live the same day). Foreign surfaces stay fail-open; the fence reason outranks the cap reason; the knob is read live like every other. The denial teaches the equivalents — `background:true` for durable children, `resume`/`fresh` for continuation, parallel calls for fan-out — so the model redirects instead of retrying. `/agents → l` gains a fifth field row and an `r` shortcut; the bundled config skill documents the new key.
+- **Runtime counters in the /agents limits panel** — the panel header shows `live · admitted · denied · pruned · in-flight (since TUI start)` when the policy handle is available.
+
+### Changed
+- The maxAgents denial message now directs the model what to do instead of only naming the cap: call `subagent_status` for the board, record the task with `todo_write` (pending), and dispatch it when a running agent finishes and frees a slot.
+
 ## [2.11.4] - 2026-09-10
 
 ### Changed
