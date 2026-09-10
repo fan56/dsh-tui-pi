@@ -547,6 +547,7 @@ test('the subagent/start backstop cancels a fan-out child when the others fill t
   fireSubagentStart(captured, 'newcomer')
   assert.equal(cancels.length, 1, 'over the cap: the newcomer is pruned')
   assert.equal(cancels[0].kind, 'hook', 'pruned with a hook cause')
+  assert.equal(policy.getStats().pruned, 1, 'the prune is counted in the runtime stats')
   policy.dispose()
 })
 
@@ -853,5 +854,94 @@ test('ancestor walk: a broken chain (absent parent) fails open, cyclic headers t
   assert.equal(captured.guard({ name: 'use_agent', agent: { session: { header: { parentSession: 'cyc_a' } } } }), undefined)
   assert.equal(captured.guard({ name: 'use_agent', agent: { session: {} } }), undefined, 'no header: fail open')
   assert.equal(captured.guard({ name: 'use_agent', agent: undefined }), undefined, 'no agent: fail open')
+  policy.dispose()
+})
+
+// ------------------------------------------ synchronous admission ledger ----
+
+test('a same-step burst cannot overshoot: 6 parallel spawn calls admit exactly maxAgents', () => {
+  // The 2026-09-10 incident: six background use_agent calls inside ONE
+  // assistant message all passed a cap of 2 because the guard read the
+  // bridge's async discovery count (still 0) on every call. The admission
+  // ledger counts each allowance synchronously, so the burst denies itself.
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 2, maxRounds: 50 }) })
+  const policy = applySubagentPolicy(ctx, makeState({ live: [] }))
+  const results = []
+  for (let i = 0; i < 6; i += 1) results.push(captured.guard({ name: 'use_agent', agent: tuiAgent() }))
+  const allowed = results.filter(reason => reason === undefined).length
+  assert.equal(allowed, 2, 'exactly maxAgents admissions inside the burst')
+  assert.equal(results.length - allowed, 4, 'the remaining calls are denied synchronously')
+  for (const denial of results.filter(reason => reason !== undefined)) {
+    assert.ok(denial.includes('Agent limit reached (2/2)'), 'the denial names the effective count')
+    assert.ok(denial.includes('todo_write'), 'the denial directs the model to record the task')
+    assert.ok(denial.includes('subagent_status'), 'the denial points at the live-board tool')
+  }
+  policy.dispose()
+})
+
+test('the ledger reconciles: discovered children consume slots, settled children free them', () => {
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 2, maxRounds: 50 }) })
+  const live = []
+  const policy = applySubagentPolicy(ctx, makeState({ live }))
+
+  // Two admissions while the board is empty — the third call already denies.
+  assert.equal(captured.guard({ name: 'use_agent', agent: tuiAgent() }), undefined)
+  assert.equal(captured.guard({ name: 'use_agent', agent: tuiAgent() }), undefined)
+  assert.equal(typeof captured.guard({ name: 'use_agent', agent: tuiAgent() }), 'string', 'cap held pre-discovery')
+
+  // The bridge discovers both children: they consume the two in-flight
+  // entries, so the estimate must stay exactly 2 — no phantom slot appears.
+  live.push({ childId: 'a', label: 'a' }, { childId: 'b', label: 'b' })
+  assert.equal(typeof captured.guard({ name: 'use_agent', agent: tuiAgent() }), 'string', 'still at cap post-discovery')
+
+  // One child settles: its slot frees.
+  live.splice(0, 1)
+  assert.equal(captured.guard({ name: 'use_agent', agent: tuiAgent() }), undefined, 'a settled child frees its slot')
+  assert.equal(typeof captured.guard({ name: 'use_agent', agent: tuiAgent() }), 'string', 'the freed slot is taken again')
+  policy.dispose()
+})
+
+test('settle and discovery interleaving never leaks a phantom slot', () => {
+  // The delta-counting trap: one child settles while another is discovered
+  // BETWEEN two guard calls — live length is unchanged, but one in-flight
+  // entry must still be consumed. The credited-id ledger gets this right
+  // where a live-count-delta reconciliation would double-hold the slot.
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 2, maxRounds: 50 }) })
+  const live = []
+  const policy = applySubagentPolicy(ctx, makeState({ live }))
+
+  assert.equal(captured.guard({ name: 'use_agent', agent: tuiAgent() }), undefined, 'A admitted')
+  live.push({ childId: 'A', label: 'A' })
+  assert.equal(captured.guard({ name: 'use_agent', agent: tuiAgent() }), undefined, 'A discovered (entry consumed); B admitted')
+  // Between calls: A settles off the board AND B is discovered (net delta 0).
+  live.splice(0, 1)
+  live.push({ childId: 'B', label: 'B' })
+  assert.equal(
+    captured.guard({ name: 'use_agent', agent: tuiAgent() }),
+    undefined,
+    'exactly one slot is in use (B) — no phantom in-flight slot survives the swap',
+  )
+  assert.equal(typeof captured.guard({ name: 'use_agent', agent: tuiAgent() }), 'string', 'the second slot denies again once taken')
+  policy.dispose()
+})
+
+test('an in-flight admission expires: a spawn that never materializes releases its slot', (t) => {
+  t.mock.timers.enable({ apis: ['Date'] })
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 1, maxRounds: 50 }) })
+  const policy = applySubagentPolicy(ctx, makeState({ live: [] }))
+  assert.equal(captured.guard({ name: 'use_agent', agent: tuiAgent() }), undefined, 'admitted')
+  assert.equal(typeof captured.guard({ name: 'use_agent', agent: tuiAgent() }), 'string', 'cap 1: the in-flight admission holds the slot')
+  t.mock.timers.tick(60_000)
+  assert.equal(captured.guard({ name: 'use_agent', agent: tuiAgent() }), undefined, 'the stale admission expired; the slot is back')
+  policy.dispose()
+})
+
+test('getStats reports the runtime counters', () => {
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 2, maxRounds: 50 }) })
+  const live = [{ childId: 'x', label: 'x' }]
+  const policy = applySubagentPolicy(ctx, makeState({ live }))
+  captured.guard({ name: 'use_agent', agent: tuiAgent() }) // allowed → live 1 + in-flight 1 = cap
+  captured.guard({ name: 'use_agent', agent: tuiAgent() }) // denied
+  assert.deepEqual(policy.getStats(), { live: 1, allowed: 1, denied: 1, pruned: 0, inFlight: 1 })
   policy.dispose()
 })

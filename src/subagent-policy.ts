@@ -5,15 +5,23 @@
  * decision point — no watcher needed (the /settings browser hot-applies, so
  * the next guard execution / turn count reads the new value):
  * - `maxAgents` caps concurrent live children. A `tools.guard` registered on
- *   the plugin root ctx denies model-facing spawn tools once the bridge's
- *   live child count meets the cap. The live-child COUNT covers every child
- *   in the process, but the DENIAL scope is "belongs to this TUI": a caller
- *   carrying the surface marker, or any live descendant of a marked root
- *   (the ancestor walk closes the host-created-children hole). Foreign
- *   roots fail open. The workflow/ralph fan-out bypasses the tool pipeline
- *   (its worker thread spawns through the subagent provider directly), so a
- *   `subagent/start` listener prunes any newcomer that slips past the guard
- *   — same ownership scope, decided by the child's parent ancestry.
+ *   the plugin root ctx denies model-facing spawn tools once the EFFECTIVE
+ *   child count meets the cap. The count is synchronous at the spawn
+ *   decision: discovered live children plus an admission ledger of
+ *   allowed-but-not-yet-discovered spawns, so a burst of parallel spawn
+ *   calls inside one assistant message cannot overshoot while the bridge's
+ *   firehose discovery catches up (each allowance enters the ledger the
+ *   moment it is granted; each newly discovered child consumes one entry).
+ *   The count covers every child in the process, but the DENIAL scope is
+ *   "belongs to this TUI": a caller carrying the surface marker, or any
+ *   live descendant of a marked root (the ancestor walk closes the
+ *   host-created-children hole). Foreign roots fail open. A denial tells
+ *   the model to record the task in its todo list and run it once a slot
+ *   frees, instead of retrying the spawn. The workflow/ralph fan-out
+ *   bypasses the tool pipeline (its worker thread spawns through the
+ *   subagent provider directly), so a `subagent/start` listener prunes any
+ *   newcomer that slips past the guard — same ownership scope, decided by
+ *   the child's parent ancestry.
  * - `disableSubagent` disables the plain native `subagent` tool: its calls
  *   are denied for every TUI-scoped caller (and it is hidden from the main
  *   agent's catalog), so delegation goes through registered agent
@@ -219,6 +227,17 @@ function callerBelongsToTui(ctx: Context, agent: unknown): boolean {
 const ANCESTOR_WALK_MAX_DEPTH = 4
 
 /**
+ * How long an allowed-but-never-discovered admission may hold its slot.
+ * Discovery normally lands within one bridge reconcile tick (600ms); the
+ * TTL only releases the slot of a spawn that errored after the guard
+ * allowed it, so one failed spawn cannot shrink the budget forever.
+ */
+const INFLIGHT_TTL_MS = 30_000
+
+/** Credited-id slack over the live board before stale ids are pruned. */
+const CREDITED_SLACK = 64
+
+/**
  * The wrap-up message injected into a child that reached `maxRounds`.
  * English and directive on purpose: it is a policy instruction to the child
  * LLM, and a soft "please summarize" (the earlier one-line Chinese request)
@@ -290,6 +309,24 @@ export interface HardStopRecord {
   readonly grace: number
 }
 
+/**
+ * Cumulative subagent-runtime counters since the policy was installed (this
+ * TUI process), served to the model through the `subagent_status` tool and
+ * to the operator through the /agents limits panel.
+ */
+export interface SubagentPolicyStats {
+  /** Children currently on the bridge's live board (settled excluded). */
+  live: number
+  /** Spawn-tool calls the guard admitted. */
+  allowed: number
+  /** Spawn-tool calls denied at the `maxAgents` cap. */
+  denied: number
+  /** Fan-out children pruned by the `subagent/start` backstop. */
+  pruned: number
+  /** Allowed-but-undiscovered spawns currently holding an admission slot. */
+  inFlight: number
+}
+
 /** The running policy: the bridge's `onRoundCount` sink plus the teardown. */
 export interface SubagentPolicy {
   /** Called by the bridge whenever one child produced another assistant message. */
@@ -299,6 +336,8 @@ export interface SubagentPolicy {
    * force-stopped child shows its `⏻` marker everywhere the view renders.
    */
   onHardStop?(record: HardStopRecord): void
+  /** Snapshot of the runtime counters (live / allowed / denied / pruned / inFlight). */
+  getStats(): SubagentPolicyStats
   /** Unwind the guard and event listeners. */
   dispose(): void
 }
@@ -328,14 +367,66 @@ export function applySubagentPolicy(
   /** Set by dispose: a pending deferred injection must not fire afterwards. */
   let disposed = false
 
-  // maxAgents guard: the live-child count is global (the bridge counts every
-  // child it discovers), but the DENIAL — like the disableSubagent fence —
-  // only fires for agents this bridge created or resumed (the surface
-  // marker; unmarked callers fail open). Zero disables the guard.
-  // The cap is approximate, not a hard admission lock: a burst of parallel
-  // spawn calls can briefly overshoot before the bridge's firehose discovery
-  // counts the newcomers — the subagent/start backstop below prunes the
-  // overshoot, and the next spawn's guard reads the caught-up count.
+  // ---- synchronous admission ledger -------------------------------------
+  //
+  // The maxAgents admission decision must not depend on discovery timing.
+  // Every allowance is recorded here the moment it is granted; every child
+  // the bridge later discovers consumes exactly one record (it is then
+  // counted in `live` directly). The next guard execution therefore always
+  // reads `live.length + inFlight.length`, so a burst of parallel spawn
+  // calls inside ONE assistant message sees itself: with cap 2 the calls
+  // read 0+0, 0+1, then deny at 0+2 — never six "Started" results.
+  const stats: SubagentPolicyStats = { live: 0, allowed: 0, denied: 0, pruned: 0, inFlight: 0 }
+  /** Live child ids already folded into the ledger (each consumed one in-flight). */
+  const creditedIds = new Set<string>()
+  /** Admission timestamps of allowed spawns not yet discovered in `getLive()`. */
+  const inFlightAt: number[] = []
+
+  /**
+   * Fold the bridge's current live board into the admission ledger and
+   * return the effective child count the `maxAgents` cap compares against:
+   * discovered children plus allowed-but-undiscovered admissions.
+   *
+   * Each live child absent from `creditedIds` is a fresh discovery and
+   * consumes exactly one in-flight entry. A child the guard never admitted
+   * (workflow/ralph provider spawns, foreign surfaces) consumes a phantom
+   * entry at worst — shifting an empty list is a no-op — which can only
+   * make the estimate MORE conservative, never higher. Entries older than
+   * {@link INFLIGHT_TTL_MS} expire so a spawn that failed after the guard
+   * allowed it releases its slot instead of holding it forever.
+   */
+  function reconcileAdmission(live: readonly { readonly childId: string }[]): number {
+    let discovered = 0
+    for (const view of live) {
+      const id = view.childId
+      if (typeof id !== 'string' || id === '') continue
+      if (!creditedIds.has(id)) {
+        creditedIds.add(id)
+        discovered += 1
+      }
+    }
+    for (let i = 0; i < discovered; i += 1) inFlightAt.shift()
+    const now = Date.now()
+    while (inFlightAt.length > 0 && now - inFlightAt[0] > INFLIGHT_TTL_MS) inFlightAt.shift()
+    if (creditedIds.size > live.length + CREDITED_SLACK) {
+      const liveIds = new Set(live.map(view => view.childId))
+      for (const id of creditedIds) {
+        if (!liveIds.has(id)) creditedIds.delete(id)
+      }
+    }
+    stats.inFlight = inFlightAt.length
+    stats.live = live.length
+    return live.length + inFlightAt.length
+  }
+
+  // maxAgents guard: the effective child count is global (the bridge counts
+  // every child it discovers; the admission ledger adds the
+  // allowed-but-undiscovered spawns so a same-step burst cannot overshoot),
+  // but the DENIAL — like the disableSubagent fence — only fires for agents
+  // this bridge created or resumed (the surface marker; unmarked callers
+  // fail open). Zero disables the guard. The subagent/start backstop below
+  // still covers the workflow/ralph provider path, which never reaches this
+  // guard at all.
   //
   // disableSubagent fence: the plain native `subagent` tool is denied —
   // but ONLY for agents this bridge created or resumed (the surface marker
@@ -368,9 +459,21 @@ export function applySubagentPolicy(
       const maxAgents = readSubagentLimits(ctx).maxAgents
       if (maxAgents <= 0) return undefined
       const live = state.getLive()
-      if (live.length < maxAgents) return undefined
+      // SYNCHRONOUS admission: the effective count folds in the ledger of
+      // spawns this guard already allowed but the bridge has not discovered
+      // yet — the burst window that let six parallel use_agent calls through
+      // a cap of two (2026-09-10 session 9c777e88).
+      const effective = reconcileAdmission(live)
+      if (effective < maxAgents) {
+        inFlightAt.push(Date.now())
+        stats.allowed += 1
+        return undefined
+      }
+      stats.denied += 1
       const running = live.map((agent) => agent.label).join(', ')
-      return `Agent limit reached (${live.length}/${maxAgents}): ${running} still running — wait for them to finish before spawning more.`
+      return `Agent limit reached (${effective}/${maxAgents}): ${running} still running — do NOT retry the spawn now. `
+        + 'Call subagent_status for the live board, record this task in the todo list (todo_write, status pending), '
+        + 'and execute it after a running agent finishes and frees a slot.'
     }))
   }
 
@@ -405,7 +508,10 @@ export function applySubagentPolicy(
       ? undefined
       : (ctx.agents.get(SessionId(parentSession)) as WalkableAgent | undefined)
     if (parent === undefined || !callerBelongsToTui(ctx, parent)) return
-    ctx.agents.get(info.id)?.cancel({
+    const newcomerAgent = ctx.agents.get(info.id)
+    if (newcomerAgent === undefined) return
+    stats.pruned += 1
+    newcomerAgent.cancel({
       kind: 'hook',
       reason: 'over the dsh-tui maxAgents policy cap — prune a fan-out child',
     })
@@ -554,6 +660,13 @@ export function applySubagentPolicy(
     },
     set onHardStop(sink: ((record: HardStopRecord) => void) | undefined) {
       onHardStopSink = sink
+    },
+    getStats(): SubagentPolicyStats {
+      return {
+        ...stats,
+        live: state.getLive().length,
+        inFlight: inFlightAt.length,
+      }
     },
     dispose() {
       disposed = true

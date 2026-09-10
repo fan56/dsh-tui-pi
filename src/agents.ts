@@ -51,6 +51,7 @@ import {
   type AgentRuntimeValues,
 } from './agent-runtime.ts'
 import { EditField, type ParseOutcome } from './settings.ts'
+import type { SubagentPolicyStats } from './subagent-policy.ts'
 import { readSubagentLimits, writeSubagentLimit } from './theme-settings.ts'
 import {
   autoColumns,
@@ -247,6 +248,9 @@ async function pickAgentModel(
  * Open the `/agents` manager. Resolves with a summary text when the user
  * made changes (or seeded agents) and exits, or `undefined` when nothing
  * changed. `preselect` jumps straight into one agent's fields window.
+ * `getStats` optionally feeds the limits panel the live subagent-runtime
+ * counters (the policy's admission snapshot) — omitted when the caller has
+ * no policy handle (tests, foreign hosts).
  */
 export async function openAgentManager(
   ctx: Context,
@@ -254,6 +258,7 @@ export async function openAgentManager(
   theme: TuiTheme,
   restoreFocus: () => void,
   preselect?: string,
+  getStats?: () => SubagentPolicyStats,
 ): Promise<string | undefined> {
   const dir = agentsDir()
   migrateLegacyAgentsDir(dir)
@@ -501,6 +506,7 @@ export async function openAgentManager(
      */
     const showLimits = (): void => {
       const limits = readSubagentLimits(ctx)
+      const stats = getStats?.()
       const fields = [
         { key: 'maxAgents', value: `${limits.maxAgents} · concurrent live children (0 = unlimited)`, editable: true },
         { key: 'maxRounds', value: `${limits.maxRounds} · assistant messages before wrap-up (0 = unlimited)`, editable: true },
@@ -509,6 +515,10 @@ export async function openAgentManager(
       ]
       const content: string[] = [
         'subagent delegation knobs — read live at every spawn / turn decision',
+        ...(stats !== undefined
+          ? [`runtime: ${stats.live} live · ${stats.allowed} admitted · ${stats.denied} denied`
+              + ` · ${stats.pruned} pruned · ${stats.inFlight} in-flight (since TUI start)`]
+          : []),
         ...(agents.length === 0
           ? [`no agents in ${dir} yet — drop a markdown file to define one`, ...(broken.length > 0 ? [`${broken.length} broken file(s) ignored`] : [])]
           : []),

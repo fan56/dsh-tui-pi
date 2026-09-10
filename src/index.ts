@@ -93,6 +93,7 @@ import { openRepairConfirmDialog } from './repair-dialog.ts'
 import { WriterLockedError, projectKeyFor } from './writer-lock.ts'
 import { emitNotice } from './notice-bridge.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
+import { installSubagentStatusTool } from './subagent-status-tool.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
 import { openHistoryBrowser } from './history.ts'
 import { openForkAtTurnDialog } from './history-fork.ts'
@@ -841,6 +842,15 @@ export function apply(ctx: Context): void {
     // unset by definition).
     subagentPolicy.onHardStop = ({ childId, round, cap }) => bridge.markChildHardStopped(childId, round, cap)
 
+    // subagent_status: the model-facing live board — served from the same
+    // bridge views and policy counters the TUI renders, so the model never
+    // has to probe spawn tools or re-derive state to plan its fan-outs. The
+    // maxAgents denial message points here.
+    ctx.effect(() => installSubagentStatusTool(ctx, {
+      views: () => bridge.getAgentViews(),
+      stats: () => subagentPolicy.getStats(),
+    }) ?? (() => {}), 'dsh-tui-pi:subagent_status')
+
     // Ask-user-question provider: the upstream `dsh-tool-ask-user` tool calls
     // `ctx.userQuestions.ask()` while its tool call is pending, and the
     // provider returns a canonical `{ answers: [{ id, selected, custom? }] }`
@@ -1051,6 +1061,7 @@ export function apply(ctx: Context): void {
       const result = await openAgentManager(
         ctx, ui.tui, ui.theme, refocusEditor,
         trimmed === '' ? undefined : trimmed,
+        () => subagentPolicy.getStats(),
       )
       if (result === undefined) return { kind: 'success' as const, text: 'Agents unchanged.' }
       return { kind: 'success' as const, text: result }
