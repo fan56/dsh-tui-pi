@@ -64,6 +64,7 @@ interface StreamingState {
 type ReplayOp =
   | { kind: 'welcome' }
   | { kind: 'event'; event: SessionEvent }
+  | { kind: 'streamDelta'; turn: number; step: number; chunk: { type: string; text?: string } }
   | {
     kind: 'promptEcho'
     text: string
@@ -213,9 +214,6 @@ export class TranscriptRenderer {
       case 'user/message':
         this.dropStreaming()
         this.renderUserMessage(event)
-        break
-      case 'assistant/chunk':
-        this.applyChunk(event.data.turn, event.data.step, event.data.chunk)
         break
       case 'assistant/message':
         this.finalizeStreaming()
@@ -527,6 +525,13 @@ export class TranscriptRenderer {
       case 'event':
         this.applyEvent(op.event)
         break
+      case 'streamDelta':
+        // Mirror applyStreamChunk's own push: clear() emptied the buffer, so
+        // each re-applied op must re-register or a second rebuild (relayout
+        // after a theme switch) would lose the in-flight stream.
+        this.replay.push({ kind: 'streamDelta', turn: op.turn, step: op.step, chunk: op.chunk })
+        this.growStreaming(op.turn, op.step, op.chunk)
+        break
       case 'promptEcho':
         // Mirror each render path's own push so repeated rebuilds stay 1:1:
         // a pending echo re-registers its entry (fresh Text component) so a
@@ -651,7 +656,18 @@ export class TranscriptRenderer {
 
   // ------------------------------------------------------------- streaming --
 
-  private applyChunk(turn: number, step: number, chunk: { type: string; text?: string }): void {
+  /**
+   * One live streaming delta, driven by the bridge's `agent/assistant-stream`
+   * chunk frames (dsh 0.1.5-rc.1 — the firehose delivers settlements only).
+   * Grows the in-flight typewriter text; a turn/step change starts a new
+   * streaming bubble.
+   */
+  applyStreamChunk(turn: number, step: number, chunk: { type: string; text?: string }): void {
+    this.replay.push({ kind: 'streamDelta', turn, step, chunk })
+    this.growStreaming(turn, step, chunk)
+  }
+
+  private growStreaming(turn: number, step: number, chunk: { type: string; text?: string }): void {
     if (chunk.type !== 'text-delta') return
     const delta = chunk.text ?? ''
     if (delta === '') return

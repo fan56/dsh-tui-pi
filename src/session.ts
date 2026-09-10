@@ -11,12 +11,13 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, type ReasoningEffortId, type TokenUsage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ReasoningEffortId, type StreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
+import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentView, SubagentDescriptorData } from './dsh-events.ts'
 import { descriptorModelRoute, isAgentEnd, isAgentStart, isDcpCompactionNotice, isLlmRetry, isSubagentDescriptor, isTuiPluginInjection } from './dsh-events.ts'
@@ -54,6 +55,14 @@ function installAppendSystem(agentCtx: Context): void {
 export interface BridgeCallbacks {
   /** One session-log event for the bridge's session, in log order. */
   onEvent(event: SessionEvent): void
+  /**
+   * One live streaming delta of the bridge's session, delivered as an
+   * `agent/assistant-stream` chunk frame (dsh 0.1.5-rc.1 moved the deltas off
+   * the `session/event` firehose; the log only records settlements). The
+   * turn/step come from the attempt's start frame. Drives the transcript's
+   * typewriter and the think/tool phase machine between settlements.
+   */
+  onStreamDelta?(turn: number, step: number, chunk: StreamChunk): void
   /** Whole-agent lifecycle transition. */
   onStatus(status: 'idle' | 'running'): void
   /**
@@ -363,6 +372,12 @@ export class DshSessionBridge {
   private readonly trackedSessions = new Set<string>()
   /** `${runId}:${seq}` → childId, for `tool-workflow/agent-end` pairing. */
   private readonly runSeqToChild = new Map<string, string>()
+  /**
+   * Session id → the open attempt's turn/step, pinned by `agent/assistant-stream`
+   * start frames so chunk frames (which carry no turn/step) can drive the same
+   * fold paths the old firehose `assistant/chunk` events did. Cleared on end.
+   */
+  private readonly openAttempts = new Map<string, { turn: number; step: number }>()
 
   constructor(ctx: Context, callbacks: BridgeCallbacks, options: {
     remoteTailOptions?: { intervalMs?: number; decode?(file: string): Promise<string> }
@@ -434,6 +449,20 @@ export class DshSessionBridge {
       if (this.sessionId !== undefined && session.id === this.sessionId) {
         this.applyEvent(event)
         this.callbacks.onEvent(event)
+      }
+    }))
+    // dsh 0.1.5-rc.1: the incremental streaming deltas left the firehose (it
+    // now delivers settlements only) and moved to per-agent
+    // `agent/assistant-stream` frames — start pins the attempt's turn/step,
+    // chunk frames carry the raw deltas, end closes the attempt. Root-scope
+    // listening sees every agent; frames route by session id: the bridge's
+    // own session drives the transcript/typewriter + occupancy estimate,
+    // tracked children fold into the live rows' content tail.
+    this.disposers.push(ctx.on('agent/assistant-stream', ({ agent, frame }: { agent: Agent; frame: AssistantStreamFrame }) => {
+      try {
+        this.onStreamFrame(String(agent.id), frame)
+      } catch {
+        // A malformed frame must never take the bridge down.
       }
     }))
     this.disposers.push(ctx.on('agent/status', ({ agent, status }: { agent: { id: string }; status: 'idle' | 'running' }) => {
@@ -745,7 +774,29 @@ export class DshSessionBridge {
     // Same derivation as acquireSessionLock — no cwd, no view.
     const cwd = await this.headerCwdOf(sessionId)
     if (cwd === undefined) throw new Error(`cannot locate the log of ${sessionId} for read-only viewing`)
-    const file = join(sessionLogRoot(), projectKeyFor(cwd), sessionId, 'session.jsonl.zstd')
+    const dir = join(sessionLogRoot(), projectKeyFor(cwd), sessionId)
+    // The artifact name carries the format generation since the V3 format
+    // (session.v3.jsonl[.zstd]); legacy sessions keep session.jsonl[.zstd].
+    // Prefer the current generation, compressed over raw; when nothing is
+    // on disk yet, fall back to the legacy canonical name — the tail
+    // tolerates a not-yet-existing file.
+    const candidates = [
+      'session.v3.jsonl.zstd',
+      'session.v3.jsonl',
+      'session.jsonl.zstd',
+      'session.jsonl',
+    ]
+    let file = join(dir, 'session.jsonl.zstd')
+    for (const name of candidates) {
+      const candidate = join(dir, name)
+      try {
+        statSync(candidate)
+        file = candidate
+        break
+      } catch {
+        // Not this name — try the next one.
+      }
+    }
     // The firehose gate uses this id; harmless cross-process (nothing in
     // THIS process will publish for it) and required so a later local agent
     // for the SAME id (post-switch) re-binds cleanly.
@@ -1309,9 +1360,9 @@ export class DshSessionBridge {
    * Replay a persisted session log into the transcript and stats — the second
    * half of a resume (call after `resume()`). Stats are rebuilt from zero so
    * the footer reflects the resumed session only; replaying the same log
-   * twice is idempotent. `assistant/chunk` events are skipped: the finalized
-   * `assistant/message` carries the full text, and replaying chunks would
-   * re-run the quadratic streaming assembly for every historical step.
+   * twice is idempotent. V3 logs carry no streaming chunks at all — the
+   * finalized `assistant/message` holds the full text (and its embedded
+   * stream, which replay never needs).
    */
   replay(events: readonly SessionEvent[]): void {
     this.stats.inputTokens = 0
@@ -1327,7 +1378,6 @@ export class DshSessionBridge {
     this.pendingTokens = 0
     const sessionId = this.sessionId
     for (const event of events) {
-      if (event.type === 'assistant/chunk') continue
       // Replay feeds the parent log only — fold its persisted workflow events
       // through the same tracking logic so the agents view is rebuilt; child
       // live events arrive via the subscription after resume.
@@ -1388,20 +1438,11 @@ export class DshSessionBridge {
         this.stats.contextTokens = this.contextTokens()
         break
       }
-      case 'assistant/chunk': {
-        // Streamed output of the in-flight request — the next request's
-        // context grows with it, so the occupancy follows the stream live.
-        // Both text and reasoning deltas are priced: usage.outputTokens
-        // includes reasoning tokens at snapshot time, so the live estimate
-        // must count reasoning too to match that accounting (the next billed
-        // assistant/message corrects the final value anyway).
-        const chunk = (event.data as { chunk?: { type?: string; text?: string } }).chunk
-        if ((chunk?.type === 'text-delta' || chunk?.type === 'reasoning-delta') && chunk.text !== '') {
-          this.pendingTokens += estimateTextTokens(chunk.text ?? '')
-          this.stats.contextTokens = this.contextTokens()
-        }
+      case 'assistant/attempt':
+        // A settled attempt that produced no surface message (failed, retried,
+        // cancelled). No transcript, stats, or occupancy effect — the next
+        // billed assistant/message carries the step's real usage.
         break
-      }
       case 'tool/result':
         // Tool results enter the next request — priced into the occupancy.
         this.pendingTokens += estimateToolResultTokens(event.data)
@@ -1414,6 +1455,70 @@ export class DshSessionBridge {
         break
       default:
         break
+    }
+  }
+
+  /**
+   * One `agent/assistant-stream` frame of any session in the process (dsh
+   * 0.1.5-rc.1 moved the live deltas off the firehose). Chunk frames carry no
+   * turn/step — the attempt's start frame pinned them in {@link openAttempts}.
+   */
+  private onStreamFrame(sessionKey: string, frame: AssistantStreamFrame): void {
+    if (frame.type === 'start') {
+      this.openAttempts.set(sessionKey, { turn: frame.turn, step: frame.step })
+      return
+    }
+    if (frame.type === 'end') {
+      this.openAttempts.delete(sessionKey)
+      return
+    }
+    const chunk = frame.chunk
+    if ((chunk.type !== 'text-delta' && chunk.type !== 'reasoning-delta') || (chunk.text ?? '') === '') {
+      return
+    }
+    const delta = chunk.text ?? ''
+    if (this.sessionId !== undefined && sessionKey === String(this.sessionId)) {
+      // The bridge's own session: the occupancy estimate follows the stream
+      // (both text and reasoning are priced — usage.outputTokens includes
+      // reasoning tokens at snapshot time), and the transcript's typewriter
+      // plus the think/tool phase machine stay live between settlements.
+      const attempt = this.openAttempts.get(sessionKey)
+      const turn = attempt?.turn ?? 0
+      const step = attempt?.step ?? 0
+      this.pendingTokens += estimateTextTokens(delta)
+      this.stats.contextTokens = this.contextTokens()
+      this.callbacks.onStreamDelta?.(turn, step, chunk)
+      return
+    }
+    if (this.trackedSessions.has(sessionKey) && this.childSessions.has(sessionKey)) {
+      this.foldChildStreamDelta(sessionKey, delta)
+    }
+  }
+
+  /**
+   * Fold one streaming delta of a tracked CHILD into the live row: the
+   * content tail (text AND reasoning — never a tool name, always the child's
+   * own output) and the pending-occupancy estimate. The assembled
+   * `assistant/message` later replaces the tail with the authoritative last
+   * line and resets the estimate against real usage.
+   */
+  private foldChildStreamDelta(sessionId: string, delta: string): void {
+    const view = this.agentViews.get(sessionId)
+    if (view === undefined) return
+    const buffer = bumpChildStream(this.childStreams.get(sessionId) ?? '', delta)
+    this.childStreams.set(sessionId, buffer)
+    const lastLine = lastBufferLine(buffer)
+    this.childPending.set(sessionId, (this.childPending.get(sessionId) ?? 0) + estimateTextTokens(delta))
+    const contextTokens = this.childContextTokens(sessionId)
+    const lineChanged = lastLine !== undefined && lastLine !== view.lastLine
+    const contextChanged = contextTokens !== view.contextTokens
+    if (lineChanged || contextChanged) {
+      this.agentViews.set(sessionId, {
+        ...view,
+        ...(lineChanged ? { lastLine } : {}),
+        ...(contextChanged ? { contextTokens } : {}),
+      })
+      this.emitLive()
     }
   }
 
@@ -1603,40 +1708,6 @@ export class DshSessionBridge {
             changed = true
           }
           this.childStreams.delete(sessionId)
-        } else if (event.type === 'assistant/chunk') {
-          // Live content tail: fold the child's streaming deltas (text AND
-          // reasoning) so the compact row's last line refreshes while the
-          // child works — never a tool name, always its own output. The
-          // assembled assistant/message later replaces it with the
-          // authoritative last line.
-          const chunk = (event.data as { chunk?: { type?: string; text?: string } }).chunk
-          if (chunk?.type === 'text-delta' || chunk?.type === 'reasoning-delta') {
-            const delta = chunk.text ?? ''
-            if (delta !== '') {
-              const buffer = bumpChildStream(this.childStreams.get(sessionId) ?? '', delta)
-              this.childStreams.set(sessionId, buffer)
-              const lastLine = lastBufferLine(buffer)
-              // Streamed output (text AND reasoning) grows the child's current
-              // context too — usage.outputTokens includes reasoning tokens at
-              // snapshot, so the live estimate prices both; the compact X/Y
-              // follows live.
-              const wasPending = this.childPending.get(sessionId) ?? 0
-              const lineChanged = lastLine !== undefined && lastLine !== view.lastLine
-              // The outer guard already narrowed to text/reasoning deltas, so
-              // this branch is unconditional.
-              this.childPending.set(sessionId, wasPending + estimateTextTokens(delta))
-              const contextTokens = this.childContextTokens(sessionId)
-              const contextChanged = contextTokens !== view.contextTokens
-              if (lineChanged || contextChanged) {
-                this.agentViews.set(sessionId, {
-                  ...view,
-                  ...(lineChanged ? { lastLine } : {}),
-                  ...(contextChanged ? { contextTokens } : {}),
-                })
-                changed = true
-              }
-            }
-          }
         } else if (event.type === 'user/message') {
           // The child's own prompts/injects enter its next request — the
           // occupancy follows (the content tail is never touched here). A

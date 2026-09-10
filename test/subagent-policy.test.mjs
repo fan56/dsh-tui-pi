@@ -386,7 +386,6 @@ test('onRoundCount lands the wrap-up splice after the publication window closes'
   const { Context } = await import('@deepseek-ai/cordis')
   const { default: SessionStore, SessionId } = await import('@deepseek-ai/dsh-session')
   const { createUserMessage, createMessage } = await import('@deepseek-ai/dsh-llm')
-  const { Inbox } = await import('@deepseek-ai/dsh-agent')
 
   const ctx = new Context()
   await ctx.plugin(SessionStore)
@@ -394,9 +393,20 @@ test('onRoundCount lands the wrap-up splice after the publication window closes'
     describe: () => [{ ns: 'dsh-tui', value: { maxAgents: 4, maxRounds: 1, disableSubagent: false } }],
   })
   const session = ctx.sessions.create(SessionId('wrap-child'), { meta: { cwd: process.cwd() } })
-  // A real Inbox over the mounted session: followup rides the genuine
-  // splice → durable append path, not a stub.
-  const inbox = new Inbox(session, { inserted() {}, discarded() {}, claimed() {} })
+  // A real durable inbox splice over the mounted session: dsh 0.1.5-rc.1
+  // removed the constructible `Inbox` runtime class (the interface is
+  // agent-owned now), so this stands in with the same durable append the
+  // driver records — followup rides a genuine `agent/inbox/spliced` append,
+  // not a stub, and the publication-window reentrancy guard stays real.
+  const pendingTurn = []
+  const inbox = {
+    append: (target, message) => {
+      if (target === 'next-turn') pendingTurn.push(message)
+      session.append('agent/inbox/spliced', { target, start: 0, inserted: [message] })
+    },
+    get hasPending() { return pendingTurn.length > 0 },
+    get nextTurn() { return pendingTurn },
+  }
   const agent = {
     followup: (message) => inbox.append('next-turn', message),
   }

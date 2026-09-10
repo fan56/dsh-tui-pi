@@ -221,11 +221,22 @@ export function sessionStoreRoot(): string {
 }
 
 /**
- * Physical log file names the jsonl backend writes (`logSuffix`). Single
- * source of truth for every walk of the store — the /resume mtime walk
- * (src/sessions.ts) imports this; two private copies already drifted once.
+ * Physical log file names the jsonl backend writes, across format
+ * generations: the host names the artifact after its format generation
+ * (`session.v<NNN>.jsonl` since the V3 format, `session.jsonl` for the
+ * legacy V0 era) plus the compression suffix. Walks that pick ONE file
+ * prefer the CURRENT generation over a preserved legacy one — keep the v3
+ * names LAST so `locateSessionLog`'s `.slice().reverse()` tries them
+ * first. Single source of truth for every walk of the store — the /resume
+ * mtime walk (src/sessions.ts) imports this; two private copies already
+ * drifted once.
  */
-export const SESSION_LOG_FILE_NAMES = ['session.jsonl', 'session.jsonl.zstd'] as const
+export const SESSION_LOG_FILE_NAMES = [
+  'session.jsonl',
+  'session.jsonl.zstd',
+  'session.v3.jsonl',
+  'session.v3.jsonl.zstd',
+] as const
 
 /**
  * Walk `<root>/<project>/<sessionId>/` and stat each session's log. Only

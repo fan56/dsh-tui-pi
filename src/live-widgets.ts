@@ -271,32 +271,14 @@ export class LiveWidgets {
 
   /**
    * One parent-session session event, driving the think/tool phase machine:
-   * a reasoning delta opens/feeds the think panel; a tool call refreshes the
-   * tool panel (pending, replacing any tracked tool) — except delegation
-   * spawn tools (`use_agent`/`subagent`/`workflow`/`ralph`), whose children
-   * already render in the running-agent lines below the editor and never
-   * open a tool block; a matching result settles the tracked tool; a text
-   * delta, an assembled assistant message, a user message or a turn end
-   * hides the finished phases. Called for every event AND for replayed
-   * history (a resumed session replays its tool calls; its final turn/end
-   * leaves the panels hidden).
+   * an assembled assistant message, a tool call, a user message or a turn end
+   * drives the phase transitions (see {@link applyStreamDelta} for the
+   * streaming deltas). Called for every event AND for replayed history (a
+   * resumed session replays its tool calls; its final turn/end leaves the
+   * panels hidden).
    */
   applyEvent(event: SessionEvent): void {
     switch (event.type) {
-      case 'assistant/chunk': {
-        const chunk = event.data.chunk
-        if (chunk.type === 'reasoning-delta') {
-          if ((chunk.text ?? '') !== '') {
-            this.thinkPanel.feed(chunk.text)
-            this.toolPanel.hide()
-          }
-        } else if (chunk.type === 'text-delta' && (chunk.text ?? '') !== '') {
-          // The answer streams into the transcript — the panels are done.
-          this.thinkPanel.hide()
-          this.toolPanel.hide()
-        }
-        break
-      }
       case 'assistant/message':
         this.thinkPanel.hide()
         break
@@ -330,6 +312,26 @@ export class LiveWidgets {
         break
       default:
         break
+    }
+    this.requestRender()
+  }
+
+  /**
+   * One live streaming delta of the parent session, driven by the bridge's
+   * `agent/assistant-stream` chunk frames (dsh 0.1.5-rc.1 moved the deltas
+   * off the firehose): a reasoning delta opens/feeds the think panel; a text
+   * delta means the answer is streaming into the transcript and the panels
+   * are done.
+   */
+  applyStreamDelta(chunk: { type: string; text?: string }): void {
+    if (chunk.type === 'reasoning-delta') {
+      if ((chunk.text ?? '') !== '') {
+        this.thinkPanel.feed(chunk.text ?? '')
+        this.toolPanel.hide()
+      }
+    } else if (chunk.type === 'text-delta' && (chunk.text ?? '') !== '') {
+      this.thinkPanel.hide()
+      this.toolPanel.hide()
     }
     this.requestRender()
   }

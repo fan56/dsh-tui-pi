@@ -85,6 +85,7 @@ import { stopIcon } from './icons.ts'
 import { isCorruptLogError } from './log-repair.ts'
 import { autoColumns, PanelHost, panelThemeFns, TablePanel, type TablePanelOptions } from './panels.ts'
 import {
+  headerOf,
   isResumableSessionHeader,
   inspectPersistedSession,
   loadSessionLastUpdates,
@@ -486,7 +487,7 @@ async function buildSessionPickRows(ctx: Context, currentId: string | undefined)
   if (persistence === undefined) {
     throw new Error('Session persistence is not configured in this profile.')
   }
-  const headers: SessionHeader[] = (await persistence.list()).filter(isResumableSessionHeader)
+  const headers: SessionHeader[] = (await persistence.list()).map(headerOf).filter(isResumableSessionHeader)
   const lastUpdates = await loadSessionLastUpdates()
   const ordered = sortSessionsByLastUpdate(headers, lastUpdates)
   const { previews, corruptIds } = await loadSessionPreviews(

@@ -17,10 +17,10 @@ else
 fi
 DSH_VERSION_OUT="$(dsh --version 2>&1 || true)"
 info "dsh --version: $DSH_VERSION_OUT"
-if printf '%s' "$DSH_VERSION_OUT" | grep -q '0\.1\.2-alpha'; then
-  ok 'dsh version is on the 0.1.2-alpha line'
+if printf '%s' "$DSH_VERSION_OUT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+  ok 'dsh CLI reports a semver version'
 else
-  warn "dsh version output did not contain 0.1.2-alpha: $DSH_VERSION_OUT"
+  warn "dsh version output is not a semver: $DSH_VERSION_OUT"
 fi
 
 # --- plugin tarball ------------------------------------------------------

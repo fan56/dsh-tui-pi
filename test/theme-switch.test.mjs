@@ -38,7 +38,7 @@ test('setTheme repaints existing content with the new theme', () => {
   const { doc, renderer } = makeRenderer()
   renderer.renderPromptEcho('hello')
   renderer.applyEvent({ type: 'user/message', data: { content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }, ts: 0, seq: 1 })
-  renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 0, chunk: { type: 'text-delta', text: 'Hi there' } } })
+  renderer.applyStreamChunk(0, 0, { type: 'text-delta', text: 'Hi there' })
 
   const dark = renderDocStyled(doc)
   assert.ok(dark.includes(ansiBg(githubDark.canvasSubtle)), 'dark bubble bg before switch')
@@ -56,12 +56,12 @@ test('setTheme repaints existing content with the new theme', () => {
 
 test('in-flight stream continues on the rebuilt component after setTheme', () => {
   const { doc, renderer } = makeRenderer()
-  renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 0, chunk: { type: 'text-delta', text: 'Hi ' } }, ts: 0, seq: 3 })
-  renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 0, chunk: { type: 'text-delta', text: 'there' } }, ts: 0, seq: 4 })
+  renderer.applyStreamChunk(0, 0, { type: 'text-delta', text: 'Hi ' })
+  renderer.applyStreamChunk(0, 0, { type: 'text-delta', text: 'there' })
   renderer.setTheme(lightTheme)
   // The stream continues: exactly one streaming text component, accumulated
   // text preserved, further deltas keep landing in it.
-  renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 0, chunk: { type: 'text-delta', text: '!' } }, ts: 0, seq: 5 })
+  renderer.applyStreamChunk(0, 0, { type: 'text-delta', text: '!' })
 
   const text = renderDoc(doc)
   assert.ok(text.includes('Hi there!'), 'accumulated stream text survives the switch')

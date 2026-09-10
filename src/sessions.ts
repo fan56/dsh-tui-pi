@@ -200,10 +200,68 @@ export async function showSessionInfo(
  * list/inspect vocabulary.
  */
 export interface SessionPersistence {
-  /** Lightweight read of persisted session metadata (headers only). */
-  list(signal?: AbortSignal): Promise<SessionHeader[]>
-  /** Full event log of one persisted session (damaged tails repaired on load). */
-  inspect(id: SessionId, signal?: AbortSignal): Promise<{ meta: SessionHeader; events: readonly SessionEvent[] }>
+  /**
+   * Lightweight read of persisted session metadata. dsh 0.1.5-rc.1 wraps each
+   * header in a `{header, revision, sizeBytes}` snapshot; 0.1.2 returned bare
+   * headers — `headerOf` normalizes both.
+   */
+  list(signal?: AbortSignal): Promise<Array<SessionHeader | { header: SessionHeader }>>
+  /**
+   * Legacy (≤ 0.1.2) one-shot validated read. dsh 0.1.5-rc.1 removed it —
+   * `readPersistedSession` routes through `open` + a read-handle drain
+   * instead; the two share this seam's structural type.
+   */
+  inspect?(id: SessionId, signal?: AbortSignal): Promise<{ meta: SessionHeader; events: readonly SessionEvent[] }>
+  /**
+   * dsh 0.1.5-rc.1: validated cold read = `open(id, 'read')` + a full
+   * `read()` drain on the returned handle, header riding the handle.
+   */
+  open?(sessionId: SessionId, access: 'read' | 'write', options?: { signal?: AbortSignal }): Promise<{
+    header: SessionHeader
+    read(offset?: number, length?: number, options?: { signal?: AbortSignal }): Promise<{ events: readonly SessionEvent[] }>
+    close(): Promise<void>
+  }>
+}
+
+/**
+ * Normalize one `persistence.list()` entry to its bare {@link SessionHeader}:
+ * the 0.1.5-rc.1 host returns `{header, ...}` snapshots where 0.1.2 returned
+ * the header directly.
+ */
+export function headerOf(entry: SessionHeader | { header: SessionHeader }): SessionHeader {
+  return (entry as { header?: SessionHeader }).header ?? (entry as SessionHeader)
+}
+
+/**
+ * Validated cold read of one stored session's full log, `{meta, events}` —
+ * the shared body of the /resume pre-check, /session info, and the preview
+ * harvest. Routes the two host seam generations: the 0.1.5 `open` + read-
+ * handle drain when present, else the legacy one-shot `inspect`.
+ */
+export async function readPersistedSession(
+  persistence: SessionPersistence,
+  id: SessionId,
+): Promise<{ meta: SessionHeader; events: readonly SessionEvent[] }> {
+  if (typeof persistence.open === 'function') {
+    const handle = await persistence.open(id, 'read')
+    try {
+      const events: SessionEvent[] = []
+      let offset = 0
+      for (;;) {
+        const batch = await handle.read(offset)
+        if (batch.events.length === 0) break
+        events.push(...batch.events)
+        offset += batch.events.length
+      }
+      return { meta: handle.header, events }
+    } finally {
+      await handle.close()
+    }
+  }
+  if (typeof persistence.inspect !== 'function') {
+    throw new Error('Session persistence exposes neither open() nor inspect().')
+  }
+  return await persistence.inspect(id)
 }
 
 /**
@@ -575,7 +633,7 @@ export async function loadSessionPreviews(
       const id = ids[index]
       let preview: string | undefined
       try {
-        const { events } = await persistence.inspect(id)
+        const { events } = await readPersistedSession(persistence, id)
         const text = previewOfEvents(events)
         if (text) preview = normalizePreview(text)
       } catch (error) {
@@ -594,6 +652,10 @@ export async function loadSessionPreviews(
  * Validate one persisted session's log without publishing it — the /resume
  * pre-check: a corrupt target must be rejected BEFORE the current live agent
  * is torn down. Throws when persistence is missing or the log fails to load.
+ *
+ * dsh 0.1.5-rc.1 removed the one-shot `inspect` from the service: validated
+ * cold reads go through `open(id, 'read')` + a full `read()` drain, with the
+ * header riding the handle.
  */
 export async function inspectPersistedSession(
   ctx: Context,
@@ -603,7 +665,7 @@ export async function inspectPersistedSession(
   if (persistence === undefined) {
     throw new Error('Session persistence is not configured in this profile.')
   }
-  return await persistence.inspect(id)
+  return await readPersistedSession(persistence, id)
 }
 
 /** Outcome of the `/resume` picker, so the caller can phrase its reply. */
@@ -667,7 +729,7 @@ export async function pickPersistedSession(
   }
   let headers: SessionHeader[]
   try {
-    headers = await persistence.list()
+    headers = (await persistence.list()).map(headerOf)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Failed to list persisted sessions: ${message}`)

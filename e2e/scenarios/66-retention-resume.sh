@@ -79,7 +79,7 @@ info "persistence backend entry (nested-or-flat): $PERSISTENCE_ENTRY"
 
 # --- in-script helper: write a single seeded session directory -----------------
 # Layout matches dsh's session-persistence backend:
-#   $HOME/.dsh/sessions/<project>/<id>/session.jsonl.zstd
+#   $HOME/.dsh/sessions/<project>/<id>/session.v3.jsonl.zstd
 #
 # `<project>` is the path-ENCODED cwd (per dsh-session-persistence-jsonl
 # `projectKey`): every `/` (and `\`, `:`) becomes `-`, leading `-` runs are
@@ -123,7 +123,7 @@ info "persistence backend entry (nested-or-flat): $PERSISTENCE_ENTRY"
 seed_session() {
   local project="$1" id="$2" preview="$3" size_bytes="${4:-}"
   local dir="$HOME/.dsh/sessions/$project/$id"
-  local out="$dir/session.jsonl.zstd"
+  local out="$dir/session.v3.jsonl.zstd"
   mkdir -p "$dir"
   local now_ms
   now_ms="$(date +%s)000"
@@ -145,13 +145,18 @@ const instance = Object.create(JsonlSessionPersistence.prototype);
 instance.packChunks = true;
 instance.compression = "zstd";
 
+// dsh 0.1.5-rc.1: the encoder now takes the logical header directly plus
+// an inherited-event-count argument, and the header must already stamp
+// the current format version. The old storage wrapper object is gone.
 const meta = {
-  type: "session",
-  version: 0,
+  version: 3,
   id,
   createdAt: Number(nowMs),
   cwd: "/app",
   delegationDepth: 0,
+  // The released V2 and V3 header audit requires the isSeeded key to be
+  // present. Absent means legacy format and gets refused.
+  isSeeded: false,
 };
 
 const events = [
@@ -192,34 +197,37 @@ const events = [
 // on-disk number IS the number the minBytes floor judges).
 const BATCH = 16;
 const MAX_ITER = 10;
-const FILLER_TYPES = [
-  { type: "permission/preset", makeData: () => ({ preset: "danger-full-access", pad: randomBytes(350).toString("hex") }) },
-  { type: "sandbox/mode",      makeData: () => ({ mode: "danger-full-access",    pad: randomBytes(350).toString("hex") }) },
-  { type: "approval/policy",   makeData: () => ({ policy: "never",               pad: randomBytes(350).toString("hex") }) },
-  { type: "turn/start",        makeData: (turn) => ({ turn,                     pad: randomBytes(350).toString("hex") }) },
-];
+// Filler rows are plain user messages with hex text: the V3 read path runs a
+// strict payload audit (unaudited members on knob events like
+// permission/preset are REFUSED on read, which would break the preview
+// harvest), while audited user/message text is opaque and arbitrary — the
+// hex still defeats compression for the byte-floor padding.
 let onDisk = 0;
 if (targetBytes > 0) {
   for (let iter = 0; iter < MAX_ITER; iter++) {
-    const content = await instance.encodeMaterialization({ meta }, events);
+    const content = await instance.encodeMaterialization(meta, 0, events);
     await writeFile(outPath, content);
     const info = await stat(outPath);
     onDisk = info.size;
     if (onDisk >= targetBytes) break;
     const startSeq = events.length;
     for (let i = 0; i < BATCH; i++) {
-      const filler = FILLER_TYPES[i % FILLER_TYPES.length];
-      const extra = filler.type === "turn/start" ? filler.makeData(Math.floor((startSeq + i) / FILLER_TYPES.length)) : filler.makeData();
       events.push({
-        type: filler.type,
+        type: "user/message",
         seq: startSeq + i,
         time: Number(nowMs) + startSeq + i,
-        data: extra,
+        surfaceOp: "append",
+        data: {
+          id: `${id}-p${startSeq + i}`,
+          role: "user",
+          source: { kind: "user" },
+          content: [{ type: "text", text: randomBytes(350).toString("hex") }],
+        },
       });
     }
   }
 } else {
-  const content = await instance.encodeMaterialization({ meta }, events);
+  const content = await instance.encodeMaterialization(meta, 0, events);
   await writeFile(outPath, content);
   const info = await stat(outPath);
   onDisk = info.size;
@@ -263,10 +271,10 @@ seed_session "$PROJ" a1e2f3a4-0005-4000-8000-00000000aa05 'fresh survivor' >/dev
 # Backdate every artifact so the age rule's mtime test sees them as >2 days old.
 BACKDATE_TS="$(date -d '-10 days' +%Y%m%d%H%M.%S)"
 touch -t "$BACKDATE_TS" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0001-4000-8000-00000000aa01/session.jsonl.zstd" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0002-4000-8000-00000000aa02/session.jsonl.zstd" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0003-4000-8000-00000000aa03/session.jsonl.zstd" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0004-4000-8000-00000000aa04/session.jsonl.zstd"
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0001-4000-8000-00000000aa01/session.v3.jsonl.zstd" \
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0002-4000-8000-00000000aa02/session.v3.jsonl.zstd" \
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0003-4000-8000-00000000aa03/session.v3.jsonl.zstd" \
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0004-4000-8000-00000000aa04/session.v3.jsonl.zstd"
 
 # Edge fixtures: a flat file at the sessions root (must NOT be treated as a
 # session) and an empty subdir inside the project bucket (must NOT be
@@ -357,7 +365,7 @@ scenario 'Phase B: retention MAX_COUNT=0 disables the janitor'
 # so this dir must survive (it would be removed by the age rule from Phase A).
 seed_session "$PROJ" a1e2f3a4-0006-4000-8000-00000000aa06 'doomed old log' >/dev/null
 touch -t "$BACKDATE_TS" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0006-4000-8000-00000000aa06/session.jsonl.zstd"
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0006-4000-8000-00000000aa06/session.v3.jsonl.zstd"
 
 # The test wants MAX_COUNT=0 to be the explicit "off" hatch. Set MIN_IDLE_HOURS
 # to 0 too so the (theoretical) age-rule's idle guard does not gate us; the
@@ -401,8 +409,8 @@ seed_session "$PROJ" \
 # the decompressed body). ls -la into stdout so any future debug session
 # has the ground truth without re-running the seeder.
 ls -la \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0007-4000-8000-00000000aa07/session.jsonl.zstd" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0008-4000-8000-00000000aa08/session.jsonl.zstd"
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0007-4000-8000-00000000aa07/session.v3.jsonl.zstd" \
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0008-4000-8000-00000000aa08/session.v3.jsonl.zstd"
 
 # Plain launch — no retention/resume env. The picker's defaults (7d / 20KB)
 # must drop stub (size) and keep alpha.

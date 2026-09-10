@@ -467,10 +467,7 @@ test('clear() drops todos and agent lines but keeps the last-request echo', () =
 // ---------------------------------------------- fixed think/tool panels ----
 
 /** Event factories for the panel phase machine (plain shapes, log order irrelevant). */
-const chunkEvent = (type, text) => ({
-  type: 'assistant/chunk',
-  data: { turn: 0, step: 0, chunk: { type, text } },
-})
+const chunkDelta = (type, text) => ({ type, text })
 const toolCallEvent = (callId, name, rawArguments) => ({
   type: 'tool/call',
   data: { turn: 0, step: 0, callId, name, arguments: rawArguments },
@@ -483,12 +480,12 @@ const toolResultEvent = (callId, text, isError = false) => ({
 test('think panel: one row — identifier + elapsed + last content line, refreshed in place', () => {
   const { todosDoc, widget } = makeWidget()
   assert.deepEqual(widgetRows(todosDoc), [], 'hidden while no content')
-  widget.applyEvent(chunkEvent('reasoning-delta', 'first thought'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', 'first thought'))
   let rows = widgetRows(todosDoc)
   assert.equal(rows.length, 1, 'exactly one borderless row')
   assert.match(rows[0], /^💭 thinking · \d+\.\ds · first thought$/, 'identifier + elapsed + last line')
   // More deltas refresh the SAME row: the newest non-blank line wins.
-  widget.applyEvent(chunkEvent('reasoning-delta', '\nsecond thought'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', '\nsecond thought'))
   rows = widgetRows(todosDoc)
   assert.equal(rows.length, 1, 'still ONE row — the same panel refreshed, no new blocks')
   assert.match(rows[0], /second thought$/, 'the last content line wins')
@@ -497,17 +494,17 @@ test('think panel: one row — identifier + elapsed + last content line, refresh
 
 test('think panel hides on the next phase event; reopens on the next burst', () => {
   const { todosDoc, widget } = makeWidget()
-  widget.applyEvent(chunkEvent('reasoning-delta', 'thinking'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', 'thinking'))
   assert.equal(widgetRows(todosDoc).length, 1)
   // The answer streams into the transcript — the panel hides.
-  widget.applyEvent(chunkEvent('text-delta', 'the answer'))
+  widget.applyStreamDelta(chunkDelta('text-delta', 'the answer'))
   assert.deepEqual(widgetRows(todosDoc), [], 'text delta hides the think panel')
-  widget.applyEvent(chunkEvent('reasoning-delta', 'again'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', 'again'))
   assert.equal(widgetRows(todosDoc).length, 1, 'a new burst reopens the SAME panel')
   // Assembled message, user message and turn end all hide it.
   widget.applyEvent({ type: 'assistant/message', data: { turn: 0, step: 0, message: { content: [] } } })
   assert.deepEqual(widgetRows(todosDoc), [], 'assembled message hides the think panel')
-  widget.applyEvent(chunkEvent('reasoning-delta', 'burst'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', 'burst'))
   widget.applyEvent({ type: 'turn/end', data: { turn: 0, reason: { kind: 'stop' } } })
   assert.deepEqual(widgetRows(todosDoc), [], 'turn end hides the think panel')
 })
@@ -545,7 +542,7 @@ test('tool panel hides on turn end / user message / text delta; reasoning swaps 
   const { todosDoc, widget } = makeWidget()
   widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
   assert.equal(widgetRows(todosDoc).length, 1)
-  widget.applyEvent(chunkEvent('reasoning-delta', 'next thought'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', 'next thought'))
   const rows = widgetRows(todosDoc)
   assert.equal(rows.length, 1, 'one panel at a time — think replaced tool')
   assert.match(rows[0], /^💭 thinking/)
@@ -584,7 +581,7 @@ test('1-line rows never wrap: long last lines truncate at the right edge', () =>
   process.stdout.columns = width
   try {
     const { todosDoc, widget } = makeWidget()
-    widget.applyEvent(chunkEvent('reasoning-delta', 'x'.repeat(300)))
+    widget.applyStreamDelta(chunkDelta('reasoning-delta', 'x'.repeat(300)))
     let rows = widgetRows(todosDoc, width)
     assert.equal(rows.length, 1, 'think row stays one physical row')
     assert.ok(visibleWidth(rows[0]) <= width, `think row fits ${width} cols`)
@@ -606,7 +603,7 @@ test('1-line rows never wrap: long last lines truncate at the right edge', () =>
 
 test('tickLive repaints while a panel is visible even with no running agents', () => {
   const { todosDoc, activityDoc, widget } = makeWidget()
-  widget.applyEvent(chunkEvent('reasoning-delta', 'x'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', 'x'))
   widget.tickLive()
   assert.equal(widgetRows(todosDoc).length, 1, 'the panel survives the tick (elapsed refresh)')
   widget.applyEvent({ type: 'turn/end', data: { turn: 0, reason: { kind: 'stop' } } })
@@ -617,7 +614,7 @@ test('tickLive repaints while a panel is visible even with no running agents', (
 
 test('clear() (/new) hides both panels', () => {
   const { todosDoc, widget } = makeWidget()
-  widget.applyEvent(chunkEvent('reasoning-delta', 'x'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', 'x'))
   widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
   widget.clear()
   assert.deepEqual(widgetRows(todosDoc), [])
@@ -643,7 +640,7 @@ test("boxed '5': full box (border + header + 4 content rows + border), settle ke
 
 test('boxed think panel carries the thinking color and italic header, box shape at every fixed height', () => {
   const { todosDoc, widget } = makeWidget(darkTheme, '7')
-  widget.applyEvent(chunkEvent('reasoning-delta', 'one\ntwo\nthree\nfour\nfive\nsix'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', 'one\ntwo\nthree\nfour\nfive\nsix'))
   let rows = widgetRows(todosDoc, 200)
   assert.equal(rows.length, 9, 'displayed 7 + 2 borders')
   assert.ok(rows[1].includes('💭 thinking'), 'header row')
@@ -660,7 +657,7 @@ test("'all' boxes the full body: think keeps a bounded live tail, tool results c
   const { todosDoc, widget } = makeWidget(darkTheme, 'all')
   // Think: 500 streamed lines → only the newest 200 are boxed (bounded tail).
   const thinkLines = Array.from({ length: 500 }, (_, i) => `think ${i + 1}`)
-  widget.applyEvent(chunkEvent('reasoning-delta', thinkLines.join('\n')))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', thinkLines.join('\n')))
   let rows = widgetRows(todosDoc, 400)
   assert.equal(rows.length, STREAMING_TAIL_LINES + 3, 'top border + header + bounded tail + bottom border')
   assert.ok(!rows.join('\n').includes('think 1'), 'the head is not boxed while streaming')
@@ -685,7 +682,7 @@ test('boxed panels keep their shape on narrow terminals (10/16/20 columns)', () 
     for (const columns of [10, 16, 20]) {
       process.stdout.columns = columns
       const { todosDoc, widget } = makeWidget(darkTheme, '5')
-      widget.applyEvent(chunkEvent('reasoning-delta', 'x'.repeat(120)))
+      widget.applyStreamDelta(chunkDelta('reasoning-delta', 'x'.repeat(120)))
       widget.applyEvent({ type: 'turn/end', data: { turn: 0, reason: { kind: 'stop' } } })
       widget.applyEvent(toolCallEvent('c1', 'bash', '{"command": "ls"}'))
       const rows = widgetRows(todosDoc, columns)
@@ -717,7 +714,7 @@ test('panels re-render at the current width each frame (resize-follow, no baked 
 
 test('setTheme recolors the panels in place (live state, no rebuild)', () => {
   const { todosDoc, widget } = makeWidget(darkTheme, '1')
-  widget.applyEvent(chunkEvent('reasoning-delta', 'colorful thought'))
+  widget.applyStreamDelta(chunkDelta('reasoning-delta', 'colorful thought'))
   const before = todosDoc.render(200).join('')
   assert.ok(before.includes(ansiFg(darkTheme.palette.thinking)), 'think identifier painted with the dark thinking color')
   widget.setTheme(lightTheme)

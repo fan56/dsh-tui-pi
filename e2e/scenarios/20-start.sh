@@ -25,7 +25,7 @@ assert_matches 'random welcome quote rendered' '🐳 「.+」' "$PANE"
 assert_contains 'footer keybinding hint visible' "$MARKER_FOOTER_HINT" "$PANE"
 assert_matches 'footer clock visible (HH:MM)' '[0-9]{2}:[0-9]{2}' "$PANE"
 assert_contains 'footer shows the default provider segment' 'deepseek-official' "$PANE"
-assert_contains 'footer shows the default model segment' 'deepseek-v4-flash' "$PANE"
+assert_contains 'footer shows the default model segment' 'deepseek-flash' "$PANE"
 
 # --- canvas color (SGR via capture -e) ------------------------------------
 SGR="$(capture_sgr)"

@@ -40,6 +40,14 @@ function emit(handlers, session, event) {
   handlers.get('session/event')(session, event)
 }
 
+/**
+ * Feed one `agent/assistant-stream` frame through the bridge's captured
+ * subscription (dsh 0.1.5-rc.1: live deltas ride frames, not the firehose).
+ */
+function emitFrame(handlers, sessionId, frame) {
+  handlers.get('agent/assistant-stream')({ agent: { id: sessionId }, frame })
+}
+
 function discoverViaParentWorkflow(handlers, childId) {
   emit(handlers, { id: 'root-session', header: {} }, {
     type: 'tool-workflow/agent-start',
@@ -368,10 +376,11 @@ test('a streamed text-delta chunk estimate is superseded by the next billed assi
   })
   await bridge.ensureAgent()
   const session = mainSession()
-  // Streamed text is priced into pending as the output flows.
-  emit(handlers, session, {
-    type: 'assistant/chunk', seq: 1, time: 1,
-    data: { chunk: { type: 'text-delta', text: 'hello world' } },
+  // Streamed text is priced into pending as the output flows (chunk frame).
+  emitFrame(handlers, 'root-session', { type: 'start', attemptId: 1, revision: 1, turn: 1, step: 1 })
+  emitFrame(handlers, 'root-session', {
+    type: 'chunk', attemptId: 1, revision: 1, index: 0, time: 1,
+    chunk: { type: 'text-delta', text: 'hello world' },
   })
   assert.equal(bridge.getStats().contextTokens, 3,
     'streamed text-delta priced into pending (11 chars -> ceil 11/4 = 3)')
@@ -393,9 +402,10 @@ test('a streamed child text-delta chunk estimate is superseded by the next bille
     type: 'subagent/descriptor', seq: 0, time: 1,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
   })
-  emit(handlers, childSession, {
-    type: 'assistant/chunk', seq: 1, time: 2,
-    data: { chunk: { type: 'text-delta', text: 'abcd' } },
+  emitFrame(handlers, 'child-1', { type: 'start', attemptId: 1, revision: 1, turn: 1, step: 1 })
+  emitFrame(handlers, 'child-1', {
+    type: 'chunk', attemptId: 1, revision: 1, index: 0, time: 2,
+    chunk: { type: 'text-delta', text: 'abcd' },
   })
   assert.equal(bridge.getAgentViews()[0].contextTokens, 1,
     'child streamed text priced into pending (4 chars -> 1)')
@@ -417,9 +427,10 @@ test('assistant/chunk reasoning-delta prices into the main pending estimate', as
   })
   await bridge.ensureAgent()
   const session = mainSession()
-  emit(handlers, session, {
-    type: 'assistant/chunk', seq: 1, time: 1,
-    data: { chunk: { type: 'reasoning-delta', text: 'reasoning' } },
+  emitFrame(handlers, 'root-session', { type: 'start', attemptId: 1, revision: 1, turn: 1, step: 1 })
+  emitFrame(handlers, 'root-session', {
+    type: 'chunk', attemptId: 1, revision: 1, index: 0, time: 1,
+    chunk: { type: 'reasoning-delta', text: 'reasoning' },
   })
   assert.equal(bridge.getStats().contextTokens, 3,
     'reasoning-delta priced into pending (9 chars -> ceil 9/4 = 3)')
@@ -437,9 +448,10 @@ test('child assistant/chunk reasoning-delta prices into the child pending estima
     type: 'subagent/descriptor', seq: 0, time: 1,
     data: { version: 1, mode: 'one-shot', provider: 'workhorse' },
   })
-  emit(handlers, childSession, {
-    type: 'assistant/chunk', seq: 1, time: 2,
-    data: { chunk: { type: 'reasoning-delta', text: 'abcd' } },
+  emitFrame(handlers, 'child-1', { type: 'start', attemptId: 1, revision: 1, turn: 1, step: 1 })
+  emitFrame(handlers, 'child-1', {
+    type: 'chunk', attemptId: 1, revision: 1, index: 0, time: 2,
+    chunk: { type: 'reasoning-delta', text: 'abcd' },
   })
   assert.equal(bridge.getAgentViews()[0].contextTokens, 1,
     'child reasoning-delta priced into pending (4 chars -> 1)')

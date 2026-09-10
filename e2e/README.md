@@ -61,7 +61,7 @@
   overlay 断言必须用 overlay 独有文案（`● Theme`、`⚙ hotkeys`、
   `GitHub light palette` 等），不能用命令名。
 - **无凭证也有内置 provider**：fresh profile 下 footer 就显示
-  `deepseek-official / deepseek-v4-flash`，`/model` 能列出模型——但没有
+  `deepseek-official / deepseek-flash`，`/model` 能列出模型——但没有
   API key，发送消息的真实链路不在本套件覆盖内。
 
 - **seeded 的 user/message 必须过 `inspect()` 的 seed 边界校验**：`persistence.list()`

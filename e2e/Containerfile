@@ -16,7 +16,7 @@ ARG NODE_DIST_BASE=https://npmmirror.com/mirrors/node
 ARG PNPM_VERSION=10.33.0
 # DSH_VERSION is resolved by e2e/run-e2e.sh with the same "newest of the
 # latest/next dist-tags" rule as ci.yml / release.yml (the alpha tag is
-# retired) and always clears the plugin's peer floor (>= 0.1.2-rc.1). Pin
+# retired) and always clears the plugin's peer floor (>= 0.1.5-rc.1). Pin
 # an exact version for a deterministic rebuild with
 # --build-arg DSH_VERSION=<version>.
 ARG DSH_VERSION=
@@ -46,7 +46,7 @@ RUN case "$(uname -m)" in \
 # from the global dsh install into node_modules so tsc can resolve the
 # types (they are not on the public registry in a usable form).
 RUN test -n "${DSH_VERSION}" \
-      || (echo "DSH_VERSION build arg is required (e.g. --build-arg DSH_VERSION=0.1.2-rc.1)" >&2; exit 1) \
+      || (echo "DSH_VERSION build arg is required (e.g. --build-arg DSH_VERSION=0.1.5-rc.1)" >&2; exit 1) \
  && npm install -g --no-fund --no-audit \
       pnpm@${PNPM_VERSION} \
       "@deepseek-ai/dsh@${DSH_VERSION}" \

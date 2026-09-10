@@ -195,7 +195,7 @@ test('tool calls and reasoning render nothing in the transcript (the fixed panel
   const doc = new Container()
   const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
   renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'a', name: 'read', arguments: '{"path": "src/welcome.ts"}' }, ts: 0, seq: 1 })
-  renderer.applyEvent({ type: 'assistant/chunk', data: { turn: 0, step: 1, chunk: { type: 'reasoning-delta', text: 'thinking hard' } } })
+  renderer.applyStreamChunk(0, 1, { type: 'reasoning-delta', text: 'thinking hard' })
   renderer.applyEvent({
     type: 'tool/result',
     data: { turn: 0, step: 0, callId: 'a', message: { content: [{ toolCallId: 'a', isError: false, content: [{ type: 'text', text: 'ok' }] }] } },

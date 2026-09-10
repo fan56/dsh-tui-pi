@@ -76,11 +76,11 @@ SGR_CANVAS_LIGHT='48;2;252;253;252'        # canvas #fcfdfc
 
 MARKER_EFFORT_PICKER='● Reasoning effort'          # selectors.ts openEffortPicker
 MARKER_SETTINGS_BROWSER='⚙ settings'               # settings.ts browser title
-MARKER_RESUME_NO_SESSIONS='No other persisted sessions to resume.'
+MARKER_RESUME_NO_SESSIONS='No (other persisted sessions to resume|sessions within the resume window)'
 MARKER_HOTKEYS_PANEL='⚙ hotkeys'                   # hotkeys.ts FieldPanel title
 MARKER_PERMISSION='● Permission preset'            # selectors.ts pickPermission
 MARKER_MODEL_PICKER='● Model'                      # selectors.ts pickModel
-MARKER_MODEL_ROW='deepseek-v4-flash'               # built-in default model row
+MARKER_MODEL_ROW='deepseek-flash'               # built-in default model row
 MARKER_THEME_ROWS='● Theme'                        # selectors.ts pickTheme
 
 has_wordmark() {
@@ -141,7 +141,8 @@ wait_pane() {
     sleep 1
     waited=$((waited + 1))
   done
-  bad "$label (timed out after ${timeout}s)"
+  bad "$label (timed out after ${timeout}s); haystack tail:"
+  capture | tail -8 | sed 's/^/    | /'
   return 1
 }
 

@@ -783,6 +783,13 @@ export function apply(ctx: Context): void {
           ui.requestRender()
         }
       },
+      onStreamDelta: (turn: number, step: number, chunk: { type: string; text?: string }) => {
+        // The streaming typewriter in the transcript and the think/tool phase
+        // machine both live on the deltas — dsh 0.1.5-rc.1 delivers them as
+        // `agent/assistant-stream` frames, no longer as firehose events.
+        renderer.applyStreamChunk(turn, step, chunk)
+        liveWidgets.applyStreamDelta(chunk)
+      },
       onStatus: setStatus,
       onLive: (agents: readonly AgentView[]) => {
         liveWidgets.renderAgents(agents)
