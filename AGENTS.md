@@ -160,7 +160,7 @@ history.ts        /history browser (ADR 0003): the read-only two-pane
                   never submitted; replaces any draft without confirmation —
                   prompt-less turns decline); `s` swaps the browsed session
                   through the /resume-style picker (`/` filters it); nothing
-                  writes a log or takes the writer-lock
+                  writes a log or takes write ownership
 history-turns.ts  /history pure fold: SessionEvent[] → completed
                   HistoryTurn[] (turn/start…turn/end brackets; unclosed
                   turns excluded; per-turn user prompts — claimed steer/
@@ -273,7 +273,7 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
   - text 15 + agent-manager 14 + history 13 + footer-hints 13 +
     stop-dialog 12 + session-ch-cache 12 + image-blocks 12 + custom-provider 12 +
     theme-switch 11 + preset-dialog 11 + preflight-projcache 11 + frame 11 +
-  - writer-lock 9 + workspace-presets 9 + permission 9 + history-turns 9 + history-fork 9 + commands 9 + append-system 9 +
+  - session-dir 2 + workspace-presets 9 + permission 9 + history-turns 9 + history-fork 9 + commands 9 + append-system 9 +
     notice-bridge 8 + font-detect 8 + dev-upgrade 8 +
     repair-session-log 7 + remote-tail 7 + quotes 7 + icons 7 + host-version 7 +
   - tokens 6 + subagent-status-tool 6 + reload 6 + queue-panel 6 + install-font 6 + bridge-stop 6 + selection-copy 5 +

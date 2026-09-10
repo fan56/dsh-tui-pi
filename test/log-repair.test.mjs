@@ -4,15 +4,14 @@
  * (src/repair-dialog.ts) and the corrupt-row picker label (src/sessions.ts)
  * — pure logic over a stubbed spawnSync, so the whole matrix runs without a
  * terminal and without touching real session logs. Disk fixtures live in
- * mkdtemp dirs; the writer lock is exercised for real (same pid-file
- * contract as writer-lock.test.mjs) inside those dirs.
+ * mkdtemp dirs.
  *
  * Contracts under test:
  * - runRepair maps the script's exit contract (0 CLEAN / 0+artifact
  *   repaired / 3 corrupt-unwritten / 2 environment / ENOENT → install hint);
  * - swapRepaired keeps the original as .corrupt-bak (ms-suffixed when
  *   taken), swaps the verified copy in, chmod 0600;
- * - repairSessionLog claims the writer lock, never swaps an artifact that
+ * - repairSessionLog never swaps an artifact that
  *   fails verification, always releases, and reports a live foreign holder;
  * - the dialog confirm/cancel matrix mirrors the routing dialog keymap;
  * - /corrupt .*(session|zstandard) log/i is the only fingerprint that
@@ -44,7 +43,7 @@ import {
   updateRepairConfirm,
 } from '../lib/repair-dialog.js'
 import { resumeRowTitle } from '../lib/sessions.js'
-import { projectKeyFor } from '../lib/writer-lock.js'
+import { projectKeyFor } from '../lib/session-dir.js'
 
 const ENTER = '\r'
 const UP = '\x1b[A'
@@ -299,7 +298,6 @@ test('repairSessionLog: applies, verifies, swaps under the lock — and releases
   assert.equal(mode, 0o600)
   const modes = spawnFn.calls.map(call => call.args.includes('--apply') ? 'apply' : 'verify')
   assert.deepEqual(modes, ['apply', 'verify'], 'apply first, then verify the artifact')
-  assert.equal(readdirSync(dir).includes('writer.lock'), false, 'the lock is released after the swap')
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -322,7 +320,6 @@ test('repairSessionLog: an artifact that fails verification is never swapped in,
   assert.equal(readFileSync(log, 'utf8'), 'corrupt-zstd-bytes', 'the canonical log is untouched')
   assert.equal(readdirSync(dir).includes('session.jsonl.zstd.corrupt-bak'), false, 'no backup was made')
   assert.deepEqual(calls, ['apply', 'verify'])
-  assert.equal(readdirSync(dir).includes('writer.lock'), false, 'the lock is released on failure too')
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -349,7 +346,6 @@ test('repairSessionLog: a failed swap-in restores the canonical log and reports 
     false,
     'no backup residue survives the restore',
   )
-  assert.equal(readdirSync(dir).includes('writer.lock'), false, 'the lock is released after a failed swap too')
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -364,30 +360,10 @@ test('repairSessionLog: a chmod failure mid-swap still reports repaired', async 
   assert.equal(result.kind, 'repaired', 'permissions are hygiene — they never flip the outcome')
   assert.equal(readFileSync(log, 'utf8'), 'fixed-zstd-bytes')
   assert.equal(readFileSync(result.backupPath, 'utf8'), 'corrupt-zstd-bytes')
-  assert.equal(readdirSync(dir).includes('writer.lock'), false)
   rmSync(dir, { recursive: true, force: true })
 })
 
-test('repairSessionLog: a live foreign holder refuses the lock and nothing is touched', async () => {
-  const { dir, log } = logFixture('locked')
-  const child = spawn('sleep', ['30'], { stdio: 'ignore' })
-  writeFileSync(join(dir, 'writer.lock'), JSON.stringify({ pid: child.pid, createdAt: '2026-08-28T00:00:00Z', holder: 'feishu' }))
-  try {
-    const result = await repairSessionLog(log, { spawnSyncFn: applyThenCleanSpawn() })
-
-    assert.equal(result.kind, 'locked')
-    assert.equal(result.holder.pid, child.pid)
-    assert.equal(result.holder.holder, 'feishu')
-    assert.equal(readFileSync(log, 'utf8'), 'corrupt-zstd-bytes', 'the log is untouched while another writer drives the session')
-    assert.equal(readdirSync(dir).includes('session.repaired.jsonl.zstd'), false, 'no repair was even attempted')
-    assert.equal(readFileSync(join(dir, 'writer.lock'), 'utf8').includes(`"pid":${child.pid}`), true, 'the foreign lock was not stolen')
-  } finally {
-    process.kill(child.pid, 'SIGKILL')
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('repairSessionLog: a clean verdict swaps nothing and releases the lock', async () => {
+test('repairSessionLog: a clean verdict swaps nothing', async () => {
   const { dir, log } = logFixture('clean-run')
   const spawnFn = scriptedSpawn([procResult({ status: 0, stdout: 'rows: 3 | maxSeq: 2 | seq violations: 0\nverdict: CLEAN — nothing to do.' })])
 
@@ -396,7 +372,6 @@ test('repairSessionLog: a clean verdict swaps nothing and releases the lock', as
   assert.deepEqual(result, { kind: 'clean' })
   assert.equal(readFileSync(log, 'utf8'), 'corrupt-zstd-bytes')
   assert.equal(readdirSync(dir).includes('session.jsonl.zstd.corrupt-bak'), false)
-  assert.equal(readdirSync(dir).includes('writer.lock'), false, 'the lock is released on the clean path too')
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -412,7 +387,6 @@ test('repairSessionLog: a throwing spawn seam fails without touching the log', a
   assert.match(result.detail, /cannot run the repair script/)
   assert.match(result.detail, /boom/)
   assert.equal(readFileSync(log, 'utf8'), 'corrupt-zstd-bytes')
-  assert.equal(readdirSync(dir).includes('writer.lock'), false, 'the lock is released even when the script never ran')
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -459,11 +433,7 @@ test('isCorruptLogError: only the corrupt-log fingerprint routes into repair', (
   assert.equal(isCorruptLogError(''), false)
 })
 
-test('repairFailureNotice: locked and failed name the blocker; repaired/clean proceed silently', () => {
-  assert.equal(
-    repairFailureNotice({ kind: 'locked', holder: { pid: 4242, createdAt: '', holder: 'feishu' } }),
-    'session is driven by pid 4242 — close it on the other side first',
-  )
+test('repairFailureNotice: failed names the blocker; repaired/clean proceed silently', () => {
   assert.equal(
     repairFailureNotice({ kind: 'failed', detail: 'zstd -dc failed' }),
     'repair failed: zstd -dc failed — log untouched',

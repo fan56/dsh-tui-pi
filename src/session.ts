@@ -27,7 +27,7 @@ import type { PendingPromptView } from './steer-flow.ts'
 import { RemoteSessionTail } from './remote-tail.ts'
 import { sessionLogRoot } from './sessions.ts'
 import { estimateContentTokens, estimateTextTokens } from './tokens.ts'
-import { acquireWriterLock, projectKeyFor, releaseOwnedWriterLock, WriterLockedError } from './writer-lock.ts'
+import { projectKeyFor } from './session-dir.ts'
 
 /**
  * Register the APPEND_SYSTEM.md section on ONE agent's scoped context, so the
@@ -241,12 +241,6 @@ export class DshSessionBridge {
   private resuming: Promise<AgentHandle> | undefined
   /** Target id of the in-flight resume — see `resume()`/`getResumingSessionId()`. */
   private resumeTargetId: SessionId | undefined
-  /**
-   * Session dirs whose cross-process writer lock THIS bridge established via
-   * a cold arm. Release is bound to the owning handle's disposal
-   * (`ownWithLock`), so the set itself only tracks double-release safety.
-   */
-  private readonly heldLockDirs = new Set<string>()
   /** Active cross-process read-only view (see watchRemote). */
   private remoteTail: RemoteSessionTail | undefined
   /** Session watched read-only right now. */
@@ -255,12 +249,8 @@ export class DshSessionBridge {
   private readonly remoteFollowups: string[] = []
   private promotingRemote = false
   private promoteTimer: ReturnType<typeof setInterval> | undefined
-  private idleReleaseTimer: ReturnType<typeof setTimeout> | undefined
-  /** Writer lock taken for the CURRENTLY bound local agent (see drive arms). */
-  private driveLock: { dir: string } | undefined
   /** Test seam + tuning for the watcher (interval/decoder injection). */
   private readonly remoteTailOptions: { intervalMs?: number; decode?(file: string): Promise<string> }
-  private readonly idleReleaseDelayMs: number
   private readonly promoteIntervalMs: number
   /** Serializes watch-lifecycle ops against the promotion poll. */
   private opChain: Promise<void> = Promise.resolve()
@@ -381,13 +371,11 @@ export class DshSessionBridge {
 
   constructor(ctx: Context, callbacks: BridgeCallbacks, options: {
     remoteTailOptions?: { intervalMs?: number; decode?(file: string): Promise<string> }
-    idleReleaseDelayMs?: number
     promoteIntervalMs?: number
   } = {}) {
     this.ctx = ctx
     this.callbacks = callbacks
     this.remoteTailOptions = options.remoteTailOptions ?? {}
-    this.idleReleaseDelayMs = options.idleReleaseDelayMs ?? 800
     this.promoteIntervalMs = options.promoteIntervalMs ?? 1000
     // Footer shows provider/model from the very first frame — read the cwd
     // pin (if any) else the composed default selection eagerly; a session
@@ -469,7 +457,6 @@ export class DshSessionBridge {
       if (this.handle === undefined || agent.id !== this.handle.agent.id) return
       this.running = status === 'running'
       this.callbacks.onStatus(status)
-      if (status === 'idle') this.scheduleIdleRelease()
     }))
     // Round-count reconcile fallback: keep "rounds" and the maxRounds policy
     // live even when a child's own events never bubble to this plugin (see
@@ -771,7 +758,7 @@ export class DshSessionBridge {
 
   private async watchRemoteInner(sessionId: string): Promise<void> {
     await this.stopRemoteWatch()
-    // Same derivation as acquireSessionLock — no cwd, no view.
+    // The jsonl backend's own dir derivation — no cwd, no view.
     const cwd = await this.headerCwdOf(sessionId)
     if (cwd === undefined) throw new Error(`cannot locate the log of ${sessionId} for read-only viewing`)
     const dir = join(sessionLogRoot(), projectKeyFor(cwd), sessionId)
@@ -858,36 +845,11 @@ export class DshSessionBridge {
   }
 
   /**
-   * Contract "idle releases the write; next input takes it": when OUR agent
-   * settles with nothing pending locally (own re-wake included), drop the
-   * writer lock so another surface can take over. Delayed once and
-   * re-checked because upstream may latch idle only to immediately replay
-   * a queued wake as a new turn.
-   */
-  private scheduleIdleRelease(): void {
-    if (this.idleReleaseTimer !== undefined) clearTimeout(this.idleReleaseTimer)
-    this.idleReleaseTimer = setTimeout(() => {
-      this.idleReleaseTimer = undefined
-      if (this.running) return
-      // Contained: foreign-shaped agents must not let a release timer blow
-      // up the process; when the inbox is unreadable we conservatively keep
-      // the lock.
-      try {
-        if (this.getPendingPrompts().length > 0) return
-      } catch {
-        return
-      }
-      const lock = this.driveLock
-      if (lock === undefined) return
-      void this.releaseColdLock(lock)
-    }, this.idleReleaseDelayMs)
-  }
-
-  /**
-   * Promote poll tick: viewer + queued follow-ups + watched driver idle →
-   * race for the writer lock; winning hands to onRemotePromotable (UI
-   * rebuild via resume + queue drain), losing retries next tick. All async
-   * sequencing stays in THIS loop — never inside event callbacks.
+   * Promote poll tick: viewer + queued follow-ups + watched driver gone →
+   * attempt the takeover (onRemotePromotable rebuilds the UI via resume +
+   * queue drain); an owned session still refuses the resume and we retry
+   * next tick. All async sequencing stays in THIS loop — never inside
+   * event callbacks.
    */
   private maybePromoteRemote(): Promise<void> {
     return this.runExclusive(async () => {
@@ -902,24 +864,14 @@ export class DshSessionBridge {
     const promote = this.callbacks.onRemotePromotable
     if (promote === undefined) return
     this.promotingRemote = true
-    let locked = false
-    try {
-      await this.acquireSessionLock(id)
-      locked = true
-    } catch {
-      /* still held / driver alive — retry next poll */
-    }
-    if (!locked) {
-      this.promotingRemote = false
-      return
-    }
     await this.stopRemoteWatch() // ends the view BEFORE any UI rebuild
     try {
       await promote(id)
       this.promotingRemote = false
     } catch {
-      // Took the lock but the rebuild failed: back to spectating; ownership
-      // persists cooperatively so the retry below costs nothing extra.
+      // The takeover failed — the other process still owns the session (the
+      // host lease refused the resume) or the rebuild broke: back to
+      // spectating; a later poll retries once the owner lets go.
       this.promotingRemote = false
       await this.watchRemote(id).catch(() => {})
     }
@@ -1076,7 +1028,6 @@ export class DshSessionBridge {
 
   /** Dispose the live agent (if any) and stop event subscriptions. */
   async dispose(): Promise<void> {
-    if (this.idleReleaseTimer !== undefined) clearTimeout(this.idleReleaseTimer)
     await this.stopRemoteWatch()
     for (const dispose of this.disposers.splice(0)) {
       try { dispose() } catch { /* contained */ }
@@ -1160,56 +1111,6 @@ export class DshSessionBridge {
     } catch {
       return undefined
     }
-  }
-
-  /**
-   * Single-writer guard for COLD arms (create / cold resume) only — the
-   * adopt arm above shares the live instance in-process and must stay
-   * lock-free. Locks sit beside the jsonl log so every process that could
-   * append to it competes on one file; a live foreign holder throws
-   * WriterLockedError (surfaces as "Cannot resume <id>: session is locked
-   * by a live process …"). `knownCwd` skips the header scan for creations,
-   * which always target process.cwd().
-   */
-  private async acquireSessionLock(sessionId: string, knownCwd?: string): Promise<{ dir: string } | undefined> {
-    const cwd = knownCwd ?? (await this.headerCwdOf(sessionId))
-    if (cwd === undefined || cwd === '') {
-      // No trustworthy cwd → the derived path would be a decoy the real
-      // writer never touches (fail-open, same policy as the feishu guard):
-      // locking a decoy would silently protect nothing while pretending to.
-      return undefined
-    }
-    const dir = join(sessionLogRoot(), projectKeyFor(cwd), sessionId)
-    const result = await acquireWriterLock(dir)
-    if (!result.ok) throw new WriterLockedError(result.holder)
-    this.heldLockDirs.add(dir)
-    return { dir }
-  }
-
-  /** Undo a guard whose arm then failed — transient errors must not pin the session. */
-  private async releaseColdLock(lock: { dir: string } | undefined): Promise<void> {
-    if (lock === undefined) return
-    this.heldLockDirs.delete(lock.dir)
-    await releaseOwnedWriterLock(lock.dir)
-  }
-
-  /**
-   * Bind lock release to an owned handle's disposal — every teardown path
-   * already goes through handle.dispose(), so this is the single choke
-   * point; switching away or exiting releases what we established.
-   */
-  private ownWithLock(handle: AgentHandle, lock: { dir: string } | undefined): AgentHandle {
-    if (lock === undefined) return handle
-    const base = handle.dispose.bind(handle)
-    const bridge = this
-    handle.dispose = async () => {
-      try {
-        await base()
-      } finally {
-        await bridge.releaseColdLock(lock)
-      }
-    }
-    return handle
   }
 
   /**
@@ -1314,35 +1215,27 @@ export class DshSessionBridge {
         }
         return adopted
       }
-      // Cold arm — guarded: without the registry hit above, nothing here can
-      // see whether ANOTHER process owns this id right now. Take the writer
-      // lock beside its jsonl first so a concurrent owner refuses us loudly
-      // instead of two appends interleaving into "corrupt session log".
-      const lock = await this.acquireSessionLock(String(sessionId))
-      let resumed: AgentHandle
-      try {
-        resumed = await this.ctx.agents.resume({
-          resumeSessionId: sessionId,
-          agentOptions: this.selection ?? {},
-          // Install the mutable selection so `/model` can live-switch the route,
-          // the APPEND_SYSTEM.md section on this agent ONLY (never its
-          // subagents), and the spawn-tool hide so the agent sees a single
-          // `use_agent` delegation entry. The surface marker scopes the live
-          // disableSubagent guard to THIS agent (resume runs setup too, so a
-          // resumed session is re-marked without relying on persisted meta).
-          setup: async agentCtx => {
-            markTuiSurface(agentCtx)
-            installModelSelection(agentCtx, this.selectionRef)
-            installAppendSystem(agentCtx)
-            installSpawnToolFence(agentCtx)
-          },
-        })
-      } catch (error) {
-        await this.releaseColdLock(lock)
-        throw error
-      }
-      this.driveLock = lock
-      this.handle = this.ownWithLock(resumed, lock)
+      // Cold arm — cross-process single-writer arbitration is the HOST's
+      // job since 0.1.5: `agents.resume` opens the write handle under the
+      // host's kernel lease, and a session another process drives refuses
+      // here with SessionAlreadyOwnedError (surfaces as the /resume
+      // read-only fallback).
+      this.handle = await this.ctx.agents.resume({
+        resumeSessionId: sessionId,
+        agentOptions: this.selection ?? {},
+        // Install the mutable selection so `/model` can live-switch the route,
+        // the APPEND_SYSTEM.md section on this agent ONLY (never its
+        // subagents), and the spawn-tool hide so the agent sees a single
+        // `use_agent` delegation entry. The surface marker scopes the live
+        // disableSubagent guard to THIS agent (resume runs setup too, so a
+        // resumed session is re-marked without relying on persisted meta).
+        setup: async agentCtx => {
+          markTuiSurface(agentCtx)
+          installModelSelection(agentCtx, this.selectionRef)
+          installAppendSystem(agentCtx)
+          installSpawnToolFence(agentCtx)
+        },
+      })
       this.sessionId = sessionId
       this.trackedSessions.add(String(sessionId))
       return this.handle
@@ -1918,11 +1811,8 @@ export class DshSessionBridge {
    */
   private async createSession(fork?: { seed: readonly SessionEvent[]; parentSessionId: SessionId; presetId: string | undefined }): Promise<AgentHandle> {
     this.seedSelectionFromDefault()
-    // Mint the id HERE so the pre-create lock covers exactly the directory
-    // agents.create is about to persist into (same cold-arm guard as resume).
     const sessionId = crypto.randomUUID()
     const cwd = process.cwd()
-    const lock = await this.acquireSessionLock(sessionId, cwd)
     // A fork records ITS OWN preset (what the new session composes under —
     // possibly none, keeping meta.agentPreset absent); a plain create
     // records the current selection.
@@ -1939,34 +1829,26 @@ export class DshSessionBridge {
       ...presetMeta,
       ...(fork !== undefined ? { parentSession: fork.parentSessionId, isSeeded: true } : {}),
     }
-    let handle: AgentHandle
-    try {
-      handle = await this.ctx.agents.create({
-        sessionId: SessionId(sessionId),
-        meta,
-        ...(fork === undefined ? {} : {
-          seed: fork.seed,
-          inheritedEventCount: SessionLogOffset(fork.seed.length),
-        }),
-        agentOptions: this.selection ?? {},
-        // Install the mutable selection so `/model` can live-switch the route,
-        // the APPEND_SYSTEM.md section on this agent ONLY (never its
-        // subagents), and the spawn-tool hide so the agent sees a single
-        // `use_agent` delegation entry. The surface marker scopes the live
-        // disableSubagent guard to THIS agent.
-        setup: async agentCtx => {
-          markTuiSurface(agentCtx)
-          installModelSelection(agentCtx, this.selectionRef)
-          installAppendSystem(agentCtx)
-          installSpawnToolFence(agentCtx)
-        },
-      })
-    } catch (error) {
-      await this.releaseColdLock(lock)
-      throw error
-    }
-    this.driveLock = lock
-    return this.ownWithLock(handle, lock)
+    return await this.ctx.agents.create({
+      sessionId: SessionId(sessionId),
+      meta,
+      ...(fork === undefined ? {} : {
+        seed: fork.seed,
+        inheritedEventCount: SessionLogOffset(fork.seed.length),
+      }),
+      agentOptions: this.selection ?? {},
+      // Install the mutable selection so `/model` can live-switch the route,
+      // the APPEND_SYSTEM.md section on this agent ONLY (never its
+      // subagents), and the spawn-tool hide so the agent sees a single
+      // `use_agent` delegation entry. The surface marker scopes the live
+      // disableSubagent guard to THIS agent.
+      setup: async agentCtx => {
+        markTuiSurface(agentCtx)
+        installModelSelection(agentCtx, this.selectionRef)
+        installAppendSystem(agentCtx)
+        installSpawnToolFence(agentCtx)
+      },
+    })
   }
 
   /** The model selection shown in the footer (live value after `/model`). */

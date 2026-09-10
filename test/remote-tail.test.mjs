@@ -12,7 +12,7 @@ import { RemoteSessionTail } from '../lib/remote-tail.js'
 import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { projectKeyFor } from '../lib/writer-lock.js'
+import { projectKeyFor } from '../lib/session-dir.js'
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 function existsAsync(p) { return Promise.resolve(existsSync(p)) }
 
@@ -163,43 +163,7 @@ function makeCtxForWatch(overrides = {}) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Idle releases the writer lock; queued follow-ups take it back
-
-test('idle (with nothing pending) releases our drive lock; busy or queued keeps it', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'tui-idle-'))
-  process.env.DSH_SESSION_ROOT = root
-  try {
-    const statuses = []
-    let agentId
-    const ctx = makeCtxForWatch()
-    ctx.agents.create = async options => {
-      agentId = String(options.sessionId)
-      return { agent: { id: agentId, session: { id: agentId }, status: 'idle', inbox: { nextStep: [], nextTurn: [] } }, followup() {}, async dispose() {} }
-    }
-    ctx.on = (evt, fn) => { (ctx.handlers ??= new Map()).set(evt, fn); return () => {} }
-    const bridge = new DshSessionBridge(ctx, { onLive() {}, onStatus: s => statuses.push(s), onEvent() {} },
-      { idleReleaseDelayMs: 5 })
-    await bridge.ensureAgent()
-    const lockFile = join(root, projectKeyFor(process.cwd()), agentId, 'writer.lock')
-    assert.equal(await existsAsync(lockFile), true, 'drive arm takes the lock')
-
-    // Upstream says the turn settled AND nothing is queued locally.
-    ctx.handlers.get('agent/status')({ agent: { id: agentId }, status: 'running' })
-    ctx.handlers.get('agent/status')({ agent: { id: agentId }, status: 'idle' })
-    await sleep(30)
-    assert.equal(await existsAsync(lockFile), false, 'idle + quiet ⇒ lock released for other surfaces')
-
-    // Immediate re-arm from an upstream wake replay is covered by the
-    // delayed re-check in production; here one full idle→release cycle is
-    // the contract under test (the busy-side is the running=true early-out).
-  } finally {
-    delete process.env.DSH_SESSION_ROOT
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test('promotion poll drives takeover from queue when driver idles and lock frees', async () => {
+test('promotion poll drives takeover from queue once the watched driver lets go', async () => {
   const root = mkdtempSync(join(tmpdir(), 'tui-promote-'))
   process.env.DSH_SESSION_ROOT = root
   try {

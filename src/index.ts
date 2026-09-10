@@ -90,7 +90,8 @@ import {
   repairSessionLog,
 } from './log-repair.ts'
 import { openRepairConfirmDialog } from './repair-dialog.ts'
-import { WriterLockedError, projectKeyFor } from './writer-lock.ts'
+import { projectKeyFor } from './session-dir.ts'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import { emitNotice } from './notice-bridge.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { installSubagentStatusTool } from './subagent-status-tool.ts'
@@ -798,7 +799,7 @@ export function apply(ctx: Context): void {
     const bridgeCallbacksWithTakeover: BridgeCallbacks = {
       ...bridgeCallbacks,
       onRemotePromotable: async (idRaw: string) => {
-        // Queued follow-ups won the writer-lock race at an idle boundary:
+        // Queued follow-ups won the takeover race at an ownership boundary:
         // take over EXACTLY like a manual /resume, then flush the queue.
         btwController.cancelAll()
         const resumed = await bridge.resume(SessionId(idRaw))
@@ -1406,11 +1407,12 @@ export function apply(ctx: Context): void {
           resumed = await bridge.resume(target.id)
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error)
-          if (error instanceof WriterLockedError) {
-            // Single-writer guard fired: another process drives this session.
-            // Rather than a dead end, degrade to a READ-ONLY view synced from
-            // its persisted log — final replies arrive (poll-delayed, without
-            // streaming detail); input is refused until /resume or /new.
+          if (error instanceof SessionAlreadyOwnedError) {
+            // The host's kernel write lease refused the cold resume: another
+            // process drives this session. Rather than a dead end, degrade to
+            // a READ-ONLY view synced from its persisted log — final replies
+            // arrive (poll-delayed, without streaming detail); input is
+            // refused until /resume or /new.
             try {
               await bridge.watchRemote(target.id)
               refreshPermissionPreset()
@@ -1419,7 +1421,7 @@ export function apply(ctx: Context): void {
               ui.requestRender()
               return {
                 kind: 'success' as const,
-                text: `Watching ${clipToWidth(String(target.id), 8)} (read-only · driven by pid ${error.holder.pid}). /resume or /new to switch.`,
+                text: `Watching ${clipToWidth(String(target.id), 8)} (read-only · driven by another process). /resume or /new to switch.`,
               }
             } catch (watchError: unknown) {
               return {

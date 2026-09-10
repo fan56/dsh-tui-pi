@@ -126,9 +126,9 @@ live in ARCHITECTURE.md / HANDOFF.md.
   browsed session ≠ live): the LIVE session is the one detached, still
   resumable via /resume; the browsed session is never touched)
 - **Cold read (冷读)**: 经宿主 persistence API 只读查看未激活 session 的事件
-  日志——不取 writer-lock、不 resume、不激活 agent
+  日志——不取写所有权、不 resume、不激活 agent
   (read-only viewing of an inactive session's event log through the host
-  persistence API — no writer-lock, no resume, no agent activation)
+  persistence API — no write ownership, no resume, no agent activation)
 - **Wrap-up 注入（wrap-up injection）**: 子代理到达轮数上限时 policy 注入的一条
   插件源 user 消息，要求立即收尾不再调工具。软限制——child LLM 可以无视；每个
   child 只注入一次，全程以 `⚡` 标记可见

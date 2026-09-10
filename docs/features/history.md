@@ -26,8 +26,8 @@ below):*
   finished while the viewer stays open do not appear; reopening refreshes).
   With no live session it answers with a hint instead of inventing one.
 - **`/history <sessionId>`** cold-reads any stored session through the host
-  persistence API (`sessionPersistence.inspect`) — no writer lock, no resume,
-  no agent activation (CONTEXT.md "Cold read"). A corrupt log answers with the
+  persistence API (a read-only handle — `sessionPersistence.open(id, 'read')`)
+  — no write ownership, no resume, no agent activation (CONTEXT.md "Cold read"). A corrupt log answers with the
   ⚠ line and points at `/resume`, which owns the repair flow.
 - **Navigation** stays with the left list: ↑↓/PgUp/PgDn move, `/` filters rows
   live (substring over the preview and the turn number), Esc clears an applied
@@ -70,8 +70,8 @@ below):*
 - **Fixed window**: the browser opens at 90% × 85% of the terminal and its
   geometry never changes with the content — short turns pad blank rows, long
   ones scroll. Only a terminal resize re-derives the window.
-- **Read-only by construction**: nothing here writes a session log, takes the
-  writer lock, resends, or jumps the main transcript — the one deliberate
+- **Read-only by construction**: nothing here writes a session log, takes
+  write ownership, resends, or jumps the main transcript — the one deliberate
   exception is fork at turn above (a session-level branch, never a
   message-level tree; see ADR 0003).
 

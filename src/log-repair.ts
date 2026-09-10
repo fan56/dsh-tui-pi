@@ -23,21 +23,20 @@
  *   `<name>.corrupt-bak` first and only then renames the verified repaired
  *   copy over the canonical name.
  * - A repaired copy that does not itself verify CLEAN is never swapped in.
- * - The writer lock beside the log (<sessionDir>/writer.lock, same file the
- *   cold arms and the feishu guard compete on) is claimed for the whole
- *   apply→verify→swap window and always released, success or not.
+ *
+ * Cross-process note (0.1.5): a corrupt log cannot be DRIVEN — every process
+ * that tries to open it for write fails at log validation and the host's
+ * kernel write lease is released with that failure, so there is no live
+ * writer to exclude during the apply→verify→swap window. (The pre-0.1.5
+ * pid-file guard claimed `<sessionDir>/writer.lock` here; the host lease
+ * took arbitration over and the vendored copy was deleted.)
  */
 
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { chmodSync, existsSync, renameSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { SESSION_LOG_FILE_NAMES } from './retention.ts'
-import {
-  acquireWriterLock,
-  projectKeyFor,
-  releaseOwnedWriterLock,
-  type WriterLockHolder,
-} from './writer-lock.ts'
+import { projectKeyFor } from './session-dir.ts'
 
 /** The repair script rides the published package (`files` includes scripts/). */
 export function repairScriptPath(): string {
@@ -205,7 +204,6 @@ export type RepairSessionResult =
   /** The log turned out to need no repair (e.g. the corruption self-healed) — nothing was swapped. */
   | { kind: 'clean' }
   /** Another live process drives this session; nothing was touched. */
-  | { kind: 'locked'; holder: WriterLockHolder }
   | { kind: 'failed'; detail: string }
 
 export interface RepairSessionOptions {
@@ -216,26 +214,15 @@ export interface RepairSessionOptions {
 }
 
 /**
- * End-to-end repair of one session log, under the single-writer lock beside
- * it: claim → apply → verify the repaired copy → swap → release. ANY failure
- * leaves the canonical log untouched, releases the lock, and reports
- * {kind:'failed'}; only a verified artifact is ever swapped in. The lock dir
- * is the log's own directory — the same `<sessionDir>/writer.lock` the cold
- * arms and the feishu guard compete on.
+ * End-to-end repair of one session log: apply → verify the repaired copy →
+ * swap. ANY failure leaves the canonical log untouched and reports
+ * {kind:'failed'}; only a verified artifact is ever swapped in.
  */
 export async function repairSessionLog(
   logPath: string,
   options: RepairSessionOptions = {},
 ): Promise<RepairSessionResult> {
   const dir = dirname(logPath)
-  let claim: { ok: true } | { ok: false; holder: WriterLockHolder }
-  try {
-    claim = await acquireWriterLock(dir)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return { kind: 'failed', detail: `cannot claim the writer lock: ${message}` }
-  }
-  if (!claim.ok) return { kind: 'locked', holder: claim.holder }
   try {
     const run = runRepair(logPath, { apply: true, spawnSyncFn: options.spawnSyncFn })
     if (run.status === 'failed') return { kind: 'failed', detail: run.detail }
@@ -257,8 +244,6 @@ export async function repairSessionLog(
     // command dispatch — this module's contract is results, not throws.
     const message = error instanceof Error ? error.message : String(error)
     return { kind: 'failed', detail: `swap failed: ${message}` }
-  } finally {
-    await releaseOwnedWriterLock(dir)
   }
 }
 
@@ -280,9 +265,6 @@ export function isCorruptLogError(message: string): boolean {
  * Pure so the wording is testable without a terminal (English-only).
  */
 export function repairFailureNotice(result: RepairSessionResult): string | undefined {
-  if (result.kind === 'locked') {
-    return `session is driven by pid ${result.holder.pid} — close it on the other side first`
-  }
   if (result.kind === 'failed') {
     return `repair failed: ${result.detail} — log untouched`
   }
