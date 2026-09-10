@@ -83,6 +83,31 @@ function todoIcon(status: string): string {
   return '☐'
 }
 
+/** Max todo rows the panel shows; longer lists window onto the active items. */
+export const TODO_MAX_ROWS = 5
+
+/** Window priority: running items first, then the queue, completed last. */
+function statusRank(status: string): number {
+  if (status === 'in_progress') return 0
+  if (status === 'completed') return 2
+  return 1
+}
+
+/** `[1,2,3,7,9]` -> `1-3,7,9` - the `showing` hint's range compression. */
+function compactRanges(numbers: readonly number[]): string {
+  if (numbers.length === 0) return ''
+  const runs: string[] = []
+  let start = numbers[0]
+  let prev = start
+  for (const n of numbers.slice(1)) {
+    if (n === prev + 1) { prev = n; continue }
+    runs.push(start === prev ? `${start}` : `${start}-${prev}`)
+    start = prev = n
+  }
+  runs.push(start === prev ? `${start}` : `${start}-${prev}`)
+  return runs.join(',')
+}
+
 /**
  * The live Todos panel - a self-drawing table on the panel framework
  * (padCell/columnWidths from panels.ts), rendered at the CURRENT width on
@@ -90,6 +115,13 @@ function todoIcon(status: string): string {
  * caching, so a terminal resize re-lays the table out (clip + column widths)
  * automatically - no stale baked rows, no word-wrap. Renders zero rows while
  * the list is empty or every todo is completed (clear-when-done).
+ *
+ * The table windows to TODO_MAX_ROWS rows: the visible slice is chosen by
+ * status priority (in_progress → pending → completed, done newest-first)
+ * and re-derived from the snapshot on EVERY render, so a fresh `todo/write`
+ * slides the window onto the newly active items with no timers or
+ * keybindings - the status churn IS the paging. Rows keep their GLOBAL
+ * plan numbers and a `· showing 4-8` header hint accounts for hidden rows.
  */
 export class TodosPanel implements Component {
   private todos: readonly { content: string; status: string }[] = []
@@ -116,10 +148,28 @@ export class TodosPanel implements Component {
     const colWidths = columnWidths(innerWidth, TODO_COLUMNS)
     const subtle = (text: string) => ansiFg(p.fgSubtle) + text + RESET
 
-    // Header row of the panel: `● Todos (done/total)` in the accent/subtle pair.
+    // The visible window: at most TODO_MAX_ROWS entries, ranked in_progress →
+    // pending → completed (stable within the active groups, done NEWEST
+    // first) and displayed back in plan order with their GLOBAL numbers. Done
+    // rows rank last, so a list longer than the window shows the active front
+    // and the pending queue; in the tail (fewer live rows than slots) the
+    // freshest ☑ rows fill in beside the frontier, keeping the window a
+    // pinned 5-row viewport that slides forward as the run advances.
+    const window = this.todos
+      .map((todo, index) => ({ todo, index }))
+      .sort((a, b) => statusRank(a.todo.status) - statusRank(b.todo.status)
+        || (a.todo.status === 'completed' ? b.index - a.index : a.index - b.index))
+      .slice(0, TODO_MAX_ROWS)
+      .sort((a, b) => a.index - b.index)
+
+    // Header row of the panel: `● Todos (done/total)` in the accent/subtle
+    // pair, plus a `· showing 4-8` range hint whenever the window hides rows.
     const done = this.todos.filter(todo => todo.status === 'completed').length
+    const showing = window.length < this.todos.length
+      ? subtle(` · showing ${compactRanges(window.map(entry => entry.index + 1))}`)
+      : ''
     const headerInner = ansiFg(p.accent) + '● Todos ' + RESET
-      + subtle(`(${done}/${this.todos.length})`)
+      + subtle(`(${done}/${this.todos.length})`) + showing
     const out = [panelTopBorder(boxWidth, borderFg), borderedRow(boxWidth, borderFg, headerInner)]
 
     // Table header: every cell padded to its column so the rows align, each
@@ -131,10 +181,9 @@ export class TodosPanel implements Component {
       TODO_COLUMNS.map((column, i) => subtle(padCell(column.title, colWidths[i], column.align))).join(TABLE_SEP),
     ))
 
-    for (let i = 0; i < this.todos.length; i++) {
-      const todo = this.todos[i]
+    for (const { todo, index } of window) {
       // Plain (clipped+padded) cells FIRST, ANSI after - the panel-line rule.
-      const idxCell = padCell(String(i + 1), colWidths[0], 'right')
+      const idxCell = padCell(String(index + 1), colWidths[0], 'right')
       const iconCell = padCell(todoIcon(todo.status), colWidths[1])
       const contentCell = padClip(todo.content, colWidths[2])
       // One color per status across the icon and content cells (the icon has

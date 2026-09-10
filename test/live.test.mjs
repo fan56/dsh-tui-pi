@@ -168,6 +168,127 @@ test('the panel re-lays out at the current width - content is clipped per render
   assert.ok(wide[2].includes(long), 'the same content renders in full once the terminal widens')
 })
 
+test('lists over five todos window onto the active items: done squeezed out, global numbers, showing hint', () => {
+  const { todosDoc, widget } = makeWidget()
+  widget.renderTodos([
+    { content: 't1', status: 'completed' },
+    { content: 't2', status: 'completed' },
+    { content: 't3', status: 'completed' },
+    { content: 't4', status: 'in_progress' },
+    { content: 't5', status: 'pending' },
+    { content: 't6', status: 'pending' },
+    { content: 't7', status: 'pending' },
+    { content: 't8', status: 'pending' },
+    { content: 't9', status: 'pending' },
+    { content: 't10', status: 'pending' },
+  ])
+  // 5 rows max: the running item first, then the pending queue; the three
+  // done items rank last and never make the cut. Row numbers stay GLOBAL.
+  assert.deepEqual(panelBody(todosDoc), [
+    '● Todos (3/10) · showing 4-8',
+    '  # │ ✓  │ Task',
+    '  4 │ ◐  │ t4',
+    '  5 │ ☐  │ t5',
+    '  6 │ ☐  │ t6',
+    '  7 │ ☐  │ t7',
+    '  8 │ ☐  │ t8',
+  ])
+})
+
+test('the window auto-pages as the run advances - a fresh snapshot slides it onto the new active items', () => {
+  const { todosDoc, widget } = makeWidget()
+  const plan = doneCount => Array.from({ length: 10 }, (_, i) => ({
+    content: `t${i + 1}`,
+    status: i < doneCount ? 'completed' : i === doneCount ? 'in_progress' : 'pending',
+  }))
+  widget.renderTodos(plan(3)) // t1-t3 done, t4 running
+  assert.deepEqual(panelBody(todosDoc)[0], '● Todos (3/10) · showing 4-8')
+  // No timers, no keys: the next todo/write snapshot alone re-ranks the
+  // window onto t9 (the newly active item) - the status churn IS the paging.
+  // Only two live rows are left, so the freshest ☑ rows (6,7,8) fill in
+  // beside the frontier: the window stays PINNED at 6-10 for the whole tail.
+  widget.renderTodos(plan(8)) // t1-t8 done, t9 running
+  assert.deepEqual(panelBody(todosDoc), [
+    '● Todos (8/10) · showing 6-10',
+    '  # │ ✓  │ Task',
+    '  6 │ ☑  │ t6',
+    '  7 │ ☑  │ t7',
+    '  8 │ ☑  │ t8',
+    '  9 │ ◐  │ t9',
+    ' 10 │ ☐  │ t10',
+  ])
+})
+
+test('scattered active items render a compressed showing hint; the tail fills with the freshest done rows', () => {
+  const { todosDoc, widget } = makeWidget()
+  // Two active items far apart: the ranked window is {1, 10, 2, 3, 4} -
+  // displayed back in plan order the hint compresses to 1-4,10.
+  widget.renderTodos([
+    { content: 't1', status: 'in_progress' },
+    { content: 't2', status: 'pending' },
+    { content: 't3', status: 'pending' },
+    { content: 't4', status: 'pending' },
+    { content: 't5', status: 'pending' },
+    { content: 't6', status: 'pending' },
+    { content: 't7', status: 'pending' },
+    { content: 't8', status: 'pending' },
+    { content: 't9', status: 'pending' },
+    { content: 't10', status: 'in_progress' },
+  ])
+  assert.deepEqual(panelBody(todosDoc), [
+    '● Todos (0/10) · showing 1-4,10',
+    '  # │ ✓  │ Task',
+    '  1 │ ◐  │ t1',
+    '  2 │ ☐  │ t2',
+    '  3 │ ☐  │ t3',
+    '  4 │ ☐  │ t4',
+    ' 10 │ ◐  │ t10',
+  ])
+  // Tail phase: 2 running + 2 queued fill only four slots, so the freshest
+  // done row (t6, right behind the frontier) takes the last one.
+  widget.renderTodos([
+    { content: 't1', status: 'completed' },
+    { content: 't2', status: 'completed' },
+    { content: 't3', status: 'completed' },
+    { content: 't4', status: 'completed' },
+    { content: 't5', status: 'completed' },
+    { content: 't6', status: 'completed' },
+    { content: 't7', status: 'in_progress' },
+    { content: 't8', status: 'in_progress' },
+    { content: 't9', status: 'pending' },
+    { content: 't10', status: 'pending' },
+  ])
+  assert.deepEqual(panelBody(todosDoc), [
+    '● Todos (6/10) · showing 6-10',
+    '  # │ ✓  │ Task',
+    '  6 │ ☑  │ t6',
+    '  7 │ ◐  │ t7',
+    '  8 │ ◐  │ t8',
+    '  9 │ ☐  │ t9',
+    ' 10 │ ☐  │ t10',
+  ])
+})
+
+test('lists within five todos render every row with no showing hint', () => {
+  const { todosDoc, widget } = makeWidget()
+  widget.renderTodos([
+    { content: 't1', status: 'completed' },
+    { content: 't2', status: 'completed' },
+    { content: 't3', status: 'in_progress' },
+    { content: 't4', status: 'pending' },
+    { content: 't5', status: 'pending' },
+  ])
+  assert.deepEqual(panelBody(todosDoc), [
+    '● Todos (2/5)',
+    '  # │ ✓  │ Task',
+    '  1 │ ☑  │ t1',
+    '  2 │ ☑  │ t2',
+    '  3 │ ◐  │ t3',
+    '  4 │ ☐  │ t4',
+    '  5 │ ☐  │ t5',
+  ])
+})
+
 // --------------------------------------------------------- running agents ----
 
 test('running agent line: └─ prefix (single, last), spinner + name first, compact meta, no provider', () => {
