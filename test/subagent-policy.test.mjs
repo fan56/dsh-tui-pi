@@ -945,3 +945,56 @@ test('getStats reports the runtime counters', () => {
   assert.deepEqual(policy.getStats(), { live: 1, allowed: 1, denied: 1, pruned: 0, inFlight: 1 })
   policy.dispose()
 })
+
+// --------------------------------------------------- registeredOnly fence --
+
+test('registeredOnly fences EVERY spawn tool except use_agent', () => {
+  // The 2026-09-10 live-test leak: ad-hoc children labeled with task
+  // descriptions ("实现 …") rode the non-registry spawn tools. With the
+  // fence on, a child may only ever be backed by a registered agent
+  // definition — everything else is denied at the guard.
+  const { ctx, captured } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 50, disableSubagent: false, registeredOnly: true }),
+  })
+  const policy = applySubagentPolicy(ctx, makeState({ live: [] }))
+  for (const name of ['subagent', 'subagent_fork', 'workflow', 'ralph']) {
+    const denial = captured.guard({ name, agent: tuiAgent() })
+    assert.equal(typeof denial, 'string', `${name} denied under the registered-only fence`)
+    assert.ok(denial.includes('use_agent'), `the ${name} denial points at the registry tool`)
+  }
+  assert.equal(captured.guard({ name: 'use_agent', agent: tuiAgent() }), undefined, 'the registry tool itself passes')
+  policy.dispose()
+})
+
+test('registeredOnly is off by default and surface-scoped', () => {
+  // Off by default: the ad-hoc tools pass when the knob is absent.
+  const off = makeCtx({ settings: makeSettings({ maxAgents: 4, maxRounds: 50, disableSubagent: false }) })
+  const offPolicy = applySubagentPolicy(off.ctx, makeState({ live: [] }))
+  for (const name of ['subagent_fork', 'workflow', 'ralph']) {
+    assert.equal(off.captured.guard({ name, agent: tuiAgent() }), undefined, `${name} allowed with the fence off`)
+  }
+  offPolicy.dispose()
+
+  // Surface scope: a foreign caller fails open even with the fence on.
+  const on = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 50, disableSubagent: false, registeredOnly: true }),
+  })
+  const onPolicy = applySubagentPolicy(on.ctx, makeState({ live: [] }))
+  for (const name of SPAWN_TOOLS) {
+    assert.equal(on.captured.guard({ name, agent: foreignAgent() }), undefined, `foreign ${name}: fail open`)
+  }
+  onPolicy.dispose()
+})
+
+test('the registeredOnly fence reason wins over the cap reason', () => {
+  // At the cap AND fenced: the fence is the reported reason — the tool rule
+  // is the primary contract (same precedence as the disableSubagent fence).
+  const { ctx, captured } = makeCtx({
+    settings: makeSettings({ maxAgents: 1, maxRounds: 50, disableSubagent: false, registeredOnly: true }),
+  })
+  const policy = applySubagentPolicy(ctx, makeState({ live: [{ childId: 'a', label: 'busy' }] }))
+  const denial = captured.guard({ name: 'subagent_fork', agent: tuiAgent() })
+  assert.ok(denial.includes('Ad-hoc subagents are disabled'), 'the fence reason wins')
+  assert.ok(!denial.includes('Agent limit reached'), 'no cap reason leaks through')
+  policy.dispose()
+})

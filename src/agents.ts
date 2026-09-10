@@ -512,6 +512,7 @@ export async function openAgentManager(
         { key: 'maxRounds', value: `${limits.maxRounds} · assistant messages before wrap-up (0 = unlimited)`, editable: true },
         { key: 'maxRoundsGrace', value: `${limits.maxRoundsGrace} · wrap-up rounds before force-stop (0 = warn only)`, editable: true },
         { key: 'disableSubagent', value: `${limits.disableSubagent ? 'on' : 'off'} · native subagent tool`, editable: true },
+        { key: 'registeredOnly', value: `${limits.registeredOnly ? 'on' : 'off'} · only use_agent may spawn (subagent/fork/workflow/ralph fenced)`, editable: true },
       ]
       const content: string[] = [
         'subagent delegation knobs — read live at every spawn / turn decision',
@@ -528,10 +529,11 @@ export async function openAgentManager(
         content,
         fields,
         status: () => limitsStatus,
-        footer: '↑↓ field · Enter edit (0 = unlimited) · d toggle subagent · Esc back',
-        shortcuts: { d: () => void toggleDisableSubagent() },
+        footer: '↑↓ field · Enter edit (0 = unlimited) · d toggle subagent · r registered-only · Esc back',
+        shortcuts: { d: () => void toggleDisableSubagent(), r: () => void toggleRegisteredOnly() },
         onEdit: index => {
           if (index === 3) toggleDisableSubagent()
+          else if (index === 4) toggleRegisteredOnly()
           else editLimit(index === 0 ? 'maxAgents' : index === 1 ? 'maxRounds' : 'maxRoundsGrace')
         },
         // With no agent files the table has nothing to go back to — Esc then
@@ -588,6 +590,21 @@ export async function openAgentManager(
       limitsStatus = error !== undefined
         ? `✘ ${error}`
         : `subagent tool ${next ? 'disabled' : 'enabled'} — applies to future subagent spawns`
+      showLimits()
+    }
+
+    /**
+     * Toggle the registeredOnly fence (the `r` shortcut / the 5th field
+     * row): on, every spawn tool except `use_agent` is denied, so children
+     * may only ever be backed by a registered agent definition. The live
+     * read means the next spawn call is already fenced.
+     */
+    const toggleRegisteredOnly = async (): Promise<void> => {
+      const next = !readSubagentLimits(ctx).registeredOnly
+      const error = await writeSubagentLimit(ctx, 'registeredOnly', next)
+      limitsStatus = error !== undefined
+        ? `✘ ${error}`
+        : `registered-only fence ${next ? 'ON — only use_agent may spawn' : 'off — ad-hoc spawn tools available'}`
       showLimits()
     }
 

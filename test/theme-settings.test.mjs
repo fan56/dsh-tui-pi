@@ -281,6 +281,7 @@ test('subagent limits resolve to defaults and round-trip through a committed wri
     maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
     maxRoundsGrace: DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace,
     disableSubagent: DEFAULT_SUBAGENT_LIMITS.disableSubagent,
+    registeredOnly: DEFAULT_SUBAGENT_LIMITS.registeredOnly,
   }
   assert.deepEqual(readSubagentLimits(ctx), defaults, 'base entry resolves to the defaults')
 
@@ -288,7 +289,8 @@ test('subagent limits resolve to defaults and round-trip through a committed wri
   assert.equal(await writeSubagentLimit(ctx, 'maxAgents', 2), undefined)
   assert.equal(await writeSubagentLimit(ctx, 'maxRounds', 10), undefined)
   assert.equal(await writeSubagentLimit(ctx, 'disableSubagent', false), undefined)
-  assert.deepEqual(readSubagentLimits(ctx), { maxAgents: 2, maxRounds: 10, maxRoundsGrace: DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace, disableSubagent: false }, 'committed limits read back')
+  assert.equal(await writeSubagentLimit(ctx, 'registeredOnly', true), undefined)
+  assert.deepEqual(readSubagentLimits(ctx), { maxAgents: 2, maxRounds: 10, maxRoundsGrace: DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace, disableSubagent: false, registeredOnly: true }, 'committed limits read back')
 })
 
 test('maxRounds defaults to 75 and is configurable through the settings chain', async () => {
@@ -326,6 +328,7 @@ test('subagent limits fall back to defaults when the service or a field is missi
     maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
     maxRoundsGrace: DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace,
     disableSubagent: DEFAULT_SUBAGENT_LIMITS.disableSubagent,
+    registeredOnly: DEFAULT_SUBAGENT_LIMITS.registeredOnly,
   }
 
   // No settings service: read degrades, write reports the failure (no throw).

@@ -257,13 +257,13 @@ pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` runs **1285 tests** across 74 files (verified by
+- `pnpm test` runs **1288 tests** across 74 files (verified by
   `node --test test/*.mjs`; per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals and the
   per-file list here. The suite is fully green.
-  - ask-user 119 + btw 45 + subagent-viewer 41 + subagent-policy 41 + retention 39 + skills 36 +
+  - ask-user 119 + btw 45 + subagent-viewer 41 + subagent-policy 44 + retention 39 + skills 36 +
   - live 35 + sessions 35 + session-reconcile 33 + history-viewer 33 + keymap 31 + model-profiles 31 +
   - usage 26 + pending-echo 26 + clipboard 26 + login 25 + log-repair 25 +
     startup-info 24 + skills-manager 24 + panels 24 +

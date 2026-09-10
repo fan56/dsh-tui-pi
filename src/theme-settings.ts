@@ -87,6 +87,17 @@ export interface SubagentLimits {
    * plain one-shot spawn the TUI's user wants fenced off).
    */
   disableSubagent: boolean
+  /**
+   * Fence EVERY spawn tool except the registry's `use_agent`: delegation may
+   * only create subagents backed by a registered agent definition
+   * (`~/.dsh/agents/*.md`), and the ad-hoc paths — native `subagent`,
+   * `subagent_fork`, `workflow`, `ralph` — are denied at the guard. This is
+   * the "no subagents we did not define" lever: any child whose label is a
+   * task description rather than a registered agent's display name is a
+   * fence miss this knob closes. Default off (the narrower
+   * `disableSubagent` fence stays the out-of-the-box stance).
+   */
+  registeredOnly: boolean
 }
 
 /**
@@ -103,6 +114,7 @@ export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({
   maxRounds: 75,
   maxRoundsGrace: 7,
   disableSubagent: true,
+  registeredOnly: false,
 })
 
 /** Schema of the `dsh-tui` settings section. */
@@ -144,6 +156,15 @@ const THEME_SETTINGS_SCHEMA = z.object({
       'Disable the native subagent tool (delegation goes through registered '
       + 'agents, ~/.dsh/agents/*.md via use_agent); subagent_fork/workflow/'
       + 'ralph stay available',
+    ),
+  registeredOnly: z
+    .boolean()
+    .default(DEFAULT_SUBAGENT_LIMITS.registeredOnly)
+    .description(
+      'Fence EVERY spawn tool except use_agent: delegation may only create '
+      + 'subagents backed by a registered agent definition (~/.dsh/agents/'
+      + '*.md); the ad-hoc paths (subagent, subagent_fork, workflow, ralph) '
+      + 'are denied at the guard',
     ),
   footerHints: z
     .object({
@@ -256,6 +277,7 @@ const THEME_SETTINGS_ENTRY: {
   maxRounds: number
   maxRoundsGrace: number
   disableSubagent: boolean
+  registeredOnly: boolean
   footerHints: FooterHints
   cacheHitMode: CacheHitMode
   iconSet: IconSet
@@ -271,6 +293,7 @@ const THEME_SETTINGS_ENTRY: {
   maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
   maxRoundsGrace: DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace,
   disableSubagent: DEFAULT_SUBAGENT_LIMITS.disableSubagent,
+  registeredOnly: DEFAULT_SUBAGENT_LIMITS.registeredOnly,
   footerHints: { ...DEFAULT_FOOTER_HINTS },
   cacheHitMode: DEFAULT_CACHE_HIT_MODE,
   iconSet: 'auto',
@@ -647,6 +670,7 @@ export function currentThemePreference(ctx: Context): ThemePreference {
 async function writeDshTuiPreference(
   ctx: Context,
   key: 'theme' | 'panelHeight' | 'maxAgents' | 'maxRounds' | 'maxRoundsGrace' | 'disableSubagent'
+    | 'registeredOnly'
     | 'favoriteModels' | 'hiddenModels',
   value: string | number | boolean | string[],
 ): Promise<string | undefined> {
@@ -699,7 +723,7 @@ export function readSubagentLimits(ctx: Context): SubagentLimits {
   const section = settings
     .describe()
     .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { maxAgents?: unknown; maxRounds?: unknown; maxRoundsGrace?: unknown; disableSubagent?: unknown }
+    | { maxAgents?: unknown; maxRounds?: unknown; maxRoundsGrace?: unknown; disableSubagent?: unknown; registeredOnly?: unknown }
     | undefined
   const natural = (value: unknown, fallback: number): number =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
@@ -710,6 +734,9 @@ export function readSubagentLimits(ctx: Context): SubagentLimits {
     disableSubagent: typeof section?.disableSubagent === 'boolean'
       ? section.disableSubagent
       : DEFAULT_SUBAGENT_LIMITS.disableSubagent,
+    registeredOnly: typeof section?.registeredOnly === 'boolean'
+      ? section.registeredOnly
+      : DEFAULT_SUBAGENT_LIMITS.registeredOnly,
   }
 }
 
@@ -724,7 +751,7 @@ export function readSubagentLimits(ctx: Context): SubagentLimits {
  */
 export async function writeSubagentLimit(
   ctx: Context,
-  key: 'maxAgents' | 'maxRounds' | 'maxRoundsGrace' | 'disableSubagent',
+  key: 'maxAgents' | 'maxRounds' | 'maxRoundsGrace' | 'disableSubagent' | 'registeredOnly',
   value: number | boolean,
 ): Promise<string | undefined> {
   return writeDshTuiPreference(ctx, key, value)

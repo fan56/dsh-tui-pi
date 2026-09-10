@@ -27,6 +27,11 @@
  *   agent's catalog), so delegation goes through registered agent
  *   definitions (`~/.dsh/agents/*.md` via the registry's `use_agent`).
  *   `subagent_fork`, `workflow` and `ralph` stay available.
+ * - `registeredOnly` is the wider fence: EVERY spawn tool except
+ *   `use_agent` is denied for TUI-scoped callers, so no child can exist
+ *   without a registered agent definition behind it (no ad-hoc
+ *   "implement <task>" children). Default off; the fence is read live like
+ *   every other knob.
  * - `maxRounds` caps a child's assistant messages (each LLM round-trip is
  *   one "round") through a TWO-STAGE ladder. Stage 1: at the cap — the
  *   per-agent tier when the child's label resolves to an agent .md
@@ -452,6 +457,19 @@ export function applySubagentPolicy(
       // hole — host-created children carry no marker of their own). Foreign
       // roots still fail open.
       if (!callerBelongsToTui(ctx, exec.agent)) return undefined
+      // registeredOnly fence: EVERY spawn tool except the registry's
+      // use_agent is denied — a child may only ever be backed by a
+      // registered agent definition (~/.dsh/agents/*.md). Stricter than the
+      // disableSubagent fence: subagent_fork/workflow/ralph are fenced too,
+      // so the model cannot sidestep the roster with ad-hoc or forked
+      // spawns (the "实现 <task description>" label shape is exactly the
+      // leak this closes).
+      if (readSubagentLimits(ctx).registeredOnly && exec.name !== 'use_agent') {
+        return `Ad-hoc subagents are disabled here — the "${exec.name}" tool is not available. `
+          + 'Delegation goes through the use_agent tool with one of the REGISTERED agent names '
+          + '(~/.dsh/agents/*.md) only; if no registered agent fits this task, do it yourself '
+          + 'or record it with todo_write and surface it to the operator.'
+      }
       if (readSubagentLimits(ctx).disableSubagent && NATIVE_SPAWN_TOOLS.includes(exec.name)) {
         return `Tool "subagent" is disabled here - delegation goes through registered agents. `
           + 'Dispatch the work through the use_agent tool with one of the registered agent names instead.'
