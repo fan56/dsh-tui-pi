@@ -467,8 +467,10 @@ export function applySubagentPolicy(
       if (readSubagentLimits(ctx).registeredOnly && exec.name !== 'use_agent') {
         return `Ad-hoc subagents are disabled here — the "${exec.name}" tool is not available. `
           + 'Delegation goes through the use_agent tool with one of the REGISTERED agent names '
-          + '(~/.dsh/agents/*.md) only; if no registered agent fits this task, do it yourself '
-          + 'or record it with todo_write and surface it to the operator.'
+          + '(~/.dsh/agents/*.md) only — it covers the same ground: background:true for a durable '
+          + 'background child, resume/fresh for continuation, parallel use_agent calls for fan-out. '
+          + 'If no registered agent fits this task, do it yourself or record it with todo_write and '
+          + 'surface it to the operator.'
       }
       if (readSubagentLimits(ctx).disableSubagent && NATIVE_SPAWN_TOOLS.includes(exec.name)) {
         return `Tool "subagent" is disabled here - delegation goes through registered agents. `
