@@ -4,7 +4,7 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.13.0] - 2026-09-10
 
 ### Changed
 - **The Todos panel windows to 5 rows and auto-pages with the run.** The table used to render EVERY todo unbounded, so a 20-item plan boxed 20+ rows above the editor and squeezed the transcript. The visible slice is now re-derived per render by status priority — `in_progress` → `pending` → completed (done newest-first) — so each `todo/write` snapshot alone slides the window onto the newly active items: no timers, no keybindings, the status churn IS the paging. Rows keep their global plan numbers and a `· showing 4-8` header hint (range-compressed for scattered windows) accounts for hidden rows; lists of ≤5 render exactly as before. In the tail phase (fewer live rows than slots) the freshest ☑ rows fill in beside the frontier, keeping the window a pinned 5-row viewport that rides the active front to completion.
