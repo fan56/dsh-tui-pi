@@ -70,8 +70,8 @@
     "@earendil-works/pi-tui": "0.84.4"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-skill": ">=0.1.5-rc.1",
-    "@deepseek-ai/dsh-user-questions": ">=0.1.5-rc.1"
+    "@deepseek-ai/dsh-skill": ">=0.1.5-rc.2",
+    "@deepseek-ai/dsh-user-questions": ">=0.1.5-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-skill": {

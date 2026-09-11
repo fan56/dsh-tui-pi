@@ -12,10 +12,10 @@ live in ARCHITECTURE.md / HANDOFF.md.
   `@deepseek-ai/*` import resolves through symlink to that one closure
   instance, so tsc sees exactly the type graph the host runs)
 - **Floor**: peer 声明中本插件要求的宿主最低版本，`>=` 语义——不精确钉，
-  随宿主滚动线向上（当前 `dsh-user-questions >= 0.1.2-rc.1`）
+  随宿主滚动线向上（当前 `dsh-user-questions >= 0.1.5-rc.2`）
   (the minimum host version a peer declaration requires, `>=` semantics —
   deliberately not an exact pin; it only ratchets up along the host's
-  rolling line, currently `dsh-user-questions >= 0.1.2-rc.1`)
+  rolling line, currently `dsh-user-questions >= 0.1.5-rc.2`)
 - **Era**: rc/alpha 双路径兼容模式——插件同时支撑两条宿主形状分支、运行时
   feature-detect 选路。**已废弃**：2026-09-01 起 single-target，2026-09-03
   起目标线为 rc/stable（`0.1.2-rc.1+`），alpha 路径退役，双路径分支与其测试

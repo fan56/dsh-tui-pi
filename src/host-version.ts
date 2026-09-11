@@ -15,7 +15,7 @@ import { createRequire } from 'node:module'
  * Same floor as the peerDependencies range in package.json — keep the two in
  * lockstep (the package.json field stays the npm-facing source of truth).
  */
-export const HOST_FLOOR = '0.1.2-rc.1'
+export const HOST_FLOOR = '0.1.5-rc.2'
 
 /**
  * The @deepseek-ai package the peer range is declared against; resolving its

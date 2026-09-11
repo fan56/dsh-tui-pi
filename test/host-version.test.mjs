@@ -31,12 +31,13 @@ test('parseVersion accepts core, prerelease, and padded input; rejects garbage',
 
 test('compareVersions orders the host lines the plugin must distinguish', () => {
   const cmp = (a, b) => compareVersions(parseVersion(a), parseVersion(b))
-  // the shipped stable line (npm latest) sits below the rc floor
-  assert.ok(cmp('0.1.1-rc.2', '0.1.2-alpha.4') < 0)
-  assert.ok(cmp('0.1.2-rc.1', HOST_FLOOR) === 0)
-  assert.ok(cmp('0.1.2-rc.2', HOST_FLOOR) > 0)
+  // the exact version the floor names equals it; neighbours straddle it
+  assert.ok(cmp('0.1.5-rc.2', HOST_FLOOR) === 0)
+  assert.ok(cmp('0.1.5-rc.3', HOST_FLOOR) > 0)
+  assert.ok(cmp('0.1.5-rc.1', HOST_FLOOR) < 0)
+  assert.ok(cmp('0.1.4', HOST_FLOOR) < 0)
   // the retired alpha line sorts below the rc identifiers
-  assert.ok(cmp('0.1.2-alpha.5', HOST_FLOOR) < 0)
+  assert.ok(cmp('0.1.5-alpha.5', HOST_FLOOR) < 0)
   // numeric identifiers compare numerically, not lexically
   assert.ok(cmp('0.1.2-alpha.13', '0.1.2-alpha.5') > 0)
   assert.ok(cmp('0.1.2-rc.13', '0.1.2-rc.5') > 0)
@@ -52,28 +53,29 @@ test('compareVersions orders the host lines the plugin must distinguish', () => 
 
 test('hostSupported judges exactly the peer floor', () => {
   assert.equal(hostSupported('0.1.1-rc.2'), false)
-  assert.equal(hostSupported('0.1.2-alpha.3'), false)
-  assert.equal(hostSupported('0.1.2-alpha.4'), false)
   assert.equal(hostSupported('0.1.2-alpha.5'), false)
-  assert.equal(hostSupported('0.1.2-rc.1'), true)
-  assert.equal(hostSupported('0.1.2-rc.2'), true)
-  assert.equal(hostSupported('0.1.2'), true)
+  assert.equal(hostSupported('0.1.5-alpha.5'), false)
+  assert.equal(hostSupported('0.1.5-rc.1'), false)
+  assert.equal(hostSupported('0.1.4'), false)
+  assert.equal(hostSupported('0.1.5-rc.2'), true)
+  assert.equal(hostSupported('0.1.5-rc.3'), true)
+  assert.equal(hostSupported('0.1.5'), true)
   assert.equal(hostSupported('0.2.0'), true)
   assert.equal(hostSupported('garbage'), false)
 })
 
 test('checkHostSupport reports an unsupported host with the found version and the upgrade path', () => {
-  const check = checkHostSupport(() => '0.1.2-alpha.5')
+  const check = checkHostSupport(() => '0.1.5-rc.1')
   assert.equal(check.ok, false)
-  assert.equal(check.version, '0.1.2-alpha.5')
+  assert.equal(check.version, '0.1.5-rc.1')
   assert.match(check.message, new RegExp(HOST_FLOOR.replace('.', '\\.')))
-  assert.match(check.message, /found 0\.1\.2-alpha\.5/)
+  assert.match(check.message, /found 0\.1\.5-rc\.1/)
   assert.match(check.message, /npm install -g @deepseek-ai\/dsh@next/)
 })
 
 test('checkHostSupport accepts hosts at or above the floor', () => {
-  assert.deepEqual(checkHostSupport(() => '0.1.2-rc.1'), { ok: true, version: '0.1.2-rc.1' })
-  assert.deepEqual(checkHostSupport(() => '0.1.2'), { ok: true, version: '0.1.2' })
+  assert.deepEqual(checkHostSupport(() => '0.1.5-rc.2'), { ok: true, version: '0.1.5-rc.2' })
+  assert.deepEqual(checkHostSupport(() => '0.1.5'), { ok: true, version: '0.1.5' })
 })
 
 test('checkHostSupport fails open when the closure version is unreadable', () => {
