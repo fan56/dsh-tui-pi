@@ -289,14 +289,14 @@ export const RESUME_DIR_CAP = 32
  * the resume-filter precedence chain (settings.yaml `dsh-tui.resume.maxAgeDays`
  * > `DSH_TUI_RESUME_MAX_AGE_DAYS` > this constant), deliberately coupled in
  * VALUE with its retention twin `RETENTION_MAX_AGE_DAYS` (src/retention.ts):
- * the two 7s are one product decision ("a week is the working set") but
+ * the two 30s are one product decision ("a month is the working set") but
  * serve different masters (this one HIDES picker rows, retention DELETES
  * logs), so they are separate constants — change them together.
  * Boundary semantics match retention: the boundary case survives in both
  * (retention deletes strictly-older-than, the picker keeps
  * not-older-than).
  */
-export const RESUME_MAX_AGE_DAYS = 7
+export const RESUME_MAX_AGE_DAYS = 30
 
 /**
  * Minimum on-disk log size for a session to appear in `/resume` — the
@@ -304,10 +304,12 @@ export const RESUME_MAX_AGE_DAYS = 7
  * `DSH_TUI_RESUME_MIN_BYTES` > this constant). This is the COMPRESSED size
  * — `stat().size` of `session.jsonl` or `session.jsonl.zstd`, whichever
  * exists — read from the same stat the mtime walk already does (zero extra
- * IO, no decompression). A session below 20KB is a stub or a false start,
- * not worth a picker row.
+ * IO, no decompression). A session below 1KB is a stub or a false start,
+ * not worth a picker row — but a real short conversation (a few commands
+ * and replies) is typically far larger, so a 1KB floor keeps e2e/demo
+ * stubs out of the picker without hiding genuine small sessions.
  */
-export const RESUME_MIN_BYTES = 20 * 1024
+export const RESUME_MIN_BYTES = 1024
 
 /**
  * Explicit `dsh-tui.resume` overrides from settings.yaml — the USER layer
@@ -528,7 +530,7 @@ export interface ResumeActivityPolicy {
  * column and the sort show — the walked mtime when known, else the header's
  * `createdAt` — with retention's boundary semantics (exactly `maxAgeDays`
  * old survives; only strictly older is dropped). Size is the compressed
- * on-disk `stat().size`, inclusive at `minBytes` (20480 passes, 20479 does
+ * on-disk `stat().size`, inclusive at `minBytes` (1024 passes, 1023 does
  * not). A session MISSING from the stat map fails OPEN on size: the walk is
  * best-effort (unknown root, path-encoded id mismatch) and must never empty
  * the picker by itself — but its age still applies through `createdAt`.

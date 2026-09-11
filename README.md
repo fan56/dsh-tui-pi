@@ -71,7 +71,7 @@ What stays on disk on purpose (deleting user data is destructive; a reinstall re
 - the `dsh-tui:` section of `~/.dsh/settings.yaml` — theme/panel/footer/retention/subagent limits
 - `~/.dsh/storages/session_projcache/` — the session projection cache, incl. `.bak-preflight-*` migration backups
 
-While the plugin runs, the retention janitor (default `maxCount: 100` / `maxAgeDays: 7`, configurable in the `dsh-tui` settings) deletes old session logs — uninstalling stops that, but already-deleted logs are gone.
+While the plugin runs, the retention janitor (default `maxCount: 100` / `maxAgeDays: 30`, configurable in the `dsh-tui` settings) deletes old session logs — uninstalling stops that, but already-deleted logs are gone.
 
 `scripts/install-font.mjs` mutates OS font/terminal state and has a documented backup; uninstall doesn't touch it.
 
@@ -143,11 +143,11 @@ Session-store knobs (env overrides `DSH_TUI_RETENTION_*` / `DSH_TUI_RESUME_*`; p
 dsh-tui:
   retention:        # startup janitor for ~/.dsh/sessions — DELETES old logs. Once per startup.
     maxCount: 100   # <= 0 disables the janitor
-    maxAgeDays: 7
+    maxAgeDays: 30
     minIdleHours: 24
   resume:           # /resume display filter — only HIDES picker rows, never deletes.
-    maxAgeDays: 7
-    minBytes: 20480
+    maxAgeDays: 30
+    minBytes: 1024
 ```
 
 Key remaps live in `~/.dsh/keybindings.json` (keyboard section above); `DSH_TUI_COPY_ON_SELECT=0` keeps drag-selection visual-only.

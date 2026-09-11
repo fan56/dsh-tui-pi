@@ -59,9 +59,9 @@ export interface RetentionPolicy {
 export const RETENTION_MAX_COUNT = 100
 
 /**
- * Default window: sessions untouched for 7 days are deleted. Deliberately
- * coupled in VALUE with `RESUME_MAX_AGE_DAYS` (src/sessions.ts): the two 7s
- * are one product decision ("a week is the working set"), but their SEMANTICS
+ * Default window: sessions untouched for 30 days are deleted. Deliberately
+ * coupled in VALUE with `RESUME_MAX_AGE_DAYS` (src/sessions.ts): the two 30s
+ * are one product decision ("a month is the working set"), but their SEMANTICS
  * differ — this constant DELETES logs, that one only hides picker rows — so
  * they are separate constants, not one shared number. Note the asymmetry:
  * this one resolves through the settings/env chain
@@ -69,7 +69,7 @@ export const RETENTION_MAX_COUNT = 100
  * one has its own twin knobs (`dsh-tui.resume.maxAgeDays` /
  * `DSH_TUI_RESUME_MAX_AGE_DAYS`).
  */
-export const RETENTION_MAX_AGE_DAYS = 7
+export const RETENTION_MAX_AGE_DAYS = 30
 
 const HOUR_MS = 60 * 60 * 1000
 const DAY_MS = 24 * HOUR_MS
@@ -81,7 +81,7 @@ const DAY_MS = 24 * HOUR_MS
  * (feishu remote, headless, a subagent) still holds open but has not
  * written to recently — its mtime predates the 100 fresher sessions, yet
  * removing the directory would destroy the log that process appends to
- * next. The age rule needs no extra guard: 7 idle days are proof enough.
+ * next. The age rule needs no extra guard: 30 idle days are proof enough.
  * Exported as hours because that is the unit the settings field and env
  * knob expose; the selector consumes the ms twin below.
  */

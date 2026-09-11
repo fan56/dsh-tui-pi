@@ -368,7 +368,7 @@ test('filter + walk: an active zstd sibling rescues a session whose raw log went
     const kept = filterSessionsByLastActivity(
       [headerOf('rescued', 0)],
       stats,
-      { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW2 },
+      { maxAgeDays: 30, minBytes: 1024, now: NOW2 },
     )
     assert.deepEqual(kept.map(h => h.sessionId), ['rescued'])
   } finally {
@@ -383,7 +383,7 @@ test('filter + walk: an active zstd sibling rescues a session whose raw log went
 // same warn contract as retention (test/retention.test.mjs).
 
 test('resolveResumeConfig: defaults when the environment is silent', () => {
-  assert.deepEqual(resolveResumeConfig({}), { maxAgeDays: 7, minBytes: 20 * 1024 })
+  assert.deepEqual(resolveResumeConfig({}), { maxAgeDays: 30, minBytes: 1024 })
   // An empty settings section is not an override either.
   assert.deepEqual(resolveResumeConfig({}, {}), {
     maxAgeDays: RESUME_MAX_AGE_DAYS,
@@ -570,24 +570,24 @@ test('resolveResumeConfig: a fractional env MIN_BYTES is invalid env — the flo
     assert.deepEqual(config, {
       maxAgeDays: RESUME_MAX_AGE_DAYS,
       minBytes: RESUME_MIN_BYTES,
-    }, 'fractional env floor falls to the default 20480')
+    }, 'fractional env floor falls to the default 1024')
     assert.deepEqual(chunks, [], 'env-level fallbacks are silent on every channel')
     assert.deepEqual(takePendingNotices(), [], 'and they emit no notice either')
     // The resolved default floor keeps its inclusive boundary: exactly
-    // 20480B passes, 20479B does not (had 20480.5 won, 'at-min' would
+    // 1024B passes, 1023B does not (had 20480.5 won, 'at-min' would
     // have been dropped — the silent bar-raise symptom).
     const now = 2_000_000_000_000
     const headers = [headerOf('at-min', now), headerOf('one-short', now)]
     const stats = new Map([
-      ['at-min', { mtimeMs: now, size: 20 * 1024 }],
-      ['one-short', { mtimeMs: now, size: 20 * 1024 - 1 }],
+      ['at-min', { mtimeMs: now, size: 1024 }],
+      ['one-short', { mtimeMs: now, size: 1023 }],
     ])
     const kept = filterSessionsByLastActivity(headers, stats, {
       maxAgeDays: config.maxAgeDays,
       minBytes: config.minBytes,
       now,
     })
-    assert.deepEqual(kept.map(h => h.sessionId), ['at-min'], 'exactly-20480B logs still pass the default floor')
+    assert.deepEqual(kept.map(h => h.sessionId), ['at-min'], 'exactly-1024B logs still pass the default floor')
   } finally {
     resetNoticeBridge()
   }
@@ -599,37 +599,37 @@ const DAY = 24 * 60 * 60 * 1000
 const NOW = 1_700_000_000_000
 const BIG = { mtimeMs: NOW, size: 100 * 1024 }
 
-test('filterSessionsByLastActivity: age boundary — 6d23h kept, exactly 7d kept, 7d+1s dropped', () => {
+test('filterSessionsByLastActivity: age boundary — 29d23h kept, exactly 30d kept, 30d+1s dropped', () => {
   const headers = [
-    headerOf('almost-7d', NOW),
-    headerOf('exactly-7d', NOW),
-    headerOf('past-7d', NOW),
+    headerOf('almost-30d', NOW),
+    headerOf('exactly-30d', NOW),
+    headerOf('past-30d', NOW),
   ]
   const stats = new Map([
-    ['almost-7d', { ...BIG, mtimeMs: NOW - 7 * DAY + 60 * 60 * 1000 }], // 6d23h
-    ['exactly-7d', { ...BIG, mtimeMs: NOW - 7 * DAY }], // boundary survives
-    ['past-7d', { ...BIG, mtimeMs: NOW - 7 * DAY - 1000 }], // strictly older
+    ['almost-30d', { ...BIG, mtimeMs: NOW - 30 * DAY + 60 * 60 * 1000 }], // 29d23h
+    ['exactly-30d', { ...BIG, mtimeMs: NOW - 30 * DAY }], // boundary survives
+    ['past-30d', { ...BIG, mtimeMs: NOW - 30 * DAY - 1000 }], // strictly older
   ])
-  const kept = filterSessionsByLastActivity(headers, stats, { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW })
-  assert.deepEqual(kept.map(h => h.sessionId), ['almost-7d', 'exactly-7d'])
+  const kept = filterSessionsByLastActivity(headers, stats, { maxAgeDays: 30, minBytes: 1024, now: NOW })
+  assert.deepEqual(kept.map(h => h.sessionId), ['almost-30d', 'exactly-30d'])
 })
 
-test('filterSessionsByLastActivity: size boundary — exactly 20480B kept, 20479B dropped', () => {
+test('filterSessionsByLastActivity: size boundary — exactly 1024B kept, 1023B dropped', () => {
   const headers = [headerOf('at-min', NOW), headerOf('one-short', NOW)]
   const stats = new Map([
-    ['at-min', { mtimeMs: NOW, size: 20 * 1024 }],
-    ['one-short', { mtimeMs: NOW, size: 20 * 1024 - 1 }],
+    ['at-min', { mtimeMs: NOW, size: 1024 }],
+    ['one-short', { mtimeMs: NOW, size: 1023 }],
   ])
-  const kept = filterSessionsByLastActivity(headers, stats, { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW })
+  const kept = filterSessionsByLastActivity(headers, stats, { maxAgeDays: 30, minBytes: 1024, now: NOW })
   assert.deepEqual(kept.map(h => h.sessionId), ['at-min'])
 })
 
 test('filterSessionsByLastActivity: missing stat fails open on size, ages by createdAt', () => {
   const headers = [
     headerOf('unwalked-fresh', NOW - DAY), // no stat, recent createdAt → kept
-    headerOf('unwalked-stale', NOW - 30 * DAY), // no stat, old createdAt → dropped
+    headerOf('unwalked-stale', NOW - 31 * DAY), // no stat, old createdAt → dropped
   ]
-  const kept = filterSessionsByLastActivity(headers, new Map(), { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW })
+  const kept = filterSessionsByLastActivity(headers, new Map(), { maxAgeDays: 30, minBytes: 1024, now: NOW })
   assert.deepEqual(kept.map(h => h.sessionId), ['unwalked-fresh'])
 })
 
@@ -640,10 +640,10 @@ test('filter + walk integration: sizes and mtimes come from the same stat on dis
     const NOW2 = 2_000_000_000_000
     const cases = [
       // [id, mtime, bytes, survives]
-      ['fresh-big', NOW2 - DAY, 20 * 1024, true], // boundary size + fresh age
-      ['fresh-small', NOW2 - DAY, 20 * 1024 - 1, false], // one byte short
-      ['stale-big', NOW2 - 8 * DAY, 20 * 1024, false], // past the age window
-      ['edge-age', NOW2 - 7 * DAY, 21 * 1024, true], // exactly 7d survives
+      ['fresh-big', NOW2 - DAY, 1024, true], // boundary size + fresh age
+      ['fresh-small', NOW2 - DAY, 1023, false], // one byte short
+      ['stale-big', NOW2 - 31 * DAY, 1024, false], // past the age window
+      ['edge-age', NOW2 - 30 * DAY, 2048, true], // exactly 30d survives
     ]
     for (const [id, mtime, bytes] of cases) {
       await mkdir(join(dir, 'proj', id), { recursive: true })
@@ -653,7 +653,7 @@ test('filter + walk integration: sizes and mtimes come from the same stat on dis
     const stats = await loadSessionLastUpdates(dir)
     assert.equal(stats.size, cases.length)
     const headers = cases.map(([id]) => headerOf(id, 0))
-    const kept = filterSessionsByLastActivity(headers, stats, { maxAgeDays: 7, minBytes: 20 * 1024, now: NOW2 })
+    const kept = filterSessionsByLastActivity(headers, stats, { maxAgeDays: 30, minBytes: 1024, now: NOW2 })
     assert.deepEqual(
       kept.map(h => h.sessionId),
       cases.filter(c => c[3] === true).map(c => c[0]),
@@ -661,6 +661,27 @@ test('filter + walk integration: sizes and mtimes come from the same stat on dis
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('filterSessionsByLastActivity: the shipped defaults keep a week-old small session visible', () => {
+  // The regression this suite pins: a real short conversation (a handful of
+  // commands and replies, ~2KB on disk) from two weeks ago used to vanish
+  // from /resume under the old 7d/20KB defaults. The 30d/1KB window must
+  // keep it, and an e2e/demo stub (~200B, three weeks old) must stay hidden.
+  const headers = [
+    headerOf('old-small', NOW),
+    headerOf('old-stub', NOW),
+  ]
+  const stats = new Map([
+    ['old-small', { mtimeMs: NOW - 14 * DAY, size: 2048 }], // 14d old, 2KB → kept
+    ['old-stub', { mtimeMs: NOW - 21 * DAY, size: 200 }], // 21d old, 200B → hidden
+  ])
+  const kept = filterSessionsByLastActivity(
+    headers,
+    stats,
+    { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES, now: NOW },
+  )
+  assert.deepEqual(kept.map(h => h.sessionId), ['old-small'])
 })
 
 // ------------------------------------------- picker empty-branch differentiation --

@@ -476,7 +476,7 @@ test('readSessionManagementExplicit ignores the resolved section — schema defa
   await settle()
 
   // Sanity: the RESOLVED descriptor value carries the baked-in defaults
-  // (base entry: retention 100/7d/24h, resume 7d/20KB).
+  // (base entry: retention 100/30d/24h, resume 30d/1KB).
   const descriptor = settings.describe().find(d => d.ns === THEME_SETTINGS_NAMESPACE)
   assert.ok(descriptor.value.retention !== undefined, 'resolved section has the retention defaults')
   assert.ok(descriptor.value.resume !== undefined, 'resolved section has the resume defaults')

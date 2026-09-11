@@ -68,7 +68,7 @@ dsh plugin --profile <name> remove @aiwayds/dsh-tui-pi
 - `~/.dsh/settings.yaml` 的 `dsh-tui:` 段 —— 主题/面板/footer/保留策略/subagent 限制
 - `~/.dsh/storages/session_projcache/` —— 会话投影缓存，含 `.bak-preflight-*` 迁移备份
 
-插件运行期间，保留清理器（默认 `maxCount: 100` / `maxAgeDays: 7`，可在 `dsh-tui` 设置中调整）会删除旧会话日志——卸载后即停止，但已删除的日志找不回来。
+插件运行期间，保留清理器（默认 `maxCount: 100` / `maxAgeDays: 30`，可在 `dsh-tui` 设置中调整）会删除旧会话日志——卸载后即停止，但已删除的日志找不回来。
 
 `scripts/install-font.mjs` 会改动 OS 字体/终端状态且有文档化的备份；卸载不会碰它。
 
@@ -140,11 +140,11 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 dsh-tui:
   retention:        # ~/.dsh/sessions 的启动清理器——删除旧日志。每次启动跑一次。
     maxCount: 100   # <= 0 关闭清理器
-    maxAgeDays: 7
+    maxAgeDays: 30
     minIdleHours: 24
   resume:           # /resume 显示过滤器——只隐藏选择器行，从不删除。
-    maxAgeDays: 7
-    minBytes: 20480
+    maxAgeDays: 30
+    minBytes: 1024
 ```
 
 按键重映射见 `~/.dsh/keybindings.json`（上文键盘一节）。

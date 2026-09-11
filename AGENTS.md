@@ -137,7 +137,7 @@ sessions.ts       /session panel + /resume picker (ordered by last update:
                   retention: settings.yaml `dsh-tui.resume.*` explicit
                   (USER layer via readSessionManagementExplicit) >
                   DSH_TUI_RESUME_MAX_AGE_DAYS/_MIN_BYTES env > defaults
-                  7d/20KB, resolved per picker open by resolveResumeConfig)
+                  30d/1KB, resolved per picker open by resolveResumeConfig)
 history.ts        /history browser (ADR 0003): the read-only two-pane
                   look-back — left TablePanel of the browsed session's
                   completed turns (live snapshot or sessionPersistence
@@ -180,7 +180,7 @@ skills-manager.ts /skills panel (standalone skill browser): ~/.agents/skills
                   rescans either way with the summary riding above the
                   rows, and an applying gate blocks Space/Enter mid-batch
 retention.ts      startup session-log janitor: pure selector (keep 100 /
-                  7 days, 24h idle guard on the count rule, protected set
+                  30 days, 24h idle guard on the count rule, protected set
                   = current session ∪ in-flight /resume target, both exempt
                   and slot-free) + store walk (skips symlinks, lstat
                   semantics) + one-by-one fs.rm runner (rm failure → failed

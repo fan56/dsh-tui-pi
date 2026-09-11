@@ -393,7 +393,7 @@ scenario 'Phase C: /resume surfaces the large session and hides the stub'
 # Reset the store so Phase C's filter test is independent of the previous
 # janitor state. Seed two sessions under the path-encoded project dir:
 #   - alpha  : preview "resume-row-alpha hello world", padded to ≥25KB
-#   - stub   : preview "stub tiny log", ~200B (well below the default 20KB floor)
+#   - stub   : preview "stub tiny log", ~200B (well below the default 1KB floor)
 rm -rf "$HOME/.dsh/sessions"
 mkdir -p "$HOME/.dsh/sessions"
 PROJ='--app--'
@@ -404,15 +404,15 @@ seed_session "$PROJ" \
   a1e2f3a4-0008-4000-8000-00000000aa08 \
   'stub tiny log'
 
-# Belt-and-braces evidence for the seeded byte sizes: the floor hides alpha
-# if the on-disk zstd is below 20480B (sessions.ts reads stat().size, never
-# the decompressed body). ls -la into stdout so any future debug session
-# has the ground truth without re-running the seeder.
+# Belt-and-braces evidence for the seeded byte sizes: the floor keeps alpha
+# only if the on-disk zstd is above 1024B (sessions.ts reads stat().size,
+# never the decompressed body). ls -la into stdout so any future debug
+# session has the ground truth without re-running the seeder.
 ls -la \
   "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0007-4000-8000-00000000aa07/session.v3.jsonl.zstd" \
   "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0008-4000-8000-00000000aa08/session.v3.jsonl.zstd"
 
-# Plain launch — no retention/resume env. The picker's defaults (7d / 20KB)
+# Plain launch — no retention/resume env. The picker's defaults (30d / 1KB)
 # must drop stub (size) and keep alpha.
 start_tui ''
 wait_tui_up 120 || summary

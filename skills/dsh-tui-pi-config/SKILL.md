@@ -30,10 +30,10 @@ description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南
 | `favoriteModels` | string[] | `[]` | 收藏模型（`provider/id` 键），钉在 `/model` 选择器顶部 |
 | `hiddenModels` | string[] | `[]` | 隐藏模型（`provider/id` 键），移入 `/model` 的 Hidden 区 |
 | `retention.maxCount` | 数字 | `100` | 启动清理器：最多保留这么多会话日志，`<= 0` 关闭清理器；下次启动生效 |
-| `retention.maxAgeDays` | 数字 | `7` | 清理超过这么久未活动的日志（真删除）；下次启动生效 |
+| `retention.maxAgeDays` | 数字 | `30` | 清理超过这么久未活动的日志（真删除）；下次启动生效 |
 | `retention.minIdleHours` | 数字 | `24` | 按条数规则清理时的空闲保护小时数；下次启动生效 |
-| `resume.maxAgeDays` | 数字 | `7` | `/resume` 选择器只显示这么新内的会话（显示口径，不删数据）；每次打开选择器生效 |
-| `resume.minBytes` | 数字 | `20480` | `/resume` 选择器的最小压缩日志体积（显示口径）；每次打开选择器生效 |
+| `resume.maxAgeDays` | 数字 | `30` | `/resume` 选择器只显示这么新内的会话（显示口径，不删数据）；每次打开选择器生效 |
+| `resume.minBytes` | 数字 | `1024` | `/resume` 选择器的最小压缩日志体积（显示口径）；每次打开选择器生效 |
 
 ### DSH_TUI_* 环境变量
 

@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.0] - 2026-09-11
+
+### Changed
+- **The `/resume` display window widens from 7 days / 20KB to 30 days / 1KB, and the retention janitor's age window follows (7 → 30 days).** A real session idle for a fortnight (a handful of commands, a few KB on disk) used to vanish from the picker and could be deleted at startup before it was ever resumable. The 30d window covers a month's working set; the 1KB floor still hides e2e/demo stubs (~200B) while letting genuine short conversations through. Data and format are untouched — stored v0 logs still auto-migrate to the current generation on open. Both knobs stay configurable via `dsh-tui.resume.*` / `dsh-tui.retention.*` (settings > env > default).
+
 ## [2.14.0] - 2026-09-11
 
 ### Changed

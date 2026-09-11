@@ -1,6 +1,6 @@
 /**
  * Session retention lock — the startup janitor that prunes jsonl session
- * directories outside "100 kept / 7 days" (src/retention.ts). Pure
+ * directories outside "100 kept / 30 days" (src/retention.ts). Pure
  * selector coverage (age/count boundaries, idle guard, the protected set
  * = current session ∪ pending /resume target), knob resolution through
  * the precedence chain (settings.yaml explicit > env > default, invalid
@@ -80,6 +80,21 @@ test('age rule fires regardless of how many sessions exist', () => {
   // is nowhere near reached — the two rules are a union.
   const doomed = selectRetentionDeletions([cand('lone-ancient', NOW - 8 * DAY)], policy())
   assert.deepEqual(doomed.map(c => c.id), ['lone-ancient'])
+})
+
+test('the shipped 30-day window keeps a fortnight-old session and prunes only past it', () => {
+  // The regression this suite pins: under the old 7-day default, a real
+  // session idle for two weeks was deleted at startup before it could ever
+  // be /resume'd. With the 30-day shipped window (RETENTION_MAX_AGE_DAYS),
+  // 15d/25d sessions survive and only strictly-past-30d ones are pruned.
+  const cutoff = NOW - RETENTION_MAX_AGE_DAYS * DAY
+  const pool = [
+    cand('day15', NOW - 15 * DAY),
+    cand('day25', NOW - 25 * DAY),
+    cand('day31', cutoff - 1),
+  ]
+  const doomed = selectRetentionDeletions(pool, policy({ maxAgeDays: RETENTION_MAX_AGE_DAYS }))
+  assert.deepEqual(doomed.map(c => c.id), ['day31'])
 })
 
 // ------------------------------------------------------------ pure: count --
@@ -171,7 +186,7 @@ test('an empty store selects nothing', () => {
 
 // ------------------------------------------------------------ pure: defaults --
 
-test('defaults match the shipped policy: 100 kept, 7 days, 24h idle guard', () => {
+test('defaults match the shipped policy: 100 kept, 30 days, 24h idle guard', () => {
   // 105 sessions spanning 5 days (all idle-protected): only the 5 ranked
   // beyond 100 are collected. Verifies RETENTION_MAX_COUNT is the real cap.
   const pool = Array.from({ length: 105 }, (_, i) => cand(`s${i}`, NOW - i * 60 * 60 * 1000))
@@ -185,7 +200,7 @@ test('defaults match the shipped policy: 100 kept, 7 days, 24h idle guard', () =
 test('resolveRetentionConfig: defaults when the environment is silent', () => {
   assert.deepEqual(resolveRetentionConfig({}), {
     maxCount: 100,
-    maxAgeDays: 7,
+    maxAgeDays: 30,
     minIdleMs: 24 * 60 * 60 * 1000,
     enabled: true,
   })
@@ -402,7 +417,7 @@ test('runSessionRetention: settings maxCount 0 disables the pass even with env s
   process.env.DSH_TUI_RETENTION_MAX_COUNT = '500'
   try {
     const now = Date.now()
-    const ancient = await makeSession(dir, 'proj', 'ancient', now - 30 * DAY)
+    const ancient = await makeSession(dir, 'proj', 'ancient', now - 31 * DAY)
     const disabled = await runSessionRetention({
       root: dir,
       maxCount: 3,
@@ -506,6 +521,7 @@ test('runSessionRetention protects a pending resume target that lands after the 
     const result = await runSessionRetention({
       root: dir,
       maxCount: 3,
+      maxAgeDays: 7,
       getSessionId: () => undefined,
       getResumingSessionId: () => (polled++ === 0 ? undefined : 'resume-target'),
       now,
@@ -627,6 +643,7 @@ test('runSessionRetention deletes the right directories and keeps buckets + stra
     const result = await runSessionRetention({
       root: dir,
       maxCount: 3,
+      maxAgeDays: 7,
       // No live session in this pass.
       getSessionId: () => undefined,
       now,
@@ -658,7 +675,7 @@ test('runSessionRetention re-checks the current session before every removal', a
     const currentDir = await makeSession(dir, 'proj', 'ancient-live', now - 10 * DAY)
     let polled = 0
     const getSessionId = () => (polled++ === 0 ? undefined : 'ancient-live')
-    const result = await runSessionRetention({ root: dir, maxCount: 3, getSessionId, now })
+    const result = await runSessionRetention({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId, now })
     assert.deepEqual(result, { removed: 1, failed: 0 })
     assert.equal(polled, 3) // once for selection, once per doomed removal
     assert.equal(await stat(doomedDir).then(() => true, () => false), false)
@@ -689,6 +706,7 @@ test('a failed rm counts as failed and never stops the remaining removals', asyn
     const result = await runSessionRetention({
       root: dir,
       maxCount: 3,
+      maxAgeDays: 7,
       getSessionId: () => undefined,
       now,
     })
@@ -729,7 +747,7 @@ test('runSessionRetention holds the result as a pending notice when no sink is r
     await makeSession(dir, 'proj', 'ancient', now - 9 * DAY)
     let result
     const chunks = await captureTerminalOutput(() =>
-      runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now }).then(r => { result = r }))
+      runSessionRetention({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now }).then(r => { result = r }))
     assert.deepEqual(result, { removed: 1, failed: 0 })
     // The old raw stderr line is gone entirely — a TUI-less run must not
     // write anything to the terminal, on EITHER channel (console.warn or
@@ -752,7 +770,7 @@ test('a sink registered before the pass receives the result directly; a later si
     await makeSession(dir, 'proj', 'ancient-b', now - 10 * DAY)
     const seen = []
     setNoticeSink(message => { seen.push(message) })
-    const result = await runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    const result = await runSessionRetention({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
     assert.deepEqual(result, { removed: 2, failed: 0 })
     assert.deepEqual(seen, ['Session retention: removed 2'])
     assert.deepEqual(takePendingNotices(), [], 'nothing held pending')
@@ -798,7 +816,7 @@ test('the notice names failed removals alongside removed ones', async () => {
     await chmod(join(dir, 'locked-proj'), 0o555)
     let message
     setNoticeSink(m => { message = m })
-    const result = await runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    const result = await runSessionRetention({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
     assert.deepEqual(result, { removed: 1, failed: 1 })
     assert.equal(message, 'Session retention: removed 1, failed 1')
   } finally {
@@ -814,15 +832,17 @@ test('runSessionRetentionOnce runs once per process across /reload-style re-invo
   const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-once-'))
   try {
     const now = Date.now()
+    // Pin an explicit 7-day window so the 9-day-old fixture is "ancient"
+    // regardless of the shipped default (30 days).
     const ancient = await makeSession(dir, 'proj', 'ancient', now - 9 * DAY)
-    const first = await runSessionRetentionOnce({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    const first = await runSessionRetentionOnce({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
     assert.deepEqual(first, { removed: 1, failed: 0 })
     assert.equal(await stat(ancient).then(() => true, () => false), false)
     // The /reload re-run: a fresh module load would re-run apply(); the
     // process-global flag must make this pass a no-op even though new
     // ancient sessions appeared.
     const fresh = await makeSession(dir, 'proj', 'ancient-2', now - 9 * DAY)
-    const second = await runSessionRetentionOnce({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    const second = await runSessionRetentionOnce({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
     assert.deepEqual(second, { removed: 0, failed: 0 })
     assert.equal(await stat(fresh).then(() => true, () => false), true)
   } finally {
