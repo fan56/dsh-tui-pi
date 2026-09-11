@@ -46,7 +46,7 @@ RUN case "$(uname -m)" in \
 # from the global dsh install into node_modules so tsc can resolve the
 # types (they are not on the public registry in a usable form).
 RUN test -n "${DSH_VERSION}" \
-      || (echo "DSH_VERSION build arg is required (e.g. --build-arg DSH_VERSION=0.1.5-rc.1)" >&2; exit 1) \
+      || (echo "DSH_VERSION build arg is required (e.g. --build-arg DSH_VERSION=0.1.5-rc.2)" >&2; exit 1) \
  && npm install -g --no-fund --no-audit \
       pnpm@${PNPM_VERSION} \
       "@deepseek-ai/dsh@${DSH_VERSION}" \
