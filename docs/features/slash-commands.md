@@ -14,8 +14,8 @@
 | `/permission` | Permission-preset picker (read-only / workspace-write / danger-full-access). |
 | `/theme` | Color-scheme picker (`auto`/`light`/`dark`), applies immediately. |
 | `/preset` | Switch the agent preset (`<name>` direct, `next` cycles) — confirmed with a dialog and applied by starting a NEW session on it. |
-| `/profile-switch` | Apply a model profile to the live selection, the persisted default and the agent files; `p` pins the cwd. |
-| `/profile-cfg` | Manage profiles: edit default model / think / per-agent models, `s` save current, `n` new, `r` rename, `d` delete. |
+| `/profile-switch` | *(dsh-profile-switch plugin)* Bind this tree to a model profile via ask-user; live-switches the current session through the TUI bridge. |
+| `/profile-cfg` | *(dsh-profile-switch plugin)* Configure profiles (new / edit / save-current / rename / delete) via ask-user. |
 | `/agents` | Manage agent markdown files + subagent limits (`maxAgents`, `maxRounds`). |
 | `/subagents` | Pick a running/recent subagent and watch its live transcript; `Enter` steers it. |
 | `/skills` | Manage user skills (installed and available). |

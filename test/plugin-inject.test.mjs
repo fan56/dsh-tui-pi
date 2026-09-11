@@ -26,6 +26,7 @@ const source = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta
 const NON_SERVICE_MEMBERS = new Set([
   'effect',
   'get',
+  'provide',
   'root',
 ])
 

@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
-# Scenario 74 — model profiles (v2.2.0): /profile-switch workspace binding and
-# the /agents scope-aware edit path, entirely offline (no model traffic — the
-# picked route comes from the mock provider 68 declared, and picking a model
-# never calls it).
+# Scenario 74 — model profiles: the /agents scope-aware edit path, entirely
+# offline (no model traffic — the picked route comes from the mock provider
+# 68 declared, and picking a model never calls it).
 #
-# Covers src/profile.ts + src/model-profiles.ts + the /agents glue:
+# The /profile-switch + /profile-cfg panels moved to the dsh-profile-switch
+# plugin (ask-user based, surface-agnostic); this scenario keeps the part
+# that lives HERE — the /agents manager writing into the shared
+# $DSH_HOME/model-profiles.json store, scope-aware of a .dsh-profile pin:
 #
-#   1. a fresh store (no model-profiles.json) opens the switcher on the seeded
-#      roster (work / personal / other) with '.dsh-profile here: none';
-#   2. Enter on 'work' applies it: the summary echo reads 'Profile → work ·
-#      model unchanged · agent values compose per-workspace at spawn · pinned
-#      this tree (.dsh-profile)' and the pin file /app/.dsh-profile now names
-#      the profile;
-#   3. reopening the switcher marks the bound row '● work' and the title
-#      carries '.dsh-profile here: work';
-#   4. with the pin, /agents' fields window announces the scoped target
+#   1. the pin file /app/.dsh-profile is seeded directly (the switcher that
+#      used to write it lives in dsh-profile-switch now);
+#   2. with the pin, /agents' fields window announces the scoped target
 #      ('model/think edits apply to profile "work" …'), the model edit saves
 #      with the '(profile "work")' scope note, the override lands in
 #      $DSH_HOME/model-profiles.json, and the agent file's frontmatter stays
 #      byte-untouched;
-#   5. 'p' on the bound row unpins ('unpinned /app', pin file gone);
-#   6. unpinned, the same edit announces the frontmatter target, saves with no
-#      scope note, and the route lands in the agent file itself.
+#   3. the pin is removed directly; the same edit then announces the
+#      frontmatter target, saves with no scope note, and the route lands in
+#      the agent file itself.
 #
 # The store's read path is self-healing: rm'ing the file before boot re-seeds
 # the default roster, so the scenario starts deterministic. The picker's
@@ -29,7 +25,7 @@
 # same discipline as 68-ask-user.sh.
 set -u
 . "$(dirname "$0")/../lib/common.sh"
-scenario 'model profiles: /profile-switch binding + /agents scope-aware edits'
+scenario 'model profiles: /agents scope-aware edits over the shared store'
 
 # Container-only: it writes $DSH_HOME/model-profiles.json, the agents dir and
 # the cwd pin file — on the host those are live config.
@@ -68,44 +64,17 @@ You are e2e-bot, an e2e fixture agent.
 EOF
 ok 'seeded agent file e2e-bot.md (no model in frontmatter)'
 rm -f "$HOME/.dsh/model-profiles.json"
-rm -f /app/.dsh-profile
 
 kill_tui
 start_tui 'DSH_TUI_THEME=dark'
 wait_tui_up 120 || { summary; exit 0; }
-ensure_editor_ready 'editor clean before the profile flow' || true
-
-# --- 1-2. switcher on the seeded store; Enter applies + binds -------------------
-send '/profile-switch' Enter
-wait_pane 'switcher opens on the seeded store, no binding' 20 \
-  '● Model profiles · \.dsh-profile here: none'
-PANE="$(capture)"
-assert_contains 'seeded roster lists work' 'work' "$PANE"
-assert_contains 'seeded roster lists personal' 'personal' "$PANE"
-assert_contains 'seeded roster lists other' 'other' "$PANE"
-assert_contains 'switcher footer advertises the binding keys' \
-  'Enter switch (binds this dir) · p pin/unpin' "$PANE"
-
-send Enter # cursor preselected onto row 0 = work
-wait_pane 'apply summary names the switch' 20 'Profile → work'
-wait_pane 'apply summary names the pin' 20 'pinned this tree \(\.dsh-profile\)'
-if [ "$(cat /app/.dsh-profile 2>/dev/null)" = "work" ]; then
-  ok 'pin file /app/.dsh-profile names work'
-else
-  bad 'pin file /app/.dsh-profile missing or wrong'
-fi
-
-# --- 3. the bound row is marked ---------------------------------------------------
-ensure_editor_ready 'editor clean before the reopen' || true
-send '/profile-switch' Enter
-wait_pane 'switcher title shows the tree binding' 20 \
-  '● Model profiles · \.dsh-profile here: work'
-PANE="$(capture)"
-assert_matches 'bound profile row carries the current marker' '● work' "$PANE"
-esc_until_gone 'Esc closes the switcher' '● Model profiles'
-
-# --- 4. pinned /agents edit lands in the profile store ---------------------------
 ensure_editor_ready 'editor clean before the agents flow' || true
+
+# --- 1. seed the tree binding directly (the switcher lives in dsh-profile-switch)
+printf 'work\n' > /app/.dsh-profile
+ok 'pin file /app/.dsh-profile seeded with "work"'
+
+# --- 2. pinned /agents edit lands in the profile store ---------------------------
 send '/agents' Enter
 wait_pane 'agents table opens' 20 '● Agents'
 PANE="$(capture)"
@@ -116,14 +85,6 @@ assert_contains 'unconfigured model cell shows inherit' '(inherit)' "$PANE"
 # mock-chat row with Down navigation and verify the ▸ marker per press. The
 # mock model declares no reasoning efforts, so no stage-2 effort picker
 # follows the selection.
-
-ensure_editor_ready 'editor clean before the agents flow' || true
-send '/agents' Enter
-wait_pane 'agents table opens' 20 '● Agents'
-PANE="$(capture)"
-assert_contains 'agent row lists e2e-bot' 'e2e-bot' "$PANE"
-assert_contains 'unconfigured model cell shows inherit' '(inherit)' "$PANE"
-
 send Enter # open the single agent's fields window
 wait_pane 'fields window announces the pinned scope' 20 \
   'model/think edits apply to profile "work"'
@@ -153,21 +114,10 @@ sleep 1
 send Escape # table -> close
 wait_pane 'closing the manager echoes the change set' 15 'Agents updated: e2e-bot'
 
-# --- 5. unpin via the p toggle ---------------------------------------------------
-ensure_editor_ready 'editor clean before the unpin' || true
-send '/profile-switch' Enter
-wait_pane 'switcher still shows the binding' 20 \
-  '● Model profiles · \.dsh-profile here: work'
-send p
-wait_pane 'p toggle unpins the tree' 15 'unpinned /app'
-if [ ! -f /app/.dsh-profile ]; then
-  ok 'pin file removed by the unpin'
-else
-  bad 'pin file survived the unpin'
-fi
-esc_until_gone 'Esc closes the switcher after the unpin' '● Model profiles'
+# --- 3. unpin directly; unpinned edit writes the frontmatter baseline ------------
+rm -f /app/.dsh-profile
+ok 'pin file removed — the tree is unbound'
 
-# --- 6. unpinned edit writes the frontmatter baseline ----------------------------
 ensure_editor_ready 'editor clean before the unpinned edit' || true
 send '/agents' Enter
 wait_pane 'agents table opens again' 20 '● Agents'

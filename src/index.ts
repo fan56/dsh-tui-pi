@@ -34,6 +34,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-tool-todo'
 import { Loader } from '@earendil-works/pi-tui'
 import { CommandService, type LocalCommandHandler } from './commands.ts'
+import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import { FooterHint, PowerlineFooter, type FooterDataSource, type FooterHints } from './footer.ts'
 import { GitBranchWatcher } from './git.ts'
 import { ensureAppendSystemFile, dshHome, migrateAgentsMdTodoSection } from './append-system.ts'
@@ -68,7 +69,6 @@ import { applyIconSet, resolveIconSet, stopIcon, type IconSet } from './icons.ts
 import { readAgentMaxRounds } from './agent-runtime.ts'
 import { detectNerdFontAvailable } from './font-detect.ts'
 import { openAgentManager } from './agents.ts'
-import { openProfileManager, openProfileSwitcher, type ProfileDeps } from './profile.ts'
 import { openSettingsBrowser } from './settings.ts'
 import { openSkillsManagerPanel } from './skills-manager.ts'
 import { openLoginFlow, openLogoutFlow } from './login.ts'
@@ -1279,47 +1279,22 @@ export function apply(ctx: Context): void {
       handler: invocation => presetHandler(invocation.rawInput, invocation.signal),
     }), 'dsh-tui-pi: /preset')
 
-    // /profile-switch + /profile-cfg: user model profiles — named snapshots
-    // of the whole model configuration (default model + think level, every
-    // subagent's model/thinking). Switching is WORKSPACE-SCOPED: Enter
-    // applies the profile to the live session + agent markdown and binds the
-    // current directory tree (.dsh-profile) so NEW sessions here start on
-    // it — other trees keep their own binding, or the global default.
-    // Storage lives at $DSH_HOME/model-profiles.json.
-    const profileDeps: ProfileDeps = {
-      getSelection: () => bridge.getSelection(),
-      setSelection: selection => bridge.setSelection(selection),
-    }
-    const profileHandler: LocalCommandHandler = async () => {
-      const summary = await openProfileSwitcher(ui.tui, ui.theme, profileDeps, refocusEditor)
-      ui.requestRender()
-      return summary === undefined
-        ? { kind: 'success' as const, text: 'Profile unchanged.' }
-        : { kind: 'success' as const, text: summary }
-    }
-    commands.registerLocal('profile-switch', profileHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'profile-switch',
-      description: 'Switch the model profile for this workspace (default model, subagent models, think levels)',
-      handler: invocation => profileHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /profile-switch')
-
-    const profilesHandler: LocalCommandHandler = async rawInput => {
-      const trimmed = rawInput?.trim() ?? ''
-      const summary = await openProfileManager(
-        ctx, ui.tui, ui.theme, profileDeps, refocusEditor,
-        trimmed === '' ? undefined : trimmed,
-      )
-      return summary === undefined
-        ? { kind: 'success' as const, text: 'Profiles unchanged.' }
-        : { kind: 'success' as const, text: summary }
-    }
-    commands.registerLocal('profile-cfg', profilesHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'profile-cfg',
-      description: 'Configure model profiles (edit, save current, rename, review)',
-      handler: invocation => profilesHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /profile-cfg')
+    // Model profiles moved to the dsh-profile-switch plugin (ask-user based,
+    // surface-agnostic). What stays HERE is the live-selection bridge it
+    // consumes: the TUI's /model + /think ride the same selection ref, and
+    // the plugin's /profile-switch applies through it so a switch stays live
+    // in the current conversation. Agent model/think values still compose at
+    // spawn from the frontmatter baseline ⊕ the pinned profile's overrides
+    // (src/agent-runtime.ts), and new sessions still seed from the tree pin
+    // (src/session.ts) — the shared $DSH_HOME/model-profiles.json store is
+    // read-side only for this plugin now.
+    ctx.provide('dshTuiModelSelection', {
+      apply: (selection: ModelSelection) => {
+        bridge.setSelection(selection)
+        ui.requestRender()
+      },
+      current: () => bridge.getSelection(),
+    })
 
     const sessionHandler: LocalCommandHandler = async () => {
       const agent = bridge.getAgent()
@@ -2085,7 +2060,7 @@ export function apply(ctx: Context): void {
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'history', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'profile-switch', 'profile-cfg', 'wiki', 'vault'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'history', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'wiki', 'vault'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {

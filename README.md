@@ -21,13 +21,13 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**Feishu integration**](docs/features/feishu-demo.md) — dsh-tui-pi on the desktop and Feishu/Lark on the phone driving (and answering for) the same dsh session.
 - [**Dynamic context pruning (DCP)**](docs/features/dcp.md) — context stays within limits automatically, with zero LLM calls.
 - [**Persistent context**](docs/features/persistent-context.md) — your ground rules ride along on every request, hot-applied with no restart.
-- [**Model profiles & favorites**](docs/features/model-profiles.md) — switch a whole model setup per project and keep the picker small.
+- [**Model profiles & favorites**](docs/features/model-profiles.md) — profile switching lives in [dsh-profile-switch](https://github.com/fan56/dsh-profile-switch) now; this suite keeps the TUI read side (session seeding from the pin, live-selection bridge, scope-aware `/agents` edits) and the `/model` favorites that keep the picker small.
 - [**Agent preset switching**](docs/features/preset-switch.md) — `/preset` between the shipped agent compositions (`standard`, `minimal`, …); a switch is confirmed and starts a NEW session on the preset (the current one stays resumable); what a preset really gates.
 - [**Sessions & resume**](docs/features/sessions-resume.md) — sessions stay tidy automatically and resume in a few keystrokes; the host's kernel write lease keeps the log single-writer across processes.
 - [**History browser**](docs/features/history.md) — `/history` opens a fixed two-pane look-back over the session: completed turns on the left, the selected turn's replies on the right; copy a prompt back to the editor, or cold-read any stored session without resuming it (read-only).
 - [**Themes**](docs/features/themes.md) — GitHub light/dark palettes, hot-switchable; `auto` follows your terminal.
 - [**Search, selection & images**](docs/features/search-selection-images.md) — `Ctrl+Shift+F` over the whole transcript, drag-select copies to the OS clipboard, attachments from web/Feishu render inline, LaTeX replies draw as Unicode math.
-- [**Slash commands**](docs/features/slash-commands.md) — `/model`, `/resume`, `/btw`, `/profile-switch`, … plus everything dsh-native.
+- [**Slash commands**](docs/features/slash-commands.md) — `/model`, `/resume`, `/btw`, … plus everything dsh-native.
 - [**Startup plugin tree**](docs/features/startup-tree.md) — every profile plugin with its installed npm version, printed at launch.
 
 ---
@@ -64,7 +64,7 @@ What stays on disk on purpose (deleting user data is destructive; a reinstall re
 
 - `~/.dsh/APPEND_SYSTEM.md` — auto-seeded system-prompt appendix (plugin-owned; delete by hand if unwanted)
 - `~/.dsh/tui-command-usage.json` — slash-command usage ranking
-- `~/.dsh/model-profiles.json` — model profiles (SHARED with other plugins — dsh-subagent-registry reads it)
+- `~/.dsh/model-profiles.json` — model profiles (SHARED: read by dsh-subagent-registry and dsh-profile-switch; per-agent edits via /agents write it)
 - `~/.dsh/keybindings.json` — the dsh-tui app-key rows (host-shared file)
 - `~/.dsh/agents/*.md` and `~/.dsh/skills/` — user-editable agents/skills (shared with other plugins)
 - `.dsh-profile` pin files in project workspaces (written by /model profile pinning)
