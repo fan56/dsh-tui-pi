@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.0] - 2026-09-11
+
+### Changed
+- **dsh support floor raised to 0.1.5-rc.2.** `HOST_FLOOR` follows the 0.1.5 migration line: hosts below it get the startup warning and exit 1 (the `DSH_TUI_SKIP_HOST_CHECK=1` escape hatch still applies); rc.2 sits exactly at the floor and rc.1 now sorts below it. The dev closure and the e2e image ride rc.2 — a code-zero-diff re-pin of rc.1. READMEs and CONTEXT.md updated.
+
 ## [2.13.0] - 2026-09-10
 
 ### Changed
