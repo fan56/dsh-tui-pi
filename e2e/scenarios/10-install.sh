@@ -114,6 +114,7 @@ for (const name of [
   "@aiwayds/dsh-llm-stats",
   "@aiwayds/dsh-mcp-adapter",
   "@aiwayds/dsh-model-sync",
+  "@aiwayds/dsh-profile-switch",
   "@aiwayds/dsh-subagent-registry",
   "@aiwayds/dsh-web-search-anysearch",
 ]) {
@@ -137,6 +138,8 @@ assert_contains '@aiwayds/dsh-mcp-adapter resolves from plugin dir' \
   '@aiwayds/dsh-mcp-adapter RESOLVED' "$RESOLVE_OUT"
 assert_contains '@aiwayds/dsh-model-sync resolves from plugin dir' \
   '@aiwayds/dsh-model-sync RESOLVED' "$RESOLVE_OUT"
+assert_contains '@aiwayds/dsh-profile-switch resolves from plugin dir' \
+  '@aiwayds/dsh-profile-switch RESOLVED' "$RESOLVE_OUT"
 assert_contains '@aiwayds/dsh-subagent-registry resolves from plugin dir' \
   '@aiwayds/dsh-subagent-registry RESOLVED' "$RESOLVE_OUT"
 assert_contains '@aiwayds/dsh-web-search-anysearch resolves from plugin dir' \

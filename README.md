@@ -79,7 +79,7 @@ While the plugin runs, the retention janitor (default `maxCount: 100` / `maxAgeD
 
 ## Companion plugins
 
-**Default dependencies** — the eight plugins below ship with this package (installed into the profile's `node_modules`); activation still follows the profile's `bundles` list — list each one there to activate it.
+**Default dependencies** — the nine plugins below ship with this package (installed into the profile's `node_modules`); activation still follows the profile's `bundles` list — list each one there to activate it.
 
 - [@aiwayds/dsh-ask-router](https://www.npmjs.com/package/@aiwayds/dsh-ask-router) — fans every `ask_user_question` out to all answering surfaces (TUI panel, Feishu card); the first answer wins — list it in `bundles` before the UI bundles to activate.
 - [@aiwayds/dsh-dcp](https://github.com/fan56/dsh-dcp) — the deterministic zero-LLM compaction backend.
@@ -87,6 +87,7 @@ While the plugin runs, the retention janitor (default `maxCount: 100` / `maxAgeD
 - [@aiwayds/dsh-llm-stats](https://github.com/fan56/dsh-llm-stats) — the `/llm-stats` usage ledger.
 - [@aiwayds/dsh-mcp-adapter](https://github.com/fan56/dsh-mcp-adapter) — folds MCP tool schemas out of every prompt and adds the `/mcp` command ([demo](docs/features/mcp-adapter.md)).
 - [@aiwayds/dsh-model-sync](https://github.com/fan56/dsh-model-sync) — syncs provider routes with the pi.dev model catalog.
+- [@aiwayds/dsh-profile-switch](https://github.com/fan56/dsh-profile-switch) — `/profile-switch` + `/profile-cfg`: named model profiles switched and configured through the host's ask-user flow, on the TUI and the web (the panels this suite used to carry). Add it to your profile's `bundles` to activate.
 - [@aiwayds/dsh-subagent-registry](https://github.com/fan56/dsh-subagent-registry) — registers `~/.dsh/agents/*.md` as `use_agent` subagents.
 - [@aiwayds/dsh-web-search-anysearch](https://github.com/fan56/dsh-web-search-anysearch) — the AnySearch web search provider.
 
