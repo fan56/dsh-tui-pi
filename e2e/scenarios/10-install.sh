@@ -145,4 +145,12 @@ assert_contains '@aiwayds/dsh-subagent-registry resolves from plugin dir' \
 assert_contains '@aiwayds/dsh-web-search-anysearch resolves from plugin dir' \
   '@aiwayds/dsh-web-search-anysearch RESOLVED' "$RESOLVE_OUT"
 
+# --- auto-mount: the patch inserts dsh-profile-switch without a bundles entry --
+# The companion is a default dependency of this package and its own patch does
+# NOT list it in bundles — its presence in the composed tree can only come from
+# this package's bundle-patch insert (the zero-awareness upgrade path).
+DUMP_OUT="$(timeout 120 dsh --profile tui --dump-config 2>&1 || true)"
+assert_contains 'composed tree auto-mounts dsh-profile-switch (no bundles entry)' \
+  "name: '@aiwayds/dsh-profile-switch'" "$DUMP_OUT"
+
 summary

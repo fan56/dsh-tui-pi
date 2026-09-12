@@ -9,6 +9,18 @@
 # the profile's bundles mounts it; mounting it here too would duplicate the
 # entry id and crash the loader.
 #
+# dsh-profile-switch IS mounted here — the one deliberate exception to the
+# rule above: its commands replace the panels this suite used to carry
+# (src/profile.ts, removed in 2.16.0), so an upgrade must reactivate them
+# with zero user action or /profile-switch silently vanishes. It ships as a
+# default dependency of this package and this insert mounts it from the
+# profile root (every dsh-managed profile boots with nodeLinker: hoisted).
+# A profile that ALSO lists @aiwayds/dsh-profile-switch in bundles is
+# tolerated: the plugin's apply is idempotent across mounts (0.1.1), so the
+# second entry no-ops instead of crashing on the duplicate command
+# registration. (On surfaces without tui-pi — a web-only profile —
+# activation stays manual as usual: add it to bundles.)
+#
 # dsh-tool-ask-user is mounted here: the upstream tool is a soft-linked
 # closure dependency (not a regular npm dep) and needs an explicit entry in
 # the bundle to be wired into the model-facing tool catalog. Without this
@@ -37,6 +49,8 @@
 - insert:
     - id: tui-pi
       name: '@aiwayds/dsh-tui-pi'
+    - id: profile-switch
+      name: '@aiwayds/dsh-profile-switch'
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
     # Config mirrors the stock row's values (the plugin's Config schema

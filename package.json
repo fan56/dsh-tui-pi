@@ -65,7 +65,7 @@
     "@aiwayds/dsh-llm-stats": "^0.5.0",
     "@aiwayds/dsh-mcp-adapter": "^0.4.0",
     "@aiwayds/dsh-model-sync": "^0.3.0",
-    "@aiwayds/dsh-profile-switch": "^0.1.0",
+    "@aiwayds/dsh-profile-switch": "^0.1.1",
     "@aiwayds/dsh-subagent-registry": "^0.10.0",
     "@aiwayds/dsh-web-search-anysearch": "^0.3.0",
     "@earendil-works/pi-tui": "0.84.4"
@@ -83,9 +83,9 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
     "@deepseek-ai/dsh-skill": "0.1.5-rc.2",
     "@deepseek-ai/dsh-user-questions": "0.1.5-rc.2",
+    "@types/node": "^24.0.0",
     "typescript": "~5.9.0"
   },
   "dsh": {

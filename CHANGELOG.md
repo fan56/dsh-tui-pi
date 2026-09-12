@@ -4,6 +4,11 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.0] - 2026-09-12
+
+### Changed
+- **`/profile-switch` + `/profile-cfg` now auto-mount with the TUI.** The bundle patch inserts `@aiwayds/dsh-profile-switch` (the ninth default dependency) directly, so upgrading profiles get the commands back with zero user action — no `bundles` edit needed. Profiles that also list the plugin explicitly are unaffected: its apply is idempotent across mounts (0.1.1).
+
 ## [2.16.0] - 2026-09-12
 
 ### Changed
