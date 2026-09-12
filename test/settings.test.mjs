@@ -205,7 +205,7 @@ test('categoryDescription joins empty or duplicated members', () => {
   assert.equal(categoryDescription(['llm-deepseek', 'llm-deepseek', 'shell']), 'llm-deepseek, shell')
 })
 
-test('dsh-tui theme and panelHeight fields rehydrate as all-literal unions (cycle rows)', async () => {
+test('dsh-tui theme is a free string (input row), panelHeight stays an all-literal union (cycle row)', async () => {
   // Minimal settings fake (describe/register only): the registration stores
   // the schema; rehydrate walks it exactly like the /settings browser's
   // SettingsBrowser.root → nodeAtPath path.
@@ -225,14 +225,16 @@ test('dsh-tui theme and panelHeight fields rehydrate as all-literal unions (cycl
   assert.ok(desc !== undefined, 'dsh-tui namespace registered')
   const root = rehydrateSchema(desc.schema)
 
-  // Theme field: the reference pattern — every branch is a literal, so
-  // rowKindFor maps the union to 'cycle' (Enter cycles the value).
+  // Theme field: a free string now — custom theme names (one-dark, a
+  // user's own file in ~/.dsh/themes) are valid preferences, so the schema
+  // can no longer be an all-literal union. rowKindFor maps it to 'input'
+  // (inline text editor) instead of 'cycle'; the /theme picker is the
+  // friendly entry point.
   const theme = nodeAtPath(root, ['theme'])
-  assert.equal(theme.type, 'union', 'theme node is a union')
-  assert.deepEqual(unionLiterals(theme), { values: ['auto', 'light', 'dark'], all: true },
-    'theme is an all-literal union → cycle row')
+  assert.equal(theme.type, 'string', 'theme node is a free string')
 
-  // PanelHeight field: same mechanism, the five configurable heights.
+  // PanelHeight field: same mechanism as before, the five configurable
+  // heights stay an all-literal union.
   const panelHeight = nodeAtPath(root, ['panelHeight'])
   assert.equal(panelHeight.type, 'union', 'panelHeight node is a union')
   assert.deepEqual(unionLiterals(panelHeight), { values: ['1', '5', '7', '10', 'all'], all: true },

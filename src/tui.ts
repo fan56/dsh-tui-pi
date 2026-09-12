@@ -41,6 +41,7 @@ import { mergeKeyBindings, resolveKeyAction, type KeyAction, type KeyBindings } 
 import { mouseDisableSequence, mouseEnableSequence, resolveMouseMode } from './mouse-mode.ts'
 import { consumeRightClickPaste } from './ask-user.ts'
 import { ansiBg, ansiFg, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
+import type { Palette } from './theme/palette.ts'
 import { clipToWidth } from './text.ts'
 
 export interface StartTuiOptions {
@@ -71,6 +72,8 @@ export interface StartTuiOptions {
   keyBindings?: Partial<KeyBindings>
   /** Persisted theme preference; 'auto' falls back to terminal detection. */
   themePreference?: ThemePreference
+  /** Theme registry for named custom themes (id → palette). Absent: only the built-in light/dark/auto resolution applies. */
+  themeRegistry?: ReadonlyMap<string, Palette>
 }
 
 export interface TuiHandle {
@@ -184,7 +187,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   })
   // Mutable theme ref: `applyTheme` swaps it and every later read (handle
   // getter, baked closures below) observes the new bundle on the next call.
-  let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto')
+  let themeRef: TuiTheme = resolveTheme(process.env, options.themePreference ?? 'auto', options.themeRegistry)
   // App-owned canvas: the write-stream decorator injects the palette's
   // canvas colors around every erase sequence and after every color reset
   // (BCE + re-injection — see canvas-terminal.ts), so a theme switch

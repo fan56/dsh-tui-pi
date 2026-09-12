@@ -15,6 +15,7 @@ import {
   resolveTheme,
 } from '../lib/theme/index.js'
 import { githubDark, githubLight, hexContrast, hexIsLight } from '../lib/theme/palette.js'
+import { parseThemeFile } from '../lib/theme/registry.js'
 
 test('ansiFg emits truecolor SGR', () => {
   assert.equal(ansiFg('#ff0000'), '\x1b[38;2;255;0;0m')
@@ -164,4 +165,39 @@ test('dark theme is usable (no empty color roles)', () => {
 test('palette dark flag flips with the theme', () => {
   assert.equal(githubLight.dark, false, 'light palette is not dark')
   assert.equal(githubDark.dark, true, 'dark palette is dark')
+})
+
+// -------------------------------------------- registry-aware resolveTheme additions --
+// These append the theme-file layer: resolveTheme now accepts a registry of
+// discovered themes and resolves any registered name (the /theme picker and
+// DSH_TUI_THEME accept them too), falling back to terminal detection for
+// unknown names — light/dark stay pinned to the singletons.
+
+test('resolveTheme with a registry resolves a parsed custom theme by name', () => {
+  const custom = parseThemeFile(
+    JSON.stringify({
+      name: 'custom-dark',
+      dark: true,
+      canvas: '#101010',
+      canvasSubtle: '#1a1a1a',
+      canvasInset: '#050505',
+      fgDefault: '#eeeeee',
+      fgMuted: '#bbbbbb',
+      fgSubtle: '#888888',
+      borderDefault: '#555555',
+      borderMuted: '#333333',
+      accent: '#55aaff',
+      success: '#55cc66',
+      danger: '#ff7777',
+      attention: '#eebb44',
+      thinking: '#cc88ff',
+    }),
+    'custom-dark.json',
+  )
+  const registry = new Map([['custom-dark', custom]])
+
+  assert.equal(resolveTheme({}, 'custom-dark', registry).palette.name, 'custom-dark')
+  assert.equal(resolveTheme({ DSH_TUI_THEME: 'custom-dark' }, 'auto', registry).palette.name, 'custom-dark')
+  // Unknown names still fall back to detection ({} is dark by default).
+  assert.equal(resolveTheme({}, 'custom-missing', registry).palette.name, 'github-dark')
 })

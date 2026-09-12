@@ -155,20 +155,49 @@ export function buildTheme(palette: Palette): TuiTheme {
 export const lightTheme: TuiTheme = buildTheme(githubLight)
 export const darkTheme: TuiTheme = buildTheme(githubDark)
 
+/**
+ * Bundle cache for registry themes: one `Palette` object → one `TuiTheme`
+ * instance, so repeated `resolveTheme` calls for the same theme return the
+ * same bundle reference. The identity matters twice — `applyTheme`'s
+ * `theme === ui.theme` no-op guard, and the /theme handler's env-pin check
+ * (which compares two resolve results by reference).
+ */
+const bundleCache = new WeakMap<Palette, TuiTheme>()
+
+/** Build (or fetch the cached) TuiTheme for one palette. */
+export function themeBundle(palette: Palette): TuiTheme {
+  let bundle = bundleCache.get(palette)
+  if (bundle === undefined) {
+    bundle = buildTheme(palette)
+    bundleCache.set(palette, bundle)
+  }
+  return bundle
+}
+
 /** Theme selection: 'auto' falls back to terminal detection. */
-export type ThemePreference = 'auto' | 'light' | 'dark'
+export type ThemePreference = string
 
 /**
  * Resolve the active theme bundle: the DSH_TUI_THEME env override wins, then
- * an explicit light/dark preference, then terminal detection for 'auto'.
+ * an explicit light/dark preference, then a registry theme by name, then
+ * terminal detection for 'auto' (and for unknown registry names).
  */
 export function resolveTheme(
   env: NodeJS.ProcessEnv = process.env,
   preference: ThemePreference = 'auto',
+  registry?: ReadonlyMap<string, Palette>,
 ): TuiTheme {
   if (env.DSH_TUI_THEME === 'light') return lightTheme
   if (env.DSH_TUI_THEME === 'dark') return darkTheme
+  const registered = (name: string): TuiTheme | undefined => {
+    const palette = registry?.get(name)
+    return palette === undefined ? undefined : themeBundle(palette)
+  }
+  const envRegistered = registered(env.DSH_TUI_THEME ?? '')
+  if (envRegistered !== undefined) return envRegistered
   if (preference === 'light') return lightTheme
   if (preference === 'dark') return darkTheme
+  const prefRegistered = registered(preference)
+  if (prefRegistered !== undefined) return prefRegistered
   return detectDarkPalette(env) ? darkTheme : lightTheme
 }

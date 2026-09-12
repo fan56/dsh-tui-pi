@@ -10,7 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { PresetEntry, PresetState } from './preset.ts'
 import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { OverlayHandle, TUI } from '@earendil-works/pi-tui'
+import type { Component, OverlayHandle, TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
 import {
   buildModelRows,
@@ -23,7 +23,8 @@ import {
 import { permissionItems } from './permission.ts'
 import { autoColumns, PanelHost, TablePanel, type TableColumn, type TablePanelOptions } from './panels.ts'
 import { readModelPrefs, writeModelPref } from './theme-settings.ts'
-import type { ThemePreference, TuiTheme } from './theme/index.ts'
+import { type ThemePreference, type TuiTheme } from './theme/index.ts'
+import { ThemePickerOverlay, themePickerRows, type PickThemeOptions } from './theme-preview.ts'
 
 /** Outcome of the reasoning effort picker overlay. */
 export type PickEffortResult =
@@ -44,6 +45,11 @@ function mountPicker<T>(tui: TUI, theme: TuiTheme, panel: TablePanel<T>): Overla
   // (title + header + rule + rows + footer); the 75% cap keeps the bottom
   // border intact on small terminals.
   return tui.showOverlay(wrapFramedOverlay(theme, panel), { width: '80%', maxHeight: '75%' })
+}
+
+/** Mount a generic overlay component (e.g. the theme picker's dual pane). */
+function mountPickerOverlay(tui: TUI, theme: TuiTheme, child: Component): OverlayHandle {
+  return tui.showOverlay(wrapFramedOverlay(theme, child), { width: '80%', maxHeight: '75%' })
 }
 
 /** A generic picker row — the SelectList-style shape every items builder already produces. */
@@ -152,41 +158,30 @@ export async function pickEffort(
   return { kind: 'effort', effort: picked.effort }
 }
 
-/** Theme preference rows of the picker, matching the settings schema vocabulary. */
-const THEME_ROWS: PickerItem[] = [
-  { value: 'auto', label: 'auto (terminal detection)', description: 'follow the terminal light/dark signal' },
-  { value: 'light', label: 'light', description: 'GitHub light palette' },
-  { value: 'dark', label: 'dark', description: 'GitHub dark palette' },
-]
-
 /**
- * Open the theme preference picker overlay. Resolves with the picked
- * preference, or `undefined` when cancelled. The row matching `current` is
- * preselected; focus returns to `restoreFocus` on close.
+ * Open the theme preference picker overlay: a theme list on the left and a
+ * live preview of the SELECTED theme on the right (ThemePickerOverlay). The
+ * row matching `current` is preselected; focus returns to `restoreFocus` on
+ * close. Resolves with the picked preference, or `undefined` when cancelled.
  */
 export function pickTheme(
   tui: TUI,
   theme: TuiTheme,
   current: ThemePreference,
   restoreFocus: () => void,
+  options?: PickThemeOptions,
 ): Promise<ThemePreference | undefined> {
+  const rows = themePickerRows(options)
+  // Legacy stored values `light`/`dark` map onto their rows (the flat list
+  // carries the GitHub palettes under their full names now).
+  const currentRow = current === 'light' ? 'github-light' : current === 'dark' ? 'github-dark' : current
+  const preselect = Math.max(0, rows.findIndex(row => row.value === currentRow))
   return new Promise(resolve => {
-    const list = new TablePanel(theme, {
-      title: '● Theme',
-      columns: labelDescriptionColumns('Theme', THEME_ROWS),
-      rows: THEME_ROWS,
-      renderCell: itemCell,
-      preselect: THEME_ROWS.findIndex(row => row.value === current),
-      onSelect: row => finish(row.value as ThemePreference),
-      onCancel: () => finish(undefined),
-    })
-    const overlay = mountPicker(tui, theme, list)
-
-    function finish(picked: ThemePreference | undefined): void {
-      overlay.hide()
+    const handle = mountPickerOverlay(tui, theme, new ThemePickerOverlay(theme, rows, preselect, picked => {
+      handle.hide()
       restoreFocus()
       resolve(picked)
-    }
+    }, () => theme))
   })
 }
 

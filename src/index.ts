@@ -122,8 +122,9 @@ import {
 import { BtwOverlayWire } from './btw-overlay.ts'
 import { openPendingQueuePanel } from './queue-panel.ts'
 import type { AgentView } from './dsh-events.ts'
-import { ansiFg, BOLD, darkTheme, lightTheme, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
+import { ansiFg, BOLD, RESET, resolveTheme, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { rgbIsLight } from './theme/palette.ts'
+import { discoverThemes, scanThemeDir, userThemesDir } from './theme/registry.ts'
 import { clipToWidth } from './text.ts'
 import { type KeyAction } from './keymap.ts'
 import { keybindingsPath, loadKeyBindings, openHotkeysManager } from './hotkeys.ts'
@@ -250,6 +251,15 @@ export function apply(ctx: Context): void {
   // silently dropping the bundled usage/config guide.
   ctx.skills.registerProvider(() => skillProvider)
   let handle: TuiHandle | undefined
+  // Theme registry: bundled themes/ plus $DSH_HOME/themes (user overrides
+  // bundled by name). Built ONCE per apply() and handed to every resolveTheme
+  // / pickTheme call site (startup, the settings watch sink, the /theme
+  // handler), so a custom theme named by DSH_TUI_THEME or by the persisted
+  // preference resolves through the same snapshot. `themeUserNames` marks
+  // which registry ids are user-owned (for the picker's "user theme" /
+  // "built-in" labels).
+  const themeRegistry = discoverThemes({ home: dshHome() })
+  const themeUserNames = new Set(scanThemeDir(userThemesDir(dshHome())).keys())
   // Live-session handle for the startup janitor (assigned inside the
   // render effect below, where the bridge is constructed): retention
   // polls the CURRENT session id at selection time and again right
@@ -598,6 +608,7 @@ export function apply(ctx: Context): void {
         }
       },
       themePreference,
+      themeRegistry,
     })
     handle = ui
     /**
@@ -667,7 +678,7 @@ export function apply(ctx: Context): void {
       // 'auto' subscribes to the terminal's live color-scheme pushes; an
       // explicit pin opts out. resolveTheme guards env-pinned displays.
       ui.tui.setTerminalColorSchemeNotifications(pref === 'auto')
-      applyTheme(resolveTheme(process.env, pref))
+      applyTheme(resolveTheme(process.env, pref, themeRegistry))
     }
 
     const renderer = new TranscriptRenderer(ui.transcript, ui.theme, () => ui.requestRender(), startupInfo)
@@ -942,6 +953,26 @@ export function apply(ctx: Context): void {
     // these providers are re-applied to the replacement instance.
     ui.setEditorAutocompleteProvider(commands.autocompleteProvider())
 
+    // One registration for both dispatch surfaces: CommandService.registerLocal
+    // (direct dispatch when no agent exists — no throwaway session) plus
+    // ctx.commands.register (discovery + lifecycle events against a live
+    // agent). Agentless bodies go through both, so autocomplete matches web.
+    const registerLocalCommand = (
+      name: string,
+      description: string,
+      handler: LocalCommandHandler,
+    ): void => {
+      commands.registerLocal(name, handler)
+      ctx.effect(() => ctx.commands.register({
+        name,
+        description,
+        handler: invocation => handler(invocation.rawInput, invocation.signal),
+      }), `dsh-tui-pi: /${name}`)
+    }
+
+    /** Error message for notices — unknown catch values stringify safely. */
+    const messageOf = (e: unknown): string => e instanceof Error ? e.message : String(e)
+
     // ------------------------------------------------------------ /btw (TUI-owned; ADR 0001) --
     // By-the-way side questions: one tool-less one-shot model call over a
     // read-only recent-conversation snapshot, streaming into a framed
@@ -1018,12 +1049,7 @@ export function apply(ctx: Context): void {
           return { kind: 'error' as const, text: `btw rejected — ${result.reason}.` }
       }
     }
-    commands.registerLocal('btw', btwHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'btw',
-      description: 'Ask a side question while the main task runs (temp overlay, not kept)',
-      handler: invocation => btwHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /btw')
+    registerLocalCommand('btw', 'Ask a side question while the main task runs (temp overlay, not kept)', btwHandler)
 
     // ------------------------------------------- TUI-owned slash commands --
     // Web-surface parity: `model` is a browser client contribution there and
@@ -1054,12 +1080,7 @@ export function apply(ctx: Context): void {
         text: persistError === undefined ? modelText : `${modelText} · ⚠ not persisted: ${persistError}`,
       }
     }
-    commands.registerLocal('model', modelHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'model',
-      description: 'Select the model (and think level) for this conversation',
-      handler: invocation => modelHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /model')
+    registerLocalCommand('model', 'Select the model (and think level) for this conversation', modelHandler)
 
     // /agents: manage agent definition markdown files (model, think level,
     // spawn depth) — the terminal counterpart of pi's /fun-agent-cfg. An
@@ -1074,12 +1095,7 @@ export function apply(ctx: Context): void {
       if (result === undefined) return { kind: 'success' as const, text: 'Agents unchanged.' }
       return { kind: 'success' as const, text: result }
     }
-    commands.registerLocal('agents', agentsHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'agents',
-      description: 'Manage agent definitions (model, think level, spawn depth) from markdown files',
-      handler: invocation => agentsHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /agents')
+    registerLocalCommand('agents', 'Manage agent definitions (model, think level, spawn depth) from markdown files', agentsHandler)
 
     // /subagents: the command twin of Ctrl+G — pick a running (or recently
     // settled) subagent and inspect its live transcript in the 80% viewer.
@@ -1088,12 +1104,7 @@ export function apply(ctx: Context): void {
       await openSubagentViewer(ctx, ui.tui, ui.theme, bridge, refocusEditor)
       return { kind: 'success' as const, text: 'Subagent viewer closed.' }
     }
-    commands.registerLocal('subagents', subagentsHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'subagents',
-      description: 'Browse subagents and inspect their live transcript',
-      handler: invocation => subagentsHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /subagents')
+    registerLocalCommand('subagents', 'Browse subagents and inspect their live transcript', subagentsHandler)
 
     // /think: cycle the current model's reasoning effort without re-picking
     // the model. A no-session /think still lands in the selection ref and
@@ -1136,12 +1147,7 @@ export function apply(ctx: Context): void {
         text: persistError === undefined ? thinkText : `${thinkText} · ⚠ not persisted: ${persistError}`,
       }
     }
-    commands.registerLocal('think', thinkHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'think',
-      description: 'Switch the current model\'s think (reasoning) level',
-      handler: invocation => thinkHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /think')
+    registerLocalCommand('think', 'Switch the current model\'s think (reasoning) level', thinkHandler)
 
     /**
      * Record one committed preset as THIS workspace's remembered selection
@@ -1272,12 +1278,7 @@ export function apply(ctx: Context): void {
       if (outcome.switched) persistRememberedPreset(target.id)
       return { kind: 'success' as const, text: outcome.message }
     }
-    commands.registerLocal('preset', presetHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'preset',
-      description: 'Switch the agent preset (starts a new session on it; /preset next cycles)',
-      handler: invocation => presetHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /preset')
+    registerLocalCommand('preset', 'Switch the agent preset (starts a new session on it; /preset next cycles)', presetHandler)
 
     // Model profiles moved to the dsh-profile-switch plugin (ask-user based,
     // surface-agnostic). What stays HERE is the live-selection bridge it
@@ -1321,12 +1322,7 @@ export function apply(ctx: Context): void {
       }, refocusEditor)
       return { kind: 'success' as const, text: agent === undefined ? 'No active session.' : 'Session info shown.' }
     }
-    commands.registerLocal('session', sessionHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'session',
-      description: 'Show the current session\'s info (id, model, stats)',
-      handler: invocation => sessionHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /session')
+    registerLocalCommand('session', 'Show the current session\'s info (id, model, stats)', sessionHandler)
 
     // /resume: pick a persisted session, validate its log, swap the live
     // agent for it, and rebuild transcript + stats from the stored events.
@@ -1345,7 +1341,7 @@ export function apply(ctx: Context): void {
           resumeSettings,
         )
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = messageOf(error)
         return { kind: 'error' as const, text: message }
       }
       if (picked.kind === 'empty') {
@@ -1381,7 +1377,7 @@ export function apply(ctx: Context): void {
         try {
           resumed = await bridge.resume(target.id)
         } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error)
+          const message = messageOf(error)
           if (error instanceof SessionAlreadyOwnedError) {
             // The host's kernel write lease refused the cold resume: another
             // process drives this session. Rather than a dead end, degrade to
@@ -1401,7 +1397,7 @@ export function apply(ctx: Context): void {
             } catch (watchError: unknown) {
               return {
                 kind: 'error' as const,
-                text: `Cannot watch ${clipToWidth(String(target.id), 8)} read-only: ${watchError instanceof Error ? watchError.message : String(watchError)}`,
+                text: `Cannot watch ${clipToWidth(String(target.id), 8)} read-only: ${messageOf(watchError)}`,
               }
             }
           }
@@ -1467,7 +1463,7 @@ export function apply(ctx: Context): void {
         try {
           notice = repairFailureNotice(await repairSessionLog(logPath))
         } catch (error: unknown) {
-          const detail = error instanceof Error ? error.message : String(error)
+          const detail = messageOf(error)
           notice = `repair failed: ${detail} — log untouched`
         }
         if (notice !== undefined) return { kind: 'error' as const, text: notice }
@@ -1481,7 +1477,7 @@ export function apply(ctx: Context): void {
       try {
         await inspectPersistedSession(ctx, picked.id)
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = messageOf(error)
         if (isCorruptLogError(message)) {
           return offerCorruptedLogRepair(message)
         }
@@ -1489,12 +1485,7 @@ export function apply(ctx: Context): void {
       }
       return resumeAndReplay()
     }
-    commands.registerLocal('resume', resumeHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'resume',
-      description: 'Resume a persisted session',
-      handler: invocation => resumeHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /resume')
+    registerLocalCommand('resume', 'Resume a persisted session', resumeHandler)
 
     // /history: the read-only two-pane look-back (ADR 0003) — left pane lists
     // the browsed session's completed turns, right pane shows the selected
@@ -1564,12 +1555,7 @@ export function apply(ctx: Context): void {
       }, arg === '' ? undefined : arg)
       return { kind: result.error ? 'error' as const : 'success' as const, text: result.text }
     }
-    commands.registerLocal('history', historyHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'history',
-      description: 'Browse past turns of a session (read-only; /history <id> for a stored one)',
-      handler: invocation => historyHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /history')
+    registerLocalCommand('history', 'Browse past turns of a session (read-only; /history <id> for a stored one)', historyHandler)
 
     // Auto-resume after a hot-reload: a `/reload` stashes the previously
     // current session id before this fiber's teardown, and the freshly
@@ -1617,7 +1603,7 @@ export function apply(ctx: Context): void {
           bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
           ui.requestRender()
         } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error)
+          const message = messageOf(error)
           renderer.renderNotice(`--resume ${clipToWidth(bootResumeId, 8)}: ${message} — starting fresh.`, 'error')
         }
       })()
@@ -1688,7 +1674,7 @@ export function apply(ctx: Context): void {
         const session = restored.agent.session
         bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
       } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
+        const detail = messageOf(error)
         renderer.renderNotice(
           'could not re-attach the previous session — it stays resumable via /resume;'
           + ` the next prompt starts a fresh one (${detail})`,
@@ -1702,12 +1688,7 @@ export function apply(ctx: Context): void {
       await startNewSession()
       return { kind: 'success' as const, text: 'New session started.' }
     }
-    commands.registerLocal('new', newHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'new',
-      description: 'Start a new session',
-      handler: invocation => newHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /new')
+    registerLocalCommand('new', 'Start a new session', newHandler)
 
     // /settings: text-based configuration browser — the terminal counterpart
     // of the web GUI's settings surface. Enumerates ctx.settings.describe()
@@ -1736,12 +1717,7 @@ export function apply(ctx: Context): void {
           : `Settings: ${changes} change${changes === 1 ? '' : 's'} applied.`,
       }
     }
-    commands.registerLocal('settings', settingsHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'settings',
-      description: 'Browse and edit configuration (namespaces, values, resets)',
-      handler: invocation => settingsHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /settings')
+    registerLocalCommand('settings', 'Browse and edit configuration (namespaces, values, resets)', settingsHandler)
 
     // /skills: standalone skill browser with Installed/Available dual mode.
     // Enter/Space toggles or symlinks; Tab switches views; Esc exits.
@@ -1750,12 +1726,7 @@ export function apply(ctx: Context): void {
       openSkillsManagerPanel(ctx, ui.tui, ui.theme, refocusEditor, agent ?? undefined, () => {})
       return { kind: 'success' as const, text: 'Skills manager opened.' }
     }
-    commands.registerLocal('skills', skillsHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'skills',
-      description: 'Manage user skills (installed and available)',
-      handler: invocation => skillsHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /skills')
+    registerLocalCommand('skills', 'Manage user skills (installed and available)', skillsHandler)
 
     // /theme: pick a color scheme and apply it immediately — the choice is
     // persisted to the dsh-tui settings namespace (`applies: 'live'`, so the
@@ -1768,18 +1739,24 @@ export function apply(ctx: Context): void {
         return { kind: 'error' as const, text: 'Settings service is not available.' }
       }
       // Preselect from the live settings value (which may have changed since
-      // startup via the /settings browser), not the startup snapshot.
-      const picked = await pickTheme(ui.tui, ui.theme, currentThemePreference(ctx), refocusEditor)
+      // startup via the /settings browser), not the startup snapshot. The
+      // picker lists the registry themes (user + built-in) after the
+      // constant auto/light/dark rows.
+      const picked = await pickTheme(ui.tui, ui.theme, currentThemePreference(ctx), refocusEditor, {
+        themes: themeRegistry,
+        userNames: themeUserNames,
+      })
       if (picked === undefined) return { kind: 'success' as const, text: 'Theme unchanged.' }
       const writeError = await writeThemePreference(ctx, picked)
       if (writeError !== undefined) return { kind: 'error' as const, text: writeError }
       // DSH_TUI_THEME pins the display regardless of the preference — don't
-      // claim the pick was applied when it wasn't. The preference is still
-      // persisted (and shown once the env override is dropped); the notice
-      // goes through the buffered command echo, so no replay issue.
-      const applied = resolveTheme(process.env, picked)
+      // claim the pick was applied when it wasn't. Compare against the
+      // env-free resolution of the same pick (the bundle cache makes the
+      // reference comparison exact); 'auto' is skipped — it was never
+      // env-pin-sensitive (its display follows the terminal either way).
+      const applied = resolveTheme(process.env, picked, themeRegistry)
       applyTheme(applied)
-      const expected = picked === 'light' ? lightTheme : picked === 'dark' ? darkTheme : undefined
+      const expected = picked === 'auto' ? undefined : resolveTheme({}, picked, themeRegistry)
       if (expected !== undefined && applied !== expected) {
         return {
           kind: 'success' as const,
@@ -1788,12 +1765,7 @@ export function apply(ctx: Context): void {
       }
       return { kind: 'success' as const, text: `Theme: ${picked} — applied.` }
     }
-    commands.registerLocal('theme', themeHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'theme',
-      description: 'Set the terminal color scheme (applies immediately)',
-      handler: invocation => themeHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /theme')
+    registerLocalCommand('theme', 'Set the terminal color scheme (applies immediately)', themeHandler)
 
     // /reload: hot-reload this plugin from the current source — re-imports the
     // module and its dependencies (picking up src changes after `pnpm build`)
@@ -1804,12 +1776,7 @@ export function apply(ctx: Context): void {
       kind: 'success' as const,
       text: await reloadPlugin(ctx, import.meta.url),
     })
-    commands.registerLocal('reload', reloadHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'reload',
-      description: 'Reload the TUI from the current source (apply code changes without restarting dsh)',
-      handler: invocation => reloadHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /reload')
+    registerLocalCommand('reload', 'Reload the TUI from the current source (apply code changes without restarting dsh)', reloadHandler)
 
     // /hotkeys — pi's keybinding browser, in the /agents select-panel style:
     // a field list of the app keys, Enter opens an editor that writes
@@ -1822,12 +1789,7 @@ export function apply(ctx: Context): void {
       })
       return { kind: 'success' as const, text: summary ?? 'Keybindings unchanged.' }
     }
-    commands.registerLocal('hotkeys', hotkeysHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'hotkeys',
-      description: 'Show the current keybindings (custom file: ~/.dsh/keybindings.json)',
-      handler: invocation => hotkeysHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /hotkeys')
+    registerLocalCommand('hotkeys', 'Show the current keybindings (custom file: ~/.dsh/keybindings.json)', hotkeysHandler)
 
     // /login: register provider credentials — the terminal counterpart of
     // pi-agent's /login, on the Models category's add-provider flow. Opens a
@@ -1858,12 +1820,7 @@ export function apply(ctx: Context): void {
       if (result.kind === 'cancelled') return { kind: 'success' as const, text: 'Login cancelled.' }
       return { kind: 'success' as const, text: `Provider ${result.name} configured.` }
     }
-    commands.registerLocal('login', loginHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'login',
-      description: 'Configure a provider API key (register or replace credentials)',
-      handler: invocation => loginHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /login')
+    registerLocalCommand('login', 'Register provider credentials (API key) through the provider directory', loginHandler)
 
     // /logout: unsubscribe a provider — pi-agent's /logout on the dsh side.
     // Lists the providers with a stored credential; on selection removes the
@@ -1909,12 +1866,7 @@ export function apply(ctx: Context): void {
         text: `Logged out ${result.name} — API key and provider configuration removed.`,
       }
     }
-    commands.registerLocal('logout', logoutHandler)
-    ctx.effect(() => ctx.commands.register({
-      name: 'logout',
-      description: 'Log out a provider (removes its API key and provider configuration)',
-      handler: invocation => logoutHandler(invocation.rawInput, invocation.signal),
-    }), 'dsh-tui-pi: /logout')
+    registerLocalCommand('logout', 'Log out a provider (removes its API key and provider configuration)', logoutHandler)
 
     // ------------------------------------------------- powerline footer + git --
     const git = new GitBranchWatcher(process.cwd())
@@ -2025,12 +1977,12 @@ export function apply(ctx: Context): void {
       void (async () => {
         const scheme = await ui.tui.queryTerminalColorScheme({ timeoutMs: 200 }).catch(() => undefined)
         if (scheme === 'light' || scheme === 'dark') {
-          applyTheme(resolveTheme(process.env, scheme))
+          applyTheme(resolveTheme(process.env, scheme, themeRegistry))
           return
         }
         const background = await ui.tui.queryTerminalBackgroundColor({ timeoutMs: 200 }).catch(() => undefined)
         if (background !== undefined) {
-          applyTheme(resolveTheme(process.env, rgbIsLight(background) ? 'light' : 'dark'))
+          applyTheme(resolveTheme(process.env, rgbIsLight(background) ? 'light' : 'dark', themeRegistry))
         }
       })()
     }
@@ -2039,7 +1991,7 @@ export function apply(ctx: Context): void {
     // TUI repaints on the next frame, no restart. Explicit pins ignore it.
     const stopTerminalFollow = ui.tui.onTerminalColorSchemeChange(scheme => {
       if (themePreferenceRef !== 'auto') return
-      applyTheme(resolveTheme(process.env, scheme))
+      applyTheme(resolveTheme(process.env, scheme, themeRegistry))
     })
 
     // Live clock: the footer is the only thing that changes each second.
@@ -2093,7 +2045,7 @@ export function apply(ctx: Context): void {
             // again; surface the failure in the transcript like every other
             // dispatch error. Buffered notice: this line is the only record of
             // the failure and must survive a theme-switch rebuild (doc.clear()).
-            const message = error instanceof Error ? error.message : String(error)
+            const message = messageOf(error)
             renderer.renderNotice(message, 'error')
             return
           }
@@ -2115,7 +2067,7 @@ export function apply(ctx: Context): void {
         // the transcript instead of an unhandled rejection killing the TUI.
         // Buffered notice: this line is the only record of the failure and
         // must survive a theme-switch rebuild (doc.clear()).
-        const message = error instanceof Error ? error.message : String(error)
+        const message = messageOf(error)
         renderer.renderNotice(message, 'error')
         return
       }
@@ -2153,7 +2105,7 @@ export function apply(ctx: Context): void {
       } catch (error: unknown) {
         // Buffered notice: the failure line is the only on-screen record and
         // must survive a theme-switch rebuild (doc.clear()).
-        const message = error instanceof Error ? error.message : String(error)
+        const message = messageOf(error)
         renderer.renderNotice(message, 'error')
       }
       // Session (re)created by the prompt: seed the badge cache. The initial

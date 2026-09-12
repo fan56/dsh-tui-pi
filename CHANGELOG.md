@@ -4,6 +4,36 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.0] - 2026-09-12
+
+### Added
+- **Themes are now files** — the palette set moved from two hard-coded GitHub
+  palettes to a `themes/` directory of 20 built-in JSON themes (10 light + 10
+  dark: github, one, solarized, gruvbox, catppuccin, tokyo-night, ayu,
+  material, nord, dracula, monokai, synthwave) with automatic discovery. A new
+  theme registry (`src/theme/registry.ts`) parses the JSON contract (15
+  required fields + 8 derived blend fields), scans the builtin `themes/`
+  directory and the user theme directory, and merges user themes over
+  built-ins by name. `/theme` now lists every registered theme, and
+  `DSH_TUI_THEME` / `dsh-tui.theme` accept any registered theme name. Drop a
+  `.json` file into `~/.dsh/themes/` (or `$DSH_HOME/themes/`) to register your
+  own — same-name user themes override the built-ins. Invalid theme files are
+  skipped with a warning, never a crash.
+- **`/theme` live preview** — the picker is now a dual-pane overlay: the theme
+  list on the left (flat two-level: `auto`, then every registered theme), and
+  a mock chat page on the right that repaints with the SELECTED theme's real
+  surface colors on every cursor move — user bubble, think panel, tool card,
+  code block, assistant reply, input dock — so a theme is previewed before it
+  is committed. Stacks vertically below 100 columns. Repeated `resolveTheme`
+  calls now return the same bundle per palette (`WeakMap` cache), restoring
+  `applyTheme`'s identity no-op guard.
+
+### Changed
+- **Unified slash-command registration** (`registerLocalCommand`): local
+  dispatch and agent discovery registration (`ctx.commands.register`) share
+  one helper — agentless bodies go through both, so autocomplete matches the
+  web client.
+
 ## [2.17.0] - 2026-09-12
 
 ### Changed

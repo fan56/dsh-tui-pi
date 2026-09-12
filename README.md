@@ -2,7 +2,7 @@
 
 # dsh-tui-pi
 
-A fully-featured pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a plugin suite that turns dsh into a pi-like coding-agent experience: /history look-back & fork-at-turn, guided preset switching, live subagent steering, model profiles, GitHub light/dark themes and a powerline footer.
+A fully-featured pi-style terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a plugin suite that turns dsh into a pi-like coding-agent experience: /history look-back & fork-at-turn, guided preset switching, live subagent steering, model profiles, 20+ built-in themes (10 light + 10 dark) with user theme directory discovery, and a powerline footer.
 
 **Requires dsh >= 0.1.5-rc.2** — this plugin targets the dsh RC/stable line only (CI and releases resolve the newest of the `latest`/`next` dist-tags at runtime). **The alpha line is no longer supported.** A startup guard logs a one-line warning and exits cleanly when the host is older than the floor (opt out with `DSH_TUI_SKIP_HOST_CHECK=1`). See [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md) for the now-superseded alpha single-target decision.
 
@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**Agent preset switching**](docs/features/preset-switch.md) — `/preset` between the shipped agent compositions (`standard`, `minimal`, …); a switch is confirmed and starts a NEW session on the preset (the current one stays resumable); what a preset really gates.
 - [**Sessions & resume**](docs/features/sessions-resume.md) — sessions stay tidy automatically and resume in a few keystrokes; the host's kernel write lease keeps the log single-writer across processes.
 - [**History browser**](docs/features/history.md) — `/history` opens a fixed two-pane look-back over the session: completed turns on the left, the selected turn's replies on the right; copy a prompt back to the editor, or cold-read any stored session without resuming it (read-only).
-- [**Themes**](docs/features/themes.md) — GitHub light/dark palettes, hot-switchable; `auto` follows your terminal.
+- [**Themes**](docs/features/themes.md) — 20 built-in palettes (10 light + 10 dark) plus user theme discovery (`~/.dsh/themes/`); hot-switchable, `auto` follows your terminal.
 - [**Search, selection & images**](docs/features/search-selection-images.md) — `Ctrl+Shift+F` over the whole transcript, drag-select copies to the OS clipboard, attachments from web/Feishu render inline, LaTeX replies draw as Unicode math.
 - [**Slash commands**](docs/features/slash-commands.md) — `/model`, `/resume`, `/btw`, … plus everything dsh-native.
 - [**Startup plugin tree**](docs/features/startup-tree.md) — every profile plugin with its installed npm version, printed at launch.
@@ -125,7 +125,7 @@ Every knob lives under the `dsh-tui` settings namespace in `~/.dsh/settings.yaml
 
 | Key | Default | Meaning |
 |---|---|---|
-| `theme` | `auto` | Color scheme: `auto` (follow the terminal) / `light` / `dark`; `/theme` writes back to the same key |
+| `theme` | `auto` | Color scheme: `auto` (follow the terminal) / `light` / `dark` / any registered theme name (`/theme` writes back to the same key) |
 | `panelHeight` | `'1'` | Think/tool panel height: `'1'` / `'5'` / `'7'` / `'10'` / `'all'` (full content) |
 | `maxAgents` | `4` | Max concurrently running subagents, `0` = unlimited (hot-tunable in `/agents → l` limits) |
 | `maxRounds` | `75` | Max assistant messages per subagent before a wrap-up request is injected; `0` = unlimited |

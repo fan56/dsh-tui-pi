@@ -120,9 +120,12 @@ export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({
 /** Schema of the `dsh-tui` settings section. */
 const THEME_SETTINGS_SCHEMA = z.object({
   theme: z
-    .union(['auto', 'light', 'dark'])
+    .string()
     .default('auto')
-    .description('Terminal color scheme (applies immediately)'),
+    .description(
+      "Terminal color scheme ('auto' follows the terminal, 'light'/'dark' are "
+      + 'the GitHub palettes, any other value names a registered custom theme)',
+    ),
   panelHeight: z
     .union(['1', '5', '7', '10', 'all'])
     .default(DEFAULT_PANEL_HEIGHT)
@@ -365,7 +368,7 @@ export function registerThemeSettings(
             const theme = section.theme
             const panelHeight = section.panelHeight
             onPreferenceChange(
-              theme === 'light' || theme === 'dark' ? theme : 'auto',
+              typeof theme === 'string' && theme !== '' ? theme : 'auto',
               isPanelHeight(panelHeight) ? panelHeight : DEFAULT_PANEL_HEIGHT,
               narrowFooterHints(section.footerHints),
               narrowIconSet(section.iconSet),
@@ -479,7 +482,7 @@ async function readResolvedSection(ctx: Context): Promise<{
  */
 export async function readThemePreference(ctx: Context): Promise<ThemePreference> {
   const pref = (await readResolvedSection(ctx))?.theme
-  if (pref === 'light' || pref === 'dark') return pref
+  if (typeof pref === 'string' && pref !== '') return pref
   return 'auto'
 }
 
@@ -652,7 +655,7 @@ export function currentThemePreference(ctx: Context): ThemePreference {
     .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
     | { theme?: unknown }
     | undefined)?.theme
-  if (pref === 'light' || pref === 'dark') return pref
+  if (typeof pref === 'string' && pref !== '') return pref
   return 'auto'
 }
 

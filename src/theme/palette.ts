@@ -63,7 +63,7 @@ export interface Palette {
 const HEX6 = /^#[0-9a-fA-F]{6}$/
 
 /** Alpha tint of `over` on `base`, as a solid hex approximation of an alpha blend. */
-function blend(base: string, over: string, alpha: number): string {
+export function blend(base: string, over: string, alpha: number): string {
   if (!HEX6.test(base) || !HEX6.test(over)) {
     throw new TypeError(`blend(): expected #rrggbb hex colors, got "${base}" and "${over}"`)
   }

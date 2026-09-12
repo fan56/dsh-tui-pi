@@ -208,7 +208,14 @@ theme-settings.ts dsh-tui settings namespace (applies: 'live') + watch sink
 theme/            palette.ts (GitHub light/dark) + index.ts (buildTheme,
                   resolveTheme: env > preference > terminal detection —
                   COLORFGBG sync guess, then CSI 996n / OSC 11 query + live
-                  CSI 997 follow for 'auto')
+                  CSI 997 follow for 'auto') + registry.ts (theme-file
+                  layer: parseThemeFile validates the 15 required + 8 derived
+                  JSON fields, scanThemeDir warn-skips invalid files,
+                  discoverThemes merges builtin themes/ with the user theme
+                  directory (~/.dsh/themes/, $DSH_HOME/themes when set) over
+                  the builtins by name; resolveTheme's optional registry arg
+                  resolves any registered name — /theme and DSH_TUI_THEME
+                  accept them too, unknown names fall back to detection)
 text.ts           clipToWidth / visibleWidth — the only width vocabulary
 ```
 
@@ -218,6 +225,17 @@ Theme hot-switch chain (read this before touching anything theme-related):
 editor rebuild) → one throttled render frame`. `auto` also follows the
 terminal: a CSI 996n/OSC 11 query refines the startup guess, and CSI 997
 pushes repaint while the preference stays `auto` (see `stopTerminalFollow`).
+
+Theme file layer: the 20 built-in palettes live as JSON under `themes/`
+(10 light + 10 dark); user themes go in `~/.dsh/themes/` (or
+`$DSH_HOME/themes/` when `DSH_HOME` is set) and override same-name builtins.
+The palette contract is 15 required fields (name/dark + the canvas/fg/border/
+status colors) plus 8 derived fields that are blended over `canvas` when
+omitted (accentMuted 0.25 dark / 0.18 light, success/danger/attentionMuted
+0.25, thinkingPanelBg 0.25 dark / 0.12 light, toolPanelBg = accentMuted,
+panelBorder = borderDefault, panelBoxBorder 0.70). Registry tests live in
+test/theme-registry.test.mjs; the JSON schema is documented in
+docs/features/themes.md.
 
 ## Iron rules
 

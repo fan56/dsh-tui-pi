@@ -16,7 +16,7 @@ description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南
 
 | 键 | 类型 | 默认 | 作用 |
 |----|------|------|------|
-| `theme` | `'auto'\|'light'\|'dark'` | `auto` | 配色方案；`auto` 跟随终端明暗（`/theme` 写回同一段） |
+| `theme` | 任意字符串 | `auto` | 配色方案；`auto` 跟随终端明暗，也可填任意已注册主题名（内置 20 个 + `~/.dsh/themes/` 用户主题；`/theme` 写回同一段） |
 | `panelHeight` | `'1'\|'5'\|'7'\|'10'\|'all'` | `'1'` | think/tool 固定面板高度；`all` = 完整内容（推理 200 行尾随、工具结果 2000 行封顶） |
 | `maxAgents` | 非负整数 | `4` | 并发子代理上限，`0` = 不限 |
 | `maxRounds` | 非负整数 | `75` | 每个子代理 assistant 消息数上限，到达后注入收尾请求；`0` = 不限 |
@@ -41,7 +41,7 @@ description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南
 |------|------|
 | `DSH_TUI_RETENTION_MAX_COUNT` / `_MAX_AGE_DAYS` / `_MIN_IDLE_HOURS` | retention 三键的 env 兜底 |
 | `DSH_TUI_RESUME_MAX_AGE_DAYS` / `_MIN_BYTES` | resume 两键的 env 兜底 |
-| `DSH_TUI_THEME` | `light`/`dark` 硬钉显示配色（优先于偏好设置） |
+| `DSH_TUI_THEME` | `light`/`dark` 或任意已注册主题名硬钉显示配色（优先于偏好设置） |
 | `DSH_TUI_TRANSPARENT` | `1` 恢复透明终端背景 |
 | `DSH_TUI_MOUSE` | `buttons`（默认）\|`all`\|`off`，鼠标跟踪模式 |
 | `DSH_TUI_COPY_ON_SELECT` | `0` 让拖选仅视觉选中、不自动复制（默认开） |
@@ -56,7 +56,7 @@ retention/resume 组的优先级：**settings.yaml 显式值 > env > 默认**（
 新用户说"帮我配置 TUI / 配置 dsh-tui"时，不要甩文档让对方自己读——用 `ask_user_question`
 只问三题，然后代写配置：
 
-1. **主题**：`auto`（跟随终端，推荐）／`light`／`dark`。
+1. **主题**：`auto`（跟随终端，推荐）／`light`／`dark`／任意已注册主题名。
 2. **面板高度**：`'1'`（单行摘要，推荐）／`'5'`／`'7'`／`'10'`／`'all'`（完整内容）。
 3. **子代理并发**：`maxAgents` 4（默认）／8／0（不限）。
 
@@ -64,11 +64,18 @@ retention/resume 组的优先级：**settings.yaml 显式值 > env > 默认**（
 用户要细调时再指向上面的全表：footerHints 分段、cacheHitMode、iconSet、
 favoriteModels/hiddenModels、retention/resume。
 
+### 自定义主题目录
+
+除了内置的 20 个主题（`themes/`），用户可在 `~/.dsh/themes/`（`$DSH_HOME` 被设置时用
+`$DSH_HOME/themes`）放 `.json` 主题文件即自动注册——文件名随意，`name` 字段是主题 id；
+与内置同名时用户主题覆盖内置。JSON 契约见 `docs/features/themes.md`（15 个必填字段 +
+8 个可省略的推导字段，颜色为 `#rrggbb`）。非法文件会被跳过（warn），不会崩。
+
 ## 命令与文件面
 
 | 命令/文件 | 作用 |
 |------|------|
-| `/theme` | 选配色，写入 `dsh-tui.theme` 并即时生效 |
+| `/theme` | 选配色（列出全部内置与用户主题），写入 `dsh-tui.theme` 并即时生效 |
 | `/hotkeys` | 按键重映射浏览器，写 `~/.dsh/keybindings.json`（部分 JSON 映射，实时应用） |
 | `/model` | 模型/think 选择器；`f` 收藏、`h` 隐藏即写 `favoriteModels`/`hiddenModels`（收藏行拒绝 `h`，先取消收藏） |
 | `/preset` | 切换 agent preset（确认对话框：fork 携带历史 / 全新开始 / 取消；`/preset next` 循环）；默认按工作区记忆上次选择（`rememberPreset`） |

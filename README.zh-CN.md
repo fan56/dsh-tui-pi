@@ -2,7 +2,7 @@
 
 # dsh-tui-pi
 
-面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的功能齐全的 pi 风格终端 UI——一套把 dsh 变成 pi 式编码代理体验的插件套件：/history 回看与任意轮分叉、确认式 preset 切换、subagent 实时操控、模型档案、GitHub 明/暗主题和 powerline 状态栏。
+面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的功能齐全的 pi 风格终端 UI——一套把 dsh 变成 pi 式编码代理体验的插件套件：/history 回看与任意轮分叉、确认式 preset 切换、subagent 实时操控、模型档案、20+ 内置主题（10 亮 + 10 暗，支持用户主题目录自动发现）和 powerline 状态栏。
 
 **要求 dsh >= 0.1.5-rc.2** —— 本插件只跟随 dsh RC/stable 线（CI 与发版在运行时解析 latest/next 中更新的 dist-tag）。**不再支持 alpha 线。**宿主低于下限时，启动守卫会打一行 warning 并干净退出（可用 `DSH_TUI_SKIP_HOST_CHECK=1` 跳过）。alpha 单目标决策的历史见 [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)（已被取代）。
 
@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**模型 profile 与收藏**](docs/features/model-profiles.md) —— 按项目切换整套模型配置，选择器保持精简。
 - [**Agent preset 切换**](docs/features/preset-switch.md) —— `/preset` 在内置 agent 组合（`standard`、`minimal`……）间切换；切换需确认并会开启新会话（当前会话仍可 /resume 恢复）；preset 到底管什么。
 - [**Sessions 会话与恢复**](docs/features/sessions-resume.md) —— 会话自动保持整洁、几次按键恢复；跨进程写者守卫保证日志单写者。
-- [**Themes 主题**](docs/features/themes.md) —— GitHub 明/暗配色热切换；`auto` 跟随终端。
+- [**Themes 主题**](docs/features/themes.md) —— 20 个内置配色（10 亮 + 10 暗）+ 用户主题目录发现（`~/.dsh/themes/`）；热切换，`auto` 跟随终端。
 - [**搜索、选择与图片**](docs/features/search-selection-images.md) —— `Ctrl+Shift+F` 全文搜索、划选复制到系统剪贴板、web/飞书附件内联渲染、LaTeX 转 Unicode 数学。
 - [**斜杠命令**](docs/features/slash-commands.md) —— `/model`、`/resume`、`/btw`、`/profile-switch`……外加全部 dsh 原生命令。
 - [**启动插件树**](docs/features/startup-tree.md) —— 启动即打印每个 profile 插件及其安装的 npm 版本。
@@ -121,7 +121,7 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 
 | 键 | 默认 | 作用 |
 |---|---|---|
-| `theme` | `auto` | 配色：`auto`（跟随终端）/`light`/`dark`；`/theme` 写回同一段 |
+| `theme` | `auto` | 配色：`auto`（跟随终端）/`light`/`dark`/任意已注册主题名；`/theme` 写回同一段 |
 | `panelHeight` | `'1'` | think/tool 面板高度：`'1'`/`'5'`/`'7'`/`'10'`/`'all'`（完整内容） |
 | `maxAgents` | `4` | 并发子代理上限，`0` = 不限（`/agents → l` limits 面板可热调） |
 | `maxRounds` | `75` | 每个子代理的 assistant 消息数上限，到达后注入收尾请求；`0` = 不限 |

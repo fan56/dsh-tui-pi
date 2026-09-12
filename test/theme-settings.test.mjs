@@ -149,7 +149,7 @@ test('committed theme changes flow register → watch → sink with narrowing', 
   assert.equal(await readThemePreference(ctx), 'light', 'live value read back')
 })
 
-test('watch narrows unknown or missing theme values to auto', async () => {
+test('watch forwards any non-empty theme value (custom theme names pass through)', async () => {
   const ctx = new Context()
   const settings = makeSettings()
   ctx.provide('settings', settings)
@@ -157,19 +157,21 @@ test('watch narrows unknown or missing theme values to auto', async () => {
   registerThemeSettings(ctx, pref => { sink.push(pref) })
   await settle()
 
+  // A custom theme name is a valid theme preference now — it must pass
+  // through untouched so resolveTheme can look it up in the registry.
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['theme'], value: 'neon' }])
   await settle()
-  assert.deepEqual(sink, ['auto'], 'unknown theme value narrows to auto')
+  assert.deepEqual(sink, ['neon'], 'custom theme name passes through')
 
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['theme'], value: 'dark' }])
   await settle()
-  assert.deepEqual(sink, ['auto', 'dark'], 'dark value passes through')
+  assert.deepEqual(sink, ['neon', 'dark'], 'light/dark pass through')
 
   // Unsetting the theme key removes it from the section: the watch then sees
   // a section without a theme and narrows to auto.
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['theme'] }])
   await settle()
-  assert.deepEqual(sink, ['auto', 'dark', 'auto'], 'missing theme key narrows to auto')
+  assert.deepEqual(sink, ['neon', 'dark', 'auto'], 'missing theme key narrows to auto')
 })
 
 test('committed panelHeight changes flow register → watch → sink with narrowing', async () => {
