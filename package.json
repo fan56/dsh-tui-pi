@@ -70,7 +70,7 @@
     "@aiwayds/dsh-profile-switch": "^0.1.1",
     "@aiwayds/dsh-subagent-registry": "^0.10.0",
     "@aiwayds/dsh-web-search-anysearch": "^0.3.0",
-    "@earendil-works/pi-tui": "0.84.4"
+    "@earendil-works/pi-tui": "0.85.1"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-skill": ">=0.1.5-rc.2",

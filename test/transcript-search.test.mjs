@@ -93,13 +93,19 @@ function output(term) {
   return term.writes.join('')
 }
 
+// 0.85.1 renders the overlay title as an Input placeholder (dim SGR + OSC-8
+// hyperlink sequences split the words, e.g. F\x1b[22mind in transcript), so
+// title/counter assertions run against escape-stripped output.
+const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '').replace(/\x1b\]8;;\x07/g, '').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+const TITLE = 'Find in transcript'
+
 test('ctrl+shift+f opens the search overlay over the plugin layout shape', () => {
   const term = stubTerminal()
   const tui = searchHarness(term, ['alpha beta gamma', 'the quick brown fox'])
   term.feed(SEARCH_KEY)
   tui.renderNow(true)
-  const out = output(term)
-  assert.ok(out.includes('Find transcript'), `search overlay rendered (got ${JSON.stringify(out.slice(-400))})`)
+  const out = stripAnsi(output(term))
+  assert.ok(out.includes(TITLE), `search overlay rendered (got ${JSON.stringify(output(term).slice(-400))})`)
   tui.stop()
 })
 
@@ -110,14 +116,14 @@ test('typing counts matches; enter navigates; escape closes; reopen starts fresh
   tui.renderNow(true)
   for (const ch of 'needle') term.feed(ch)
   tui.renderNow(true)
-  let out = output(term)
-  assert.ok(out.includes('1/2'), `two needle matches counted (got ${JSON.stringify(out.slice(-400))})`)
+  let out = stripAnsi(output(term))
+  assert.ok(out.includes('1/2'), `two needle matches counted (got ${JSON.stringify(output(term).slice(-400))})`)
 
   // enter navigates to the next match — consumed by the search modal.
   term.feed(ENTER)
   tui.renderNow(true)
-  out = output(term)
-  assert.ok(out.includes('2/2'), `enter advanced to the second match (got ${JSON.stringify(out.slice(-400))})`)
+  out = stripAnsi(output(term))
+  assert.ok(out.includes('2/2'), `enter advanced to the second match (got ${JSON.stringify(output(term).slice(-400))})`)
 
   // escape closes; a plain key afterwards must not resurrect anything.
   term.feed(ESC)
@@ -125,13 +131,13 @@ test('typing counts matches; enter navigates; escape closes; reopen starts fresh
   term.writes.length = 0
   term.feed('x')
   tui.renderNow(true)
-  assert.ok(!output(term).includes('Find transcript'), 'closed search stays closed on plain input')
+  assert.ok(!stripAnsi(output(term)).includes(TITLE), 'closed search stays closed on plain input')
 
   // reopening starts a fresh, empty query — the old query is gone.
   term.feed(SEARCH_KEY)
   tui.renderNow(true)
-  out = output(term)
-  assert.ok(out.includes('Find transcript'), 'search reopened')
+  out = stripAnsi(output(term))
+  assert.ok(out.includes(TITLE), 'search reopened')
   assert.ok(!out.includes('2/2'), 'no stale match counter from the previous query')
   tui.stop()
 })
@@ -141,7 +147,7 @@ test('plain keys and unmatched bindings never open the search', () => {
   const tui = searchHarness(term, ['alpha beta gamma'])
   for (const data of ['x', 'h', 'i', ENTER, '\t', 'q']) term.feed(data)
   tui.renderNow(true)
-  assert.ok(!output(term).includes('Find transcript'), 'no search overlay on ordinary keys')
+  assert.ok(!stripAnsi(output(term)).includes(TITLE), 'no search overlay on ordinary keys')
   tui.stop()
 })
 
@@ -155,7 +161,7 @@ test('mouse-less alt screen ignores mouse-shaped input while search is open', ()
   tui.renderNow(true)
   term.feed('\x1b[<64;10;5M\x1b[<64;10;6M') // two coalesced wheel-up events
   tui.renderNow(true)
-  const out = output(term)
-  assert.ok(out.includes('Find transcript'), 'search overlay still up')
+  const out = stripAnsi(output(term))
+  assert.ok(out.includes(TITLE), 'search overlay still up')
   tui.stop()
 })
