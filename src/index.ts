@@ -2011,8 +2011,13 @@ export function apply(ctx: Context): void {
      * The generic guard would fire mid-flow and echo a spurious
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
+     *
+     * profile-switch/profile-cfg are registered by the external
+     * @aiwayds/dsh-profile-switch package, but every plugin command routes
+     * through this dispatcher, so their names belong here all the same
+     * (dropping them in 2.16.0 re-introduced the timeout).
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'history', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'wiki', 'vault'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'history', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'profile-switch', 'profile-cfg', 'wiki', 'vault'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {
