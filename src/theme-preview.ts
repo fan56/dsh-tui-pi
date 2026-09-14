@@ -72,8 +72,9 @@ export class ThemePreviewPane implements Component {
     const lines: string[] = []
 
     // Title bar: the theme label + its description, accent-tinted, on the
-    // inset surface (the description carries the "GitHub light palette" /
-    // "GitHub dark palette" text the e2e suite asserts).
+    // inset surface. With the list's description column gone, this is the
+    // only place the "GitHub light palette" / "GitHub dark palette" texts
+    // (which the e2e suite asserts) appear.
     const title = `${row.label} — ${row.description}`
     lines.push(surfaceRow(p.canvasInset, ` ${bold(p.accent, title)} `, width))
     lines.push(canvas(''))
@@ -180,7 +181,7 @@ export function themePickerRows(options?: PickThemeOptions): ThemePickerRow[] {
   })
   // The two defaults keep their classic descriptions (the e2e suite asserts
   // the "GitHub light/dark palette" texts); other rows just carry their
-  // origin — the name is already in the Theme column.
+  // origin. Descriptions render in the preview's title bar, not in the list.
   // A user theme overriding a default id shows its own palette under the
   // default's name (discoverThemes merges user-over-builtin).
   const origin = (name: string): string => userNames?.has(name) === true ? 'user theme' : 'built-in'
@@ -200,8 +201,14 @@ export function themePickerRows(options?: PickThemeOptions): ThemePickerRow[] {
 /** Terminal width at which the picker switches from stacked to side-by-side. */
 export const DUAL_PANE_MIN_COLUMNS = 100
 
-/** Floor of the left list pane in dual-pane mode. */
-export const LEFT_PANE_MIN_COLUMNS = 30
+/** Floor of the left list pane in dual-pane mode (single theme column). */
+export const LEFT_PANE_MIN_COLUMNS = 20
+
+/**
+ * Cap for the content-fitted left pane: a theme label wider than this clips
+ * in its cell instead of crowding the preview.
+ */
+export const LEFT_PANE_MAX_COLUMNS = 28
 
 /**
  * A one-column divider between the theme list and the preview pane, so the
@@ -254,12 +261,11 @@ export class ThemePickerOverlay implements Component {
     this.preview.setRow(rows[Math.max(0, preselect)])
     this.list = new TablePanel(theme, {
       title: '● Theme',
-      columns: [
-        { key: 'theme', title: 'Theme', width: Math.max(5, ...rows.map(row => row.label.length)) },
-        { key: 'description', title: 'Description', flex: true },
-      ],
+      // Single column: the description lives in the preview's title bar, so
+      // the list stays a narrow label sliver and the preview gets the width.
+      columns: [{ key: 'theme', title: 'Theme', flex: true }],
       rows,
-      renderCell: (row, column) => column.key === 'description' ? row.description : row.label,
+      renderCell: row => row.label,
       preselect,
       onSelect: row => this.finish(row.value),
       onCancel: () => this.finish(undefined),
@@ -277,10 +283,11 @@ export class ThemePickerOverlay implements Component {
     const budget = overlayContentBudget()
     let lines: string[]
     if (width >= DUAL_PANE_MIN_COLUMNS) {
-      // Left pane keeps a ~40% column floor (same as the history browser);
-      // a one-column divider separates the panes; the preview grows into
-      // the rest.
-      const leftWidth = Math.max(LEFT_PANE_MIN_COLUMNS, Math.floor(width * 0.4))
+      // The list pane fits the widest theme label (marker + slack) instead
+      // of a fixed share — no description column, so the preview grows into
+      // the rest; a one-column divider separates the panes.
+      const widest = Math.max(...this.rows.map(row => visibleWidth(row.label)))
+      const leftWidth = Math.min(LEFT_PANE_MAX_COLUMNS, Math.max(LEFT_PANE_MIN_COLUMNS, widest + 4))
       const stack = new HStack([
         { component: this.list, basis: leftWidth, shrink: 1, minSize: LEFT_PANE_MIN_COLUMNS },
         { component: new Divider(), basis: 1, grow: 0, shrink: 0 },

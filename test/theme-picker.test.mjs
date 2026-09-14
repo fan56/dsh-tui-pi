@@ -49,12 +49,19 @@ test('overlay renders the theme list and a live preview side by side', () => {
   const { overlay } = makeOverlay(darkTheme, 'github-dark', 120)
   const lines = overlay.render(120)
   const text = lines.map(stripAnsi).join('\n')
-  // Left list: the constant row plus the registry themes.
+  // Left list: the constant row plus the registry themes — names only, the
+  // description column is gone (it lives in the preview's title bar now).
   assert.ok(text.includes('● Theme'), 'title present')
   assert.ok(text.includes('auto'), 'auto row present')
-  assert.ok(text.includes('GitHub light palette'), 'light description present')
-  assert.ok(text.includes('GitHub dark palette'), 'dark description present')
+  assert.ok(text.includes('github-light'), 'light row present')
+  assert.ok(text.includes('github-dark'), 'dark row present')
   assert.ok(text.includes('dracula'), 'a registry theme is listed')
+  assert.ok(!text.includes('Description'), 'description column removed')
+  // The freed width goes to the preview: its mock-page rows span most of
+  // the terminal (the list keeps only a label-fitted sliver).
+  const bubble = lines.find(line => stripAnsi(line).includes('帮我分析这段代码'))
+  assert.ok(bubble !== undefined, 'user bubble row found')
+  assert.ok(visibleWidth(bubble) >= 90, `preview pane wide (got ${visibleWidth(bubble)})`)
   // Right pane: the mock chat page content.
   assert.ok(text.includes('帮我分析这段代码'), 'user bubble text present')
   assert.ok(text.includes('read_file'), 'tool card text present')
@@ -117,8 +124,8 @@ test('narrow terminals stack the list above the preview', () => {
   const text = lines.join('\n')
   assert.ok(text.includes('● Theme'), 'title present on narrow')
   // Both panes visible: list rows and the preview page (or its first lines).
-  assert.ok(text.includes('GitHub dark palette'), 'list visible')
-  const listAt = lines.findIndex(line => line.includes('GitHub dark palette'))
+  assert.ok(text.includes('github-dark'), 'list rows visible')
+  const listAt = lines.findIndex(line => line.includes('● Theme'))
   const previewAt = lines.findIndex(line => line.includes('read_file') || line.includes('帮我分析这段代码'))
   assert.ok(previewAt > listAt, `preview below list (list ${listAt}, preview ${previewAt})`)
   for (const line of overlay.render(80)) {

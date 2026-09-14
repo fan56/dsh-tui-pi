@@ -4,10 +4,10 @@
 # the persisted preference in ~/.dsh/settings.yaml, and persistence across
 # a full TUI restart.
 #
-# Navigation model (src/selectors.ts): rows are [auto, light, dark]; the
-# preselected row is the persisted preference (fresh profile = 'auto',
-# row 0), so one Down lands on light; with light persisted, one Down lands
-# on dark.
+# Navigation model (src/selectors.ts): rows are [auto, github-light,
+# github-dark, ...]; the preselected row is the persisted preference (fresh
+# profile = 'auto', row 0), so one Down lands on github-light; with light
+# persisted, one Down lands on github-dark.
 #
 # IMPORTANT: no DSH_TUI_THEME here — the env override pins the display and
 # a preference change then only saves ("display is pinned by
@@ -31,11 +31,11 @@ send '/theme' Enter
 wait_pane '/theme opens the theme picker' 15 "$MARKER_THEME_ROWS" || summary
 PANE="$(capture)"
 assert_contains 'picker row: auto' 'auto' "$PANE"
-assert_contains 'picker row: light description' 'GitHub light palette' "$PANE"
-assert_contains 'picker row: dark description' 'GitHub dark palette' "$PANE"
+assert_contains 'picker row: github-light' 'github-light' "$PANE"
+assert_contains 'picker row: github-dark' 'github-dark' "$PANE"
 
 # --- switch to light ---------------------------------------------------------
-# Fresh profile: preference 'auto' preselected (row 0) -> Down -> light.
+# Fresh profile: preference 'auto' preselected (row 0) -> Down -> github-light.
 send Down
 send Enter
 sleep 3
@@ -50,7 +50,7 @@ if printf '%s' "$SGR" | grep -qF -- "$SGR_CANVAS_DARK"; then
 else
   ok 'dark canvas SGR gone after switching to light'
 fi
-wait_pane 'selection notice rendered (Theme: light)' 10 'Theme: light'
+wait_pane 'selection notice rendered (Theme: github-light — applied)' 10 'Theme: github-light'
 wait_gone 'theme picker closed after selection' 10 "$MARKER_THEME_ROWS"
 if [[ -f "$SETTINGS_YAML" ]] && grep -q 'light' "$SETTINGS_YAML"; then
   ok 'preference persisted to settings.yaml (light)'
@@ -59,7 +59,7 @@ else
 fi
 
 # --- switch back to dark ------------------------------------------------------
-# Preference is now light (row 1) -> Down -> dark.
+# Preference is now github-light (row 1) -> Down -> github-dark.
 ensure_editor_ready 'editor focused for the dark switch' || true
 send '/theme' Enter
 wait_pane '/theme reopens the theme picker' 15 "$MARKER_THEME_ROWS" || summary
@@ -72,7 +72,7 @@ if printf '%s' "$SGR" | grep -qF -- "$SGR_CANVAS_DARK"; then
 else
   bad 'dark canvas SGR not found after switching to dark'
 fi
-wait_pane 'selection notice rendered (Theme: dark — applied)' 10 'Theme: dark'
+wait_pane 'selection notice rendered (Theme: github-dark — applied)' 10 'Theme: github-dark'
 if [[ -f "$SETTINGS_YAML" ]] && grep -q 'dark' "$SETTINGS_YAML" \
   && ! grep -q 'light' "$SETTINGS_YAML"; then
   ok 'preference persisted to settings.yaml (dark, light gone)'
