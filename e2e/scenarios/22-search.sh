@@ -2,7 +2,8 @@
 # Fullscreen transcript search (pi-tui built-in, Ctrl+Shift+F) over a real
 # PTY. The plugin ships no search code of its own: the tui.altScreen.search
 # binding opens pi-tui's input overlay anchored top-right ("Find
-# transcript"), the query counts matches over the primary ScrollView (the
+# in transcript" — pi-tui 0.85.1 reworded the placeholder), the query counts
+# matches over the primary ScrollView (the
 # transcript), escape closes, and reopening starts a fresh query. Also pins
 # the footer hint segment for discoverability ('Ctrl+Shift+F: search',
 # default on).
@@ -23,7 +24,7 @@ assert_contains 'footer hint shows the search segment' 'Ctrl+Shift+F: search' "$
 
 # --- open the search overlay ----------------------------------------------
 send C-S-f
-wait_pane 'search overlay opens on ctrl+shift+f' 15 'Find transcript'
+wait_pane 'search overlay opens on ctrl+shift+f' 15 'Find in transcript'
 
 # --- negative path: an absurd query counts zero matches --------------------
 send 'zzqqxx'
@@ -36,11 +37,11 @@ send 'plugins'
 wait_pane 'banner counts line matches the query' 15 '[0-9]+/[0-9]+'
 
 # --- close: escape returns to the plain transcript --------------------------
-esc_until_gone 'escape closes the search' 'Find transcript'
+esc_until_gone 'escape closes the search' 'Find in transcript'
 
 # --- reopen: a fresh, empty query (no stale counter) ------------------------
 send C-S-f
-wait_pane 'search reopens' 15 'Find transcript'
+wait_pane 'search reopens' 15 'Find in transcript'
 sleep 1
 PANE="$(capture)"
 assert_not_contains 'reopened search starts with an empty query' 'No matches' "$PANE"
