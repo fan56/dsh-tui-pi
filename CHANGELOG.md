@@ -4,6 +4,25 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.1] - 2026-09-14
+
+### Fixed
+- **`/profile-switch` + `/profile-cfg` no longer abort with "aborted due to
+  timeout"** — the 2.16.0 extraction of the profile panels into the external
+  `@aiwayds/dsh-profile-switch` plugin also dropped their names from the TUI's
+  `MODAL_COMMANDS` set, but the TUI's submit dispatcher wraps *every* plugin
+  command in the generic 90s guard, so the externally-registered commands
+  fired it mid-configuration. Both names are re-whitelisted with
+  never-aborting dispatch, plus a comment anchoring why externally-owned
+  names must stay in the set.
+
+### Changed
+- **Theme picker layout** — the theme list renders as a single flex column
+  sized to the widest theme label (floor 20, cap 28 columns) instead of a
+  fixed ~40% share, so the live preview grows into the freed width (~98 of
+  120 columns at the dual-pane threshold vs ~71 before). Row descriptions
+  still exist and surface in the preview's title bar.
+
 ## [2.18.0] - 2026-09-12
 
 ### Added
