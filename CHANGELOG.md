@@ -4,6 +4,21 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.2] - 2026-09-14
+
+### Changed
+- **The `@aiwayds/dsh-profile-switch` floor is raised to `^0.1.2`** — the
+  companion plugin's docs-only 0.1.2 (TUI pairing guidance, no-wiring install
+  note) is the version this package is validated against; the previous caret
+  range already resolved to it on fresh installs.
+
+### Fixed
+- **e2e scenario 22-search matches pi-tui 0.85.1's reworded placeholder** —
+  the search overlay title changed from "Find transcript" to "Find in
+  transcript" with the pi-tui 0.85.1 bump; the scenario needles still waited
+  for the old wording and failed two assertions even though the overlay
+  opened and worked. Test-infra only, no runtime change.
+
 ## [2.18.1] - 2026-09-14
 
 ### Fixed
