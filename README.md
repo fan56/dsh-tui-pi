@@ -149,7 +149,12 @@ dsh-tui:
   resume:           # /resume display filter — only HIDES picker rows, never deletes.
     maxAgeDays: 30
     minBytes: 1024
+  askUser:          # ask_user_question auto-answer timeouts — the panel never waits forever.
+    idleMinutes: 5       # no-input window per question; <= 0 disables (DSH_TUI_ASK_USER_IDLE_MINUTES)
+    absoluteMinutes: 10  # hard cap per question even with input; <= 0 disables (DSH_TUI_ASK_USER_ABSOLUTE_MINUTES)
 ```
+
+On a timeout the focused question is auto-answered with the **recommended option** (first in the list); plans are never auto-approved, a half-typed answer is committed, and every automatic pick is noted to the model in the answer. Details: [Ask User Question → Timeouts](docs/features/ask-user-question.md#timeouts--the-panel-never-waits-forever).
 
 Key remaps live in `~/.dsh/keybindings.json` (keyboard section above); `DSH_TUI_COPY_ON_SELECT=0` keeps drag-selection visual-only.
 

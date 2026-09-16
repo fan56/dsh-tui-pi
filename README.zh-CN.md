@@ -145,7 +145,12 @@ dsh-tui:
   resume:           # /resume 显示过滤器——只隐藏选择器行，从不删除。
     maxAgeDays: 30
     minBytes: 1024
+  askUser:          # ask_user_question 自动应答超时——面板绝不无限等待。
+    idleMinutes: 5       # 每题无操作窗口；<= 0 关闭（DSH_TUI_ASK_USER_IDLE_MINUTES）
+    absoluteMinutes: 10  # 每题硬上限，有操作也生效；<= 0 关闭（DSH_TUI_ASK_USER_ABSOLUTE_MINUTES）
 ```
+
+超时后，聚焦的未答题目自动选**推荐项**（列表第一项）；计划审批绝不自动批准；打了一半的自由文本会被提交；每次自动作答都会在答案里向模型注明。详见 [Ask User Question → Timeouts](docs/features/ask-user-question.md#timeouts--the-panel-never-waits-forever)。
 
 按键重映射见 `~/.dsh/keybindings.json`（上文键盘一节）。
 

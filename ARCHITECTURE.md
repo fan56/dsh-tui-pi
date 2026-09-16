@@ -373,7 +373,12 @@ Todos-panel box look). While open it holds keyboard focus and the app
 keymap treats it exactly like an open overlay (`dockedModalActive` feeds
 the `overlayOpen` composition in tui.ts); a capturing overlay open beneath
 is dismissed on open — the pending question outranks every panel. Focus
-returns to the current editor on close.
+returns to the current editor on close. The panel never waits forever:
+each focused question carries a dual auto-answer timeout (idle window +
+absolute cap, `dsh-tui.askUser.*` / `DSH_TUI_ASK_USER_*`, both `<= 0`
+disable) — firing picks the recommended option (first; plans never
+auto-approved), declares the pick in the answer's `custom` note, and
+settles as soon as nothing is left unanswered.
 
 The **history browser** (`/history`, src/history.ts) is the one composite
 overlay: at ≥100 columns its root renders a pi-tui `HStack` (left turn-list

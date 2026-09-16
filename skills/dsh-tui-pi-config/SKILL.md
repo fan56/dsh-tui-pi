@@ -1,6 +1,6 @@
 ---
 name: dsh-tui-pi-config
-description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 15 键（theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume）、DSH_TUI_* 环境变量、ask_user_question 快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。"
+description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤、ask_user_question 超时、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 17 键（theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser）、DSH_TUI_* 环境变量、快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。"
 ---
 
 # dsh-tui-pi 使用指南（TUI 主题 / 子代理治理 / 会话管理）
@@ -34,6 +34,8 @@ description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南
 | `retention.minIdleHours` | 数字 | `24` | 按条数规则清理时的空闲保护小时数；下次启动生效 |
 | `resume.maxAgeDays` | 数字 | `30` | `/resume` 选择器只显示这么新内的会话（显示口径，不删数据）；每次打开选择器生效 |
 | `resume.minBytes` | 数字 | `1024` | `/resume` 选择器的最小压缩日志体积（显示口径）；每次打开选择器生效 |
+| `askUser.idleMinutes` | 数字 | `5` | ask_user_question 面板：聚焦题目无按键超过这么多分钟即自动应答（推荐项，计划不自动批准）；`<= 0` 关闭该规则；每次打开面板生效 |
+| `askUser.absoluteMinutes` | 数字 | `10` | ask_user_question 面板：单题硬上限，有操作也强制自动应答；`<= 0` 关闭该规则；每次打开面板生效 |
 
 ### DSH_TUI_* 环境变量
 
@@ -41,6 +43,7 @@ description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南
 |------|------|
 | `DSH_TUI_RETENTION_MAX_COUNT` / `_MAX_AGE_DAYS` / `_MIN_IDLE_HOURS` | retention 三键的 env 兜底 |
 | `DSH_TUI_RESUME_MAX_AGE_DAYS` / `_MIN_BYTES` | resume 两键的 env 兜底 |
+| `DSH_TUI_ASK_USER_IDLE_MINUTES` / `_ABSOLUTE_MINUTES` | askUser 两键的 env 兜底 |
 | `DSH_TUI_THEME` | `light`/`dark` 或任意已注册主题名硬钉显示配色（优先于偏好设置） |
 | `DSH_TUI_TRANSPARENT` | `1` 恢复透明终端背景 |
 | `DSH_TUI_MOUSE` | `buttons`（默认）\|`all`\|`off`，鼠标跟踪模式 |
@@ -48,7 +51,7 @@ description: "dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南
 | `DSH_TUI_BTW_CONTEXT_MESSAGES` | `/btw` 侧问快照的最近消息条数 |
 | `DSH_TUI_SKIP_HOST_CHECK` | `1` 跳过宿主版本下限检查（测试用） |
 
-retention/resume 组的优先级：**settings.yaml 显式值 > env > 默认**（只看 settings.yaml 里
+retention/resume/askUser 组的优先级：**settings.yaml 显式值 > env > 默认**（只看 settings.yaml 里
 实际写下的键，未写的键回落 env，再回落默认）。
 
 ## 交互式快速上手（ask_user_question）
@@ -62,7 +65,7 @@ retention/resume 组的优先级：**settings.yaml 显式值 > env > 默认**（
 
 收集完把 `dsh-tui:` 段写进 `~/.dsh/settings.yaml`——**只写问过的键**，未问的键留在默认值。
 用户要细调时再指向上面的全表：footerHints 分段、cacheHitMode、iconSet、
-favoriteModels/hiddenModels、retention/resume。
+favoriteModels/hiddenModels、retention/resume/askUser。
 
 ### 自定义主题目录
 

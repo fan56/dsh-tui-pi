@@ -33,6 +33,7 @@ import { narrowStringList } from './model-list.ts'
 import type { IconSet } from './icons.ts'
 import { RETENTION_MAX_AGE_DAYS, RETENTION_MAX_COUNT, RETENTION_MIN_IDLE_HOURS } from './retention.ts'
 import { RESUME_MAX_AGE_DAYS, RESUME_MIN_BYTES } from './sessions.ts'
+import { ASK_USER_ABSOLUTE_MINUTES_DEFAULT, ASK_USER_IDLE_MINUTES_DEFAULT } from './ask-user.ts'
 import { emitNotice } from './notice-bridge.ts'
 import type { ThemePreference } from './theme/index.ts'
 
@@ -270,6 +271,27 @@ const THEME_SETTINGS_SCHEMA = z.object({
     })
     .default({ maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES })
     .description('Resume picker display filter (explicit values here outrank the DSH_TUI_RESUME_* env vars)'),
+  askUser: z
+    .object({
+      idleMinutes: z
+        .number()
+        .default(ASK_USER_IDLE_MINUTES_DEFAULT)
+        .description(
+          'Ask User panel: auto-answer the focused question after this many minutes without a single keypress — '
+          + 'unanswered questions take the recommended option (first in the list), plans are never auto-approved; '
+          + '<= 0 disables the no-input rule; outranks DSH_TUI_ASK_USER_IDLE_MINUTES',
+        ),
+      absoluteMinutes: z
+        .number()
+        .default(ASK_USER_ABSOLUTE_MINUTES_DEFAULT)
+        .description(
+          'Ask User panel: hard cap per question — after this many minutes the question is auto-answered even '
+          + 'if the user keeps interacting (the panel must never hold a run hostage); <= 0 disables the cap; '
+          + 'outranks DSH_TUI_ASK_USER_ABSOLUTE_MINUTES',
+        ),
+    })
+    .default({ idleMinutes: ASK_USER_IDLE_MINUTES_DEFAULT, absoluteMinutes: ASK_USER_ABSOLUTE_MINUTES_DEFAULT })
+    .description('Ask User question panel timeouts (explicit values here outrank the DSH_TUI_ASK_USER_* env vars)'),
 })
 
 /** Composition entry below the user layer: fall back to the defaults. */
@@ -289,6 +311,7 @@ const THEME_SETTINGS_ENTRY: {
   hiddenModels: string[]
   retention: { maxCount: number; maxAgeDays: number; minIdleHours: number }
   resume: { maxAgeDays: number; minBytes: number }
+  askUser: { idleMinutes: number; absoluteMinutes: number }
 } = {
   theme: 'auto',
   panelHeight: DEFAULT_PANEL_HEIGHT,
@@ -309,6 +332,7 @@ const THEME_SETTINGS_ENTRY: {
     minIdleHours: RETENTION_MIN_IDLE_HOURS,
   },
   resume: { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES },
+  askUser: { idleMinutes: ASK_USER_IDLE_MINUTES_DEFAULT, absoluteMinutes: ASK_USER_ABSOLUTE_MINUTES_DEFAULT },
 }
 
 /**
@@ -601,6 +625,38 @@ export async function readSessionManagementExplicit(
       ? resume as SessionManagementExplicit['resume']
       : undefined,
   }
+}
+
+/**
+ * Raw user-layer `dsh-tui.askUser` section — the explicit ask-user timeout
+ * overrides as written in settings.yaml (see `readSessionManagementExplicit`
+ * for why the USER layer, not the resolved value, is the precedence seam:
+ * the resolved value's schema defaults must not shadow the
+ * DSH_TUI_ASK_USER_* environment variables). `undefined` = nothing
+ * explicitly configured (env/defaults govern).
+ */
+export interface AskUserTimeoutExplicit {
+  idleMinutes?: unknown
+  absoluteMinutes?: unknown
+}
+
+/**
+ * Read the explicit `dsh-tui.askUser` section from the settings document's
+ * user layer. Awaits the namespace registration bounded (same plumbing as
+ * `readSessionManagementExplicit`), so an ask arriving during startup
+ * cannot hang on a settings-less deployment. Returns `undefined` when the
+ * section, the user layer, the namespace, or the whole service is absent —
+ * "nothing explicitly configured" for the ask-user resolver.
+ */
+export async function readAskUserExplicit(
+  ctx: Context,
+): Promise<AskUserTimeoutExplicit | undefined> {
+  const user = (await registeredDescriptor(ctx))?.user
+  if (user === null || typeof user !== 'object') return undefined
+  const section = (user as { askUser?: unknown }).askUser
+  return section !== null && typeof section === 'object'
+    ? section as AskUserTimeoutExplicit
+    : undefined
 }
 
 /**

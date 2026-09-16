@@ -71,6 +71,10 @@ ask-user.ts       Ask User Question: pure state reducers (answer/declined
                   DOCKED questions panel (Todos-panel box in the askUser dock
                   slot above the editor — takes focus while open, the app
                   keymap yields via dockedModalActive, no floating overlay)
+                  + per-question auto-answer timeouts (dual rule: idle
+                  window + absolute cap, both <= 0 disable; recommended =
+                  first option, plans never auto-approved, notes declared
+                  in the answer envelope; countdown rides the panel footer)
                   + ctx.userQuestions provider registration
 custom-provider.ts /login "Custom provider…" entry: pure field parsers +
                   the chained EditField form composing a hand-declared
@@ -275,13 +279,13 @@ docs/features/themes.md.
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` runs **1306 tests** across 78 files (verified by
+- `pnpm test` runs **1330 tests** across 79 files (verified by
   `node --test test/*.mjs`; per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals and the
   per-file list here. The suite is fully green.
-  - ask-user 119 + btw 45 + subagent-viewer 42 + subagent-policy 44 + retention 39 + skills 36 +
+  - ask-user 119 + ask-user-timeout 24 + btw 45 + subagent-viewer 42 + subagent-policy 44 + retention 39 + skills 36 +
   - live 35 + sessions 35 + session-reconcile 33 + history-viewer 33 + keymap 31 + model-profiles 31 +
   - usage 26 + pending-echo 26 + clipboard 26 + login 25 + log-repair 25 +
     startup-info 24 + skills-manager 24 + panels 24 +

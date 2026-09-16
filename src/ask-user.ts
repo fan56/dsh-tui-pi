@@ -186,6 +186,46 @@ export const DECLINE_MESSAGE = 'User declined to answer questions.'
 /** Transient hint when Enter lands on an incomplete confirm/submit row. */
 export const INCOMPLETE_HINT = 'Answer every question first'
 
+// ------------------------------------------------------------- timeouts --
+
+/** Default no-input window per focused question, in minutes: after this long
+ *  without a single keypress the question is auto-answered (recommended
+ *  option, plan-safe) and the panel moves on. */
+export const ASK_USER_IDLE_MINUTES_DEFAULT = 5
+
+/** Default hard cap per focused question, in minutes: after this long the
+ *  question is auto-answered EVEN IF the user keeps interacting — the panel
+ *  must never hold a run hostage indefinitely (dual rule with the idle
+ *  window; either firing resolves the question). */
+export const ASK_USER_ABSOLUTE_MINUTES_DEFAULT = 10
+
+/** Env override for the no-input window (minutes; <= 0 disables the rule). */
+export const ASK_USER_IDLE_ENV = 'DSH_TUI_ASK_USER_IDLE_MINUTES'
+
+/** Env override for the hard cap (minutes; <= 0 disables the rule). */
+export const ASK_USER_ABSOLUTE_ENV = 'DSH_TUI_ASK_USER_ABSOLUTE_MINUTES'
+
+const MINUTE_MS = 60_000
+
+/** Note folded into the answer envelope's `custom` field when a question was
+ *  auto-answered with the recommended option — the model reads the answer as
+ *  a tool result, so an automatic pick is declared in-band (same spirit as
+ *  DECLINE_MESSAGE), never silently passed off as a human choice. */
+export const TIMEOUT_RECOMMENDED_NOTE = 'Auto-answered after the no-input timeout: the recommended option was picked.'
+
+/** Note for a plan-review question auto-answered by timeout: plans are NEVER
+ *  auto-approved — the first non-approve option is picked instead. */
+export const TIMEOUT_PLAN_DECLINED_NOTE = 'Auto-answered after the no-input timeout: no user input, so the plan was NOT approved.'
+
+/** Note for a question with no options at all — there is no recommended value
+ *  to fall back to, so the answer carries the explanation only. */
+export const TIMEOUT_NO_DEFAULT_NOTE = 'Auto-answered after the no-input timeout: the question offers no default option to pick.'
+
+/** Note appended when the timeout commits a half-typed sentinel buffer: the
+ *  text is the user's own, but it never went through Enter, so the envelope
+ *  says so. */
+export const TIMEOUT_CUSTOM_NOTE = 'Auto-committed after the no-input timeout: the text typed so far.'
+
 /** Mark left of a question a custom input wrote text into. */
 const CUSTOM_MARK = '✎ '
 
@@ -579,6 +619,181 @@ export function canAutoSubmit(state: AskUserState): boolean {
   return allQuestionsAnswered(state)
 }
 
+// --------------------------------------- timeout config + auto-answer --
+
+/**
+ * Timeout rules for one open ask-user panel — the unit is ms internally,
+ * minutes in settings/env (human units, like retention's maxAgeDays).
+ * `0` disables that rule; both zero = the legacy wait-forever panel.
+ */
+export interface AskUserTimeouts {
+  /** No-input window per focused question. Any keypress restarts it. */
+  idleMs: number
+  /** Hard cap per focused question, measured from when focus entered it —
+   *  fires even under continuous input. */
+  absoluteMs: number
+}
+
+/** Both rules off — the panel waits for the human exactly as before. */
+export const ASK_USER_TIMEOUTS_DISABLED: AskUserTimeouts = { idleMs: 0, absoluteMs: 0 }
+
+/** Raw user-layer `dsh-tui.askUser` section (handed over by the
+ * theme-settings reader): every field is `unknown` because a hand-edited
+ * settings.yaml can carry anything. */
+export interface AskUserTimeoutSettings {
+  idleMinutes?: unknown
+  absoluteMinutes?: unknown
+}
+
+/** Minutes → ms; negatives clamp to 0 (a non-positive knob is the
+ *  documented per-rule off switch, mirroring retention's maxCount). */
+function minutesToMs(minutes: number): number {
+  return Math.max(0, minutes) * MINUTE_MS
+}
+
+/**
+ * Narrow one explicit settings field: a finite number, or undefined
+ * (absent, or present-but-invalid). An invalid value emits one notice
+ * through the shared bridge naming the field and its raw value — same
+ * contract as retention's `explicitSetting` — and the caller falls to the
+ * next precedence level. Every finite value is accepted here: the <= 0
+ * case is the documented disable switch, not garbage.
+ */
+function explicitMinutes(section: AskUserTimeoutSettings | undefined, key: keyof AskUserTimeoutSettings): number | undefined {
+  const raw = section?.[key]
+  if (raw === undefined) return undefined
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    emitNotice(
+      `settings dsh-tui.askUser.${key}: invalid value `
+      + `${JSON.stringify(raw)} — falling back to environment/default`,
+    )
+    return undefined
+  }
+  return raw
+}
+
+/** One env slot: a finite number, or undefined when absent/garbage — env
+ *  garbage falls to the default silently (retention's finiteEnv contract). */
+function finiteEnvMinutes(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : undefined
+}
+
+/**
+ * Resolve the ask-user timeout knobs through the repo's standard precedence
+ * chain — explicit settings.yaml values (`dsh-tui.askUser.*`) outrank the
+ * `DSH_TUI_ASK_USER_*` environment variables, which outrank the defaults
+ * (5 min idle / 10 min absolute). Invalid settings values emit one notice
+ * each (notice bridge) and fall to the next level; invalid env values fall
+ * back silently. Pure; `process.env` and the settings section are passed
+ * explicitly so tests can pin them.
+ */
+export function resolveAskUserTimeouts(
+  settings?: AskUserTimeoutSettings,
+  env: Record<string, string | undefined> = process.env,
+): AskUserTimeouts {
+  const idle = explicitMinutes(settings, 'idleMinutes') ?? finiteEnvMinutes(env[ASK_USER_IDLE_ENV]) ?? ASK_USER_IDLE_MINUTES_DEFAULT
+  const absolute = explicitMinutes(settings, 'absoluteMinutes') ?? finiteEnvMinutes(env[ASK_USER_ABSOLUTE_ENV]) ?? ASK_USER_ABSOLUTE_MINUTES_DEFAULT
+  return {
+    idleMs: minutesToMs(idle),
+    absoluteMs: minutesToMs(absolute),
+  }
+}
+
+/**
+ * Earliest deadline at which the panel's timeout should fire, or null when
+ * no rule is armed. The idle deadline runs from `lastInputAt` (any
+ * keypress); the absolute deadline runs from `focusEnteredAt` (focus entry
+ * into the current question) and applies in BOTH phases — a review page
+ * entered late inherits its question's remaining budget, so the total wait
+ * per question stays bounded. Pure; the panel arms a timer on this.
+ */
+export function nextTimeoutDeadline(
+  timeouts: AskUserTimeouts,
+  now: number,
+  focusEnteredAt: number,
+  lastInputAt: number,
+): number | null {
+  if (timeouts.idleMs <= 0 && timeouts.absoluteMs <= 0) return null
+  let deadline = Number.POSITIVE_INFINITY
+  if (timeouts.idleMs > 0) deadline = lastInputAt + timeouts.idleMs
+  if (timeouts.absoluteMs > 0) deadline = Math.min(deadline, focusEnteredAt + timeouts.absoluteMs)
+  return Number.isFinite(deadline) ? deadline : null
+}
+
+/** Whether a per-question pending answer counts as answered. */
+function isAnswered(answer: PendingAnswer | undefined): boolean {
+  return answer !== undefined
+    && (answer.selected.length > 0 || (answer.custom !== undefined && answer.custom.trim() !== ''))
+}
+
+/**
+ * The timeout auto-answer for ONE unanswered question — what the panel
+ * writes into `perQuestion` when a timer fires on it. Priority:
+ *
+ * 1. a non-empty live sentinel buffer is committed as the custom answer
+ *    (the panel's own ↑↓ arrow-exit semantics commit non-empty buffers, so
+ *    typed-but-uncommitted text is honored, not discarded);
+ * 2. a `plan-review` question NEVER auto-approves — the first option that
+ *    is not the intent's `approve` label is picked (decline by omission);
+ * 3. otherwise the FIRST option — the dsh tool contract declares the
+ *    recommended choice by putting it first ("put it first and append
+ *    '(Recommended)' to that label").
+ *
+ * The companion envelope note is returned alongside so the panel can fold
+ * it into the answer at settle time; the note never enters panel state
+ * (it would leak into the sentinel row / review rendering).
+ */
+export function timeoutAnswerFor(
+  question: AskUserQuestionItem,
+  liveBuffer: string | null | undefined,
+): { answer: PendingAnswer; note?: string } {
+  const buffer = (liveBuffer ?? '').trim()
+  if (buffer !== '') return { answer: { selected: [], custom: buffer }, note: TIMEOUT_CUSTOM_NOTE }
+  const intent = question.intent
+  if (intent?.kind === 'plan-review') {
+    const declineOption = (question.options ?? []).find(option => option.label !== intent.approve)
+    if (declineOption !== undefined) return { answer: { selected: [declineOption.label] }, note: TIMEOUT_PLAN_DECLINED_NOTE }
+    return { answer: { selected: [] }, note: TIMEOUT_PLAN_DECLINED_NOTE }
+  }
+  const first = question.options?.[0]
+  if (first !== undefined) return { answer: { selected: [first.label] }, note: TIMEOUT_RECOMMENDED_NOTE }
+  return { answer: { selected: [] }, note: TIMEOUT_NO_DEFAULT_NOTE }
+}
+
+/**
+ * `buildAnswerEnvelope` with the timeout notes folded in: `notes` maps a
+ * question index to the note appended to that answer item's `custom` field
+ * (created when absent, concatenated when the answer already carries custom
+ * text — the buffer-commit case). The model reads the envelope as the tool
+ * result, so every automatic pick is declared in-band. Omitting `notes`
+ * reproduces `buildAnswerEnvelope` exactly.
+ */
+export function buildAnswerEnvelopeWithNotes(
+  state: AskUserState,
+  notes?: ReadonlyMap<number, string>,
+): AskUserQuestionAnswer {
+  const envelope = buildAnswerEnvelope(state)
+  if (notes === undefined || notes.size === 0) return envelope
+  envelope.answers.forEach((item, i) => {
+    const note = notes.get(i)
+    if (note === undefined) return
+    item.custom = item.custom !== undefined && item.custom !== '' ? `${item.custom} (${note})` : note
+  })
+  return envelope
+}
+
+/**
+ * The idle countdown for the panel footer: `m:ss` until the next deadline,
+ * floored at 0:00. Pure so tests pin it without a clock.
+ */
+export function formatCountdown(msRemaining: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(msRemaining / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  return `${minutes}:${String(totalSeconds % 60).padStart(2, '0')}`
+}
+
 /**
  * Row index to land on after a single-select answer on question `answeredQi`
  * (option toggle or committed custom text): advance the tab focus to the
@@ -752,6 +967,7 @@ export function renderQuestionsView(
   state: AskUserState,
   width: number,
   maxVisible: number = ASK_USER_MAX_VISIBLE,
+  countdown?: string,
 ): string[] {
   const fns = panelThemeFns(theme)
   const wrap = Math.max(2, width - 2)
@@ -765,7 +981,7 @@ export function renderQuestionsView(
   const rows = buildRowList(state.questions, state.perQuestion, state.focusQuestion)
   if (rows.length === 0) {
     lines.push(fns.muted(clipToWidth('(no questions)', wrap)))
-    return finalizeQuestionsView(fns, wrap, lines, state)
+    return finalizeQuestionsView(fns, wrap, lines, state, '', countdown)
   }
 
   const columns = QUESTIONS_COLUMNS()
@@ -902,6 +1118,7 @@ export function renderQuestionsView(
     lines,
     state,
     overflow ? ` (${cursorRank}/${selectableTotal})` : '',
+    countdown,
   )
 }
 
@@ -911,6 +1128,7 @@ function finalizeQuestionsView(
   lines: string[],
   state: AskUserState,
   scrollInfo = '',
+  countdown?: string,
 ): string[] {
   if (state.attentionHint !== null) {
     lines.push(fns.attention(clipToWidth(state.attentionHint, wrap)))
@@ -928,8 +1146,9 @@ function finalizeQuestionsView(
     ? 'Type free text · Enter keep · ↑↓ move · Ctrl+T fold · Esc abandon'
     : `${multiTab ? '←→ tabs · ' : ''}↑↓ move · Enter ${needsConfirmRow(state.questions) ? 'toggle' : 'select'} · 1-9 pick · Ctrl+T fold · Esc decline`
   // The (n/m) readout goes FIRST so narrow terminals clip the hint, never
-  // the scroll info.
-  lines.push(fns.subtle(clipToWidth(scrollInfo + footer, wrap)))
+  // the scroll info. The auto-answer countdown trails — clipped first on a
+  // narrow terminal, and it re-renders every second with the footer clock.
+  lines.push(fns.subtle(clipToWidth(scrollInfo + footer + (countdown !== undefined ? ` · ${countdown}` : ''), wrap)))
   return lines
 }
 
@@ -941,6 +1160,7 @@ export function renderReviewView(
   state: AskUserState,
   width: number,
   maxVisible: number = ASK_USER_MAX_VISIBLE,
+  countdown?: string,
 ): string[] {
   const fns = panelThemeFns(theme)
   const wrap = Math.max(2, width - 2)
@@ -992,7 +1212,7 @@ export function renderReviewView(
   lines.push('')
   const footer = '↑↓ select · Enter return to edit / submit · Ctrl+T fold'
   const scrollInfo = body.length > visible ? ` (${state.reviewIndex + 1}/${body.length})` : ''
-  lines.push(fns.subtle(clipToWidth(scrollInfo + footer, wrap)))
+  lines.push(fns.subtle(clipToWidth(scrollInfo + footer + (countdown !== undefined ? ` · ${countdown}` : ''), wrap)))
   return lines
 }
 
@@ -1200,6 +1420,13 @@ export interface AskUserPanelDeps {
   setModalActive: (active: boolean) => void
   /** Injectable clock for tests; defaults to Date.now. */
   now?: () => number
+  /**
+   * Resolve the timeout rules for ONE ask (settings > env > defaults, read
+   * fresh per ask so a committed settings change applies to the next
+   * question without a reload). Absent = disabled — the panel waits for the
+   * human exactly as before (direct callers, tests, embedders).
+   */
+  resolveTimeouts?: () => Promise<AskUserTimeouts>
 }
 
 /** Result promise from `openAskUserPanel`. Declined carries the canonical decline envelope. */
@@ -1215,11 +1442,21 @@ export type AskUserResult = AskUserQuestionAnswer
  * service already screens entry-time aborts, and a step aborted after this
  * point discards the tool result anyway — resolving keeps the pending promise
  * from ever hanging either way.
+ *
+ * `timeouts` arms the auto-answer rules (see {@link AskUserTimeouts}): the
+ * FOCUSED question's idle window and hard cap. A firing timer auto-answers
+ * the focused question (recommended option, plan-safe —
+ * {@link timeoutAnswerFor}), hops to the next unanswered question with fresh
+ * budgets, and — once nothing is left unanswered — settles the envelope
+ * directly (the review page exists for a human double-check an absent human
+ * cannot do). Defaults to disabled: callers opt in through the provider's
+ * `resolveTimeouts`.
  */
 export function openAskUserPanel(
   deps: AskUserPanelDeps,
   questions: readonly AskUserQuestionItem[],
   signal?: AbortSignal,
+  timeouts: AskUserTimeouts = ASK_USER_TIMEOUTS_DISABLED,
 ): Promise<AskUserResult> {
   if (signal?.aborted) {
     return Promise.resolve(buildDeclinedEnvelope(questions))
@@ -1229,6 +1466,89 @@ export function openAskUserPanel(
     const state: AskUserState = initialState(questions)
     let settled = false
 
+    // ---- timeout bookkeeping (per focused question) ----
+    // focusEnteredAt is re-stamped whenever the focused question changes
+    // (open, tab switch, auto/manual advance, review jump-back); lastInputAt
+    // on every keypress. The two deadlines (idle from lastInputAt, absolute
+    // from focusEnteredAt) arm ONE timer for the earlier of the two.
+    // The clock is NEVER read while the rules are disabled — tests inject a
+    // queue clock whose exact consumption order the double-Esc timings
+    // depend on, so every read here is gated behind `timeoutEnabled` and
+    // both stamps initialize on the first arm().
+    const timeoutEnabled = timeouts.idleMs > 0 || timeouts.absoluteMs > 0
+    let focusEnteredAt = 0
+    let lastInputAt = 0
+    let stampedFocus = -1
+    let stampedInput = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const timeoutNotes = new Map<number, string>()
+
+    const disarm = (): void => {
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
+    }
+
+    /** (Re)arm the timeout timer; cheap + idempotent, call after every
+     *  keypress and every focus/phase mutation. */
+    const arm = (): void => {
+      if (!timeoutEnabled || settled) return
+      if (state.focusQuestion !== stampedFocus) {
+        stampedFocus = state.focusQuestion
+        focusEnteredAt = clock()
+      }
+      if (!stampedInput) {
+        stampedInput = true
+        lastInputAt = clock()
+      }
+      disarm()
+      const deadline = nextTimeoutDeadline(timeouts, clock(), focusEnteredAt, lastInputAt)
+      if (deadline === null) return
+      timer = setTimeout(() => {
+        timer = null
+        onTimeoutFire()
+      }, Math.max(0, deadline - clock()))
+      timer.unref?.()
+    }
+
+    /** A deadline fired on the focused question: auto-answer it if still
+     *  unanswered, then settle (everything answered) or hop to the next
+     *  unanswered question with fresh budgets. */
+    const onTimeoutFire = (): void => {
+      if (settled) return
+      if (state.phase === 'review') {
+        // The review page only opens with every question answered, so this
+        // submits the answers already given — nothing is picked for the user.
+        settle(buildAnswerEnvelopeWithNotes(state, timeoutNotes))
+        emitNotice('ask_user_question: timed out — submitted the answers already given')
+        close()
+        return
+      }
+      const qi = state.focusQuestion
+      const question = state.questions[qi]
+      if (question !== undefined && !isAnswered(state.perQuestion[qi])) {
+        const { answer, note } = timeoutAnswerFor(question, state.customInputs[qi])
+        if (note !== undefined) timeoutNotes.set(qi, note)
+        if (answer.custom !== undefined) {
+          Object.assign(state, setCustomAnswer(state, qi, answer.custom))
+        } else {
+          const perQuestion = state.perQuestion.slice()
+          perQuestion[qi] = answer
+          Object.assign(state, { ...state, perQuestion })
+        }
+      }
+      if (allQuestionsAnswered(state)) {
+        settle(buildAnswerEnvelopeWithNotes(state, timeoutNotes))
+        emitNotice('ask_user_question: timed out — unanswered questions took the recommended options (noted in the answers)')
+        close()
+        return
+      }
+      Object.assign(state, advanceAfterAnswer(state, qi))
+      lastInputAt = clock()
+      arm()
+    }
+
     /**
      * Terminal close: unmount the dock panel, clear the modal flag (BEFORE
      * restoreFocus so refocusEditor's guard sees the modal gone), and hand
@@ -1236,6 +1556,7 @@ export function openAskUserPanel(
      * dismissed then (see below), so focus lands on the current editor.
      */
     const close = (): void => {
+      disarm()
       livePanels.delete(panelEntry)
       unmount()
       deps.setModalActive(false)
@@ -1279,9 +1600,18 @@ export function openAskUserPanel(
           (deps.tui as { terminal?: { rows?: number } }).terminal?.rows,
           state.phase === 'questions' && state.questions.length >= 2 ? 1 : 0,
         )
+        // Auto-answer countdown for the focused question's next deadline —
+        // recomputed per render; the footer clock's 1s requestRender keeps it
+        // fresh without a timer of its own.
+        const countdown = timeoutEnabled && !settled
+          ? (() => {
+              const deadline = nextTimeoutDeadline(timeouts, clock(), focusEnteredAt, lastInputAt)
+              return deadline === null ? undefined : `auto in ${formatCountdown(deadline - clock())}`
+            })()
+          : undefined
         const inner = state.phase === 'review'
-          ? renderReviewView(theme, state, innerWidth, maxVisible)
-          : renderQuestionsView(theme, state, innerWidth, maxVisible)
+          ? renderReviewView(theme, state, innerWidth, maxVisible, countdown)
+          : renderQuestionsView(theme, state, innerWidth, maxVisible, countdown)
         return [
           panelTopBorder(boxWidth, borderFg),
           ...inner.map(line => borderedRow(boxWidth, borderFg, line)),
@@ -1290,6 +1620,13 @@ export function openAskUserPanel(
       },
       handleInput(data: string) {
         if (settled) return
+        // Every keypress is presence: restart the focused question's idle
+        // window, then re-arm below at each focus-changing branch (arm is
+        // idempotent and re-stamps focusEnteredAt when the focus moved).
+        if (timeoutEnabled) {
+          lastInputAt = clock()
+          arm()
+        }
         const kb = getKeybindings()
         // The fold toggle outranks everything — including the sentinel edit:
         // folding commits the buffer first (the ↑↓ arrow-exit semantics), so
@@ -1315,10 +1652,12 @@ export function openAskUserPanel(
         if (state.phase === 'questions' && state.questions.length >= 2) {
           if (matchesKey(data, 'right') || matchesKey(data, 'tab')) {
             Object.assign(state, switchFocus(state, 1))
+            arm()
             return
           }
           if (matchesKey(data, 'left') || matchesKey(data, 'shift+tab')) {
             Object.assign(state, switchFocus(state, -1))
+            arm()
             return
           }
         }
@@ -1349,6 +1688,9 @@ export function openAskUserPanel(
     deps.tui.setFocus(panel)
     deps.setModalActive(true)
     signal?.addEventListener('abort', onAbort, { once: true })
+    // Arm the timeout rules (no-op when disabled): the focused question's
+    // idle window + hard cap start at mount.
+    arm()
     // Register the live panel so the right-click → paste hook (installed
     // at the TUI level in tui.ts) can find an editing panel to feed. The
     // entry is removed in `close()` above.
@@ -1417,13 +1759,14 @@ export function openAskUserPanel(
             cancelHint: false,
             attentionHint: null,
           })
+          arm()
           return
         }
         if (!allQuestionsAnswered(s)) {
           Object.assign(s, { cancelHint: false, attentionHint: INCOMPLETE_HINT })
           return
         }
-        settle(buildAnswerEnvelope(s))
+        settle(buildAnswerEnvelopeWithNotes(s, timeoutNotes))
         close()
         return
       }
@@ -1440,7 +1783,7 @@ export function openAskUserPanel(
         // submits immediately. multiSelect never auto-submits — the user may
         // want more toggles, so it routes through the Confirm row instead.
         if (canAutoSubmit(next)) {
-          settle(buildAnswerEnvelope(s))
+          settle(buildAnswerEnvelopeWithNotes(s, timeoutNotes))
           close()
         } else {
           // Answering a single-select tab hops the focus to the next
@@ -1453,6 +1796,7 @@ export function openAskUserPanel(
             && (answer.selected.length > 0 || (answer.custom ?? '').trim() !== '')
           if (answered && s.questions[row.questionIndex]?.multiSelect !== true) {
             Object.assign(s, advanceAfterAnswer(s, row.questionIndex))
+            arm()
           }
         }
         return
@@ -1544,12 +1888,13 @@ export function openAskUserPanel(
       if (s.customEditingFor !== null) return // edit not committed (empty buffer)
       if (s.perQuestion[qi]?.custom === undefined) return
       if (canAutoSubmit(s)) {
-        settle(buildAnswerEnvelope(s))
+        settle(buildAnswerEnvelopeWithNotes(s, timeoutNotes))
         close()
         return
       }
       if (s.questions.length >= 2) {
         Object.assign(s, advanceAfterAnswer(s, qi))
+        arm()
       }
     }
   })
@@ -1616,7 +1961,13 @@ export function registerAskUserProvider(
         const controller = new AbortController()
         controllers.set(request, controller)
         request.signal?.addEventListener('abort', () => controller.abort(), { once: true })
-        return openAskUserPanel(deps, request.questions, controller.signal)
+        const open = (timeouts: AskUserTimeouts): Promise<AskUserQuestionAnswer> =>
+          openAskUserPanel(deps, request.questions, controller.signal, timeouts)
+        if (deps.resolveTimeouts === undefined) return open(ASK_USER_TIMEOUTS_DISABLED)
+        // Resolved fresh per ask so a committed settings change applies to
+        // the NEXT question without a reload; a resolution failure degrades
+        // to the disabled panel rather than failing the ask.
+        return deps.resolveTimeouts().then(open, () => open(ASK_USER_TIMEOUTS_DISABLED))
       },
       settled: request => {
         // Another surface answered first — close the panel through the
@@ -1655,7 +2006,10 @@ export function registerAskUserProvider(
       const asking = request.agent?.session?.id
       if (asking !== undefined && String(asking) !== mine) return next()
     }
-    return openAskUserPanel(deps, request.questions, request.signal)
+    const open = (timeouts: AskUserTimeouts): Promise<AskUserQuestionAnswer> =>
+      openAskUserPanel(deps, request.questions, request.signal, timeouts)
+    if (deps.resolveTimeouts === undefined) return open(ASK_USER_TIMEOUTS_DISABLED)
+    return deps.resolveTimeouts().then(open, () => open(ASK_USER_TIMEOUTS_DISABLED))
   })
 }
 
