@@ -4,6 +4,35 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.0] - 2026-09-16
+
+### Added
+- **Ask User Question auto-answer timeouts — the panel never waits forever.**
+  Every focused question carries a dual rule: an **idle window** (default
+  5 min — any keypress restarts it, so an actively interacting user is never
+  interrupted) and an **absolute cap** (default 10 min — fires even under
+  continuous input). A firing timer auto-answers the focused question with the
+  **recommended option** (first in the list, per the `dsh-tool-ask-user`
+  contract), hops to the next unanswered question with fresh budgets, and —
+  once nothing is left unanswered — settles the envelope directly (the review
+  page is a human double-check an absent human cannot do); a review-phase
+  timeout submits the answers already given. Safety and honesty guarantees:
+  `plan-review` questions are **never auto-approved** (a non-approve option is
+  picked instead), a half-typed sentinel buffer commits as the custom answer
+  (the panel's existing commit-on-exit semantics), and every automatic pick is
+  declared to the model in-band via a note in the answer's `custom` field
+  (`Auto-answered after the no-input timeout: …`) — never silently passed off
+  as a human choice. The panel footer shows a live `auto in m:ss` countdown
+  while a timer is armed (riding the footer clock's 1s render, no extra
+  timer), and a transient notice reports the auto-answer once it happens.
+  Knobs follow the repo's standard precedence chain — settings.yaml
+  `dsh-tui.askUser.{idleMinutes,absoluteMinutes}` > `DSH_TUI_ASK_USER_*` env >
+  defaults; invalid settings emit one notice each, `<= 0` disables a rule, and
+  both rules off reproduces the legacy wait-forever panel. Timers are
+  re-read per ask (a committed settings change applies to the next question
+  without a reload) and are fully inert when disabled — including never
+  reading the injectable clock, so queue-clock tests stay aligned.
+
 ## [2.18.2] - 2026-09-14
 
 ### Changed
