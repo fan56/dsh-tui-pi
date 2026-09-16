@@ -25,6 +25,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { dshHome } from './append-system.ts'
+import { t } from './i18n/index.ts'
 import { clipToWidth } from './text.ts'
 
 /** Module specifier of the MCP client plugin (one instance per server). */
@@ -138,7 +139,7 @@ export function classifyPluginEntries(
     }
     const version = resolveVersion?.(entry.name)
     const label = typeof version === 'string' && version !== '' ? `${entry.name}@${version}` : entry.name
-    userPlugins.push(entry.disabled ? `${label} (disabled)` : label)
+    userPlugins.push(entry.disabled ? t('startup.plugin.disabled', { label }) : label)
   }
   return { mcp, userPlugins, baseCount, pluginTotal }
 }
@@ -218,7 +219,7 @@ export function formatStartupInfoLines(summary: StartupSummary, columns: number 
   }
   const rows = summary.userPlugins.map(name => `├─ ${name}`)
   if (summary.baseCount > 0) {
-    rows.push(`└─ dsh-base (${summary.baseCount})`)
+    rows.push(t('startup.tree.base', { count: summary.baseCount }))
   } else if (rows.length > 0) {
     // No base row to close the tree — the last user row takes the corner.
     rows[rows.length - 1] = `└─ ${summary.userPlugins[summary.userPlugins.length - 1]}`
@@ -226,7 +227,12 @@ export function formatStartupInfoLines(summary: StartupSummary, columns: number 
   for (const row of rows) lines.push(clipToWidth(row, budget))
   const enabledMcp = summary.mcp.filter(server => !server.disabled).length
   lines.push(clipToWidth(
-    `mcp ${enabledMcp} · skills ${summary.skills.installed}/${summary.skills.total} · plugins ${summary.userPlugins.length}`,
+    t('startup.summary', {
+      mcp: enabledMcp,
+      installed: summary.skills.installed,
+      total: summary.skills.total,
+      plugins: summary.userPlugins.length,
+    }),
     budget,
   ))
   return lines

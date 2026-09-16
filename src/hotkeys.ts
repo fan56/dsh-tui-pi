@@ -21,6 +21,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { KeyId, TUI } from '@earendil-works/pi-tui'
+import { t } from './i18n/index.ts'
 import { DEFAULT_KEYBINDINGS, type KeyBindings } from './keymap.ts'
 import { FieldPanel, PanelHost } from './panels.ts'
 import { EditField, type CommitResult, type ParseOutcome } from './settings.ts'
@@ -37,14 +38,16 @@ export function keybindingsPath(home: string): string {
 /** The six app-level bindings the file may remap (order = display order). */
 export const APP_KEY_FIELDS: readonly (keyof KeyBindings)[] = ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel']
 
-/** Action descriptions for the `/hotkeys` table. */
-const KEY_ACTIONS: Record<keyof KeyBindings, string> = {
-  escape: 'stop the current task — requires two presses (1st arms, 2nd within 500ms fires)',
-  ctrlC: 'running: cancel turn · idle: clear editor · second press quits',
-  ctrlD: 'quit — only on an empty editor',
-  modelPicker: 'open the model / think picker',
-  subagentViewer: 'open the subagent picker / viewer',
-  queuePanel: 'open the pending-message queue (d remove · s steer now)',
+/** Action description for one app key in the `/hotkeys` table. A function, not a module table: the text resolves through `t()` on every call so a language switch re-renders instead of freezing the boot-time language. */
+function keyAction(field: keyof KeyBindings): string {
+  switch (field) {
+    case 'escape': return t('hotkeys.action.escape')
+    case 'ctrlC': return t('hotkeys.action.ctrlC')
+    case 'ctrlD': return t('hotkeys.action.ctrlD')
+    case 'modelPicker': return t('hotkeys.action.modelPicker')
+    case 'subagentViewer': return t('hotkeys.action.subagentViewer')
+    case 'queuePanel': return t('hotkeys.action.queuePanel')
+  }
 }
 
 // ------------------------------------------------------------- validation --
@@ -116,10 +119,10 @@ export function loadKeyBindings(path: string): LoadedKeyBindings {
   try {
     raw = JSON.parse(text)
   } catch (error) {
-    return { bindings: {}, warnings: [`${label}: invalid JSON — ${(error as Error).message}`], exists: true }
+    return { bindings: {}, warnings: [t('hotkeys.warn.invalidJson', { label, error: (error as Error).message })], exists: true }
   }
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { bindings: {}, warnings: [`${label}: expected a JSON object of app-key → key id`], exists: true }
+    return { bindings: {}, warnings: [t('hotkeys.warn.notObject', { label })], exists: true }
   }
   const record = raw as Record<string, unknown>
   const bindings: Partial<KeyBindings> = {}
@@ -128,14 +131,14 @@ export function loadKeyBindings(path: string): LoadedKeyBindings {
     const value = record[field]
     if (value === undefined) continue
     if (!isValidKeyId(value)) {
-      warnings.push(`${label}: "${field}" = ${JSON.stringify(value)} is not a valid key id — keeping the default`)
+      warnings.push(t('hotkeys.warn.invalidKey', { label, field, value: JSON.stringify(value) }))
     } else {
       bindings[field] = value
     }
   }
   for (const field of Object.keys(record)) {
     if (!(APP_KEY_FIELDS as readonly string[]).includes(field)) {
-      warnings.push(`${label}: unknown field "${field}" — ignored`)
+      warnings.push(t('hotkeys.warn.unknownField', { label, field }))
     }
   }
   return { bindings, warnings, exists: true }
@@ -160,11 +163,11 @@ export function updateKeyBindingsFile(
     fileExisted = true
     const parsed: unknown = JSON.parse(text)
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return `${label}: expected a JSON object — fix or delete the file, then retry`
+      return t('hotkeys.file.notObject', { label })
     }
     Object.assign(existing, parsed)
   } catch (error) {
-    if (fileExisted) return `${label}: ${(error as Error).message} — fix or delete the file, then retry`
+    if (fileExisted) return t('hotkeys.file.parseError', { label, error: (error as Error).message })
     // Absent file: start fresh.
   }
   for (const [field, value] of updates) {
@@ -174,7 +177,7 @@ export function updateKeyBindingsFile(
   try {
     writeFileSync(path, JSON.stringify(existing, null, 2) + '\n')
   } catch (error) {
-    return `${label}: cannot write — ${(error as Error).message}`
+    return t('hotkeys.file.writeError', { label, error: (error as Error).message })
   }
   return undefined
 }
@@ -184,7 +187,7 @@ export function parseKeyInput(text: string): ParseOutcome {
   const trimmed = text.trim()
   if (trimmed === '') return { kind: 'unset' }
   if (!isValidKeyId(trimmed)) {
-    return { kind: 'error', error: `not a key id — ctrl/shift/alt/super + key (e.g. ctrl+x, f5, escape)` }
+    return { kind: 'error', error: t('hotkeys.parse.notKeyId') }
   }
   return { kind: 'value', value: trimmed }
 }
@@ -214,7 +217,7 @@ export function appHotkeyRows(custom: Partial<KeyBindings>): HotkeyRow[] {
     return {
       field,
       key: displayKey(override ?? DEFAULT_KEYBINDINGS[field]),
-      action: KEY_ACTIONS[field],
+      action: keyAction(field),
       custom: override !== undefined,
     }
   })
@@ -251,7 +254,7 @@ export async function openHotkeysManager(
 
   const host = new PanelHost(tui, theme, message => {
     options.restoreFocus()
-    settle?.(`✘ failed to open the hotkeys view: ${message}`)
+    settle?.(t('hotkeys.openFailed', { message }))
   })
 
   /** Re-read the file after a write and push the change into the running TUI. */
@@ -269,25 +272,28 @@ export async function openHotkeysManager(
       editable: true,
     }))
     const customCount = Object.keys(loaded.bindings).length
+    const customLine = loaded.exists
+      ? (customCount === 1
+        ? t('hotkeys.custom.one', { path: options.filePath })
+        : t('hotkeys.custom.many', { path: options.filePath, count: customCount }))
+      : t('hotkeys.custom.missing', { path: options.filePath })
     const content: string[] = [
-      loaded.exists
-        ? `custom: ${options.filePath} (${customCount} override${customCount === 1 ? '' : 's'})`
-        : `custom: ${options.filePath} (not found — defaults in use)`,
-      'format: ctrl/shift/alt/super+key · Enter edits · empty input resets to the default',
-      'editor: pi-tui defaults — arrows · Ctrl+B/F · Alt+←→ word · Home/End · Ctrl+W/U/K delete · Ctrl+- undo',
+      customLine,
+      t('hotkeys.formatHint'),
+      t('hotkeys.editorHint'),
       ...loaded.warnings.map(warning => `! ${warning}`),
     ]
     const panel = new FieldPanel(theme, {
-      title: ansiFg(theme.palette.accent) + BOLD + '⚙ hotkeys' + RESET,
+      title: ansiFg(theme.palette.accent) + BOLD + t('hotkeys.title') + RESET,
       content,
       fields,
       status: () => status,
-      footer: '↑↓ key · Enter change · Esc close',
+      footer: t('hotkeys.footer'),
       onEdit: index => edit(fields[index].key),
       onCancel: () => {
         host.close()
         options.restoreFocus()
-        resolve(changed ? 'Keybindings updated.' : undefined)
+        resolve(changed ? t('hotkeys.updated') : undefined)
       },
     })
     host.open(panel)
@@ -302,9 +308,14 @@ export async function openHotkeysManager(
     const loaded = loadKeyBindings(options.filePath)
     const current = loaded.bindings[field]
     const editor = new EditField(tui, {
-      title: `Key for ${field} — default ${displayKey(DEFAULT_KEYBINDINGS[field])}`
-        + (current !== undefined ? ` · custom ${displayKey(current)}` : ''),
-      subtitle: 'ctrl/shift/alt/super + key · empty resets to the default',
+      title: current !== undefined
+        ? t('hotkeys.edit.titleCustom', {
+            field,
+            defaultValue: displayKey(DEFAULT_KEYBINDINGS[field]),
+            custom: displayKey(current),
+          })
+        : t('hotkeys.edit.title', { field, defaultValue: displayKey(DEFAULT_KEYBINDINGS[field]) }),
+      subtitle: t('hotkeys.edit.subtitle'),
       initial: current ?? '',
       parse: parseKeyInput,
       onCommit: async (outcome): Promise<CommitResult | undefined> => {
@@ -319,8 +330,8 @@ export async function openHotkeysManager(
           changed = true
           applyBindings()
           status = reset
-            ? `${field} → default (${displayKey(DEFAULT_KEYBINDINGS[field])}) — applied`
-            : `${field} → ${id} — applied`
+            ? t('hotkeys.status.reset', { field, defaultValue: displayKey(DEFAULT_KEYBINDINGS[field]) })
+            : t('hotkeys.status.set', { field, id })
           return undefined
         }
         if (outcome.kind === 'unset') {
@@ -330,7 +341,7 @@ export async function openHotkeysManager(
           if (error !== undefined) return { error }
           changed = true
           applyBindings()
-          status = `${field} → default (${displayKey(DEFAULT_KEYBINDINGS[field])}) — applied`
+          status = t('hotkeys.status.reset', { field, defaultValue: displayKey(DEFAULT_KEYBINDINGS[field]) })
           return undefined
         }
         return undefined

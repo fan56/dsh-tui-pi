@@ -12,10 +12,11 @@ description: "dsh TUI 增强套件使用与配置指南。凡涉及 TUI 主题/�
 ## 配置入口（settings.yaml 顶层 `dsh-tui:` 段）
 
 在 `~/.dsh/settings.yaml` 写顶层 `dsh-tui:` 段（注意段名是 `dsh-tui`，不是 `dsh-tui-pi`）。
-主题 / 面板高度 / footer 提示 / 图标集为 `applies: 'live'`——保存提交即热生效，无需重启。
+语言 / 主题 / 面板高度 / footer 提示 / 图标集为 `applies: 'live'`——保存提交即热生效，无需重启。
 
 | 键 | 类型 | 默认 | 作用 |
 |----|------|------|------|
+| `language` | 任意字符串 | `en` | 界面语言：内置 `locales/` 或 `~/.dsh/locales/` 下语言文件的 id（内置 `en`、`zh-CN`）；`/language` 列出并即时切换，未知 id 回退 `en` |
 | `theme` | 任意字符串 | `auto` | 配色方案；`auto` 跟随终端明暗，也可填任意已注册主题名（内置 20 个 + `~/.dsh/themes/` 用户主题；`/theme` 写回同一段） |
 | `panelHeight` | `'1'\|'5'\|'7'\|'10'\|'all'` | `'1'` | think/tool 固定面板高度；`all` = 完整内容（推理 200 行尾随、工具结果 2000 行封顶） |
 | `maxAgents` | 非负整数 | `4` | 并发子代理上限，`0` = 不限 |
@@ -66,6 +67,12 @@ retention/resume/askUser 组的优先级：**settings.yaml 显式值 > env > 默
 收集完把 `dsh-tui:` 段写进 `~/.dsh/settings.yaml`——**只写问过的键**，未问的键留在默认值。
 用户要细调时再指向上面的全表：footerHints 分段、cacheHitMode、iconSet、
 favoriteModels/hiddenModels、retention/resume/askUser。
+
+### 界面语言（/language）
+
+每种语言一个扁平 JSON：`locales/<id>.json`（内置 `en` 规范模板 + `zh-CN` 中文）。`/language` 列出已装语言，`/language <id>` 即时切换并写回 `dsh-tui.language`（下一帧刷新生效；对话 backlog 重建前保持原语言；/settings 描述文案重启生效）。
+新增语言或局部覆盖：把 `<id>.json` 放进 `~/.dsh/locales/`——同名 id 按键合并到内置文件之上（user 覆盖 wins），新 id 直接注册；
+文件契约：必有非空 `name`（该语言的显示名），其余每键一个非空字符串，`{param}` 占位符须与 en 同名键一致（测试守卫）。韩/日 = 未来两个文件。
 
 ### 自定义主题目录
 

@@ -14,6 +14,7 @@
 
 import type { Component } from '@earendil-works/pi-tui'
 import { HStack, VStack } from '@earendil-works/pi-tui'
+import { t } from './i18n/index.ts'
 import { TablePanel } from './panels.ts'
 import { ansiBg, ansiFg, BOLD, buildTheme, RESET, type ThemePreference, type TuiTheme } from './theme/index.ts'
 import { githubDark, githubLight, type Palette } from './theme/palette.ts'
@@ -104,7 +105,7 @@ export class ThemePreviewPane implements Component {
     lines.push(canvas(''))
 
     // Input dock placeholder (inset surface).
-    lines.push(surfaceRow(p.canvasInset, ` ${fg(p.fgMuted, 'Type a message…')}`, width))
+    lines.push(surfaceRow(p.canvasInset, ` ${fg(p.fgMuted, t('themepv.input.placeholder'))}`, width))
 
     return lines
   }
@@ -117,10 +118,10 @@ export class ThemePreviewPane implements Component {
     const lines: string[] = []
     lines.push(surfaceRow(p.canvasInset, ` ${bold(p.accent, 'auto')} `, width))
     lines.push(surfaceRow(p.canvas, '', width))
-    lines.push(surfaceRow(p.canvas, ` ${fg(p.fgDefault, 'Theme follows the terminal.')}`, width))
-    lines.push(surfaceRow(p.canvas, ` ${fg(p.fgMuted, 'Pick light/dark or a named theme to preview it.')}`, width))
+    lines.push(surfaceRow(p.canvas, ` ${fg(p.fgDefault, t('themepv.auto.follows'))}`, width))
+    lines.push(surfaceRow(p.canvas, ` ${fg(p.fgMuted, t('themepv.auto.pick'))}`, width))
     lines.push(surfaceRow(p.canvas, '', width))
-    lines.push(surfaceRow(p.canvasInset, ` ${fg(p.fgMuted, 'Type a message…')}`, width))
+    lines.push(surfaceRow(p.canvasInset, ` ${fg(p.fgMuted, t('themepv.input.placeholder'))}`, width))
     return lines
   }
 }
@@ -161,14 +162,14 @@ export interface PickThemeOptions {
  */
 export function themePickerRows(options?: PickThemeOptions): ThemePickerRow[] {
   const rows: ThemePickerRow[] = [
-    { value: 'auto', label: 'auto', description: 'follow the terminal light/dark signal' },
+    { value: 'auto', label: 'auto', description: t('themepv.desc.auto') },
   ]
   const themes = options?.themes
   if (themes === undefined) {
     // No registry (the legacy no-argument mount): just the two defaults.
     rows.push(
-      { value: 'github-light', label: 'github-light', description: 'GitHub light palette', palette: githubLight },
-      { value: 'github-dark', label: 'github-dark', description: 'GitHub dark palette', palette: githubDark },
+      { value: 'github-light', label: 'github-light', description: t('themepv.desc.githubLight'), palette: githubLight },
+      { value: 'github-dark', label: 'github-dark', description: t('themepv.desc.githubDark'), palette: githubDark },
     )
     return rows
   }
@@ -184,10 +185,11 @@ export function themePickerRows(options?: PickThemeOptions): ThemePickerRow[] {
   // origin. Descriptions render in the preview's title bar, not in the list.
   // A user theme overriding a default id shows its own palette under the
   // default's name (discoverThemes merges user-over-builtin).
-  const origin = (name: string): string => userNames?.has(name) === true ? 'user theme' : 'built-in'
+  const origin = (name: string): string =>
+    userNames?.has(name) === true ? t('themepv.origin.user') : t('themepv.origin.builtin')
   rows.push(
-    row('github-light', themes.get('github-light') ?? githubLight, 'GitHub light palette'),
-    row('github-dark', themes.get('github-dark') ?? githubDark, 'GitHub dark palette'),
+    row('github-light', themes.get('github-light') ?? githubLight, t('themepv.desc.githubLight')),
+    row('github-dark', themes.get('github-dark') ?? githubDark, t('themepv.desc.githubDark')),
   )
   // Reserved names that resolveTheme handles specially never get rows.
   const reserved = new Set(['auto', 'light', 'dark', 'github-light', 'github-dark'])
@@ -256,14 +258,14 @@ export class ThemePickerOverlay implements Component {
   ) {
     this.rows = rows
     this.onPick = onPick
-    this.footer = '↑↓ navigate · Enter select · Esc back'
+    this.footer = t('themepv.footer')
     this.preview = new ThemePreviewPane(getTheme)
     this.preview.setRow(rows[Math.max(0, preselect)])
     this.list = new TablePanel(theme, {
-      title: '● Theme',
+      title: t('themepv.title'),
       // Single column: the description lives in the preview's title bar, so
       // the list stays a narrow label sliver and the preview gets the width.
-      columns: [{ key: 'theme', title: 'Theme', flex: true }],
+      columns: [{ key: 'theme', title: t('themepv.col.theme'), flex: true }],
       rows,
       renderCell: row => row.label,
       preselect,

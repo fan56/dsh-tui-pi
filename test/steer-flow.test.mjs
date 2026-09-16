@@ -24,10 +24,10 @@ import {
   removeFromInbox,
 } from '../lib/steer-flow.js'
 import {
-  ROUTE_DIALOG_FOOTER,
-  ROUTE_OPTIONS,
   initialRouteDialogState,
+  routeDialogFooter,
   routeDialogOutcome,
+  routeOptions,
   updateRouteDialog,
 } from '../lib/route-dialog.js'
 import { QUEUE_PANEL_FOOTER, queueRow } from '../lib/queue-panel.js'
@@ -241,7 +241,7 @@ test('route dialog: arrows move within bounds, digits select directly', () => {
 
 test('route dialog: Enter confirms the highlighted route, Esc cancels', () => {
   const confirm = updateRouteDialog(initialRouteDialogState(), ENTER)
-  assert.equal(routeDialogOutcome(confirm), ROUTE_OPTIONS[0].id)
+  assert.equal(routeDialogOutcome(confirm), routeOptions()[0].id)
   const confirmSecond = updateRouteDialog(updateRouteDialog(initialRouteDialogState(), DOWN), ENTER)
   assert.equal(routeDialogOutcome(confirmSecond), 'steer')
   const cancel = updateRouteDialog(initialRouteDialogState(), ESC)
@@ -258,7 +258,7 @@ test('route dialog: exactly one terminal outcome — input after settle is ignor
   let confirmed = updateRouteDialog(initialRouteDialogState(), ENTER)
   confirmed = updateRouteDialog(confirmed, ESC)
   assert.equal(confirmed.settled, 'confirm', 'a later Esc cannot overwrite the confirm')
-  assert.equal(routeDialogOutcome(confirmed), ROUTE_OPTIONS[0].id)
+  assert.equal(routeDialogOutcome(confirmed), routeOptions()[0].id)
 })
 
 test('route dialog: unknown keys are no-ops and out-of-range digits are ignored', () => {
@@ -269,13 +269,13 @@ test('route dialog: unknown keys are no-ops and out-of-range digits are ignored'
 })
 
 test('route dialog options carry the design labels with English hints', () => {
-  assert.deepEqual(ROUTE_OPTIONS.map(option => option.id), ['followup', 'steer'])
-  assert.equal(ROUTE_OPTIONS[0].title, 'Queue as follow-up')
-  assert.equal(ROUTE_OPTIONS[1].title, 'Steer now')
-  for (const option of ROUTE_OPTIONS) {
+  assert.deepEqual(routeOptions().map(option => option.id), ['followup', 'steer'])
+  assert.equal(routeOptions()[0].title, 'Queue as follow-up')
+  assert.equal(routeOptions()[1].title, 'Steer now')
+  for (const option of routeOptions()) {
     assert.match(option.hint, /^[a-z].*[a-z]$/, 'hints are plain English text')
   }
-  assert.match(ROUTE_DIALOG_FOOTER, /Esc cancel/)
+  assert.match(routeDialogFooter(), /Esc cancel/)
   assert.match(QUEUE_PANEL_FOOTER, /d remove · s steer now/)
 })
 

@@ -64,6 +64,7 @@ import {
 import { openEffortPicker } from './selectors.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
+import { t } from './i18n/index.ts'
 
 /** zcode-style 8-color label palette — GitHub-flavored hexes, per theme. */
 const AGENT_COLORS: Record<string, string> = {
@@ -102,7 +103,7 @@ function parseDeepInput(text: string): ParseOutcome {
   const trimmed = text.trim()
   if (trimmed === '') return { kind: 'keep' }
   if (!/^\d+$/.test(trimmed)) {
-    return { kind: 'error', error: `expected a non-negative integer, got "${trimmed}"` }
+    return { kind: 'error', error: t('agentsmg.error.integer', { text: trimmed }) }
   }
   return { kind: 'value', value: Number(trimmed) }
 }
@@ -112,7 +113,7 @@ function parseLimitInput(text: string): ParseOutcome {
   const trimmed = text.trim()
   if (trimmed === '') return { kind: 'keep' }
   if (!/^\d+$/.test(trimmed)) {
-    return { kind: 'error', error: `expected a non-negative integer, got "${trimmed}"` }
+    return { kind: 'error', error: t('agentsmg.error.integer', { text: trimmed }) }
   }
   return { kind: 'value', value: Number(trimmed) }
 }
@@ -126,10 +127,10 @@ function agentColumns(
 ): readonly TableColumn[] {
   return autoColumns(
     [
-      { key: 'name', title: 'name', cap: 16 },
-      { key: 'model', title: 'model', cap: 30 },
-      { key: 'deep', title: 'deep', align: 'right' as const },
-      { key: 'description', title: 'description' },
+      { key: 'name', title: t('agentsmg.col.name'), cap: 16 },
+      { key: 'model', title: t('agentsmg.col.model'), cap: 30 },
+      { key: 'deep', title: t('agentsmg.col.deep'), align: 'right' as const },
+      { key: 'description', title: t('agentsmg.col.description') },
     ],
     agents,
     cell,
@@ -145,7 +146,7 @@ function agentCellFor(
     const meta = agent.meta
     switch (column.key) {
       case 'name': return meta.displayName ?? meta.name
-      case 'model': return effective.get(meta.name)?.model ?? '(inherit)'
+      case 'model': return effective.get(meta.name)?.model ?? t('agentsmg.inherit')
       case 'deep': return String(meta.deep)
       default: return meta.description ?? ''
     }
@@ -201,10 +202,10 @@ async function pickAgentModel(
       resolve(value)
     }
     const list = new TablePanel(theme, {
-      title: '● Model',
+      title: t('agentsmg.model.title'),
       // Auto layout: MODEL fits its content, PROVIDER runs to the edge.
       columns: autoColumns(
-        [{ key: 'label', title: 'Model', cap: 40 }, { key: 'description', title: 'Provider' }],
+        [{ key: 'label', title: t('agentsmg.picker.colModel'), cap: 40 }, { key: 'description', title: t('agentsmg.picker.colProvider') }],
         models,
         (model, key) => (key === 'description' ? model.description ?? '' : model.label),
       ),
@@ -295,7 +296,7 @@ export async function openAgentManager(
 
   const host = new PanelHost(tui, theme, message => {
     restoreFocus()
-    settle?.(`✘ failed to open the agents view: ${message}`)
+    settle?.(t('agentsmg.openFailed', { message }))
   })
 
   return new Promise(resolve => {
@@ -307,12 +308,12 @@ export async function openAgentManager(
         : agents.findIndex(agent => agent.meta.name === pendingPreselect)
       pendingPreselect = undefined
       const table = new TablePanel(theme, {
-        title: '● Agents',
+        title: t('agentsmg.title'),
         columns: agentColumns(agents, (agent, key) => agentCellFor(effective)(agent, { key })),
         rows: agents,
         renderCell: agentCellFor(effective),
         preselect: preselectIndex !== undefined && preselectIndex >= 0 ? preselectIndex : undefined,
-        footer: '↑↓ navigate · Enter open · Esc back · l limits',
+        footer: t('agentsmg.tableFooter'),
         // Defensive: an empty table (never shown, but guards the round-trip)
         // must not hand `undefined` to showFields.
         onSelect: agent => {
@@ -328,25 +329,29 @@ export async function openAgentManager(
       host.close()
       restoreFocus()
       if (changed.length > 0) {
-        const seededNote = seed.seeded > 0 ? ` (seeded ${seed.seeded} from ${zcodeAgentsDir()})` : ''
-        resolve(`Agents updated: ${changed.join(', ')}${seededNote}`)
+        const seededNote = seed.seeded > 0
+          ? t('agentsmg.seededNote', { n: seed.seeded, dir: zcodeAgentsDir() })
+          : ''
+        resolve(t('agentsmg.updated', { list: changed.join(', '), note: seededNote }))
       } else {
-        resolve(seed.seeded > 0 ? `Seeded ${seed.seeded} agent(s) from ${zcodeAgentsDir()} — no changes.` : undefined)
+        resolve(seed.seeded > 0
+          ? t('agentsmg.seededOnly', { n: seed.seeded, dir: zcodeAgentsDir() })
+          : undefined)
       }
     }
 
     const showFields = (agent: AgentFile): void => {
       const meta = agent.meta
       const eff = effective.get(meta.name)
-      const content = (meta.description ?? '(no description)').split('\n')
+      const content = (meta.description ?? t('agentsmg.noDescription')).split('\n')
       content.push(
         editTarget.kind === 'profile'
-          ? `model/think edits apply to profile "${editTarget.name}" (workspace-scoped — the frontmatter baseline stays untouched)`
-          : 'no workspace profile pin — edits write the frontmatter baseline (global)',
+          ? t('agentsmg.target.profile', { name: editTarget.name })
+          : t('agentsmg.target.frontmatter'),
       )
       const fields = [
-        { key: 'model', value: eff?.model ?? '(inherit — default model)', editable: true },
-        { key: 'thinking', value: eff?.thinking ?? '(inherit)', editable: true },
+        { key: 'model', value: eff?.model ?? t('agentsmg.inheritDefault'), editable: true },
+        { key: 'thinking', value: eff?.thinking ?? t('agentsmg.inherit'), editable: true },
         { key: 'deep', value: String(meta.deep), editable: true },
       ]
       const view = new FieldPanel(theme, {
@@ -354,7 +359,7 @@ export async function openAgentManager(
         content,
         fields,
         status: () => detailStatus,
-        footer: '↑↓ field · Enter edit (m model · t think · d deep) · v full prompt · Esc back',
+        footer: t('agentsmg.fieldsFooter'),
         shortcuts: {
           m: () => void changeModel(agent),
           t: () => void changeThinking(agent),
@@ -401,28 +406,28 @@ export async function openAgentManager(
       }
       refreshEffective()
       if (!changed.includes(agent.meta.name)) changed.push(agent.meta.name)
-      const thinkText = picked.thinking !== null ? ` · think ${picked.thinking}` : ''
-      const scopeNote = result.target.kind === 'profile' ? ` (profile "${result.target.name}")` : ''
-      detailStatus = `saved ${agent.meta.name} → ${picked.model}${thinkText}${scopeNote}`
+      const thinkText = picked.thinking !== null ? t('agentsmg.thinkSuffix', { effort: picked.thinking }) : ''
+      const scopeNote = result.target.kind === 'profile' ? t('agentsmg.scopeNote', { name: result.target.name }) : ''
+      detailStatus = t('agentsmg.savedModel', { name: agent.meta.name, model: picked.model, think: thinkText, scope: scopeNote })
       showFields(agent)
     }
 
     const changeThinking = async (agent: AgentFile): Promise<void> => {
       const model = effective.get(agent.meta.name)?.model
       if (model === undefined) {
-        detailStatus = '✘ no model set — pick a model first (m)'
+        detailStatus = t('agentsmg.error.noModel')
         showFields(agent)
         return
       }
       const llm = ctx.get('llm')
       if (llm === undefined) {
-        detailStatus = '✘ llm service unavailable'
+        detailStatus = t('agentsmg.error.noLlm')
         showFields(agent)
         return
       }
       const slash = model.indexOf('/')
       if (slash <= 0) {
-        detailStatus = `✘ cannot resolve think levels for ${model}`
+        detailStatus = t('agentsmg.error.noThinkLevels', { model })
         showFields(agent)
         return
       }
@@ -433,7 +438,7 @@ export async function openAgentManager(
         efforts = undefined
       }
       if (efforts === undefined || efforts.length === 0) {
-        detailStatus = `✘ ${model} exposes no think levels`
+        detailStatus = t('agentsmg.error.modelNoThink', { model })
         showFields(agent)
         return
       }
@@ -455,16 +460,16 @@ export async function openAgentManager(
       if (result.target.kind === 'frontmatter') agent.meta.thinking = thinking ?? undefined
       refreshEffective()
       if (!changed.includes(agent.meta.name)) changed.push(agent.meta.name)
-      const scopeNote = result.target.kind === 'profile' ? ` (profile "${result.target.name}")` : ''
-      detailStatus = `saved ${agent.meta.name} → think ${thinking ?? 'inherit'}${scopeNote}`
+      const scopeNote = result.target.kind === 'profile' ? t('agentsmg.scopeNote', { name: result.target.name }) : ''
+      detailStatus = t('agentsmg.savedThink', { name: agent.meta.name, effort: thinking ?? t('agentsmg.inheritWord'), scope: scopeNote })
       showFields(agent)
     }
 
     const showDeepEditor = (agent: AgentFile): void => {
       let committed = false
       const field = new EditField(tui, {
-        title: `Max spawn depth — ${agent.meta.displayName ?? agent.meta.name}`,
-        subtitle: '0 = this agent never spawns subagents · no unlimited',
+        title: t('agentsmg.deep.title', { name: agent.meta.displayName ?? agent.meta.name }),
+        subtitle: t('agentsmg.deep.subtitle'),
         initial: String(agent.meta.deep),
         parse: parseDeepInput,
         onCommit: async parsed => {
@@ -474,14 +479,14 @@ export async function openAgentManager(
           if (error !== undefined) return { error }
           agent.meta.deep = n
           committed = true
-          return { notice: `max depth ${n} saved — takes effect when this agent is spawned` }
+          return { notice: t('agentsmg.deep.saved', { n }) }
         },
         onDone: () => {
           // onDone fires on every terminal transition (commit, keep, Esc) —
           // only a real commit counts as a change.
           if (committed) {
             if (!changed.includes(agent.meta.name)) changed.push(agent.meta.name)
-            detailStatus = `saved ${agent.meta.name} → max depth ${agent.meta.deep}`
+            detailStatus = t('agentsmg.deep.status', { name: agent.meta.name, n: agent.meta.deep })
           }
           showFields(agent)
         },
@@ -492,9 +497,9 @@ export async function openAgentManager(
 
     const showBody = (agent: AgentFile): void => {
       host.open(new ViewerPanel(theme, {
-        title: `ⓘ ${agent.meta.displayName ?? agent.meta.name} · system prompt`,
+        title: t('agentsmg.body.title', { name: agent.meta.displayName ?? agent.meta.name }),
         lines: agent.body.split('\n'),
-        footer: '  Esc to close',
+        footer: t('agentsmg.body.footer'),
         onClose: () => showFields(agent),
       }))
     }
@@ -508,28 +513,34 @@ export async function openAgentManager(
       const limits = readSubagentLimits(ctx)
       const stats = getStats?.()
       const fields = [
-        { key: 'maxAgents', value: `${limits.maxAgents} · concurrent live children (0 = unlimited)`, editable: true },
-        { key: 'maxRounds', value: `${limits.maxRounds} · assistant messages before wrap-up (0 = unlimited)`, editable: true },
-        { key: 'maxRoundsGrace', value: `${limits.maxRoundsGrace} · wrap-up rounds before force-stop (0 = warn only)`, editable: true },
-        { key: 'disableSubagent', value: `${limits.disableSubagent ? 'on' : 'off'} · native subagent tool`, editable: true },
-        { key: 'registeredOnly', value: `${limits.registeredOnly ? 'on' : 'off'} · only use_agent may spawn (subagent/fork/workflow/ralph fenced)`, editable: true },
+        { key: 'maxAgents', value: t('agentsmg.limits.maxAgents', { n: limits.maxAgents }), editable: true },
+        { key: 'maxRounds', value: t('agentsmg.limits.maxRounds', { n: limits.maxRounds }), editable: true },
+        { key: 'maxRoundsGrace', value: t('agentsmg.limits.maxRoundsGrace', { n: limits.maxRoundsGrace }), editable: true },
+        { key: 'disableSubagent', value: t('agentsmg.limits.disableSubagent', { value: limits.disableSubagent ? t('agentsmg.on') : t('agentsmg.off') }), editable: true },
+        { key: 'registeredOnly', value: t('agentsmg.limits.registeredOnly', { value: limits.registeredOnly ? t('agentsmg.on') : t('agentsmg.off') }), editable: true },
       ]
       const content: string[] = [
-        'subagent delegation knobs — read live at every spawn / turn decision',
+        t('agentsmg.limits.intro'),
         ...(stats !== undefined
-          ? [`runtime: ${stats.live} live · ${stats.allowed} admitted · ${stats.denied} denied`
-              + ` · ${stats.pruned} pruned · ${stats.inFlight} in-flight (since TUI start)`]
+          ? [t('agentsmg.limits.runtime', {
+              live: stats.live,
+              allowed: stats.allowed,
+              denied: stats.denied,
+              pruned: stats.pruned,
+              inFlight: stats.inFlight,
+            })]
           : []),
         ...(agents.length === 0
-          ? [`no agents in ${dir} yet — drop a markdown file to define one`, ...(broken.length > 0 ? [`${broken.length} broken file(s) ignored`] : [])]
+          ? [t('agentsmg.limits.noAgents', { dir }),
+              ...(broken.length > 0 ? [t('agentsmg.limits.broken', { n: broken.length })] : [])]
           : []),
       ]
       const panel = new FieldPanel(theme, {
-        title: ansiFg(theme.palette.accent) + BOLD + '⚙ subagent' + RESET,
+        title: ansiFg(theme.palette.accent) + BOLD + t('agentsmg.limits.title') + RESET,
         content,
         fields,
         status: () => limitsStatus,
-        footer: '↑↓ field · Enter edit (0 = unlimited) · d toggle subagent · r registered-only · Esc back',
+        footer: t('agentsmg.limits.footer'),
         shortcuts: { d: () => void toggleDisableSubagent(), r: () => void toggleRegisteredOnly() },
         onEdit: index => {
           if (index === 3) toggleDisableSubagent()
@@ -552,8 +563,8 @@ export async function openAgentManager(
       const current = readSubagentLimits(ctx)[key]
       let committed = false
       const field = new EditField(tui, {
-        title: `${key} — subagent delegation limit (current ${current})`,
-        subtitle: 'non-negative integer · 0 = unlimited · empty keeps the current value',
+        title: t('agentsmg.limit.title', { key, current }),
+        subtitle: t('agentsmg.limit.subtitle'),
         initial: String(current),
         parse: parseLimitInput,
         onCommit: async parsed => {
@@ -569,7 +580,7 @@ export async function openAgentManager(
           // only a real commit counts and flashes the status line.
           if (committed) {
             const n = readSubagentLimits(ctx)[key]
-            limitsStatus = `${key} → ${n} saved — applies to future subagent spawns`
+            limitsStatus = t('agentsmg.limit.saved', { key, n })
           }
           showLimits()
         },
@@ -589,7 +600,9 @@ export async function openAgentManager(
       const error = await writeSubagentLimit(ctx, 'disableSubagent', next)
       limitsStatus = error !== undefined
         ? `✘ ${error}`
-        : `subagent tool ${next ? 'disabled' : 'enabled'} — applies to future subagent spawns`
+        : next
+          ? t('agentsmg.subagent.enabled')
+          : t('agentsmg.subagent.disabled')
       showLimits()
     }
 
@@ -604,7 +617,9 @@ export async function openAgentManager(
       const error = await writeSubagentLimit(ctx, 'registeredOnly', next)
       limitsStatus = error !== undefined
         ? `✘ ${error}`
-        : `registered-only fence ${next ? 'ON — only use_agent may spawn' : 'off — ad-hoc spawn tools available'}`
+        : next
+          ? t('agentsmg.fence.on')
+          : t('agentsmg.fence.off')
       showLimits()
     }
 

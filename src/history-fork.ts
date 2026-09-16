@@ -15,6 +15,7 @@
  */
 
 import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
+import { t } from './i18n/index.ts'
 import { PanelHost, panelThemeFns } from './panels.ts'
 import { BOLD, RESET, ansiFg, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, wrapText } from './text.ts'
@@ -24,7 +25,7 @@ export const FORK_AT_TURN_OPTION_IDS: ReadonlyArray<'fork' | 'cancel'> = ['fork'
 
 /** Accent-BOLD dialog title (`N` = the selected turn's number). */
 export function forkAtTurnTitle(turnLabel: string): string {
-  return `● Fork at turn ${turnLabel}?`
+  return t('fork.title', { turn: turnLabel })
 }
 
 /**
@@ -39,23 +40,25 @@ export function forkAtTurnTitle(turnLabel: string): string {
  */
 export function forkAtTurnBody(turnLabel: string, totalTurns: number, detachedLiveId?: string): readonly string[] {
   return [
-    `The new session carries turns through ${turnLabel} (of ${totalTurns}); later turns stay in the current session.`,
+    t('fork.body.carry', { turn: turnLabel, total: totalTurns }),
     detachedLiveId === undefined
-      ? 'The current session stays resumable via /resume.'
-      : `Your live session ${detachedLiveId} will be detached — it stays resumable via /resume.`,
+      ? t('fork.body.resume')
+      : t('fork.body.detach', { id: detachedLiveId }),
   ]
 }
 
 /** The fixed option rows for one target turn. */
 export function forkAtTurnOptions(turnLabel: string): ReadonlyArray<{ id: 'fork' | 'cancel'; text: string }> {
   return [
-    { id: 'fork', text: `Fork now — new session through turn ${turnLabel}` },
-    { id: 'cancel', text: 'Cancel' },
+    { id: 'fork', text: t('fork.option.fork', { turn: turnLabel }) },
+    { id: 'cancel', text: t('fork.option.cancel') },
   ]
 }
 
-/** Footer hint — hardcoded like every other panel footer (English-only). */
-export const FORK_AT_TURN_FOOTER = '↑↓ select · 1/2 pick · Enter confirm · Esc cancel'
+/** Footer hint — resolved per call so a live language switch repaints it. */
+export function forkAtTurnFooter(): string {
+  return t('fork.footer')
+}
 
 /** Pure dialog state: which row is highlighted, and the terminal outcome. */
 export interface ForkAtTurnState {
@@ -155,7 +158,7 @@ export class ForkAtTurnPanel implements Component {
         : fns.muted(row))
     }
     lines.push('')
-    lines.push(fns.subtle(clipToWidth(FORK_AT_TURN_FOOTER, wrap)))
+    lines.push(fns.subtle(clipToWidth(forkAtTurnFooter(), wrap)))
     return lines
   }
 

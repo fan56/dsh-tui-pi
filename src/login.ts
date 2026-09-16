@@ -39,6 +39,7 @@ import {
 import { CUSTOM_PROVIDER_ID, CustomProviderFlow, customProviderEntry } from './custom-provider.ts'
 import { AddProviderFlow, commitProvider } from './settings.ts'
 import type { TuiTheme } from './theme/index.ts'
+import { t } from './i18n/index.ts'
 
 /**
  * The llm-pi-ai settings namespace (same id the /settings browser uses).
@@ -470,10 +471,10 @@ export async function openLogoutFlow(options: LogoutFlowOptions): Promise<Logout
 
   return new Promise(resolve => {
     const list = new TablePanel(options.theme, {
-      title: '● Log out',
+      title: t('login.title.logout'),
       // Auto layout: PROVIDER fits its content, KEY REF runs to the edge.
       columns: autoColumns(
-        [{ key: 'label', title: 'Provider', cap: 28 }, { key: 'description', title: 'Key ref' }],
+        [{ key: 'label', title: t('login.col.provider'), cap: 28 }, { key: 'description', title: t('login.col.keyRef') }],
         loggedIn,
         (candidate, key) => (key === 'description' ? candidate.ref : candidate.name),
       ),
@@ -494,11 +495,9 @@ export async function openLogoutFlow(options: LogoutFlowOptions): Promise<Logout
       void commit(candidate).then(result => {
         if (result.kind === 'failed') {
           const cause = result.cause === undefined ? '' : `: ${result.cause}`
-          options.onError(`Failed to remove stored key for ${result.name}${cause}`)
+          options.onError(t('login.error.removeFailed', { name: result.name, cause }))
         } else if (result.kind === 'removed-incomplete') {
-          options.onError(
-            `Removed the stored key for ${result.name}, but its provider configuration was not removed: ${result.error}`,
-          )
+          options.onError(t('login.error.removeIncomplete', { name: result.name, error: result.error }))
         }
         resolve(result)
       })

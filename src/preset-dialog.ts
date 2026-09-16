@@ -22,6 +22,7 @@
 
 import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { t } from './i18n/index.ts'
 import type { PresetEntry, PresetState } from './preset.ts'
 import { PanelHost, panelThemeFns } from './panels.ts'
 import { BOLD, RESET, ansiFg, type TuiTheme } from './theme/index.ts'
@@ -49,16 +50,16 @@ export interface PresetConfirmWording {
 export function presetConfirmWording(name: string, restart: boolean): PresetConfirmWording {
   return restart
     ? {
-        title: `● Restart session on ${name}?`,
-        fork: `Fork & restart — new session on ${name}, carrying this conversation`,
-        fresh: `Restart now — new empty session on ${name}`,
-        firstPoint: `Restarting starts a NEW session on ${name}.`,
+        title: t('presetdlg.title.restart', { name }),
+        fork: t('presetdlg.fork.restart', { name }),
+        fresh: t('presetdlg.fresh.restart', { name }),
+        firstPoint: t('presetdlg.point.restart', { name }),
       }
     : {
-        title: `● Switch preset to ${name}?`,
-        fork: `Fork & switch — new session on ${name}, carrying this conversation`,
-        fresh: `Fresh start — new empty session on ${name}`,
-        firstPoint: `Switching starts a NEW session on ${name}.`,
+        title: t('presetdlg.title.switch', { name }),
+        fork: t('presetdlg.fork.switch', { name }),
+        fresh: t('presetdlg.fresh.switch', { name }),
+        firstPoint: t('presetdlg.point.switch', { name }),
       }
 }
 
@@ -67,7 +68,7 @@ export function presetConfirmOptions(wording: PresetConfirmWording): ReadonlyArr
   return [
     { id: 'fork', text: wording.fork },
     { id: 'fresh', text: wording.fresh },
-    { id: 'cancel', text: 'Cancel — stay on the current session' },
+    { id: 'cancel', text: t('presetdlg.option.cancel') },
   ]
 }
 
@@ -83,12 +84,14 @@ export function presetConfirmTitle(wording: PresetConfirmWording): string {
 export function presetConfirmBody(wording: PresetConfirmWording): readonly string[] {
   return [
     wording.firstPoint,
-    'Fork carries this conversation into the new session (compacted context included) — fresh starts empty.',
+    t('presetdlg.carry'),
   ]
 }
 
-/** Footer hint — hardcoded like every other panel footer (English-only). */
-export const PRESET_CONFIRM_FOOTER = '↑↓ select · 1/2/3 pick · Enter confirm · Esc cancel'
+/** Footer hint — resolved per call so a live language switch repaints it. */
+export function presetConfirmFooter(): string {
+  return t('presetdlg.footer')
+}
 
 /** Pure dialog state: which row is highlighted, and the terminal outcome. */
 export interface PresetConfirmState {
@@ -183,7 +186,7 @@ export class PresetConfirmPanel implements Component {
         : fns.muted(row))
     }
     lines.push('')
-    lines.push(fns.subtle(clipToWidth(PRESET_CONFIRM_FOOTER, wrap)))
+    lines.push(fns.subtle(clipToWidth(presetConfirmFooter(), wrap)))
     return lines
   }
 
@@ -250,7 +253,7 @@ export function openPresetConfirmDialog(
 export interface PresetSwitchOutcome {
   /** True when the selection was committed and the session restarted. */
   switched: boolean
-  /** The user-facing echo line (English-only). */
+  /** The user-facing echo line (translated at call time). */
   message: string
 }
 
@@ -300,7 +303,7 @@ export async function performPresetSwitch(
     const restart = state.roster[state.index]?.id === target.id
     const action = await deps.confirmSwitch(target.name, restart)
     if (action === 'cancel') {
-      return { switched: false, message: 'Preset unchanged — still on the current session.' }
+      return { switched: false, message: t('presetdlg.echo.unchanged') }
     }
     // Snapshot BEFORE the index write: a commit that throws must not leave
     // the selection (and with it the footer) advertising a preset the live
@@ -311,10 +314,10 @@ export async function performPresetSwitch(
       if (index >= 0) state.index = index
       if (action === 'fork') {
         await deps.forkCommit(target.id)
-        return { switched: true, message: `Preset → ${target.name} — new session forked from this conversation.` }
+        return { switched: true, message: t('presetdlg.echo.forked', { name: target.name }) }
       }
       await deps.commit(target.id)
-      return { switched: true, message: `Preset → ${target.name} — new empty session started on it.` }
+      return { switched: true, message: t('presetdlg.echo.fresh', { name: target.name }) }
     } catch (error) {
       state.index = previousIndex
       throw error
@@ -323,7 +326,7 @@ export async function performPresetSwitch(
   const index = state.roster.findIndex(preset => preset.id === target.id)
   if (index >= 0) state.index = index
   await deps.commit(target.id)
-  return { switched: true, message: `Preset → ${target.name} — new session started on it.` }
+  return { switched: true, message: t('presetdlg.echo.direct', { name: target.name }) }
 }
 
 /**

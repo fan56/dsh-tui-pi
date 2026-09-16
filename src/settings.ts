@@ -63,6 +63,7 @@ import {
   type TableColumn,
 } from './panels.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
+import { t } from './i18n/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 import { wrapFramedOverlay } from './frame.ts'
 import {
@@ -71,6 +72,7 @@ import {
   directoryProviderEntries,
   providerProfileFor,
   providerRowView,
+  resolveCatalogHint,
   unconfiguredCatalogEntries,
   type ProviderCatalogEntry,
 } from './provider-catalog.ts'
@@ -104,8 +106,10 @@ export interface SettingsCategory {
  * no category field, so the slots are maintained here by hand. Namespaces not
  * listed anywhere fall into the trailing `other` category.
  *
- * Labels are English-only: pi-tui's SettingsList search matches the label
- * text, so English queries (model, shell, permission, …) hit directly.
+ * The `label`s here are the English source of truth: rows render through
+ * `categoryLabel()` (t() at render time, keyed by category id), so the active
+ * UI language translates them while search keeps matching whatever is
+ * displayed.
  */
 export const CATEGORY_MAP: readonly SettingsCategory[] = [
   { id: 'general', label: 'General', namespaces: ['permission', 'dsh-tui'] },
@@ -113,6 +117,27 @@ export const CATEGORY_MAP: readonly SettingsCategory[] = [
   { id: 'plugins', label: 'Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
   { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
 ]
+
+/**
+ * Category id → i18n key resolver for the user-facing label. The static
+ * labels in CATEGORY_MAP stay English (module data must not freeze a
+ * language at import time); rows resolve through these literal t() call
+ * sites at render time and fall back to the static label for an id without
+ * an entry.
+ */
+const CATEGORY_LABEL_KEYS: Readonly<Record<string, () => string>> = {
+  general: () => t('settingsui.category.general'),
+  models: () => t('settingsui.category.models'),
+  plugins: () => t('settingsui.category.plugins'),
+  agent: () => t('settingsui.category.agent'),
+  other: () => t('settingsui.category.other'),
+}
+
+/** User-facing label of one category (t()-resolved; English fallback). */
+function categoryLabel(cat: SettingsCategory): string {
+  const make = CATEGORY_LABEL_KEYS[cat.id]
+  return make === undefined ? cat.label : make()
+}
 
 /** Cap for a category row's member-name description line. */
 export const CATEGORY_DESC_MAX = 60
@@ -169,14 +194,14 @@ export function categoryDescription(namespaces: readonly string[], max = 60): st
 
 /** Human display for a resolved value (row value column; never re-scans anything). */
 export function formatValue(value: unknown): string {
-  if (value === undefined) return '(unset)'
+  if (value === undefined) return t('settingsui.value.unset')
   if (value === null) return 'null'
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  if (Array.isArray(value)) return value.length === 0 ? '[]' : `[${value.length} items]`
+  if (Array.isArray(value)) return value.length === 0 ? '[]' : t('settingsui.value.items', { count: value.length })
   if (typeof value === 'object') {
     const keys = Object.keys(value as Record<string, unknown>)
-    return keys.length === 0 ? '{}' : `{${keys.length} keys}`
+    return keys.length === 0 ? '{}' : `{${t('settingsui.value.keys', { count: keys.length })}}`
   }
   return String(value)
 }
@@ -217,10 +242,10 @@ export function parseNumberInput(text: string): ParseOutcome {
   // Literal decimal subset: hex/octal/binary prefixes and trailing garbage
   // are rejected; decimal scientific notation stays (1e3 = 1000).
   if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(text.trim())) {
-    return { kind: 'error', error: `expected a number, got "${text}"` }
+    return { kind: 'error', error: t('settingsui.parse.number', { text }) }
   }
   const n = Number(text)
-  if (!Number.isFinite(n)) return { kind: 'error', error: `expected a number, got "${text}"` }
+  if (!Number.isFinite(n)) return { kind: 'error', error: t('settingsui.parse.number', { text }) }
   return { kind: 'value', value: n }
 }
 
@@ -240,7 +265,7 @@ export function parseUnionInput(text: string, node: SchemaNode): ParseOutcome {
     member => member.type === 'string' || (member.type === 'literal' && typeof member.value === 'string'),
   )
   if (hasStringBranch) return { kind: 'value', value: text }
-  return { kind: 'error', error: 'expected a JSON value (number, boolean, string, …)' }
+  return { kind: 'error', error: t('settingsui.parse.json') }
 }
 
 /** Seed value for a newly added dict key, from the inner schema. */
@@ -292,18 +317,18 @@ export function fieldDescription(node: SchemaNode, userOverride: boolean): strin
   else if (raw !== undefined && typeof raw === 'object') {
     parts.push(raw['en'] ?? raw[''] ?? Object.values(raw)[0] ?? '')
   }
-  if (meta.required === true) parts.push('required')
-  if (meta.default !== undefined) parts.push(`default: ${formatValue(meta.default)}`)
-  if (meta.min !== undefined) parts.push(`min: ${meta.min}`)
-  if (meta.max !== undefined) parts.push(`max: ${meta.max}`)
-  if (meta.step !== undefined) parts.push(`step: ${meta.step}`)
-  if (meta.pattern !== undefined) parts.push(`pattern: ${meta.pattern.source}`)
-  if (meta.role === 'secret') parts.push('secret')
-  if (meta.disabled === true) parts.push('disabled')
+  if (meta.required === true) parts.push(t('settingsui.meta.required'))
+  if (meta.default !== undefined) parts.push(t('settingsui.meta.default', { value: formatValue(meta.default) }))
+  if (meta.min !== undefined) parts.push(t('settingsui.meta.min', { value: meta.min }))
+  if (meta.max !== undefined) parts.push(t('settingsui.meta.max', { value: meta.max }))
+  if (meta.step !== undefined) parts.push(t('settingsui.meta.step', { value: meta.step }))
+  if (meta.pattern !== undefined) parts.push(t('settingsui.meta.pattern', { value: meta.pattern.source }))
+  if (meta.role === 'secret') parts.push(t('settingsui.meta.secret'))
+  if (meta.disabled === true) parts.push(t('settingsui.meta.disabled'))
   for (const badge of meta.badges ?? []) {
     if (typeof badge.text === 'string') parts.push(badge.text)
   }
-  if (userOverride) parts.push('user-set')
+  if (userOverride) parts.push(t('settingsui.meta.userSet'))
   return parts.filter(part => part !== '').join(' · ')
 }
 
@@ -457,7 +482,7 @@ export class EditField implements Component {
       lines.push(...this.input.render(width))
     }
     lines.push('')
-    lines.push(fns.subtle(clipToWidth('Enter save · Esc back', wrap)))
+    lines.push(fns.subtle(clipToWidth(t('settingsui.edit.footer'), wrap)))
     return lines
   }
 
@@ -504,7 +529,7 @@ class ConfirmReset implements Component {
     return [
       fns.accent(BOLD + this.label + RESET),
       '',
-      fns.subtle(this.pending ? '  resetting…' : '  Enter: reset to defaults · Esc: cancel'),
+      fns.subtle(this.pending ? `  ${t('settingsui.reset.working')}` : `  ${t('settingsui.reset.hints')}`),
     ]
   }
 
@@ -621,12 +646,12 @@ export class AddProviderFlow implements Component {
       return
     }
     this.list = new SettingsListPanel(theme, {
-      title: '⚙ Add provider',
+      title: t('settingsui.addProvider.title'),
       rows: options.entries.map(entry => ({
         id: entry.id,
         label: entry.name,
         value: '',
-        description: entry.hint,
+        description: resolveCatalogHint(entry.hint),
         submenu: (_current, done) => isCustom(entry)
           ? options.customFlow!(done)
           : this.keyEditor(entry, options, done),
@@ -642,15 +667,15 @@ export class AddProviderFlow implements Component {
   private keyEditor(entry: ProviderCatalogEntry, options: AddProviderOptions, done: () => void): Component {
     const ref = deriveKeyRef(entry.id)
     return new EditField(this.tui, {
-      title: `API key for ${entry.name}`,
-      subtitle: `stored as ${ref} — never written to settings.yaml`,
+      title: t('settingsui.addProvider.keyTitle', { name: entry.name }),
+      subtitle: t('settingsui.addProvider.keySubtitle', { ref }),
       initial: '',
       // Never echo the key — masked dot row (B2).
       secret: true,
       parse: text => {
         // Unlike an edit of a stored secret, the key is required here: a
         // route with no key address cannot serve a request.
-        if (text.trim() === '') return { kind: 'error', error: 'API key must not be empty' }
+        if (text.trim() === '') return { kind: 'error', error: t('settingsui.addProvider.keyRequired') }
         return { kind: 'value', value: text.trim() }
       },
       onCommit: async outcome => {
@@ -678,11 +703,11 @@ export class AddProviderFlow implements Component {
     if (this.empty) {
       const fns = panelThemeFns(this.theme)
       return [
-        fns.accent(BOLD + '⚙ Add provider' + RESET),
+        fns.accent(BOLD + t('settingsui.addProvider.title') + RESET),
         '',
-        fns.muted('All built-in providers are already configured.'),
+        fns.muted(t('settingsui.addProvider.empty')),
         '',
-        fns.subtle('  Esc to close'),
+        fns.subtle(`  ${t('settingsui.escClose')}`),
       ]
     }
     return this.list!.render(width)
@@ -730,7 +755,7 @@ export async function commitProvider(
     // No credential store in this process — the row is configured and the
     // key must come from the environment; this is a success with a hint,
     // never an error. Enter re-runs the commit idempotently.
-    return { notice: `provider added — no credentials service in this process: export ${ref} to use it` }
+    return { notice: t('settingsui.commit.noCredentials', { ref }) }
   }
   try {
     await credentials.set(ref, key)
@@ -739,8 +764,10 @@ export async function commitProvider(
     // counts as configured, so the user needs the manual path. The error
     // stays retryable in place — Enter re-runs the whole commit (B3).
     return {
-      error: `API key not stored: ${cause instanceof Error ? cause.message : String(cause)}`
-        + ` — provider added; export ${ref}=<key> to use it`,
+      error: t('settingsui.commit.keyFailed', {
+        cause: cause instanceof Error ? cause.message : String(cause),
+        ref,
+      }),
     }
   }
   return undefined
@@ -863,7 +890,7 @@ class SettingsBrowser {
   }
 
   private categorySummary(cat: SettingsCategory): string {
-    return `${cat.namespaces.length} namespaces`
+    return t('settingsui.summary.namespaces', { count: cat.namespaces.length })
   }
 
   private categoryDescription(cat: SettingsCategory): string {
@@ -873,14 +900,14 @@ class SettingsBrowser {
   private categoryList(): SettingsListPanel {
     const items: SettingsRow[] = this.categories().map(cat => ({
       id: cat.id,
-      label: cat.label,
+      label: categoryLabel(cat),
       value: this.categorySummary(cat),
       description: this.categoryDescription(cat),
       submenu: cat.id === 'models'
         ? (_current, done) => this.openModelsSubmenu(done)
         : (_current, done) => {
               const list = this.namespaceList(
-                cat.label,
+                categoryLabel(cat),
                 this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
                 done,
               )
@@ -889,7 +916,7 @@ class SettingsBrowser {
             },
     }))
     return new SettingsListPanel(this.theme, {
-      title: '⚙ settings',
+      title: t('settingsui.title'),
       rows: items,
       maxVisible: 10,
       enableSearch: true,
@@ -910,14 +937,14 @@ class SettingsBrowser {
   private nsSummary(desc: SettingsDescriptor): string {
     const root = this.root(desc.ns)
     if (root !== undefined && root.type === 'object') {
-      return `${Object.keys(root.dict ?? {}).length} fields`
+      return t('settingsui.fields.count', { count: Object.keys(root.dict ?? {}).length })
     }
     return formatValue(desc.value)
   }
 
   private nsDescription(desc: SettingsDescriptor): string {
-    const parts = [`applies: ${desc.applies}`]
-    if (desc.user !== undefined) parts.push('user-set')
+    const parts = [t('settingsui.ns.applies', { applies: desc.applies })]
+    if (desc.user !== undefined) parts.push(t('settingsui.meta.userSet'))
     return parts.join(' · ')
   }
 
@@ -1144,7 +1171,7 @@ class SettingsBrowser {
           submenu: (_current, done) => new ViewerPanel(this.theme, {
             title: `providers.${id}`,
             lines: [
-              'read-only in the TUI — edit the settings document to change it',
+              t('settingsui.models.readonly'),
               '',
               ...JSON.stringify(profile, null, 2).split('\n'),
             ],
@@ -1159,7 +1186,7 @@ class SettingsBrowser {
     if (deepseekDesc !== undefined) {
       items.push({
         id: 'llm-deepseek',
-        label: 'DeepSeek (official)',
+        label: t('settingsui.models.deepseek'),
         value: this.nsSummary(deepseekDesc),
         description: this.nsDescription(deepseekDesc),
         submenu: (_current, done) => {
@@ -1176,7 +1203,7 @@ class SettingsBrowser {
     if (agentDesc !== undefined) {
       items.push({
         id: 'agent-default-model',
-        label: 'Default model',
+        label: t('settingsui.models.defaultModel'),
         value: this.defaultModelSummary(agentDesc),
         description: this.nsDescription(agentDesc),
         submenu: (_current, done) => {
@@ -1194,9 +1221,9 @@ class SettingsBrowser {
       const configured = new Set(Object.keys(providers.providers ?? {}))
       items.push({
         id: '\u0000add-provider',
-        label: '+ Add provider…',
+        label: t('settingsui.models.add'),
         value: '',
-        description: 'configure a built-in provider with its API key',
+        description: t('settingsui.models.addDesc'),
         submenu: (_current, done) => new AddProviderFlow(
           this.tui,
           this.theme,
@@ -1214,7 +1241,7 @@ class SettingsBrowser {
     }
 
     return new SettingsListPanel(this.theme, {
-      title: '⚙ Models',
+      title: t('settingsui.models.title'),
       rows: items,
       maxVisible: 12,
       enableSearch: true,
@@ -1234,7 +1261,7 @@ class SettingsBrowser {
     if (typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== '') {
       const effort = value?.reasoningEffort
       return typeof effort === 'string' && effort !== ''
-        ? `${provider}/${model} · think ${effort}`
+        ? t('settingsui.route.think', { provider, model, effort })
         : `${provider}/${model}`
     }
     return formatValue(desc.value)
@@ -1281,7 +1308,9 @@ class SettingsBrowser {
         id: '\u0000reset',
         ns,
         path,
-        label: `Reset ${path.length === 0 ? 'this namespace' : path.join('.')} to defaults`,
+        label: path.length === 0
+          ? t('settingsui.reset.namespace')
+          : t('settingsui.reset.path', { path: path.join('.') }),
         kind: 'reset',
         node,
         value: undefined,
@@ -1292,7 +1321,7 @@ class SettingsBrowser {
           id: '\u0000add',
           ns,
           path,
-          label: '+ Add key…',
+          label: t('settingsui.addKey.label'),
           kind: 'addkey',
           node,
           value: undefined,
@@ -1370,13 +1399,15 @@ class SettingsBrowser {
   }
 
   private computeDisplay(kind: RowKind, node: SchemaNode, value: unknown, secret: boolean): string {
-    if (secret) return value === undefined || value === null || value === '' ? '(unset)' : '••••••'
+    if (secret) return value === undefined || value === null || value === '' ? t('settingsui.value.unset') : '••••••'
     switch (kind) {
       case 'drill': {
-        if (node.type === 'object') return `{${Object.keys(node.dict ?? {}).length} fields}`
+        if (node.type === 'object') return `{${t('settingsui.fields.count', { count: Object.keys(node.dict ?? {}).length })}}`
         if (node.type === 'dict') {
           const entries = Object.keys((value ?? {}) as Record<string, unknown>)
-          return `dict · ${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`
+          return entries.length === 1
+            ? t('settingsui.dict.one', { count: entries.length })
+            : t('settingsui.dict.many', { count: entries.length })
         }
         return formatValue(value)
       }
@@ -1414,7 +1445,7 @@ class SettingsBrowser {
         submenu: (_current, done) => new ViewerPanel(this.theme, {
           title: row.path.join('.'),
           lines: [
-            'read-only in the TUI — edit the settings document to change it',
+            t('settingsui.models.readonly'),
             '',
             ...JSON.stringify(row.value, null, 2).split('\n'),
           ],
@@ -1537,8 +1568,10 @@ class SettingsBrowser {
     return new EditField(this.tui, {
       title: row.path.join('.'),
       subtitle: row.secret === true
-        ? 'secret — leave empty to keep the current value'
-        : `current: ${row.display}${meta.required === true ? ' · required' : ''}`,
+        ? t('settingsui.edit.secret')
+        : t('settingsui.edit.current', {
+            value: row.display + (meta.required === true ? ` · ${t('settingsui.meta.required')}` : ''),
+          }),
       initial,
       // role('secret') rows get the masked dot-row renderer too (B2).
       secret: row.secret === true,
@@ -1560,9 +1593,9 @@ class SettingsBrowser {
       case 'union': return parseUnionInput(text, row.node)
       case 'transform':
         return row.node.inner === undefined
-          ? { kind: 'error', error: `cannot edit ${row.node.type} value` }
+          ? { kind: 'error', error: t('settingsui.parse.type', { type: row.node.type }) }
           : this.parseFor({ ...row, node: row.node.inner }, text)
-      default: return { kind: 'error', error: `cannot edit ${row.node.type} value` }
+      default: return { kind: 'error', error: t('settingsui.parse.type', { type: row.node.type }) }
     }
   }
 
@@ -1581,13 +1614,13 @@ class SettingsBrowser {
     const inner = row.node.inner ?? row.node
     const existing = (getPath(this.descriptor(row.ns)?.value, row.path) ?? {}) as Record<string, unknown>
     return new EditField(this.tui, {
-      title: `+ key in ${row.path.length === 0 ? '…' : row.path.join('.')}`,
-      subtitle: `default: ${formatValue(defaultValueFor(inner))} · Enter to add · Esc to cancel`,
+      title: t('settingsui.addKey.title', { path: row.path.length === 0 ? '…' : row.path.join('.') }),
+      subtitle: t('settingsui.addKey.subtitle', { default: formatValue(defaultValueFor(inner)) }),
       initial: '',
       parse: text => {
         const key = text.trim()
-        if (key === '') return { kind: 'error', error: 'key must not be empty' }
-        if (key in existing) return { kind: 'error', error: `key "${key}" already exists` }
+        if (key === '') return { kind: 'error', error: t('settingsui.addKey.empty') }
+        if (key in existing) return { kind: 'error', error: t('settingsui.addKey.exists', { key }) }
         return { kind: 'value', value: key }
       },
       onCommit: async outcome => {
@@ -1607,8 +1640,8 @@ class SettingsBrowser {
     return new ConfirmReset(
       this.theme,
       row.path.length === 0
-        ? `Reset "${row.ns}" to defaults`
-        : `Reset ${row.path.join('.')} to defaults`,
+        ? t('settingsui.reset.ns', { ns: row.ns })
+        : t('settingsui.reset.path', { path: row.path.join('.') }),
       () => {
         void this.write(row.ns, [{ op: 'unset', path: row.path }]).then(error => {
           if (error !== undefined) this.onError(error)

@@ -17,6 +17,7 @@ import { SESSION_LOG_FILE_NAMES } from './retention.ts'
 import { isCorruptLogError } from './log-repair.ts'
 import { emitNotice } from './notice-bridge.ts'
 import { wrapFramedOverlay } from './frame.ts'
+import { t } from './i18n/index.ts'
 import {
   autoColumns,
   columnWidths,
@@ -88,22 +89,22 @@ const FIELD_CAP = 12
  */
 export function sessionInfoRows(data: SessionPanelData): ReadonlyArray<{ field: string; value: string }> {
   return [
-    { field: 'session', value: data.id ?? '—' },
-    { field: 'cwd', value: data.cwd ?? '—' },
-    { field: 'created', value: data.createdAt === undefined ? '—' : new Date(data.createdAt).toLocaleString() },
-    { field: 'model', value: data.model ?? '—' },
-    { field: 'think', value: data.effort ?? '—' },
-    { field: 'status', value: data.status },
-    { field: 'messages', value: String(data.msgCount) },
-    { field: 'tool calls', value: String(data.toolCallCount) },
-    { field: 'tokens in', value: String(data.inputTokens) },
-    { field: 'tokens out', value: String(data.outputTokens) },
-    { field: 'cache read', value: String(data.cacheReadTokens) },
-    { field: 'cache write', value: String(data.cacheWriteTokens) },
-    { field: 'events', value: data.eventCount === undefined ? '—' : String(data.eventCount) },
+    { field: t('resume.field.session'), value: data.id ?? '—' },
+    { field: t('resume.field.cwd'), value: data.cwd ?? '—' },
+    { field: t('resume.field.created'), value: data.createdAt === undefined ? '—' : new Date(data.createdAt).toLocaleString() },
+    { field: t('resume.field.model'), value: data.model ?? '—' },
+    { field: t('resume.field.think'), value: data.effort ?? '—' },
+    { field: t('resume.field.status'), value: data.status },
+    { field: t('resume.field.messages'), value: String(data.msgCount) },
+    { field: t('resume.field.toolcalls'), value: String(data.toolCallCount) },
+    { field: t('resume.field.tokensin'), value: String(data.inputTokens) },
+    { field: t('resume.field.tokensout'), value: String(data.outputTokens) },
+    { field: t('resume.field.cacheread'), value: String(data.cacheReadTokens) },
+    { field: t('resume.field.cachewrite'), value: String(data.cacheWriteTokens) },
+    { field: t('resume.field.events'), value: data.eventCount === undefined ? '—' : String(data.eventCount) },
     // Same short form the /resume rows use — a parent id is a pointer, not
     // something to read in full.
-    { field: 'parent', value: data.parentSession === undefined ? '—' : clipToWidth(data.parentSession, 8) },
+    { field: t('resume.field.parent'), value: data.parentSession === undefined ? '—' : clipToWidth(data.parentSession, 8) },
   ]
 }
 
@@ -147,14 +148,14 @@ export class SessionInfoPanel implements Component {
     const fns = panelThemeFns(this.theme)
     const title = this.titleOverride ?? this.data.title
     const heading = title !== undefined && title !== ''
-      ? `ⓘ ${title} · tokens: current route`
-      : 'ⓘ session · tokens: current route'
+      ? t('resume.headingTitle', { title })
+      : t('resume.headingPlain')
     const lines: string[] = [fns.accent(BOLD + clipToWidth(heading, width) + RESET)]
     if (this.data.id === undefined) {
       lines.push('')
-      lines.push(fns.muted(clipToWidth('no active session — send a prompt or /resume one', width)))
+      lines.push(fns.muted(clipToWidth(t('resume.empty'), width)))
       lines.push('')
-      lines.push(fns.subtle(clipToWidth('Esc to close', width)))
+      lines.push(fns.subtle(clipToWidth(t('resume.hintClose'), width)))
       return lines
     }
 
@@ -163,8 +164,8 @@ export class SessionInfoPanel implements Component {
     const rows = sessionInfoRows(this.data)
     const columns = autoColumns(
       [
-        { key: 'field', title: 'Field', cap: FIELD_CAP },
-        { key: 'value', title: 'Value' },
+        { key: 'field', title: t('resume.col.field'), cap: FIELD_CAP },
+        { key: 'value', title: t('resume.col.value') },
       ],
       rows,
       (row, key) => (key === 'value' ? row.value : row.field),
@@ -186,7 +187,7 @@ export class SessionInfoPanel implements Component {
       const fieldCell = padCell(row.field, widths[0]!)
       const remaining = width - MARKER_W - visibleWidth(TABLE_SEP) - visibleWidth(fieldCell)
       const valueCell = padCell(row.value, Math.min(widths[1]!, Math.max(remaining, 0)))
-      const paintedValue = row.field === 'status' && this.data.status === 'running'
+      const paintedValue = row.field === t('resume.field.status') && this.data.status === 'running'
         ? fns.accent(valueCell)
         : fns.muted(valueCell)
       lines.push(`${' '.repeat(MARKER_W)}${fieldCell}${TABLE_SEP}${paintedValue}`)
@@ -201,18 +202,18 @@ export class SessionInfoPanel implements Component {
     if (this.editing) {
       const cursor = '▏'
       const body = this.buffer === ''
-        ? clipToWidth(`rename ▸ ${cursor} (type a title)`, width)
-        : clipToWidth(`rename ▸ ${this.buffer}${cursor}`, width)
+        ? clipToWidth(t('resume.renameEmpty', { cursor }), width)
+        : clipToWidth(t('resume.renameEdit', { buffer: this.buffer, cursor }), width)
       const failed = this.note !== undefined && !this.note.ok ? `✗ ${this.note.note} · ` : ''
-      const suffix = clipToWidth(`${failed}Enter save · Esc cancel`, Math.max(width - visibleWidth(body) - 1, 0))
+      const suffix = clipToWidth(`${failed}${t('resume.hintEdit')}`, Math.max(width - visibleWidth(body) - 1, 0))
       return fns.accent(clipToWidth(`${body} ${suffix}`, width))
     }
     if (this.note !== undefined) {
       const mark = this.note.ok ? '✓' : '✗'
-      const next = this.data.canRename ? ' · r rename · Esc to close' : ' · Esc to close'
+      const next = ` · ${this.data.canRename ? t('resume.hintRename') : t('resume.hintClose')}`
       return fns.accent(clipToWidth(`${mark} ${this.note.note}${next}`, width))
     }
-    const hint = this.data.canRename ? 'r rename · Esc to close' : 'Esc to close'
+    const hint = this.data.canRename ? t('resume.hintRename') : t('resume.hintClose')
     return fns.subtle(clipToWidth(hint, width))
   }
 
@@ -260,7 +261,7 @@ export class SessionInfoPanel implements Component {
     if (this.onRename === undefined) return
     const title = this.buffer.trim()
     if (title === '') {
-      this.note = { ok: false, note: 'title is empty' }
+      this.note = { ok: false, note: t('resume.titleEmpty') }
       return
     }
     let outcome: RenameOutcome
@@ -379,7 +380,7 @@ export async function readPersistedSession(
     }
   }
   if (typeof persistence.inspect !== 'function') {
-    throw new Error('Session persistence exposes neither open() nor inspect().')
+    throw new Error(t('resume.noBackend'))
   }
   return await persistence.inspect(id)
 }
@@ -482,8 +483,7 @@ function explicitSetting(
   if (raw === undefined) return undefined
   if (typeof raw !== 'number' || !Number.isFinite(raw) || !accept(raw)) {
     emitNotice(
-      `settings dsh-tui.resume.${key}: invalid value `
-      + `${JSON.stringify(raw)} — falling back to environment/default`,
+      t('resume.settingInvalid', { key, value: JSON.stringify(raw) }),
     )
     return undefined
   }
@@ -785,7 +785,7 @@ export async function inspectPersistedSession(
 ): Promise<{ meta: SessionHeader; events: readonly SessionEvent[] }> {
   const persistence = ctx.get('sessionPersistence') as SessionPersistence | undefined
   if (persistence === undefined) {
-    throw new Error('Session persistence is not configured in this profile.')
+    throw new Error(t('resume.noPersistence'))
   }
   return await readPersistedSession(persistence, id)
 }
@@ -847,14 +847,14 @@ export async function pickPersistedSession(
 ): Promise<PickSessionResult> {
   const persistence = ctx.get('sessionPersistence') as SessionPersistence | undefined
   if (persistence === undefined) {
-    throw new Error('Session persistence is not configured in this profile.')
+    throw new Error(t('resume.noPersistence'))
   }
   let headers: SessionHeader[]
   try {
     headers = (await persistence.list()).map(headerOf)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Failed to list persisted sessions: ${message}`)
+    throw new Error(t('resume.listFailed', { message }))
   }
   const candidates = headers
     .filter(isResumableSessionHeader)
@@ -906,7 +906,7 @@ export async function pickPersistedSession(
       header,
       session: resumeRowTitle(header, previews.get(id), corruptIds.has(id)),
       when: new Date(updated).toLocaleString(),
-      dir: header.cwd ?? 'no cwd',
+      dir: header.cwd ?? t('resume.noCwd'),
     }
   })
 
@@ -917,15 +917,15 @@ export async function pickPersistedSession(
     // would otherwise eat the session column (see RESUME_DIR_CAP).
     const columns: readonly TableColumn[] = autoColumns(
       [
-        { key: 'when', title: 'Updated', cap: 26 },
-        { key: 'dir', title: 'Dir', cap: RESUME_DIR_CAP },
-        { key: 'session', title: 'Session' },
+        { key: 'when', title: t('resume.col.updated'), cap: 26 },
+        { key: 'dir', title: t('resume.col.dir'), cap: RESUME_DIR_CAP },
+        { key: 'session', title: t('resume.col.session') },
       ],
       rows,
       (row, key) => row[key as 'session' | 'when' | 'dir'],
     )
     const list = new TablePanel(theme, {
-      title: '● Resume session',
+      title: t('resume.title'),
       columns,
       rows,
       renderCell: (row, column) => row[column.key as 'session' | 'when' | 'dir'],

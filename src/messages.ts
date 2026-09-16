@@ -44,6 +44,7 @@ import { clipToWidth } from './text.ts'
 import { isImageBlock, renderImageAttachments, type ImageBlockLike } from './attachments.ts'
 import { buildWelcomeBanner } from './welcome.ts'
 import { formatStartupInfoLines, type StartupSummary } from './startup-info.ts'
+import { t } from './i18n/index.ts'
 import { formatDailyQuote, pickDailyQuote } from './quotes.ts'
 
 interface StreamingState {
@@ -96,16 +97,14 @@ export type PendingBadge = 'queued' | 'steer'
  */
 export type PendingTerminal = 'canceled' | 'failed'
 
-/** Badge prefix rendered on the bubble's first line. */
-export const PENDING_BADGE_LABELS: Record<PendingBadge, string> = {
-  queued: '⏳ queued',
-  steer: '↪ steer',
+/** Badge prefix rendered on the bubble's first line (resolved per render through t()). */
+function pendingBadgeLabel(badge: PendingBadge): string {
+  return badge === 'queued' ? t('misc.pending.queued') : t('misc.pending.steer')
 }
 
-/** Prefix rendered on the first line of a terminal-state bubble. */
-export const PENDING_TERMINAL_LABELS: Record<PendingTerminal, string> = {
-  canceled: '✕ canceled',
-  failed: '✘ not delivered',
+/** Prefix rendered on the first line of a terminal-state bubble (t()-resolved per render). */
+function pendingTerminalLabel(terminal: PendingTerminal): string {
+  return terminal === 'canceled' ? t('misc.pending.canceled') : t('misc.pending.notDelivered')
 }
 
 /** SGR strikethrough — the faded "undone" look of a canceled echo. */
@@ -380,7 +379,7 @@ export class TranscriptRenderer {
 
   /** Bubble body for an echo text, with the optional badge on the first line. */
   private bubbleBody(text: string, badge?: PendingBadge): string {
-    const body = badge === undefined ? text : `${PENDING_BADGE_LABELS[badge]} · ${text}`
+    const body = badge === undefined ? text : `${pendingBadgeLabel(badge)} · ${text}`
     return body.split('\n').map(line => `▎ ${line}`).join('\n')
   }
 
@@ -390,7 +389,7 @@ export class TranscriptRenderer {
    */
   private terminalBubbleBody(text: string, terminal: PendingTerminal): string {
     const lines = text.split('\n')
-    const head = `▎ ${PENDING_TERMINAL_LABELS[terminal]} · ${lines[0] ?? ''}`
+    const head = `▎ ${pendingTerminalLabel(terminal)} · ${lines[0] ?? ''}`
     const rest = lines.slice(1).map(line => `▎ ${line}`)
     return [head, ...rest].join('\n')
   }
@@ -731,11 +730,11 @@ export class TranscriptRenderer {
 
   private renderTurnEnd(reason: { kind: string; error?: { message: string } }): void {
     if (reason.kind === 'error') {
-      this.appendLine(ansiFg(this.theme.palette.danger) + `✘ ${reason.error?.message ?? 'turn failed'}` + RESET)
+      this.appendLine(ansiFg(this.theme.palette.danger) + `✘ ${reason.error?.message ?? t('misc.turnFailed')}` + RESET)
     } else if (reason.kind === 'aborted') {
-      this.appendLine(ansiFg(this.theme.palette.fgSubtle) + `${stopIcon()} interrupted` + RESET)
+      this.appendLine(ansiFg(this.theme.palette.fgSubtle) + `${stopIcon()} ${t('misc.interrupted')}` + RESET)
     } else if (reason.kind === 'max-tokens') {
-      this.appendLine(ansiFg(this.theme.palette.attention) + '⚠ output token limit reached' + RESET)
+      this.appendLine(ansiFg(this.theme.palette.attention) + t('misc.tokenLimit') + RESET)
     }
   }
 

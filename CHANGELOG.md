@@ -4,6 +4,31 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **UI languages — one JSON file per language, Chinese first.** Every
+  user-visible TUI string now resolves through an i18n catalog: flat
+  `locales/<id>.json` files (`en.json` is the canonical byte-identical
+  template; `zh-CN.json` ships fully translated — 637 keys across the footer,
+  panels, dialogs, pickers, settings browser, hotkeys manager, ask-user panel,
+  subagent viewer, history/resume and every command echo). `/language` lists
+  the installed languages and `/language <id>` switches live — the next
+  repaint speaks the new language; the choice persists to the new
+  `dsh-tui.language` key (18th key of the namespace, `applies: 'live'` via the
+  settings watch hook, unknown ids fall back to `en`). Adding a language
+  (Korean/Japanese are planned files, not code changes) or partially
+  overriding a shipped one needs zero code: drop `<id>.json` into
+  `~/.dsh/locales/` — a same-id file merges per key over the bundled one, a
+  new id registers as a new language (non-empty `name` + flat string entries;
+  invalid files are skipped fail-open with a warning). Enforcement rides the
+  test suite: every `t('…')` literal must exist in `en.json` (and vice versa),
+  every bundled locale must carry exactly en's key set and per-key `{param}`
+  placeholders. Known edges: `/settings` schema descriptions resolve at boot
+  (restart to re-translate those), already-rendered transcript rows keep the
+  old language until a rebuild, and command descriptions in the autocomplete
+  list apply on restart.
+
 ## [2.19.0] - 2026-09-16
 
 ### Added

@@ -24,15 +24,19 @@
  */
 
 import { createUserMessage, type Message, type ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { t } from './i18n/index.ts'
 
-// ------------------------------------------------------------ UI copy (English-only, AGENTS.md #4) --
+// ------------------------------------------------------------ UI copy --
 
-export const BTW_IDLE_NOTICE =
-  '/btw answers alongside a running turn — the main line is idle, so just ask directly.'
+/** Idle-state guidance for a bare `/btw`: the main line is idle, ask directly. */
+export function btwIdleNotice(): string {
+  return t('btw.notice.idle')
+}
 
-export const BTW_USAGE =
-  'Usage: /btw <question> — ask a side question while the main task runs. ' +
-  'The answer streams into a temporary overlay and is not kept in the session.'
+/** Usage line for `/btw <question>`. */
+export function btwUsage(): string {
+  return t('btw.notice.usage')
+}
 
 // ------------------------------------------------------------------- argument parsing --
 
@@ -57,9 +61,9 @@ export function parseBtwInput(rawInput: string | undefined): ParsedBtwInput {
     modelOverride = match[1]
     question = `${raw.slice(0, match.index)} ${raw.slice(match.index + match[0].length)}`.trim()
   }
-  if (question === '') return { kind: 'error', error: 'No question after /btw --model.' }
+  if (question === '') return { kind: 'error', error: t('btw.error.noQuestion') }
   if (modelOverride !== undefined && !modelOverride.includes('/')) {
-    return { kind: 'error', error: `Invalid --model "${modelOverride}" — expected provider/model.` }
+    return { kind: 'error', error: t('btw.error.invalidModel', { model: modelOverride }) }
   }
   // The override key is omitted (not undefined-valued) when absent.
   return modelOverride === undefined
@@ -210,7 +214,7 @@ export class BtwQueue {
       return { kind: 'started' }
     }
     if (this.waiting.length >= BTW_QUEUE_CAP) {
-      return { kind: 'rejected', reason: `the btw queue is full (${BTW_QUEUE_CAP})` }
+      return { kind: 'rejected', reason: t('btw.queueFull', { cap: BTW_QUEUE_CAP }) }
     }
     this.waiting.push(job)
     return { kind: 'queued', position: this.waiting.length }
@@ -287,17 +291,17 @@ export async function consumeBtwStream(
           case 'aborted':
             return { kind: 'aborted' }
           case 'error':
-            return { kind: 'error', message: chunk.reason.failure?.message ?? 'Unknown model stream error.' }
+            return { kind: 'error', message: chunk.reason.failure?.message ?? t('btw.error.unknownStream') }
           case 'max-tokens':
-            return { kind: 'error', message: 'The answer hit the output token cap.' }
+            return { kind: 'error', message: t('btw.error.maxTokens') }
           case 'tool-calls':
-            return { kind: 'error', message: 'The side model unexpectedly requested tools.' }
+            return { kind: 'error', message: t('btw.error.toolCalls') }
           default:
-            return { kind: 'error', message: `Unsupported stream finish: ${String(chunk.reason?.kind)}` }
+            return { kind: 'error', message: t('btw.error.unsupportedFinish', { kind: String(chunk.reason?.kind) }) }
         }
       }
     }
-    return { kind: 'error', message: 'The model stream ended without a finish chunk.' }
+    return { kind: 'error', message: t('btw.error.noFinish') }
   } catch (error) {
     if (signal?.aborted) return { kind: 'aborted' }
     return { kind: 'error', message: error instanceof Error ? error.message : String(error) }
@@ -446,8 +450,8 @@ export class BtwController {
     if (selection === undefined) {
       this.deps.notify(
         job.modelOverride === undefined
-          ? 'No model selected — btw cannot run.'
-          : `btw model "${job.modelOverride}" is not available.`,
+          ? t('btw.error.noModel')
+          : t('btw.error.modelUnavailable', { model: job.modelOverride }),
         'error',
       )
       this.drain()
@@ -465,7 +469,7 @@ export class BtwController {
     if (promoted && this.deps.hasCapturingSurface?.() === true) {
       // A drained job popping up under an active dialog/overlay would steal
       // the keyboard mid-flow — run into the slot instead; /btw reopens it.
-      this.deps.notify('btw running in the background — /btw to view the answer.', 'info')
+      this.deps.notify(t('btw.background'), 'info')
     } else {
       this.deps.onRunStarted(run)
     }
@@ -528,7 +532,7 @@ export class BtwController {
       run.error = finish.message
       // No surface to show the failure on — the footer notice is the only
       // channel left (the overlay path renders it in place).
-      if (!this.overlayOpen) this.deps.notify(`btw failed: ${finish.message}`, 'error')
+      if (!this.overlayOpen) this.deps.notify(t('btw.failed', { message: finish.message }), 'error')
     }
     this.deps.requestRender()
     this.drain()

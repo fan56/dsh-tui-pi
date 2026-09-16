@@ -17,23 +17,28 @@
  */
 
 import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
+import { t } from './i18n/index.ts'
 import { PanelHost, panelThemeFns } from './panels.ts'
 import { BOLD, RESET, ansiFg, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, wrapText } from './text.ts'
 
 /** The two choices in display order; index 0 is preselected. */
-export const REPAIR_CONFIRM_OPTIONS: ReadonlyArray<{ id: 'repair' | 'cancel'; title: string; hint: string }> = [
-  { id: 'repair', title: 'Repair & resume', hint: 'rebuild the log in place, then enter the session' },
-  { id: 'cancel', title: 'Cancel', hint: 'leave the log untouched' },
-]
+export function repairConfirmOptions(): ReadonlyArray<{ id: 'repair' | 'cancel'; title: string; hint: string }> {
+  return [
+    { id: 'repair', title: t('repair.option.repair'), hint: t('repair.option.repairHint') },
+    { id: 'cancel', title: t('repair.option.cancel'), hint: t('repair.option.cancelHint') },
+  ]
+}
 
 /** The fixed body copy (spec wording): what happened, what repair does, what is kept. */
-export const REPAIR_CONFIRM_MESSAGE =
-  'Resume log is corrupted (likely from a historical double-writer). '
-  + 'Repair it in place? The original is kept as .corrupt-bak.'
+export function repairConfirmMessage(): string {
+  return t('repair.confirm.body')
+}
 
-/** Footer hint — hardcoded like every other panel footer (English-only). */
-export const REPAIR_CONFIRM_FOOTER = '↑↓ select · 1/2 pick · Enter confirm · Esc cancel'
+/** Footer hint — resolved per call so a live language switch repaints it. */
+export function repairConfirmFooter(): string {
+  return t('repair.footer')
+}
 
 /** Pure dialog state: which row is highlighted, and the terminal outcome. */
 export interface RepairConfirmState {
@@ -62,14 +67,14 @@ export function updateRepairConfirm(state: RepairConfirmState, data: string): Re
     return { ...state, selected: Math.max(0, state.selected - 1) }
   }
   if (kb.matches(data, 'tui.select.down')) {
-    return { ...state, selected: Math.min(REPAIR_CONFIRM_OPTIONS.length - 1, state.selected + 1) }
+    return { ...state, selected: Math.min(repairConfirmOptions().length - 1, state.selected + 1) }
   }
   // Digit direct-select (1-based): selects the row, Enter still confirms —
   // same select-then-confirm split as the routing dialog.
   const digit = /^([1-9])$/.exec(data)
   if (digit !== null) {
     const index = Number(digit[1]) - 1
-    if (index < REPAIR_CONFIRM_OPTIONS.length) return { ...state, selected: index }
+    if (index < repairConfirmOptions().length) return { ...state, selected: index }
   }
   return state
 }
@@ -77,7 +82,7 @@ export function updateRepairConfirm(state: RepairConfirmState, data: string): Re
 /** Resolved dialog outcome: the chosen action, or undefined on cancel. */
 export function repairConfirmOutcome(state: RepairConfirmState): 'repair' | 'cancel' | undefined {
   if (state.settled !== 'confirm') return undefined
-  return REPAIR_CONFIRM_OPTIONS[state.selected]?.id
+  return repairConfirmOptions()[state.selected]?.id
 }
 
 /**
@@ -109,12 +114,13 @@ export class RepairConfirmPanel implements Component {
     // Word-wrap the body FIRST, then paint (iron rule: width math runs on
     // plain text, ANSI goes on after clipping).
     const lines: string[] = [
-      fns.accent(BOLD + clipToWidth('● Corrupted resume log', wrap) + RESET),
-      ...wrapText(REPAIR_CONFIRM_MESSAGE, wrap).map(segment => fns.muted(clipToWidth(segment, wrap))),
+      fns.accent(BOLD + clipToWidth(t('repair.confirm.title'), wrap) + RESET),
+      ...wrapText(repairConfirmMessage(), wrap).map(segment => fns.muted(clipToWidth(segment, wrap))),
       '',
     ]
-    for (let i = 0; i < REPAIR_CONFIRM_OPTIONS.length; i++) {
-      const option = REPAIR_CONFIRM_OPTIONS[i]!
+    const options = repairConfirmOptions()
+    for (let i = 0; i < options.length; i++) {
+      const option = options[i]!
       const marker = i === this.state.selected ? '▸' : ' '
       const row = clipToWidth(`${marker} ${i + 1}. ${option.title} — ${option.hint}`, wrap)
       lines.push(i === this.state.selected
@@ -122,7 +128,7 @@ export class RepairConfirmPanel implements Component {
         : fns.muted(row))
     }
     lines.push('')
-    lines.push(fns.subtle(clipToWidth(REPAIR_CONFIRM_FOOTER, wrap)))
+    lines.push(fns.subtle(clipToWidth(repairConfirmFooter(), wrap)))
     return lines
   }
 

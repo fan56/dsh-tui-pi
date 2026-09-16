@@ -50,6 +50,7 @@ import { columnWidths, padCell, TABLE_SEP, type TableColumn } from './panels.ts'
 import { SPAWN_TOOLS } from './subagent-policy.ts'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
+import { t } from './i18n/index.ts'
 
 /** Refresh interval of the live surfaces (spinner + elapsed columns). */
 export const AGENT_TICK_MS = 100
@@ -70,10 +71,10 @@ export function fmtCompact(n: number): string {
 }
 
 /** The todos table columns: right-aligned row number, status icon, flex content. */
-const TODO_COLUMNS: readonly TableColumn[] = [
+const TODO_COLUMNS = (): readonly TableColumn[] => [
   { key: 'idx', title: '#', width: 3, align: 'right' },
   { key: 'status', title: '✓', width: 2 },
-  { key: 'content', title: 'Task', flex: true },
+  { key: 'content', title: t('misc.todos.task'), flex: true },
 ]
 
 /** Status icon of one todo: pending / in-progress / completed. */
@@ -145,7 +146,7 @@ export class TodosPanel implements Component {
     const boxWidth = panelBoxWidth(width)
     const borderFg = ansiFg(p.borderDefault)
     const innerWidth = boxWidth - 4
-    const colWidths = columnWidths(innerWidth, TODO_COLUMNS)
+    const colWidths = columnWidths(innerWidth, TODO_COLUMNS())
     const subtle = (text: string) => ansiFg(p.fgSubtle) + text + RESET
 
     // The visible window: at most TODO_MAX_ROWS entries, ranked in_progress →
@@ -166,9 +167,9 @@ export class TodosPanel implements Component {
     // pair, plus a `· showing 4-8` range hint whenever the window hides rows.
     const done = this.todos.filter(todo => todo.status === 'completed').length
     const showing = window.length < this.todos.length
-      ? subtle(` · showing ${compactRanges(window.map(entry => entry.index + 1))}`)
+      ? subtle(t('misc.todos.showing', { ranges: compactRanges(window.map(entry => entry.index + 1)) }))
       : ''
-    const headerInner = ansiFg(p.accent) + '● Todos ' + RESET
+    const headerInner = ansiFg(p.accent) + t('misc.todos.title') + RESET
       + subtle(`(${done}/${this.todos.length})`) + showing
     const out = [panelTopBorder(boxWidth, borderFg), borderedRow(boxWidth, borderFg, headerInner)]
 
@@ -178,7 +179,7 @@ export class TodosPanel implements Component {
     out.push(borderedRow(
       boxWidth,
       borderFg,
-      TODO_COLUMNS.map((column, i) => subtle(padCell(column.title, colWidths[i], column.align))).join(TABLE_SEP),
+      TODO_COLUMNS().map((column, i) => subtle(padCell(column.title, colWidths[i], column.align))).join(TABLE_SEP),
     ))
 
     for (const { todo, index } of window) {
@@ -520,14 +521,14 @@ export class LiveWidgets {
     // dropped when maxRounds is 0/unlimited). Always shown — a freshly spawned
     // child at `round 0` proves the counter is live, not silently frozen.
     const maxRounds = this.readMaxRounds()
-    metaParts.push(`round ${view.rounds ?? 0}${maxRounds > 0 ? `/${maxRounds}` : ''}`)
+    metaParts.push(t('misc.agent.rounds', { n: view.rounds ?? 0, cap: maxRounds > 0 ? `/${maxRounds}` : '' }))
     const elapsed = (Date.now() - view.startedAt) / 1000
     metaParts.push(`${elapsed.toFixed(1)}s`)
     const metaPlain = ' · ' + metaParts.join(' · ')
     // Defensive: never render an empty name — fall back to `subagent`.
     const rawLabel = clipPanelLine(view.label, 0).replace(/\r/g, '').trim()
     const namePlain = rawLabel === ''
-      ? 'subagent'
+      ? t('misc.agent.fallbackName')
       : rawLabel
     // Fixed chrome: prefix (3) + spinner (1) + following space (1) + a safety
     // column. The name caps at 40% of what the meta leaves; the tail gets the

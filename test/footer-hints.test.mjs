@@ -21,7 +21,7 @@ import { visibleWidth } from '../lib/text.js'
 const stripAnsi = line => line.replace(/\x1b\[[0-9;]*m/g, '')
 
 test('buildFooterHint with the default selection equals the legacy FOOTER_HINT', () => {
-  assert.equal(buildFooterHint(DEFAULT_FOOTER_HINTS), FOOTER_HINT)
+  assert.equal(buildFooterHint(DEFAULT_FOOTER_HINTS), FOOTER_HINT())
 })
 
 test('buildFooterHint keeps only the selected segments, in the fixed display order', () => {
@@ -50,7 +50,7 @@ test('the default hint width matches the current segment set', () => {
   // to 140 when the Ctrl+Shift+F search segment joined (transcript search),
   // to 144 when the preset segment switched from the removed Tab binding
   // to the /preset command.
-  assert.equal(visibleWidth(FOOTER_HINT), 144)
+  assert.equal(visibleWidth(FOOTER_HINT()), 144)
 })
 
 test('FooterHint renders one clipped row at any width - never a wrap', () => {

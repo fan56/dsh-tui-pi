@@ -22,6 +22,7 @@ import { PanelHost, panelThemeFns } from './panels.ts'
 import { normalizePreview } from './sessions.ts'
 import { BOLD, RESET, ansiFg, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
+import { t } from './i18n/index.ts'
 
 /** Live-refresh interval while the panel is open (subagent viewer cadence). */
 const QUEUE_TICK_MS = 300
@@ -33,18 +34,21 @@ const QUEUE_TICK_MS = 300
  */
 export const QUEUE_REFRESH_FAIL_THRESHOLD = 3
 
-/** The warning text raised once per failure streak at the threshold. */
+/** The warning text raised once per failure streak at the threshold (en reference; the raise site resolves t()). */
 export const QUEUE_REFRESH_FAILED_NOTICE = 'Queue status refresh failed — the list below may be stale.'
 
 /** Rows visible without scrolling; the overlay maxHeight slices the rest. */
 const QUEUE_MAX_VISIBLE = 12
 
-/** Target glyph + label per inbox boundary (badge vocabulary of the design). */
+/**
+ * Target glyph + label per inbox boundary (badge vocabulary of the design).
+ * Resolved through t() per call so the active language applies (render-time).
+ */
 function targetLabel(target: 'next-step' | 'next-turn'): string {
-  return target === 'next-step' ? '↪ steer' : '⏳ queued'
+  return target === 'next-step' ? t('queue.target.steer') : t('queue.target.queued')
 }
 
-/** Footer hint — hardcoded like every other in-panel key hint. */
+/** Footer hint — en literal kept for tests; the render site resolves t(). */
 export const QUEUE_PANEL_FOOTER = '↑↓ select · d remove · s steer now · Esc close'
 
 /** Everything the panel needs from the outside — injectable for tests. */
@@ -148,8 +152,8 @@ export class PendingQueuePanel implements Component {
         this.refreshFailures++
         if (this.refreshFailures >= QUEUE_REFRESH_FAIL_THRESHOLD && !this.refreshFailureReported) {
           this.refreshFailureReported = true
-          this.notice = QUEUE_REFRESH_FAILED_NOTICE
-          this.deps.onRefreshError?.(QUEUE_REFRESH_FAILED_NOTICE)
+          this.notice = t('queue.refreshFailed')
+          this.deps.onRefreshError?.(t('queue.refreshFailed'))
           this.requestRenderFn()
         }
       }
@@ -161,12 +165,12 @@ export class PendingQueuePanel implements Component {
     const fns = panelThemeFns(this.theme)
     const wrap = Math.max(2, width - 2)
     const lines: string[] = [
-      fns.accent(BOLD + clipToWidth('Pending messages', wrap) + RESET),
+      fns.accent(BOLD + clipToWidth(t('queue.title'), wrap) + RESET),
       '',
     ]
     const visible = this.items.slice(0, QUEUE_MAX_VISIBLE)
     if (visible.length === 0) {
-      lines.push(fns.subtle(clipToWidth('— no pending messages —', wrap)))
+      lines.push(fns.subtle(clipToWidth(t('queue.empty'), wrap)))
     } else {
       for (let i = 0; i < visible.length; i++) {
         const row = clipToWidth(queueRow(visible[i]!, i === this.selected), wrap)
@@ -177,7 +181,7 @@ export class PendingQueuePanel implements Component {
     }
     lines.push('')
     if (this.notice !== undefined) lines.push(fns.subtle(clipToWidth(this.notice, wrap)))
-    lines.push(fns.subtle(clipToWidth(QUEUE_PANEL_FOOTER, wrap)))
+    lines.push(fns.subtle(clipToWidth(t('queue.footer'), wrap)))
     return lines
   }
 

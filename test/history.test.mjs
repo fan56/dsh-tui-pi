@@ -210,6 +210,6 @@ test('FOOTER_HINT width is within a single-line budget', () => {
   // to 145 when the Ctrl+Shift+F search segment joined; the default grew to
   // 144 when the preset segment switched from the removed Tab binding to
   // the /preset command.
-  const width = visibleWidth(FOOTER_HINT)
+  const width = visibleWidth(FOOTER_HINT())
   assert.ok(width <= 145, `FOOTER_HINT is ${width} columns`)
 })

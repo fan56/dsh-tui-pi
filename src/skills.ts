@@ -29,6 +29,7 @@ import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { rowMarker, TABLE_SEP } from './panels.ts'
 import type { UsageSnapshot } from './usage.ts'
+import { t } from './i18n/index.ts'
 
 /**
  * Enabled state of a skill for a human user: visible and loadable on every
@@ -384,12 +385,12 @@ export function applySkillFrontmatter(
   try {
     text = readFileSync(path, 'utf8')
   } catch {
-    return `cannot read skill file: ${path}`
+    return t('skills.error.cannotRead', { path })
   }
   const eol = text.includes('\r\n') ? '\r\n' : '\n'
   const lines = text.split(/\r?\n/)
   // A YAML frontmatter block opens at line 0 and closes at the next `---`.
-  if (lines[0]?.trim() !== '---') return 'missing frontmatter (file must start with `---`)'
+  if (lines[0]?.trim() !== '---') return t('skills.error.missingFrontmatter')
   let close = -1
   for (let i = 1; i < lines.length; i++) {
     if (lines[i].trim() === '---') {
@@ -397,7 +398,7 @@ export function applySkillFrontmatter(
       break
     }
   }
-  if (close < 0) return 'missing closing frontmatter fence'
+  if (close < 0) return t('skills.error.missingCloseFence')
   let changed = false
   for (const [key, value] of Object.entries(updates)) {
     const rendered = value === null ? null : `${key}: ${value}`
@@ -442,7 +443,7 @@ export function applySkillFrontmatter(
       // Best-effort — the original error is what we surface.
     }
     const message = error instanceof Error ? error.message : String(error)
-    return `cannot write skill file: ${message}`
+    return t('skills.error.cannotWrite', { message })
   }
   return undefined
 }

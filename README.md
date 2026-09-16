@@ -121,10 +121,11 @@ Remap any app key through `~/.dsh/keybindings.json` (a partial JSON map, live-ap
 
 ## Configuration
 
-Every knob lives under the `dsh-tui` settings namespace in `~/.dsh/settings.yaml` (note the section name: `dsh-tui`). Theme / panel height / footer hints / icon set are `applies: 'live'` — a committed change hot-applies to the running TUI, no restart:
+Every knob lives under the `dsh-tui` settings namespace in `~/.dsh/settings.yaml` (note the section name: `dsh-tui`). Language / theme / panel height / footer hints / icon set are `applies: 'live'` — a committed change hot-applies to the running TUI, no restart:
 
 | Key | Default | Meaning |
 |---|---|---|
+| `language` | `en` | UI language: the id of a language file from the bundled `locales/` dir or `~/.dsh/locales/` (shipped: `en`, `zh-CN`). `/language` lists and switches live; adding a language is one JSON file, no code |
 | `theme` | `auto` | Color scheme: `auto` (follow the terminal) / `light` / `dark` / any registered theme name (`/theme` writes back to the same key) |
 | `panelHeight` | `'1'` | Think/tool panel height: `'1'` / `'5'` / `'7'` / `'10'` / `'all'` (full content) |
 | `maxAgents` | `4` | Max concurrently running subagents, `0` = unlimited (hot-tunable in `/agents → l` limits) |
@@ -155,6 +156,8 @@ dsh-tui:
 ```
 
 On a timeout the focused question is auto-answered with the **recommended option** (first in the list); plans are never auto-approved, a half-typed answer is committed, and every automatic pick is noted to the model in the answer. Details: [Ask User Question → Timeouts](docs/features/ask-user-question.md#timeouts--the-panel-never-waits-forever).
+
+**UI languages.** Every user-visible string resolves through the i18n catalog: one flat JSON file per language (`locales/<id>.json` — `en.json` is the canonical template, `zh-CN.json` ships translated). `/language` lists the installed languages and `/language <id>` switches immediately (persisted to `dsh-tui.language`; the next repaint speaks it — the transcript backlog keeps the old language until it rebuilds). Drop your own file into `~/.dsh/locales/` to add or partially override a language (same id merges per key over the bundled one); Korean/Japanese are future files, not code changes. `/settings` descriptions apply on restart.
 
 Key remaps live in `~/.dsh/keybindings.json` (keyboard section above); `DSH_TUI_COPY_ON_SELECT=0` keeps drag-selection visual-only.
 

@@ -117,10 +117,11 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 
 ## 配置
 
-全部旋钮都在 `~/.dsh/settings.yaml` 的 `dsh-tui` settings 命名空间下（注意段名是 `dsh-tui`）。主题 / 面板高度 / footer 提示 / 图标集为 `applies: 'live'`——保存提交即热生效，无需重启：
+全部旋钮都在 `~/.dsh/settings.yaml` 的 `dsh-tui` settings 命名空间下（注意段名是 `dsh-tui`）。语言 / 主题 / 面板高度 / footer 提示 / 图标集为 `applies: 'live'`——保存提交即热生效，无需重启：
 
 | 键 | 默认 | 作用 |
 |---|---|---|
+| `language` | `en` | 界面语言：取内置 `locales/` 目录或 `~/.dsh/locales/` 下语言文件的 id（内置 `en`、`zh-CN`）。`/language` 列出并即时切换；加一种语言 = 一个 JSON 文件，零代码 |
 | `theme` | `auto` | 配色：`auto`（跟随终端）/`light`/`dark`/任意已注册主题名；`/theme` 写回同一段 |
 | `panelHeight` | `'1'` | think/tool 面板高度：`'1'`/`'5'`/`'7'`/`'10'`/`'all'`（完整内容） |
 | `maxAgents` | `4` | 并发子代理上限，`0` = 不限（`/agents → l` limits 面板可热调） |
@@ -151,6 +152,8 @@ dsh-tui:
 ```
 
 超时后，聚焦的未答题目自动选**推荐项**（列表第一项）；计划审批绝不自动批准；打了一半的自由文本会被提交；每次自动作答都会在答案里向模型注明。详见 [Ask User Question → Timeouts](docs/features/ask-user-question.md#timeouts--the-panel-never-waits-forever)。
+
+**界面语言（i18n）。**所有界面文案都走语言目录解析：每种语言一个扁平 JSON 文件（`locales/<id>.json`——`en.json` 是规范模板，`zh-CN.json` 为已翻译的中文）。`/language` 列出已装语言，`/language <id>` 即时切换（写回 `dsh-tui.language`；下一帧刷新即生效——已有对话内容保持原语言，直到重建）。把自建文件放进 `~/.dsh/locales/` 即可新增语言或局部覆盖（同名 id 按键合并到内置文件之上）；韩文/日文就是未来的两个文件，不是代码改动。`/settings` 里的描述文案重启后生效。
 
 按键重映射见 `~/.dsh/keybindings.json`（上文键盘一节）。
 

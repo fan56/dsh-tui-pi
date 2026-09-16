@@ -28,6 +28,7 @@ import { readImageFile } from '@deepseek-ai/dsh-attachment-local'
 import { join } from 'node:path'
 import { dshHome } from './append-system.ts'
 import { ansiFg, RESET, type TuiTheme } from './theme/index.ts'
+import { t } from './i18n/index.ts'
 
 /** Bitmaps rendered per message; extra image blocks collapse to a "+N more" line. */
 export const MAX_IMAGES_PER_MESSAGE = 8
@@ -116,13 +117,17 @@ export function renderImageAttachments(
   for (const block of shown) {
     const slot = new Container()
     const name = block.attachment.name ?? block.attachment.attachmentId
-    const placeholder = muted(`🖼 ${name} — loading (${block.attachment.width}×${block.attachment.height})`)
+    const placeholder = muted(t('misc.attachment.loading', {
+      name,
+      width: block.attachment.width,
+      height: block.attachment.height,
+    }))
     slot.addChild(placeholder)
     doc.addChild(slot)
     void loadImageSlot(slot, placeholder, block, { read, root, requestRender, muted, imageTheme })
   }
   if (blocks.length > shown.length) {
-    doc.addChild(muted(`🖼 +${blocks.length - shown.length} more images not shown`))
+    doc.addChild(muted(t('misc.attachment.more', { n: blocks.length - shown.length })))
   }
   doc.addChild(new Spacer(1))
 }
@@ -153,7 +158,7 @@ async function loadImageSlot(
     const code = (error as { code?: string } | undefined)?.code
       ?? (error as { detailCode?: string } | undefined)?.detailCode
     slot.removeChild(placeholder)
-    slot.addChild(deps.muted(`🖼 ${name} — unavailable${code ? ` (${code})` : ''}`))
+    slot.addChild(deps.muted(t('misc.attachment.unavailable', { name, code: code ? ` (${code})` : '' })))
     try { deps.requestRender() } catch { /* TUI already disposed */ }
     return
   }

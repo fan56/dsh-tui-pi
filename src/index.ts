@@ -109,16 +109,16 @@ import {
   deliverToAgent,
   promotePending,
   removeFromInbox,
-  STEER_UNAVAILABLE_NOTICE,
-  TURN_ENDED_QUEUED_NOTICE,
+  steerUnavailableNotice,
+  turnEndedQueuedNotice,
   type PromptRoute,
   type QueueActionResult,
 } from './steer-flow.ts'
 import { openSubmitRouteDialog } from './route-dialog.ts'
 import {
   BtwController,
-  BTW_IDLE_NOTICE,
-  BTW_USAGE,
+  btwIdleNotice,
+  btwUsage,
   buildBtwSnapshot,
   parseBtwInput,
   resolveSnapshotLimit,
@@ -489,7 +489,7 @@ export function apply(ctx: Context): void {
             // so a stray Esc can never kill a running task. The notice keeps
             // the armed first press from feeling dead and states the
             // contract explicitly.
-            renderer.renderNotice('Press Esc again to stop all LLM work', 'info')
+            renderer.renderNotice(t('tui.esc.armStop'), 'info')
             break
           case 'interrupt-cancel': {
             // Second Esc while LLM work runs (main turn and/or subagents):
@@ -532,7 +532,7 @@ export function apply(ctx: Context): void {
               void disposeAndExit(0)
               break
             }
-            renderer.renderNotice(`${stopIcon()} Ctrl+C ×2 — quitting…`, 'info')
+            renderer.renderNotice(t('tui.esc.quitArmed', { icon: stopIcon() }), 'info')
             quitConfirmTimer = setTimeout(() => {
               quitConfirmTimer = undefined
               void disposeAndExit(0)
@@ -547,7 +547,7 @@ export function apply(ctx: Context): void {
             if (action.key === 'ctrl-c' && quitConfirmTimer !== undefined) {
               clearTimeout(quitConfirmTimer)
               quitConfirmTimer = undefined
-              renderer.renderNotice('quit aborted — Ctrl+C was held, not double-pressed', 'info')
+              renderer.renderNotice(t('tui.esc.quitAborted'), 'info')
             }
             break
           case 'ctrl-d-quit':
@@ -573,7 +573,7 @@ export function apply(ctx: Context): void {
               readItems: () => bridge.getPendingPrompts(),
               onRemove: item => {
                 const agent = bridge.getAgent()
-                if (agent === undefined) return { kind: 'error' as const, error: 'No active session.' }
+                if (agent === undefined) return { kind: 'error' as const, error: t('tui.session.none') }
                 const result = removeFromInbox(agent.inbox, item)
                 // Review B1: a successful revoke must retire the transcript
                 // badge — the echo bubble becomes an explicit canceled line
@@ -585,7 +585,7 @@ export function apply(ctx: Context): void {
               },
               onPromote: item => {
                 const agent = bridge.getAgent()
-                if (agent === undefined) return { kind: 'error' as const, error: 'No active session.' }
+                if (agent === undefined) return { kind: 'error' as const, error: t('tui.session.none') }
                 const result = promotePending(agent, item)
                 if (result.kind === 'promoted' && result.degraded) {
                   // Review S3: the steer degraded back into the queue — flip
@@ -601,7 +601,7 @@ export function apply(ctx: Context): void {
               },
               onOutcome: (result: QueueActionResult) => {
                 if (result.kind === 'promoted' && result.degraded) {
-                  renderer.renderNotice(STEER_UNAVAILABLE_NOTICE, 'info')
+                  renderer.renderNotice(steerUnavailableNotice(), 'info')
                 } else if (result.kind === 'error') {
                   renderer.renderNotice(result.error, 'error')
                 }
@@ -674,14 +674,14 @@ export function apply(ctx: Context): void {
      * dialog's Stop choice (double-Esc) and the first Ctrl+C mid-task.
      */
     const stopTask = async (): Promise<void> => {
-      renderer.renderNotice(`${stopIcon()} stopping all LLM work…`, 'info')
+      renderer.renderNotice(t('tui.stop.stopping', { icon: stopIcon() }), 'info')
       // The stop gesture is the everything-stop: side calls die with the turn.
       btwController.cancelAll()
       const cancelled = await bridge.cancelActiveTurn()
       const stoppedChildren = bridge.cancelAllChildren()
       // State raced idle between the decision and the cancel calls — nothing
       // to cancel (e.g. the task settled while the dialog was up).
-      if (!cancelled && stoppedChildren === 0) renderer.renderNotice('Nothing running to cancel.', 'info')
+      if (!cancelled && stoppedChildren === 0) renderer.renderNotice(t('tui.stop.nothingRunning'), 'info')
     }
     // Arm the settings watch sink now that the renderer exists (see apply()).
     applyThemeRef = (pref: ThemePreference): void => {
@@ -696,7 +696,7 @@ export function apply(ctx: Context): void {
     // Startup notices for a broken/misleading keybindings file — the TUI keeps
     // running with defaults; the panel shows the same warnings via /hotkeys.
     for (const warning of keyBindings.warnings) {
-      renderer.renderNotice(`keybindings: ${warning}`, 'error')
+      renderer.renderNotice(t('tui.keys.warningPrefix', { warning }), 'error')
     }
     // Arm the shared notice sink now that the TUI is up. Every operator
     // trace that fired before this point — the settings-namespace
@@ -758,7 +758,7 @@ export function apply(ctx: Context): void {
             ui.tui,
             text => BOLD + ansiFg(ui.theme.palette.accent) + text + RESET,
             text => BOLD + ansiFg(ui.theme.palette.accent) + text + RESET,
-            'working…',
+            t('tui.status.working'),
           )
           ui.status.addChild(loader)
           loader.start()
@@ -834,7 +834,7 @@ export function apply(ctx: Context): void {
         for (const text of bridge.takePendingRemoteFollowups()) {
           await bridge.prompt(text)
         }
-        emitNotice('Write lock acquired — follow-ups sent.')
+        emitNotice(t('tui.takeover.writeLock'))
         ui.requestRender()
       },
     }
@@ -1002,7 +1002,7 @@ export function apply(ctx: Context): void {
     const btwController = new BtwController({
       stream: options => {
         const llm = ctx.get('llm')
-        if (llm === undefined) throw new Error('LLM service is not available.')
+        if (llm === undefined) throw new Error(t('tui.btw.noLlm'))
         return llm.stream({
           provider: options.provider,
           model: options.model,
@@ -1037,17 +1037,17 @@ export function apply(ctx: Context): void {
       if (parsed.kind === 'empty') {
         const opened = btwController.openReview()
         return opened === 'live'
-          ? { kind: 'success' as const, text: 'btw — the running answer is back on screen.' }
+          ? { kind: 'success' as const, text: t('tui.btw.backOnScreen') }
           : opened === 'review'
-          ? { kind: 'success' as const, text: 'Last btw exchange shown.' }
-          : { kind: 'success' as const, text: BTW_USAGE }
+          ? { kind: 'success' as const, text: t('tui.btw.lastShown') }
+          : { kind: 'success' as const, text: btwUsage() }
       }
       if (parsed.kind === 'error') return { kind: 'error' as const, text: parsed.error }
       // btw is by-the-way by definition: the main line must be running (and
       // this must be the live view, not a read-only remote one) — when idle,
       // a normal prompt is strictly better (tools, history, full context).
       if (!(bridge.isRunning() && !bridge.isReadOnlyView())) {
-        return { kind: 'error' as const, text: BTW_IDLE_NOTICE }
+        return { kind: 'error' as const, text: btwIdleNotice() }
       }
       const result = btwController.submit({
         question: parsed.question,
@@ -1055,14 +1055,14 @@ export function apply(ctx: Context): void {
       })
       switch (result.kind) {
         case 'started':
-          return { kind: 'success' as const, text: 'btw — answering alongside the main task.' }
+          return { kind: 'success' as const, text: t('tui.btw.started') }
         case 'queued':
-          return { kind: 'success' as const, text: `btw queued (position ${result.position}).` }
+          return { kind: 'success' as const, text: t('tui.btw.queued', { position: result.position }) }
         case 'rejected':
-          return { kind: 'error' as const, text: `btw rejected — ${result.reason}.` }
+          return { kind: 'error' as const, text: t('tui.btw.rejected', { reason: result.reason }) }
       }
     }
-    registerLocalCommand('btw', 'Ask a side question while the main task runs (temp overlay, not kept)', btwHandler)
+    registerLocalCommand('btw', t('tui.cmd.btw.description'), btwHandler)
 
     // ------------------------------------------- TUI-owned slash commands --
     // Web-surface parity: `model` is a browser client contribution there and
@@ -1077,7 +1077,7 @@ export function apply(ctx: Context): void {
         ctx, ui.tui, ui.theme, bridge.getSelection(),
         refocusEditor,
       )
-      if (picked === undefined) return { kind: 'success' as const, text: 'Model unchanged.' }
+      if (picked === undefined) return { kind: 'success' as const, text: t('tui.model.unchanged') }
       const llm = ctx.get('llm')
       if (llm !== undefined) {
         await llm.resolveCallConfig({ provider: picked.provider, model: picked.model })
@@ -1086,14 +1086,14 @@ export function apply(ctx: Context): void {
       const persistError = await persistDefaultModel(ctx, picked)
       ui.requestRender()
       const modelText = picked.reasoningEffort === undefined
-        ? `Model: ${picked.provider}/${picked.model}`
-        : `Model: ${picked.provider}/${picked.model} · think ${String(picked.reasoningEffort)}`
+        ? t('tui.model.selected', { id: `${picked.provider}/${picked.model}` })
+        : t('tui.model.selectedThink', { id: `${picked.provider}/${picked.model}`, effort: String(picked.reasoningEffort) })
       return {
         kind: 'success' as const,
-        text: persistError === undefined ? modelText : `${modelText} · ⚠ not persisted: ${persistError}`,
+        text: persistError === undefined ? modelText : t('tui.persist.failed', { text: modelText, error: persistError }),
       }
     }
-    registerLocalCommand('model', 'Select the model (and think level) for this conversation', modelHandler)
+    registerLocalCommand('model', t('tui.cmd.model.description'), modelHandler)
 
     // /agents: manage agent definition markdown files (model, think level,
     // spawn depth) — the terminal counterpart of pi's /fun-agent-cfg. An
@@ -1105,19 +1105,19 @@ export function apply(ctx: Context): void {
         trimmed === '' ? undefined : trimmed,
         () => subagentPolicy.getStats(),
       )
-      if (result === undefined) return { kind: 'success' as const, text: 'Agents unchanged.' }
+      if (result === undefined) return { kind: 'success' as const, text: t('tui.agents.unchanged') }
       return { kind: 'success' as const, text: result }
     }
-    registerLocalCommand('agents', 'Manage agent definitions (model, think level, spawn depth) from markdown files', agentsHandler)
+    registerLocalCommand('agents', t('tui.cmd.agents.description'), agentsHandler)
 
     // /subagents: the command twin of Ctrl+G — pick a running (or recently
     // settled) subagent and inspect its live transcript in the 80% viewer.
     // Same flow as the key path; empty board closes immediately.
     const subagentsHandler: LocalCommandHandler = async () => {
       await openSubagentViewer(ctx, ui.tui, ui.theme, bridge, refocusEditor)
-      return { kind: 'success' as const, text: 'Subagent viewer closed.' }
+      return { kind: 'success' as const, text: t('tui.subagents.viewerClosed') }
     }
-    registerLocalCommand('subagents', 'Browse subagents and inspect their live transcript', subagentsHandler)
+    registerLocalCommand('subagents', t('tui.cmd.subagents.description'), subagentsHandler)
 
     // /think: cycle the current model's reasoning effort without re-picking
     // the model. A no-session /think still lands in the selection ref and
@@ -1125,25 +1125,25 @@ export function apply(ctx: Context): void {
     const thinkHandler: LocalCommandHandler = async () => {
       const current = bridge.getSelection()
       if (current === undefined) {
-        return { kind: 'error' as const, text: 'No model selected — pick one with /model first.' }
+        return { kind: 'error' as const, text: t('tui.think.noModel') }
       }
       const result = await pickEffort(ctx, ui.tui, ui.theme, current, refocusEditor)
       if (result.kind === 'unsupported') {
         return {
           kind: 'error' as const,
-          text: `${current.provider}/${current.model} exposes no selectable think levels.`,
+          text: t('tui.think.unsupported', { id: `${current.provider}/${current.model}` }),
         }
       }
-      if (result.kind === 'cancelled') return { kind: 'success' as const, text: 'Think level unchanged.' }
+      if (result.kind === 'cancelled') return { kind: 'success' as const, text: t('tui.think.unchanged') }
       if (result.effort === 'default') {
         const next = { provider: current.provider, model: current.model }
         bridge.setSelection(next)
         const persistError = await persistDefaultModel(ctx, next)
         ui.requestRender()
-        const thinkText = `Think: provider default (${current.provider}/${current.model}).`
+        const thinkText = t('tui.think.providerDefault', { id: `${current.provider}/${current.model}` })
         return {
           kind: 'success' as const,
-          text: persistError === undefined ? thinkText : `${thinkText} · ⚠ not persisted: ${persistError}`,
+          text: persistError === undefined ? thinkText : t('tui.persist.failed', { text: thinkText, error: persistError }),
         }
       }
       const next = {
@@ -1154,13 +1154,13 @@ export function apply(ctx: Context): void {
       bridge.setSelection(next)
       const persistError = await persistDefaultModel(ctx, next)
       ui.requestRender()
-      const thinkText = `Think: ${String(result.effort)} (${current.provider}/${current.model}).`
+      const thinkText = t('tui.think.set', { effort: String(result.effort), id: `${current.provider}/${current.model}` })
       return {
         kind: 'success' as const,
-        text: persistError === undefined ? thinkText : `${thinkText} · ⚠ not persisted: ${persistError}`,
+        text: persistError === undefined ? thinkText : t('tui.persist.failed', { text: thinkText, error: persistError }),
       }
     }
-    registerLocalCommand('think', 'Switch the current model\'s think (reasoning) level', thinkHandler)
+    registerLocalCommand('think', t('tui.cmd.think.description'), thinkHandler)
 
     /**
      * Record one committed preset as THIS workspace's remembered selection
@@ -1177,7 +1177,7 @@ export function apply(ctx: Context): void {
         const path = workspacePresetsPath()
         const doc = withRememberedPreset(loadWorkspacePresets(path), projectKeyFor(process.cwd()), presetId)
         const error = saveWorkspacePresets(path, doc)
-        if (error !== undefined) renderer.renderNotice(`preset memory not saved: ${error}`, 'error')
+        if (error !== undefined) renderer.renderNotice(t('tui.preset.memorySaveFailed', { error }), 'error')
       } catch {
         // A broken store must never fail the switch itself.
       }
@@ -1192,7 +1192,7 @@ export function apply(ctx: Context): void {
     // directly (the first submit already creates the session on it).
     const presetHandler: LocalCommandHandler = async rawInput => {
       if (presetState.roster.length === 0) {
-        return { kind: 'error' as const, text: 'No agent presets available.' }
+        return { kind: 'error' as const, text: t('tui.preset.none') }
       }
       const arg = rawInput?.trim() ?? ''
       let target: PresetEntry | undefined
@@ -1207,10 +1207,10 @@ export function apply(ctx: Context): void {
       } else {
         target = findPresetByName(presetState, arg)
         if (target === undefined) {
-          return { kind: 'error' as const, text: `Unknown preset: ${arg}` }
+          return { kind: 'error' as const, text: t('tui.preset.unknown', { name: arg }) }
         }
       }
-      if (target === undefined) return { kind: 'success' as const, text: 'Preset unchanged.' }
+      if (target === undefined) return { kind: 'success' as const, text: t('tui.preset.unchanged') }
       const outcome = await performPresetSwitch(presetState, target, {        hasLiveSession: () => bridge.getAgent() !== undefined,
         confirmSwitch: (name, restart) =>
           openPresetConfirmDialog(ui.tui, ui.theme, name, restart, refocusEditor)
@@ -1291,7 +1291,7 @@ export function apply(ctx: Context): void {
       if (outcome.switched) persistRememberedPreset(target.id)
       return { kind: 'success' as const, text: outcome.message }
     }
-    registerLocalCommand('preset', 'Switch the agent preset (starts a new session on it; /preset next cycles)', presetHandler)
+    registerLocalCommand('preset', t('tui.cmd.preset.description'), presetHandler)
 
     // Model profiles moved to the dsh-profile-switch plugin (ask-user based,
     // surface-agnostic). What stays HERE is the live-selection bridge it
@@ -1343,7 +1343,7 @@ export function apply(ctx: Context): void {
         createdAt: header?.createdAt,
         model: selection === undefined ? undefined : `${selection.provider}/${selection.model}`,
         effort: selection === undefined || selection.reasoningEffort === undefined
-          ? (selection === undefined ? undefined : 'provider default')
+          ? (selection === undefined ? undefined : t('tui.session.effortDefault'))
           : String(selection.reasoningEffort),
         msgCount: stats.msgCount,
         toolCallCount: stats.toolCallCount,
@@ -1361,20 +1361,20 @@ export function apply(ctx: Context): void {
         : (title) => {
             try {
               const snapshot = sessionTitleSeam.rename(liveSession, title)
-              return { ok: true, note: `renamed to "${snapshot.title}"`, title: snapshot.title }
+              return { ok: true, note: t('tui.session.renamed', { title: snapshot.title }), title: snapshot.title }
             } catch (error) {
               // The one input-blaming failure gets a panel-friendly phrase;
               // anything else (disposed service, non-live session) rides its
               // own message into the panel's note line.
               if (error instanceof Error && error.name === 'SessionTitleInvalidError') {
-                return { ok: false, note: 'title normalizes to empty' }
+                return { ok: false, note: t('tui.session.titleEmpty') }
               }
               throw error
             }
           })
-      return { kind: 'success' as const, text: agent === undefined ? 'No active session.' : 'Session info shown.' }
+      return { kind: 'success' as const, text: agent === undefined ? t('tui.session.none') : t('tui.session.infoShown') }
     }
-    registerLocalCommand('session', 'Show the current session\'s info (id, title, stats) and rename it (r)', sessionHandler)
+    registerLocalCommand('session', t('tui.cmd.session.description'), sessionHandler)
 
     // /resume: pick a persisted session, validate its log, swap the live
     // agent for it, and rebuild transcript + stats from the stored events.
@@ -1397,7 +1397,7 @@ export function apply(ctx: Context): void {
         return { kind: 'error' as const, text: message }
       }
       if (picked.kind === 'empty') {
-        return { kind: 'error' as const, text: 'No other persisted sessions to resume.' }
+        return { kind: 'error' as const, text: t('tui.resume.noneOther') }
       }
       if (picked.kind === 'empty-filtered') {
         // Sessions exist but the display window hid them all — name the
@@ -1408,10 +1408,10 @@ export function apply(ctx: Context): void {
           : `${picked.minBytes}B`
         return {
           kind: 'error' as const,
-          text: `No sessions within the resume window (${picked.maxAgeDays}d, ≥${floor}) — adjust dsh-tui.resume.* to see more.`,
+          text: t('tui.resume.windowEmpty', { days: picked.maxAgeDays, floor }),
         }
       }
-      if (picked.kind === 'cancelled') return { kind: 'success' as const, text: 'Resume cancelled.' }
+      if (picked.kind === 'cancelled') return { kind: 'success' as const, text: t('tui.resume.cancelled') }
 
       // Narrowed shared handle for the closures below (const narrowing
       // propagates into async closures; `picked`'s does not).
@@ -1444,18 +1444,18 @@ export function apply(ctx: Context): void {
               ui.requestRender()
               return {
                 kind: 'success' as const,
-                text: `Watching ${clipToWidth(String(target.id), 8)} (read-only · driven by another process). /resume or /new to switch.`,
+                text: t('tui.resume.watching', { id: clipToWidth(String(target.id), 8) }),
               }
             } catch (watchError: unknown) {
               return {
                 kind: 'error' as const,
-                text: `Cannot watch ${clipToWidth(String(target.id), 8)} read-only: ${messageOf(watchError)}`,
+                text: t('tui.resume.watchFailed', { id: clipToWidth(String(target.id), 8), error: messageOf(watchError) }),
               }
             }
           }
           return {
             kind: 'error' as const,
-            text: `Resume failed: ${message} — the previous session was closed; the next prompt starts a new one.`,
+            text: t('tui.resume.failed', { error: message }),
           }
         }
         // Seed the badge cache for the resumed session (its pin event may have
@@ -1483,7 +1483,7 @@ export function apply(ctx: Context): void {
         ui.requestRender()
         return {
           kind: 'success' as const,
-          text: `Resumed ${clipToWidth(String(target.id), 8)} · ${session.seq} events.`,
+          text: t('tui.resume.done', { id: clipToWidth(String(target.id), 8), count: session.seq }),
         }
       }
 
@@ -1500,13 +1500,13 @@ export function apply(ctx: Context): void {
         if (logPath === undefined) {
           return {
             kind: 'error' as const,
-            text: `repair failed: cannot locate the log of ${clipToWidth(String(target.id), 8)} on disk — log untouched`,
+            text: t('tui.repair.logMissing', { id: clipToWidth(String(target.id), 8) }),
           }
         }
         if (await openRepairConfirmDialog(ui.tui, ui.theme, refocusEditor) !== 'repair') {
           return {
             kind: 'error' as const,
-            text: `Cannot resume ${clipToWidth(String(target.id), 8)}: ${message}`,
+            text: t('tui.resume.cannot', { id: clipToWidth(String(target.id), 8), error: message }),
           }
         }
         // repairSessionLog maps its own failures to results; the catch is a
@@ -1516,7 +1516,7 @@ export function apply(ctx: Context): void {
           notice = repairFailureNotice(await repairSessionLog(logPath))
         } catch (error: unknown) {
           const detail = messageOf(error)
-          notice = `repair failed: ${detail} — log untouched`
+          notice = t('tui.repair.failed', { error: detail })
         }
         if (notice !== undefined) return { kind: 'error' as const, text: notice }
         // A verified-clean log now sits under the canonical name — re-enter
@@ -1533,11 +1533,11 @@ export function apply(ctx: Context): void {
         if (isCorruptLogError(message)) {
           return offerCorruptedLogRepair(message)
         }
-        return { kind: 'error' as const, text: `Cannot resume ${clipToWidth(String(picked.id), 8)}: ${message}` }
+        return { kind: 'error' as const, text: t('tui.resume.cannot', { id: clipToWidth(String(picked.id), 8), error: message }) }
       }
       return resumeAndReplay()
     }
-    registerLocalCommand('resume', 'Resume a persisted session', resumeHandler)
+    registerLocalCommand('resume', t('tui.cmd.resume.description'), resumeHandler)
 
     // /history: the read-only two-pane look-back (ADR 0003) — left pane lists
     // the browsed session's completed turns, right pane shows the selected
@@ -1607,7 +1607,7 @@ export function apply(ctx: Context): void {
       }, arg === '' ? undefined : arg)
       return { kind: result.error ? 'error' as const : 'success' as const, text: result.text }
     }
-    registerLocalCommand('history', 'Browse past turns of a session (read-only; /history <id> for a stored one)', historyHandler)
+    registerLocalCommand('history', t('tui.cmd.history.description'), historyHandler)
 
     // Auto-resume after a hot-reload: a `/reload` stashes the previously
     // current session id before this fiber's teardown, and the freshly
@@ -1656,7 +1656,7 @@ export function apply(ctx: Context): void {
           ui.requestRender()
         } catch (error: unknown) {
           const message = messageOf(error)
-          renderer.renderNotice(`--resume ${clipToWidth(bootResumeId, 8)}: ${message} — starting fresh.`, 'error')
+          renderer.renderNotice(t('tui.boot.resumeFailed', { id: clipToWidth(bootResumeId, 8), error: message }), 'error')
         }
       })()
     }
@@ -1667,11 +1667,11 @@ export function apply(ctx: Context): void {
     // falls back to the dsh path when one does (behavior unchanged there).
     commands.registerLocal('export', async () => ({
       kind: 'error' as const,
-      text: 'No active session to export.',
+      text: t('tui.export.noSession'),
     }))
     ctx.effect(() => ctx.commands.register({
       name: 'export',
-      description: 'Export this session log as JSONL',
+      description: t('tui.cmd.export.description'),
       input: { hint: '[path]' },
       handler: async invocation => {
         const events = invocation.agent.session.snapshotEvents()
@@ -1679,7 +1679,7 @@ export function apply(ctx: Context): void {
         const target = invocation.rawInput.trim() === '' ? fallback : resolve(invocation.rawInput.trim())
         await mkdir(dirname(target), { recursive: true })
         await writeFile(target, events.map(event => JSON.stringify(event)).join('\n') + '\n')
-        return { kind: 'success' as const, text: `Exported ${events.length} events → ${target}` }
+        return { kind: 'success' as const, text: t('tui.export.done', { count: events.length, path: target }) }
       },
     }), 'dsh-tui-pi: /export')
 
@@ -1738,9 +1738,9 @@ export function apply(ctx: Context): void {
 
     const newHandler: LocalCommandHandler = async () => {
       await startNewSession()
-      return { kind: 'success' as const, text: 'New session started.' }
+      return { kind: 'success' as const, text: t('tui.new.done') }
     }
-    registerLocalCommand('new', 'Start a new session', newHandler)
+    registerLocalCommand('new', t('tui.cmd.new.description'), newHandler)
 
     // /settings: text-based configuration browser — the terminal counterpart
     // of the web GUI's settings surface. Enumerates ctx.settings.describe()
@@ -1748,7 +1748,7 @@ export function apply(ctx: Context): void {
     // reset-to-defaults), writing through settings.mutate path ops.
     const settingsHandler: LocalCommandHandler = async () => {
       if (ctx.get('settings') === undefined) {
-        return { kind: 'error' as const, text: 'Settings service is not available.' }
+        return { kind: 'error' as const, text: t('tui.settings.unavailable') }
       }
       const changes = await openSettingsBrowser({
         ctx,
@@ -1761,24 +1761,26 @@ export function apply(ctx: Context): void {
           renderer.renderNotice(message, 'error')
         },
       })
-      if (changes < 0) return { kind: 'error' as const, text: 'No settings namespaces are registered.' }
+      if (changes < 0) return { kind: 'error' as const, text: t('tui.settings.noNamespaces') }
       return {
         kind: 'success' as const,
         text: changes === 0
-          ? 'Settings: no changes.'
-          : `Settings: ${changes} change${changes === 1 ? '' : 's'} applied.`,
+          ? t('tui.settings.noChanges')
+          : changes === 1
+            ? t('tui.settings.appliedOne', { count: changes })
+            : t('tui.settings.appliedMany', { count: changes }),
       }
     }
-    registerLocalCommand('settings', 'Browse and edit configuration (namespaces, values, resets)', settingsHandler)
+    registerLocalCommand('settings', t('tui.cmd.settings.description'), settingsHandler)
 
     // /skills: standalone skill browser with Installed/Available dual mode.
     // Enter/Space toggles or symlinks; Tab switches views; Esc exits.
     const skillsHandler: LocalCommandHandler = async () => {
       const agent = bridge.getAgent()
       openSkillsManagerPanel(ctx, ui.tui, ui.theme, refocusEditor, agent ?? undefined, () => {})
-      return { kind: 'success' as const, text: 'Skills manager opened.' }
+      return { kind: 'success' as const, text: t('tui.skills.opened') }
     }
-    registerLocalCommand('skills', 'Manage user skills (installed and available)', skillsHandler)
+    registerLocalCommand('skills', t('tui.cmd.skills.description'), skillsHandler)
 
     // /theme: pick a color scheme and apply it immediately — the choice is
     // persisted to the dsh-tui settings namespace (`applies: 'live'`, so the
@@ -1788,7 +1790,7 @@ export function apply(ctx: Context): void {
     // mirrors /settings: without the service there is nowhere to write.
     const themeHandler: LocalCommandHandler = async () => {
       if (ctx.get('settings') === undefined) {
-        return { kind: 'error' as const, text: 'Settings service is not available.' }
+        return { kind: 'error' as const, text: t('tui.settings.unavailable') }
       }
       // Preselect from the live settings value (which may have changed since
       // startup via the /settings browser), not the startup snapshot. The
@@ -1798,7 +1800,7 @@ export function apply(ctx: Context): void {
         themes: themeRegistry,
         userNames: themeUserNames,
       })
-      if (picked === undefined) return { kind: 'success' as const, text: 'Theme unchanged.' }
+      if (picked === undefined) return { kind: 'success' as const, text: t('tui.theme.unchanged') }
       const writeError = await writeThemePreference(ctx, picked)
       if (writeError !== undefined) return { kind: 'error' as const, text: writeError }
       // DSH_TUI_THEME pins the display regardless of the preference — don't
@@ -1812,12 +1814,12 @@ export function apply(ctx: Context): void {
       if (expected !== undefined && applied !== expected) {
         return {
           kind: 'success' as const,
-          text: `Theme preference saved — display is pinned by DSH_TUI_THEME=${process.env.DSH_TUI_THEME}`,
+          text: t('tui.theme.pinned', { value: String(process.env.DSH_TUI_THEME) }),
         }
       }
-      return { kind: 'success' as const, text: `Theme: ${picked} — applied.` }
+      return { kind: 'success' as const, text: t('tui.theme.applied', { name: picked }) }
     }
-    registerLocalCommand('theme', 'Set the terminal color scheme (applies immediately)', themeHandler)
+    registerLocalCommand('theme', t('tui.cmd.theme.description'), themeHandler)
 
     // /language — switch the UI language. Language files live in the bundled
     // locales/ directory plus the user's ~/.dsh/locales (one JSON file per
@@ -1858,7 +1860,7 @@ export function apply(ctx: Context): void {
       kind: 'success' as const,
       text: await reloadPlugin(ctx, import.meta.url),
     })
-    registerLocalCommand('reload', 'Reload the TUI from the current source (apply code changes without restarting dsh)', reloadHandler)
+    registerLocalCommand('reload', t('tui.cmd.reload.description'), reloadHandler)
 
     // /hotkeys — pi's keybinding browser, in the /agents select-panel style:
     // a field list of the app keys, Enter opens an editor that writes
@@ -1869,9 +1871,9 @@ export function apply(ctx: Context): void {
         apply: bindings => ui.setKeyBindings(bindings),
         restoreFocus: refocusEditor,
       })
-      return { kind: 'success' as const, text: summary ?? 'Keybindings unchanged.' }
+      return { kind: 'success' as const, text: summary ?? t('tui.hotkeys.unchanged') }
     }
-    registerLocalCommand('hotkeys', 'Show the current keybindings (custom file: ~/.dsh/keybindings.json)', hotkeysHandler)
+    registerLocalCommand('hotkeys', t('tui.cmd.hotkeys.description'), hotkeysHandler)
 
     // /login: register provider credentials — the terminal counterpart of
     // pi-agent's /login, on the Models category's add-provider flow. Opens a
@@ -1883,7 +1885,7 @@ export function apply(ctx: Context): void {
     // filtered picker otherwise.
     const loginHandler: LocalCommandHandler = async rawInput => {
       if (ctx.get('settings') === undefined) {
-        return { kind: 'error' as const, text: 'Settings service is not available.' }
+        return { kind: 'error' as const, text: t('tui.settings.unavailable') }
       }
       const result = await openLoginFlow({
         ctx,
@@ -1896,13 +1898,13 @@ export function apply(ctx: Context): void {
       if (result.kind === 'unknown') {
         return {
           kind: 'error' as const,
-          text: `Unknown provider '${result.target}' — run /login to pick from the directory.`,
+          text: t('tui.login.unknownProvider', { name: result.target }),
         }
       }
-      if (result.kind === 'cancelled') return { kind: 'success' as const, text: 'Login cancelled.' }
-      return { kind: 'success' as const, text: `Provider ${result.name} configured.` }
+      if (result.kind === 'cancelled') return { kind: 'success' as const, text: t('tui.login.cancelled') }
+      return { kind: 'success' as const, text: t('tui.login.configured', { name: result.name }) }
     }
-    registerLocalCommand('login', 'Register provider credentials (API key) through the provider directory', loginHandler)
+    registerLocalCommand('login', t('tui.cmd.login.description'), loginHandler)
 
     // /logout: unsubscribe a provider — pi-agent's /logout on the dsh side.
     // Lists the providers with a stored credential; on selection removes the
@@ -1912,7 +1914,7 @@ export function apply(ctx: Context): void {
     // the installed catalog's current model list.
     const logoutHandler: LocalCommandHandler = async () => {
       if (ctx.get('settings') === undefined) {
-        return { kind: 'error' as const, text: 'Settings service is not available.' }
+        return { kind: 'error' as const, text: t('tui.settings.unavailable') }
       }
       const result = await openLogoutFlow({
         ctx,
@@ -1922,33 +1924,31 @@ export function apply(ctx: Context): void {
         onError: message => renderer.renderNotice(message, 'error'),
       })
       if (result.kind === 'none') {
-        return { kind: 'success' as const, text: 'No stored credentials to remove.' }
+        return { kind: 'success' as const, text: t('tui.logout.none') }
       }
-      if (result.kind === 'cancelled') return { kind: 'success' as const, text: 'Logout cancelled.' }
+      if (result.kind === 'cancelled') return { kind: 'success' as const, text: t('tui.logout.cancelled') }
       if (result.kind === 'failed') {
         const cause = result.cause === undefined ? '' : `: ${result.cause}`
-        return { kind: 'error' as const, text: `Failed to remove stored API key for ${result.name}${cause}.` }
+        return { kind: 'error' as const, text: t('tui.logout.failed', { name: result.name, cause }) }
       }
       if (result.kind === 'removed-incomplete') {
         return {
           kind: 'error' as const,
-          text: `Removed the API key for ${result.name}, but its provider configuration stays: ${result.error}`
-            + ' — remove the provider in /settings to finish the logout.',
+          text: t('tui.logout.incomplete', { name: result.name, error: result.error }),
         }
       }
       if (result.kind === 'removed-key-only') {
         return {
           kind: 'success' as const,
-          text: `Removed the API key for ${result.name}. Hand-declared route — its configuration stays;`
-            + ' remove the provider in /settings to also drop its models.',
+          text: t('tui.logout.keyOnly', { name: result.name }),
         }
       }
       return {
         kind: 'success' as const,
-        text: `Logged out ${result.name} — API key and provider configuration removed.`,
+        text: t('tui.logout.done', { name: result.name }),
       }
     }
-    registerLocalCommand('logout', 'Log out a provider (removes its API key and provider configuration)', logoutHandler)
+    registerLocalCommand('logout', t('tui.cmd.logout.description'), logoutHandler)
 
     // ------------------------------------------------- powerline footer + git --
     const git = new GitBranchWatcher(process.cwd())
@@ -2140,7 +2140,7 @@ export function apply(ctx: Context): void {
             // Cancelled — or the derived custom state, which is display-only
             // and not a switch target (mirrors the web client's popup
             // filtering). Either way nothing changed.
-            renderer.renderCommandEcho(line, undefined, 'Permission unchanged.')
+            renderer.renderCommandEcho(line, undefined, t('tui.permission.unchanged'))
             return
           }
           executeLine = `/permission ${picked}`
@@ -2188,7 +2188,7 @@ export function apply(ctx: Context): void {
       const wasWatching = bridge.isReadOnlyView()
       try {
         await bridge.prompt(line)
-        if (wasWatching) emitNotice('Queued follow-up — sends automatically once the write lock frees up.')
+        if (wasWatching) emitNotice(t('tui.steer.queuedFollowup'))
       } catch (error: unknown) {
         // Buffered notice: the failure line is the only on-screen record and
         // must survive a theme-switch rebuild (doc.clear()).
@@ -2216,7 +2216,7 @@ export function apply(ctx: Context): void {
       if (agent === undefined) {
         // Running without a handle cannot deliver — say so instead of
         // dropping the message silently.
-        renderer.renderNotice('No active session — the message was not delivered.', 'error')
+        renderer.renderNotice(t('tui.steer.noSession'), 'error')
         return
       }
       const message = buildUserPrompt(raw)
@@ -2226,7 +2226,7 @@ export function apply(ctx: Context): void {
         const outcome = deliverToAgent(agent, message, route)
         if (outcome.outcome === 'degraded') {
           renderer.rebadgePendingEcho({ id: message.id }, 'queued')
-          renderer.renderNotice(TURN_ENDED_QUEUED_NOTICE, 'info')
+          renderer.renderNotice(turnEndedQueuedNotice(), 'info')
         } else if (outcome.outcome === 'error') {
           renderer.resolvePendingEcho({ id: message.id }, 'failed')
           renderer.renderNotice(outcome.error, 'error')
@@ -2261,7 +2261,7 @@ export function apply(ctx: Context): void {
         if (exitSessionId !== undefined) {
           // DIM SGR (not a theme color): the hint prints after the TUI's
           // theme machinery is gone; dim is universally supported.
-          process.stdout.write(`\n\x1b[2mTo resume this session: ${formatResumeCommand(resolveProfileName(ctx), String(exitSessionId))}\x1b[0m\n`)
+          process.stdout.write(`\n\x1b[2m${t('tui.exit.resumeHint', { command: formatResumeCommand(resolveProfileName(ctx), String(exitSessionId)) })}\x1b[0m\n`)
         }
         process.exit(code)
       })()

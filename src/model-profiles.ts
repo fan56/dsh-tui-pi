@@ -32,6 +32,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join, resolve } from 'node:path'
 import { dshHome } from './append-system.ts'
 import type { AgentFile } from './agent-manager.ts'
+import { t } from './i18n/index.ts'
 
 /** On-disk schema version; bump only for breaking changes. */
 export const MODEL_PROFILES_VERSION = 1
@@ -213,8 +214,8 @@ export function normalizeProfileName(name: string): string | undefined {
 /** Create a new empty profile; the name must be valid and not taken. */
 export function createProfile(doc: ModelProfilesDoc, rawName: string): { profile?: ModelProfile; error?: string } {
   const name = normalizeProfileName(rawName)
-  if (name === undefined) return { error: 'profile name must not be empty' }
-  if (findProfile(doc, name) !== undefined) return { error: `a profile named "${name}" already exists` }
+  if (name === undefined) return { error: t('modelprof.error.nameEmpty') }
+  if (findProfile(doc, name) !== undefined) return { error: t('modelprof.error.exists', { name }) }
   const profile: ModelProfile = { name, agents: {} }
   doc.profiles.push(profile)
   return { profile }
@@ -223,11 +224,11 @@ export function createProfile(doc: ModelProfilesDoc, rawName: string): { profile
 /** Rename a profile in place, keeping `current` consistent. Error or undefined. */
 export function renameProfile(doc: ModelProfilesDoc, from: string, to: string): string | undefined {
   const profile = findProfile(doc, from)
-  if (profile === undefined) return `no profile named "${from}"`
+  if (profile === undefined) return t('modelprof.error.notFound', { name: from })
   const name = normalizeProfileName(to)
-  if (name === undefined) return 'profile name must not be empty'
+  if (name === undefined) return t('modelprof.error.nameEmpty')
   if (name.toLowerCase() !== profile.name.toLowerCase() && findProfile(doc, name) !== undefined) {
-    return `a profile named "${name}" already exists`
+    return t('modelprof.error.exists', { name })
   }
   if (doc.current === profile.name) doc.current = name
   profile.name = name
@@ -238,8 +239,8 @@ export function renameProfile(doc: ModelProfilesDoc, from: string, to: string): 
 export function deleteProfile(doc: ModelProfilesDoc, name: string): string | undefined {
   const index = doc.profiles.findIndex(
     profile => profile.name.toLowerCase() === name.trim().toLowerCase())
-  if (index < 0) return `no profile named "${name}"`
-  if (doc.profiles.length <= 1) return 'the last profile cannot be deleted'
+  if (index < 0) return t('modelprof.error.notFound', { name })
+  if (doc.profiles.length <= 1) return t('modelprof.error.lastProfile')
   const [removed] = doc.profiles.splice(index, 1)
   if (doc.current === removed.name) doc.current = undefined
   return undefined
@@ -263,10 +264,18 @@ export function captureAgentsSnapshot(agents: readonly AgentFile[]): Record<stri
 }
 
 /** `provider/model · think high` label for a route; `fallback` when unset. */
-export function formatProfileRoute(route: ProfileModelRoute | undefined, fallback = '(not set)'): string {
+export function formatProfileRoute(
+  route: ProfileModelRoute | undefined,
+  fallback: string = t('modelprof.route.notSet'),
+): string {
   if (route === undefined) return fallback
-  const base = `${route.provider}/${route.model}`
-  return route.reasoningEffort === undefined ? base : `${base} · think ${route.reasoningEffort}`
+  return route.reasoningEffort === undefined
+    ? t('modelprof.route.plain', { provider: route.provider, model: route.model })
+    : t('modelprof.route.think', {
+        provider: route.provider,
+        model: route.model,
+        effort: route.reasoningEffort,
+      })
 }
 
 /**
@@ -280,8 +289,10 @@ export function profileReviewLines(
   isCurrent = false,
 ): string[] {
   const lines: string[] = [
-    `Profile: ${profile.name}${isCurrent ? '  · current' : ''}`,
-    `Default model: ${formatProfileRoute(profile.defaultModel)}`,
+    t('modelprof.review.profile', {
+      name: profile.name + (isCurrent ? `  · ${t('modelprof.review.current')}` : ''),
+    }),
+    t('modelprof.review.defaultModel', { route: formatProfileRoute(profile.defaultModel) }),
   ]
   const discovered = new Set(agents.map(agent => agent.meta.name))
   const rows: Array<{ name: string; entry: ProfileAgentEntry | undefined; stale: boolean }> =
@@ -290,14 +301,18 @@ export function profileReviewLines(
     if (!discovered.has(name)) rows.push({ name, entry, stale: true })
   }
   if (rows.length === 0) {
-    lines.push('Agents: none recorded — pick models under /profile-cfg, or press s to save the current configuration')
+    lines.push(t('modelprof.review.none'))
     return lines
   }
-  lines.push(`Agents (${String(rows.length)}):`)
+  lines.push(t('modelprof.review.agents', { count: rows.length }))
   for (const { name, entry, stale } of rows) {
-    const model = entry?.model ?? (entry === undefined ? '(not saved — apply leaves untouched)' : '(inherit)')
-    const think = entry?.thinking !== undefined ? `think ${entry.thinking}` : 'inherit'
-    lines.push(`  ${name}${stale ? ' (file missing)' : ''} · ${model} · ${think}`)
+    const model = entry?.model ?? (entry === undefined
+      ? t('modelprof.review.notSaved')
+      : t('modelprof.review.inherit'))
+    const think = entry?.thinking !== undefined
+      ? t('modelprof.review.think', { effort: entry.thinking })
+      : t('modelprof.review.inheritWord')
+    lines.push(`  ${name}${stale ? ` (${t('modelprof.review.fileMissing')})` : ''} · ${model} · ${think}`)
   }
   return lines
 }
@@ -328,7 +343,7 @@ export function parseProfilePinText(text: string): { name?: string; error?: stri
     if (normalized === undefined) continue
     return { name: normalized }
   }
-  return { error: 'no profile name in file' }
+  return { error: t('modelprof.error.pinEmpty') }
 }
 
 export interface ProfilePin {
@@ -412,7 +427,7 @@ export function bindWorkspaceProfile(dir: string, profileName: string): string |
     const entries = text.split(/\r?\n/).map(line => line.trim()).filter(
       line => line !== '' && !line.startsWith('#'))
     if (entries.length !== 1 || normalizeProfileName(entries[0]) === undefined) {
-      return `refusing to overwrite ${PROFILE_PIN_FILE} — edited by hand (switch applied live only)`
+      return t('modelprof.error.pinOverwrite', { file: PROFILE_PIN_FILE })
     }
   }
   return writeProfilePin(dir, profileName)
@@ -449,7 +464,7 @@ export function removeProfilePin(dir: string, expectName: string): string | unde
     line => line !== '' && !line.startsWith('#'))
   const firstName = lines.length === 1 ? normalizeProfileName(lines[0]) : undefined
   if (firstName === undefined || firstName.toLowerCase() !== expectName.trim().toLowerCase()) {
-    return `refusing to remove ${PROFILE_PIN_FILE} — edited by hand (remove it yourself)`
+    return t('modelprof.error.pinRemove', { file: PROFILE_PIN_FILE })
   }
   try {
     rmSync(path)

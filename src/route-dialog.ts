@@ -16,6 +16,7 @@
  */
 
 import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
+import { t } from './i18n/index.ts'
 import { PanelHost, panelThemeFns } from './panels.ts'
 import { normalizePreview } from './sessions.ts'
 import type { PromptRoute } from './steer-flow.ts'
@@ -23,10 +24,12 @@ import { BOLD, RESET, ansiFg, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 
 /** The two routing choices in display order (design §二.1). */
-export const ROUTE_OPTIONS: ReadonlyArray<{ id: PromptRoute; title: string; hint: string }> = [
-  { id: 'followup', title: 'Queue as follow-up', hint: 'delivered when the current turn ends' },
-  { id: 'steer', title: 'Steer now', hint: 'injected at the next step boundary' },
-]
+export function routeOptions(): ReadonlyArray<{ id: PromptRoute; title: string; hint: string }> {
+  return [
+    { id: 'followup', title: t('route.option.followup'), hint: t('route.option.followupHint') },
+    { id: 'steer', title: t('route.option.steer'), hint: t('route.option.steerHint') },
+  ]
+}
 
 /** Pure dialog state: which row is highlighted, and the terminal outcome. */
 export interface RouteDialogState {
@@ -55,14 +58,14 @@ export function updateRouteDialog(state: RouteDialogState, data: string): RouteD
     return { ...state, selected: Math.max(0, state.selected - 1) }
   }
   if (kb.matches(data, 'tui.select.down')) {
-    return { ...state, selected: Math.min(ROUTE_OPTIONS.length - 1, state.selected + 1) }
+    return { ...state, selected: Math.min(routeOptions().length - 1, state.selected + 1) }
   }
   // Digit direct-select (1-based): selects the row, Enter still confirms —
   // same select-then-confirm split as the design's "数字键选，Enter 确认".
   const digit = /^([1-9])$/.exec(data)
   if (digit !== null) {
     const index = Number(digit[1]) - 1
-    if (index < ROUTE_OPTIONS.length) return { ...state, selected: index }
+    if (index < routeOptions().length) return { ...state, selected: index }
   }
   return state
 }
@@ -70,11 +73,13 @@ export function updateRouteDialog(state: RouteDialogState, data: string): RouteD
 /** Resolved dialog outcome: the chosen route, or undefined on cancel. */
 export function routeDialogOutcome(state: RouteDialogState): PromptRoute | undefined {
   if (state.settled !== 'confirm') return undefined
-  return ROUTE_OPTIONS[state.selected]?.id
+  return routeOptions()[state.selected]?.id
 }
 
-/** Footer hint — hardcoded like every other panel footer (English-only). */
-export const ROUTE_DIALOG_FOOTER = '↑↓ select · 1/2 pick · Enter confirm · Esc cancel'
+/** Footer hint — resolved per call so a live language switch repaints it. */
+export function routeDialogFooter(): string {
+  return t('route.footer')
+}
 
 /**
  * The framed overlay component. Renders the draft preview plus the two
@@ -110,12 +115,13 @@ export class RouteDialogPanel implements Component {
     // overlay layout); the FULL raw text is what gets restored on Esc.
     const preview = normalizePreview(this.draft, 400)
     const lines: string[] = [
-      fns.accent(BOLD + clipToWidth('Agent is running — route your message', wrap) + RESET),
-      fns.muted(clipToWidth(preview === '' ? '(empty message)' : preview, wrap)),
+      fns.accent(BOLD + clipToWidth(t('route.title'), wrap) + RESET),
+      fns.muted(clipToWidth(preview === '' ? t('route.preview.empty') : preview, wrap)),
       '',
     ]
-    for (let i = 0; i < ROUTE_OPTIONS.length; i++) {
-      const option = ROUTE_OPTIONS[i]!
+    const options = routeOptions()
+    for (let i = 0; i < options.length; i++) {
+      const option = options[i]!
       const marker = i === this.state.selected ? '▸' : ' '
       const row = clipToWidth(`${marker} ${i + 1}. ${option.title} — ${option.hint}`, wrap)
       lines.push(i === this.state.selected
@@ -123,7 +129,7 @@ export class RouteDialogPanel implements Component {
         : fns.muted(row))
     }
     lines.push('')
-    lines.push(fns.subtle(clipToWidth(ROUTE_DIALOG_FOOTER, wrap)))
+    lines.push(fns.subtle(clipToWidth(routeDialogFooter(), wrap)))
     return lines
   }
 

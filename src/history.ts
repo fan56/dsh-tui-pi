@@ -82,6 +82,7 @@ import {
   type HistoryTurn,
 } from './history-turns.ts'
 import { stopIcon } from './icons.ts'
+import { t } from './i18n/index.ts'
 import { isCorruptLogError } from './log-repair.ts'
 import { autoColumns, PanelHost, panelThemeFns, TablePanel, type TablePanelOptions } from './panels.ts'
 import {
@@ -122,8 +123,13 @@ export const MAX_USER_BUBBLE_LINES = 40
  */
 export const MAX_DETAIL_LINES = 4000
 
-/** List footer hint (the detail pane carries the scroll hints). */
-const HISTORY_FOOTER = '↑↓ navigate · Enter/c copy · f fork · → detail · s session · / filter · Esc close'
+/**
+ * List footer hint (the detail pane carries the scroll hints). A function, not
+ * a const: a module-top t() would freeze the footer in the startup language.
+ */
+function historyFooter(): string {
+  return t('history.footer')
+}
 
 /**
  * Content-row budget inside the framed overlay: showOverlay slices the
@@ -178,13 +184,13 @@ export function historyRows(turns: readonly HistoryTurn[], query: string): Histo
     .map(turn => ({
       turn,
       turnLabel: String(turn.turn),
-      preview: normalizePreview(turn.previewText) || '(no text)',
+      preview: normalizePreview(turn.previewText) || t('history.noText'),
     }))
 }
 
 /** The left-list title for one browsed session. */
 function historyListTitle(sessionId: string, live: boolean): string {
-  return `● History · ${clipToWidth(sessionId, 8)}${live ? ' (live)' : ''}`
+  return `${t('history.listTitle', { id: clipToWidth(sessionId, 8) })}${live ? ` ${t('history.liveTag')}` : ''}`
 }
 
 /**
@@ -197,20 +203,20 @@ function userBubbleText(text: string, theme: TuiTheme): string {
   const lines = text.split('\n')
   const body = lines.length <= MAX_USER_BUBBLE_LINES
     ? lines
-    : [...lines.slice(0, MAX_USER_BUBBLE_LINES), `… +${lines.length - MAX_USER_BUBBLE_LINES} more lines`]
+    : [...lines.slice(0, MAX_USER_BUBBLE_LINES), t('history.moreLines', { count: lines.length - MAX_USER_BUBBLE_LINES })]
   return theme.chat.userMessageText(body.map(line => `▎ ${line}`).join('\n'))
 }
 
 /** The turn-end status line (the main transcript's renderTurnEnd vocabulary). */
 function turnEndLine(turn: HistoryTurn, theme: TuiTheme): string | undefined {
   if (turn.endReason === 'error') {
-    return ansiFg(theme.palette.danger) + `✘ ${turn.endError ?? 'turn failed'}` + RESET
+    return ansiFg(theme.palette.danger) + `✘ ${turn.endError ?? t('history.turnFailed')}` + RESET
   }
   if (turn.endReason === 'aborted' || turn.endReason === 'interrupted' || turn.interrupted) {
-    return ansiFg(theme.palette.fgSubtle) + `${stopIcon()} interrupted` + RESET
+    return ansiFg(theme.palette.fgSubtle) + `${stopIcon()} ${t('history.interrupted')}` + RESET
   }
   if (turn.endReason === 'max-tokens') {
-    return ansiFg(theme.palette.attention) + '⚠ output token limit reached' + RESET
+    return ansiFg(theme.palette.attention) + `⚠ ${t('history.maxTokens')}` + RESET
   }
   return undefined
 }
@@ -255,13 +261,13 @@ export function buildTurnDetailContainer(turn: HistoryTurn, theme: TuiTheme, ses
   if (truncated > 0) {
     const pointer = sessionId !== undefined ? `/resume ${clipToWidth(sessionId, 8)} ` : '/resume '
     doc.addChild(new Text(
-      ansiFg(theme.palette.fgSubtle) + `… ${truncated} more lines truncated — ${pointer}for the full turn` + RESET,
+      ansiFg(theme.palette.fgSubtle) + t('history.truncated', { count: truncated, pointer }) + RESET,
       1, 0,
     ))
     doc.addChild(new Spacer(1))
   }
   if (turn.userTexts.length === 0 && turn.assistantTexts.length === 0) {
-    doc.addChild(new Text(ansiFg(theme.palette.fgSubtle) + '(this turn rendered no prompt or reply text)' + RESET, 1, 0))
+    doc.addChild(new Text(ansiFg(theme.palette.fgSubtle) + t('history.emptyTurn') + RESET, 1, 0))
     doc.addChild(new Spacer(1))
   }
   if (turn.toolCallNames.length > 0) {
@@ -312,10 +318,10 @@ class TurnDetailPane implements Component {
   /** Static rebuild: swap the content to `turn`'s events and reset to the top. */
   setTurn(turn: HistoryTurn | undefined, live: boolean, sessionId: string | undefined): void {
     this.scrollTop = 0
-    const source = live ? ' · live snapshot' : ''
+    const source = live ? ` · ${t('history.liveSnapshot')}` : ''
     this.headerTitle = turn === undefined
-      ? 'History'
-      : `Turn ${String(turn.turn)}${turn.endReason === 'completed' ? '' : ` · ${turn.endReason}`}${turn.interrupted ? ' · interrupted' : ''}${source}`
+      ? t('history.title')
+      : `${t('history.turnTitle', { turn: String(turn.turn) })}${turn.endReason === 'completed' ? '' : ` · ${turn.endReason}`}${turn.interrupted ? ` · ${t('history.interrupted')}` : ''}${source}`
     this.container = turn === undefined
       ? new Container()
       : buildTurnDetailContainer(turn, this.theme, sessionId)
@@ -361,21 +367,27 @@ class TurnDetailPane implements Component {
     const maxScroll = Math.max(0, lines.length - this.bodyRows)
     this.scrollTop = Math.max(0, Math.min(this.scrollTop, maxScroll))
     const body: string[] = this.lineCount === 0
-      ? [fns.subtle(clipToWidth('Select a turn on the left.', width))]
+      ? [fns.subtle(clipToWidth(t('history.selectTurn'), width))]
       : lines.slice(this.scrollTop, this.scrollTop + this.bodyRows)
     while (body.length < this.bodyRows) body.push('')
     // Focus visuals: the focused pane's title reads accent BOLD, the idle
     // one fades to subtle; the focused footer carries the exit/scroll hints.
-    const title = this.headerTitle === '' ? 'History' : this.headerTitle
+    const title = this.headerTitle === '' ? t('history.title') : this.headerTitle
     const header = this.focused
       ? fns.accent(BOLD + clipToWidth(title, width) + RESET)
       : fns.subtle(clipToWidth(title, width))
     const window = this.lineCount > this.bodyRows
-      ? `${this.scrollTop + 1}–${Math.min(this.lineCount, this.scrollTop + this.bodyRows)}/${this.lineCount} lines`
-      : `${this.lineCount} line${this.lineCount === 1 ? '' : 's'}`
+      ? t('history.linesRange', {
+          start: this.scrollTop + 1,
+          end: Math.min(this.lineCount, this.scrollTop + this.bodyRows),
+          total: this.lineCount,
+        })
+      : this.lineCount === 1
+        ? t('history.lineOne', { count: this.lineCount })
+        : t('history.lineMany', { count: this.lineCount })
     const footer = this.focused
-      ? `← list · ↑↓ scroll · [ / ] page · ${window}`
-      : `[ / ] page · ${window}`
+      ? t('history.detailFooterFocused', { window })
+      : t('history.detailFooterIdle', { window })
     return [header, '', ...body, '', fns.subtle(clipToWidth(footer, width))]
   }
 }
@@ -443,9 +455,9 @@ export function historyLoadErrorMessage(id: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   const short = clipToWidth(id, 8)
   if (isCorruptLogError(message)) {
-    return `⚠ ${short}: corrupt session log — /resume ${short} offers a repair.`
+    return t('history.corruptLog', { id: short })
   }
-  return `Cannot read ${short}: ${message}`
+  return t('history.cannotRead', { id: short, message })
 }
 
 /** One row of the `s` session picker (the /resume picker's vocabulary). */
@@ -485,7 +497,7 @@ export function filterSessionPickRows(rows: readonly SessionPickRow[], query: st
 async function buildSessionPickRows(ctx: Context, currentId: string | undefined): Promise<SessionPickRow[]> {
   const persistence = ctx.get('sessionPersistence') as SessionPersistence | undefined
   if (persistence === undefined) {
-    throw new Error('Session persistence is not configured in this profile.')
+    throw new Error(t('history.noPersistence'))
   }
   const headers: SessionHeader[] = (await persistence.list()).map(headerOf).filter(isResumableSessionHeader)
   const lastUpdates = await loadSessionLastUpdates()
@@ -501,7 +513,7 @@ async function buildSessionPickRows(ctx: Context, currentId: string | undefined)
     return {
       id,
       updated: new Date(updated).toLocaleString(),
-      dir: header.cwd ?? 'no cwd',
+      dir: header.cwd ?? t('history.noCwd'),
       session: id === currentId ? `● ${title}` : title,
     }
   })
@@ -581,8 +593,8 @@ export class HistoryBrowserPanel implements Component {
     const wasFiltering = this.list?.isFiltering() ?? false
     const columns = autoColumns(
       [
-        { key: 'turnLabel', title: 'Turn', cap: 6, align: 'right' },
-        { key: 'preview', title: 'Prompt' },
+        { key: 'turnLabel', title: t('history.col.turn'), cap: 6, align: 'right' },
+        { key: 'preview', title: t('history.col.prompt') },
       ],
       this.rows,
       (row, key) => (key === 'preview' ? row.preview : row.turnLabel),
@@ -593,14 +605,14 @@ export class HistoryBrowserPanel implements Component {
       rows: this.rows,
       renderCell: (row, column) => (column.key === 'preview' ? row.preview : row.turnLabel),
       maxVisible: this.listMax,
-      footer: HISTORY_FOOTER,
-      emptyHint: 'No completed turns',
+      footer: historyFooter(),
+      emptyHint: t('history.empty'),
       // Focus visualization: the focused list shows the ▸ cursor; while the
       // detail pane owns the keyboard the cursor demotes to `›` (the list is
       // still visible, just not keyed).
       marker: selected => selected ? (this.focus === 'detail' ? '› ' : '▸ ') : '  ',
       onSelect: row => this.copyTurn(row.turn),
-      onCancel: () => this.finish('History closed.'),
+      onCancel: () => this.finish(t('history.closed')),
       shortcuts: {
         c: () => this.copySelected(),
         s: () => { void this.openSessionPicker() },
@@ -734,12 +746,12 @@ export class HistoryBrowserPanel implements Component {
     // not land in the editor — one Enter would submit a notice as a prompt).
     const text = turnPrimaryUserText(turn)
     if (text === undefined || text === '') {
-      this.status = 'Nothing to copy — the turn has no user prompt.'
+      this.status = t('history.nothingToCopy')
       this.deps.requestRender()
       return
     }
     this.deps.copyToEditor(text)
-    this.finish('Prompt copied to the editor.')
+    this.finish(t('history.copied'))
   }
 
   private copySelected(): void {
@@ -796,23 +808,23 @@ export class HistoryBrowserPanel implements Component {
     let query = ''
     const columns = autoColumns(
       [
-        { key: 'updated', title: 'Updated', cap: 26 },
+        { key: 'updated', title: t('history.col.updated'), cap: 26 },
         // Same cap as the /resume picker's DIR column.
-        { key: 'dir', title: 'Dir', cap: RESUME_DIR_CAP },
-        { key: 'session', title: 'Session' },
+        { key: 'dir', title: t('history.col.dir'), cap: RESUME_DIR_CAP },
+        { key: 'session', title: t('history.col.session') },
       ],
       rows,
       (row, key) => row[key as 'updated' | 'dir' | 'session'],
     )
     let picker: TablePanel<SessionPickRow>
     const options: TablePanelOptions<SessionPickRow> = {
-      title: '● Browse session',
+      title: t('history.pickerTitle'),
       columns,
       rows: [...rows],
       renderCell: (row, column) => row[column.key as 'updated' | 'dir' | 'session'],
-      footer: '↑↓ navigate · Enter browse · / filter · Esc back',
+      footer: t('history.pickerFooter'),
       maxVisible: listMaxVisible(),
-      emptyHint: 'No matching sessions',
+      emptyHint: t('history.noMatching'),
       onSelect: row => { void this.loadAndShow(row.id) },
       onCancel: () => {
         // Back to the browser: show it, then the host hides the picker. (A
@@ -853,11 +865,11 @@ export class HistoryBrowserPanel implements Component {
       const outcome = await this.deps.confirmForkAtTurn(row.turnLabel, this.turns.length, !this.live)
       if (outcome !== true) return
       await this.deps.forkAtTurn(seed, this.sessionId)
-      this.finish(`Forked at turn ${row.turnLabel} — new session opened.`)
+      this.finish(t('history.forked', { turn: row.turnLabel }))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      this.status = `Fork failed: ${message}`
-      this.deps.reportError(`Fork at turn ${row.turnLabel} failed: ${message}`)
+      this.status = t('history.forkFailed', { message })
+      this.deps.reportError(t('history.forkAtTurnFailed', { turn: row.turnLabel, message }))
       this.deps.requestRender()
     } finally {
       this.forkInProgress = false
@@ -880,7 +892,7 @@ export class HistoryBrowserPanel implements Component {
     this.pickerLoading = false
     if (this.closed) return
     if (rows.length === 0) {
-      this.status = 'No stored sessions to browse.'
+      this.status = t('history.noStored')
       this.deps.requestRender()
       return
     }
@@ -917,7 +929,7 @@ export async function openHistoryBrowser(
   const target = sessionIdArg ?? deps.getSessionId()
   if (target === undefined || target === '') {
     return {
-      text: 'No active session — use /history <sessionId> to browse a stored one.',
+      text: t('history.noActive'),
       error: true,
     }
   }
@@ -933,14 +945,14 @@ export async function openHistoryBrowser(
       // gets the truth: this is a mount failure, not a quiet close. (Promise
       // resolution is idempotent, so a later finish/onFinish is a no-op.)
       deps.restoreFocus()
-      resolve({ text: 'Failed to open the history viewer.', error: true })
+      resolve({ text: t('history.openFailed'), error: true })
     })
     const panel = new HistoryBrowserPanel(deps, host, loaded)
     panel.onFinish = text => resolve({ text, error: false })
     const handle = host.open(panel, '90%', '85%')
     if (handle === undefined) {
       // host.open already ran the error path above (focus restored + resolve).
-      resolve({ text: 'Failed to open the history viewer.', error: true })
+      resolve({ text: t('history.openFailed'), error: true })
     }
   })
 }

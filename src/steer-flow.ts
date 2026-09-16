@@ -21,6 +21,7 @@
  */
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { t } from './i18n/index.ts'
 
 /** How the user chose to route a submitted prompt. */
 export type PromptRoute = 'followup' | 'steer'
@@ -140,9 +141,25 @@ export type QueueActionResult =
  * Shared degrade notices — one wording source for the submit dialog path,
  * the queue panel and the transcript mirrors (review nit: the copy was
  * duplicated in three places and could drift).
+ *
+ * Kept as plain English consts (NOT resolved through {@link t}) because
+ * src/index.ts renders them directly and this module must not change that
+ * import shape. The i18n twins live under the `steer.notice.*` keys and are
+ * used by {@link describeQueueActionResult}; the en catalog values are
+ * byte-identical to these consts.
  */
 export const STEER_UNAVAILABLE_NOTICE = 'Steering was unavailable — the message stayed queued as a follow-up.'
 export const TURN_ENDED_QUEUED_NOTICE = 'The turn ended before the steer could land — queued as a follow-up instead.'
+
+/** Translated twin of {@link STEER_UNAVAILABLE_NOTICE} for render paths that go through `t()`. */
+export function steerUnavailableNotice(): string {
+  return t('steer.notice.unavailable')
+}
+
+/** Translated twin of {@link TURN_ENDED_QUEUED_NOTICE} for render paths that go through `t()`. */
+export function turnEndedQueuedNotice(): string {
+  return t('steer.notice.turnEnded')
+}
 
 /** Remove one pending message from the inbox (queue panel `d`). */
 export function removeFromInbox(inbox: RemovableInbox, view: PendingPromptView): QueueActionResult {
@@ -191,28 +208,28 @@ export function promotePending(
       } catch {
         return {
           kind: 'error',
-          error: `${delivery.error} — the message left the queue but was NOT delivered; submit it again.`,
+          error: t('steer.notice.orphaned', { error: delivery.error }),
         }
       }
   }
 }
 
 /**
- * Human-readable transcript notice for one queue action result (UI text is
- * English-only per AGENTS.md). The degrade wording states the ACTUAL route
- * the message took, per design §二.2/§二.4.
+ * Human-readable transcript notice for one queue action result (translated
+ * at call time through the `steer.notice.*` keys). The degrade wording
+ * states the ACTUAL route the message took, per design §二.2/§二.4.
  */
 export function describeQueueActionResult(result: QueueActionResult): string {
   switch (result.kind) {
     case 'removed':
-      return 'Removed from the pending queue.'
+      return t('steer.notice.removed')
     case 'promoted':
       return result.degraded
-        ? STEER_UNAVAILABLE_NOTICE
-        : 'Promoted — steering the current turn now.'
+        ? t('steer.notice.unavailable')
+        : t('steer.notice.promoted')
     case 'not-found':
-      return 'Already claimed or removed — list refreshed.'
+      return t('steer.notice.notFound')
     case 'error':
-      return `✘ ${result.error}`
+      return t('steer.notice.error', { error: result.error })
   }
 }

@@ -111,6 +111,7 @@ import {
 } from './panels.ts'
 import { clipToWidth, wrapText } from './text.ts'
 import { emitNotice } from './notice-bridge.ts'
+import { t } from './i18n/index.ts'
 
 // ----------------------------------------------------------------- constants --
 
@@ -489,7 +490,7 @@ export function buildRowList(
     rows.push({
       kind: 'question-header',
       questionIndex: focusQuestion,
-      label: question.header ?? `Question ${focusQuestion + 1}`,
+      label: question.header ?? t('ask.questionFallback', { n: focusQuestion + 1 }),
       description: question.question,
       ...(question.detail !== undefined ? { detail: question.detail } : {}),
       selectable: false,
@@ -509,12 +510,12 @@ export function buildRowList(
     rows.push({
       kind: 'sentinel',
       questionIndex: focusQuestion,
-      label: customAnswer !== '' ? `${CUSTOM_MARK}${customAnswer.trim()}` : SENTINEL_LABEL,
+      label: customAnswer !== '' ? `${CUSTOM_MARK}${customAnswer.trim()}` : t('ask.sentinel'),
       selectable: true,
     })
   }
   if (needsConfirmRow(questions)) {
-    rows.push({ kind: 'confirm', questionIndex: -1, label: '⏎ Confirm answers', selectable: true })
+    rows.push({ kind: 'confirm', questionIndex: -1, label: t('ask.confirmRow'), selectable: true })
   }
   return rows
 }
@@ -663,10 +664,7 @@ function explicitMinutes(section: AskUserTimeoutSettings | undefined, key: keyof
   const raw = section?.[key]
   if (raw === undefined) return undefined
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
-    emitNotice(
-      `settings dsh-tui.askUser.${key}: invalid value `
-      + `${JSON.stringify(raw)} — falling back to environment/default`,
-    )
+    emitNotice(t('ask.settings.invalid', { key, value: JSON.stringify(raw) }))
     return undefined
   }
   return raw
@@ -910,7 +908,7 @@ export function toggleCollapse(state: AskUserState): AskUserState {
 
 /** Render width budget for the questions phase (single flex label column). */
 const QUESTIONS_COLUMNS = (): readonly TableColumn[] => [
-  { key: 'label', title: 'Selection', flex: true },
+  { key: 'label', title: t('ask.col.selection'), flex: true },
 ]
 
 /** Inline marker shown before a selected option's number (unselected: `○`). */
@@ -972,15 +970,15 @@ export function renderQuestionsView(
   const fns = panelThemeFns(theme)
   const wrap = Math.max(2, width - 2)
   const title = state.questions.length === 1
-    ? '● Question'
-    : `● Questions (${state.focusQuestion + 1}/${state.questions.length})`
+    ? t('ask.title.single')
+    : t('ask.title.multi', { index: state.focusQuestion + 1, total: state.questions.length })
   const lines: string[] = [fns.accent(BOLD + clipToWidth(title, wrap) + RESET)]
   if (state.questions.length >= 2) {
     lines.push(renderTabStrip(fns, wrap, state))
   }
   const rows = buildRowList(state.questions, state.perQuestion, state.focusQuestion)
   if (rows.length === 0) {
-    lines.push(fns.muted(clipToWidth('(no questions)', wrap)))
+    lines.push(fns.muted(clipToWidth(t('ask.empty'), wrap)))
     return finalizeQuestionsView(fns, wrap, lines, state, '', countdown)
   }
 
@@ -1134,7 +1132,7 @@ function finalizeQuestionsView(
     lines.push(fns.attention(clipToWidth(state.attentionHint, wrap)))
   }
   if (state.cancelHint) {
-    lines.push(fns.attention(clipToWidth('Press Esc again to decline', wrap)))
+    lines.push(fns.attention(clipToWidth(t('ask.escHint'), wrap)))
   }
   lines.push('')
   const multiTab = state.questions.length >= 2
@@ -1143,8 +1141,8 @@ function finalizeQuestionsView(
   // scroll readout rides FIRST so narrow terminals clip the tail hints,
   // never the position.
   const footer = state.customEditingFor !== null
-    ? 'Type free text · Enter keep · ↑↓ move · Ctrl+T fold · Esc abandon'
-    : `${multiTab ? '←→ tabs · ' : ''}↑↓ move · Enter ${needsConfirmRow(state.questions) ? 'toggle' : 'select'} · 1-9 pick · Ctrl+T fold · Esc decline`
+    ? t('ask.footer.editing')
+    : `${multiTab ? t('ask.footer.tabs') : ''}${needsConfirmRow(state.questions) ? t('ask.footer.navToggle') : t('ask.footer.navSelect')}`
   // The (n/m) readout goes FIRST so narrow terminals clip the hint, never
   // the scroll info. The auto-answer countdown trails — clipped first on a
   // narrow terminal, and it re-renders every second with the footer clock.
@@ -1164,15 +1162,15 @@ export function renderReviewView(
 ): string[] {
   const fns = panelThemeFns(theme)
   const wrap = Math.max(2, width - 2)
-  const lines: string[] = [fns.accent(BOLD + clipToWidth('● Review answers', wrap) + RESET)]
+  const lines: string[] = [fns.accent(BOLD + clipToWidth(t('ask.review.title'), wrap) + RESET)]
   // Question column with a content cap + answer column flexes to the right edge.
   // (columnWidths only assigns the remainder to ONE flex column; two flex
   // columns would both get the whole remainder and clip the second off.)
   const usable = wrap - MARKER_W
   const leftCap = Math.max(20, Math.floor(usable * 0.45))
   const columns: readonly TableColumn[] = [
-    { key: 'question', title: 'Question', width: leftCap },
-    { key: 'answer', title: 'Your answer', flex: true },
+    { key: 'question', title: t('ask.review.colQuestion'), width: leftCap },
+    { key: 'answer', title: t('ask.review.colAnswer'), flex: true },
   ]
   const widths = columnWidths(usable, columns)
   lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
@@ -1195,8 +1193,8 @@ export function renderReviewView(
   // Submit row (review pane).
   {
     const selected = state.reviewIndex === state.questions.length
-    const leftCell = padCell(clipToWidth('Submit answers', widths[0]), widths[0])
-    const rightCell = padCell(clipToWidth(allQuestionsAnswered(state) ? '✓ ready' : '— incomplete', widths[1]), widths[1])
+    const leftCell = padCell(clipToWidth(t('ask.review.submit'), widths[0]), widths[0])
+    const rightCell = padCell(clipToWidth(allQuestionsAnswered(state) ? t('ask.review.ready') : t('ask.review.incomplete'), widths[1]), widths[1])
     const plain = `${rowMarker(selected)}${leftCell}${TABLE_SEP}${rightCell}`
     const line = clipToWidth(plain, wrap)
     body.push(selected ? fns.accent(BOLD + line + RESET) : fns.muted(line))
@@ -1210,7 +1208,7 @@ export function renderReviewView(
     lines.push(fns.attention(clipToWidth(state.attentionHint, wrap)))
   }
   lines.push('')
-  const footer = '↑↓ select · Enter return to edit / submit · Ctrl+T fold'
+  const footer = t('ask.review.footer')
   const scrollInfo = body.length > visible ? ` (${state.reviewIndex + 1}/${body.length})` : ''
   lines.push(fns.subtle(clipToWidth(scrollInfo + footer + (countdown !== undefined ? ` · ${countdown}` : ''), wrap)))
   return lines
@@ -1221,7 +1219,7 @@ function formatAnswerForReview(answer: PendingAnswer | undefined): string {
   // Fold newlines exactly like the questions pane (foldText): an answer cell
   // renders as ONE table row, and a bare \n inside it would split the row.
   if (answer.custom !== undefined && answer.custom !== '') return foldText(`${CUSTOM_MARK}${answer.custom}`)
-  if (answer.selected.length === 0) return '(no answer)'
+  if (answer.selected.length === 0) return t('ask.review.noAnswer')
   return foldText(answer.selected.join(', '))
 }
 
@@ -1238,18 +1236,18 @@ export function renderCollapsedLine(theme: TuiTheme, state: AskUserState, width:
   const fns = panelThemeFns(theme)
   const wrap = Math.max(2, width - 2)
   if (state.cancelHint) {
-    return fns.attention(clipToWidth('Press Esc again to decline · Ctrl+T expand', wrap))
+    return fns.attention(clipToWidth(t('ask.collapsed.esc'), wrap))
   }
   if (state.phase === 'review') {
-    return fns.accent(BOLD + clipToWidth('● Review answers pending · Ctrl+T expand', wrap) + RESET)
+    return fns.accent(BOLD + clipToWidth(t('ask.collapsed.review'), wrap) + RESET)
   }
   const answered = state.perQuestion.filter(answer =>
     answer.selected.length > 0 || (answer.custom !== undefined && answer.custom.trim() !== ''),
   ).length
   const label = state.questions.length === 1
-    ? '● Question pending'
-    : `● Questions (${state.focusQuestion + 1}/${state.questions.length} · ${answered} answered)`
-  return fns.accent(BOLD + clipToWidth(`${label} · Ctrl+T expand`, wrap) + RESET)
+    ? t('ask.collapsed.question')
+    : t('ask.collapsed.questions', { index: state.focusQuestion + 1, total: state.questions.length, answered })
+  return fns.accent(BOLD + clipToWidth(`${label} · ${t('ask.collapsed.expand')}`, wrap) + RESET)
 }
 
 // ---------------------------------- paste sanitiser + clipboard helpers --
@@ -1521,7 +1519,7 @@ export function openAskUserPanel(
         // The review page only opens with every question answered, so this
         // submits the answers already given — nothing is picked for the user.
         settle(buildAnswerEnvelopeWithNotes(state, timeoutNotes))
-        emitNotice('ask_user_question: timed out — submitted the answers already given')
+        emitNotice(t('ask.notice.timeoutReview'))
         close()
         return
       }
@@ -1540,7 +1538,7 @@ export function openAskUserPanel(
       }
       if (allQuestionsAnswered(state)) {
         settle(buildAnswerEnvelopeWithNotes(state, timeoutNotes))
-        emitNotice('ask_user_question: timed out — unanswered questions took the recommended options (noted in the answers)')
+        emitNotice(t('ask.notice.timeoutAuto'))
         close()
         return
       }
@@ -1606,7 +1604,7 @@ export function openAskUserPanel(
         const countdown = timeoutEnabled && !settled
           ? (() => {
               const deadline = nextTimeoutDeadline(timeouts, clock(), focusEnteredAt, lastInputAt)
-              return deadline === null ? undefined : `auto in ${formatCountdown(deadline - clock())}`
+              return deadline === null ? undefined : t('ask.autoIn', { time: formatCountdown(deadline - clock()) })
             })()
           : undefined
         const inner = state.phase === 'review'
@@ -1763,7 +1761,7 @@ export function openAskUserPanel(
           return
         }
         if (!allQuestionsAnswered(s)) {
-          Object.assign(s, { cancelHint: false, attentionHint: INCOMPLETE_HINT })
+          Object.assign(s, { cancelHint: false, attentionHint: t('ask.incomplete') })
           return
         }
         settle(buildAnswerEnvelopeWithNotes(s, timeoutNotes))
@@ -1811,7 +1809,7 @@ export function openAskUserPanel(
         if (allQuestionsAnswered(s)) {
           Object.assign(s, { phase: 'review', reviewIndex: 0, cancelHint: false, attentionHint: null })
         } else {
-          Object.assign(s, { cancelHint: false, attentionHint: INCOMPLETE_HINT })
+          Object.assign(s, { cancelHint: false, attentionHint: t('ask.incomplete') })
         }
       }
     }
@@ -1859,7 +1857,7 @@ export function openAskUserPanel(
           // hint slot so the "Copied" line rides the same render path
           // every other transient hint already uses.
           writeClipboard(buffer).catch(() => { /* swallowed: copy failures never throw */ })
-          s.attentionHint = 'Copied'
+          s.attentionHint = t('ask.copied')
         }
         return
       }

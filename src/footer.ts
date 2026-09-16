@@ -14,6 +14,7 @@
  */
 
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
+import { t } from './i18n/index.ts'
 import type { BridgeStats } from './session.ts'
 import type { CacheHitMode } from './theme-settings.ts'
 import { ansiBg, ansiFg, BOLD, POWERLINE, RESET, type TuiTheme } from './theme/index.ts'
@@ -22,16 +23,19 @@ import { clipToWidth } from './text.ts'
 import { arrowRight } from './icons.ts'
 
 /**
- * The footer keybinding hint, assembled from the user's `dsh-tui.footerHints`
- * selection (see buildFooterHint) - the pre-feature full string is what the
- * all-true default produces. The no-wrap rendering lives in `FooterHint` (a
- * width-clipping component, not a word-wrapping Text). The unit test in
- * test/history.test.mjs guards the default against future length regressions
+ * The footer keybinding hint with the all-true default selection — the same
+ * string `buildFooterHint(DEFAULT_FOOTER_HINTS)` produces. A function, not a
+ * module constant: the label resolves through `t()` on every call, so a
+ * language switch re-renders it instead of freezing the boot-time language.
+ * The no-wrap rendering lives in `FooterHint` (a width-clipping component,
+ * not a word-wrapping Text). The unit tests in test/footer-hints.test.mjs and
+ * test/history.test.mjs guard the default against future length regressions
  * (a longer hint word-wraps on 105-118-column terminals and hides its suffix
  * on <=104).
  */
-export const FOOTER_HINT =
-  '⌨ Enter: send · Esc ×2: stop · Ctrl+C ×2: quit · Ctrl+D: quit (empty) · Ctrl+G: subagents · Ctrl+Shift+F: search · /preset: switch · ↑↓: history'
+export function FOOTER_HINT(): string {
+  return t('footer.hint.default')
+}
 
 /** The toggleable footer hint segments, keyed as in the `dsh-tui` settings. */
 export interface FooterHints {
@@ -57,24 +61,38 @@ export const DEFAULT_FOOTER_HINTS: FooterHints = Object.freeze({
   history: true,
 })
 
-/** The hint segments in display order, each without the `⌨ ` lead. */
-export const FOOTER_HINT_ITEMS: ReadonlyArray<{ id: keyof FooterHints; label: string }> = [
-  { id: 'send', label: 'Enter: send' },
-  { id: 'stop', label: 'Esc ×2: stop' },
-  { id: 'quit', label: 'Ctrl+C ×2: quit' },
-  { id: 'quitEmpty', label: 'Ctrl+D: quit (empty)' },
-  { id: 'subagents', label: 'Ctrl+G: subagents' },
-  { id: 'search', label: 'Ctrl+Shift+F: search' },
-  { id: 'preset', label: '/preset: switch' },
-  { id: 'history', label: '↑↓: history' },
+/** The hint segments in display order; labels resolve live via footerHintLabel. */
+export const FOOTER_HINT_ITEMS: ReadonlyArray<{ id: keyof FooterHints }> = [
+  { id: 'send' },
+  { id: 'stop' },
+  { id: 'quit' },
+  { id: 'quitEmpty' },
+  { id: 'subagents' },
+  { id: 'search' },
+  { id: 'preset' },
+  { id: 'history' },
 ]
+
+/** One hint segment's display text (without the `⌨ ` lead). A function so the label tracks the active language instead of freezing at module load. */
+function footerHintLabel(id: keyof FooterHints): string {
+  switch (id) {
+    case 'send': return t('footer.hint.send')
+    case 'stop': return t('footer.hint.stop')
+    case 'quit': return t('footer.hint.quit')
+    case 'quitEmpty': return t('footer.hint.quitEmpty')
+    case 'subagents': return t('footer.hint.subagents')
+    case 'search': return t('footer.hint.search')
+    case 'preset': return t('footer.hint.preset')
+    case 'history': return t('footer.hint.history')
+  }
+}
 
 /**
  * Assemble the footer hint from the user's per-segment on/off selection, in
  * the fixed display order. `''` when every segment is off.
  */
 export function buildFooterHint(shown: FooterHints): string {
-  const parts = FOOTER_HINT_ITEMS.filter(item => shown[item.id]).map(item => item.label)
+  const parts = FOOTER_HINT_ITEMS.filter(item => shown[item.id]).map(item => footerHintLabel(item.id))
   if (parts.length === 0) return ''
   return `⌨ ${parts.join(' · ')}`
 }
@@ -250,8 +268,8 @@ export class PowerlineFooter implements Component {
     if ((stats.cacheReadTokens > 0 || stats.cacheWriteTokens > 0) && rate !== undefined) {
       segs.push({ label: `⚡ CH${rate.toFixed(1)}%`, bgHex: POWERLINE.cache })
     }
-    segs.push({ label: `💬 ${stats.msgCount} msgs`, bgHex: POWERLINE.messages })
-    segs.push({ label: `🔧 ${stats.toolCallCount} tools`, bgHex: POWERLINE.tools })
+    segs.push({ label: t('footer.seg.msgs', { count: stats.msgCount }), bgHex: POWERLINE.messages })
+    segs.push({ label: t('footer.seg.tools', { count: stats.toolCallCount }), bgHex: POWERLINE.tools })
 
     const left = buildSegments(segs)
     const leftWidth = visibleWidth(left)

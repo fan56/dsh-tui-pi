@@ -23,6 +23,7 @@
  */
 
 import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
+import { t } from './i18n/index.ts'
 import { PanelHost, panelThemeFns } from './panels.ts'
 import { BOLD, RESET, ansiFg, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, wrapText } from './text.ts'
@@ -45,19 +46,20 @@ export interface StopConfirmWording {
  */
 export function stopConfirmWording(mainRunning: boolean, runningChildren: number): StopConfirmWording {
   const running: string[] = []
-  if (mainRunning) running.push('the main turn is generating')
+  if (mainRunning) running.push(t('stop.confirm.mainRunning'))
   if (runningChildren > 0) {
-    running.push(`${runningChildren} subagent${runningChildren === 1 ? ' is' : 's are'} running`)
+    running.push(runningChildren === 1
+      ? t('stop.confirm.childrenOne', { count: runningChildren })
+      : t('stop.confirm.childrenMany', { count: runningChildren }))
   }
   const situation = running.length > 0
-    ? `Right now ${running.join(' and ')}.`
-    : 'Nothing is running right now.'
+    ? t('stop.confirm.situation', { parts: running.join(t('stop.confirm.joiner')) })
+    : t('stop.confirm.idle')
   return {
-    title: '● Stop all LLM work?',
+    title: t('stop.confirm.title'),
     body: [
       situation,
-      'Confirming cancels the main turn and every running subagent. '
-      + 'Queued messages are kept and the session stays resumable.',
+      t('stop.confirm.reassure'),
     ],
   }
 }
@@ -65,8 +67,8 @@ export function stopConfirmWording(mainRunning: boolean, runningChildren: number
 /** The fixed option rows for one wording. */
 export function stopConfirmOptions(): ReadonlyArray<{ id: 'stop' | 'cancel'; text: string }> {
   return [
-    { id: 'stop', text: 'Stop everything — cancel the main turn and all subagents' },
-    { id: 'cancel', text: 'Cancel — keep everything running' },
+    { id: 'stop', text: t('stop.option.stop') },
+    { id: 'cancel', text: t('stop.option.cancel') },
   ]
 }
 
@@ -75,8 +77,10 @@ export function stopConfirmTitle(wording: StopConfirmWording): string {
   return wording.title
 }
 
-/** Footer hint — hardcoded like every other panel footer (English-only). */
-export const STOP_CONFIRM_FOOTER = '↑↓ select · 1/2 pick · Enter confirm · Esc keep running'
+/** Footer hint — resolved per call so a live language switch repaints it. */
+export function stopConfirmFooter(): string {
+  return t('stop.footer')
+}
 
 /**
  * Pure dialog state: which row is highlighted, and the terminal outcome.
@@ -174,7 +178,7 @@ export class StopConfirmPanel implements Component {
         : fns.muted(row))
     }
     lines.push('')
-    lines.push(fns.subtle(clipToWidth(STOP_CONFIRM_FOOTER, wrap)))
+    lines.push(fns.subtle(clipToWidth(stopConfirmFooter(), wrap)))
     return lines
   }
 

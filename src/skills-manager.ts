@@ -33,6 +33,7 @@ import {
 } from './panels.ts'
 import { BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
+import { t } from './i18n/index.ts'
 import {
   clampScrollOffset,
   clampSkillCursor,
@@ -200,13 +201,13 @@ const SKILL_SUMMARY_MAX_ITEMS = 3
  * they only bloat it past what the panel can show.
  */
 export function skillApplyShortReason(error: string): string {
-  if (error.includes('not a symlink')) return 'not a symlink'
-  if (error.includes('different source')) return 'different source'
-  if (error.includes('skill not found') || error.includes('source vanished')) return 'source missing'
+  if (error.includes('not a symlink')) return t('skillsmgr.reason.notSymlink')
+  if (error.includes('different source')) return t('skillsmgr.reason.differentSource')
+  if (error.includes('skill not found') || error.includes('source vanished')) return t('skillsmgr.reason.sourceMissing')
   // No current producer emits "dest missing" — defensive mapping kept so a
   // future dest-existence check still collapses to a short reason.
-  if (error.includes('dest missing')) return 'dest missing'
-  return 'failed'
+  if (error.includes('dest missing')) return t('skillsmgr.reason.destMissing')
+  return t('skillsmgr.reason.failed')
 }
 
 /**
@@ -228,12 +229,17 @@ export function skillApplySummary(results: readonly SkillApplyResult[]): string 
     .map(r => `${r.name} (${skillApplyShortReason(r.error ?? '')})`)
     .join(', ')
   const failedExtra = failures.length - SKILL_SUMMARY_MAX_ITEMS
-  const failedMore = failedExtra > 0 ? ` +${failedExtra} more` : ''
+  const failedMore = failedExtra > 0 ? t('skillsmgr.summary.more', { n: failedExtra }) : ''
   const okShown = okNames.slice(0, SKILL_SUMMARY_MAX_ITEMS).join(', ')
   const okExtra = okNames.length - SKILL_SUMMARY_MAX_ITEMS
-  const okMore = okExtra > 0 ? ` +${okExtra} more` : ''
-  const okPart = okNames.length > 0 ? `ok: ${okShown}${okMore} · ` : ''
-  return `Applied ${okNames.length}/${results.length} — ${okPart}failed: ${failed}${failedMore}`
+  const okMore = okExtra > 0 ? t('skillsmgr.summary.more', { n: okExtra }) : ''
+  const okPart = okNames.length > 0 ? `${t('skillsmgr.summary.ok', { list: okShown })}${okMore} · ` : ''
+  return t('skillsmgr.summary.applied', {
+    ok: okNames.length,
+    total: results.length,
+    okPart,
+    failed: `${failed}${failedMore}`,
+  })
 }
 
 // ------------------------------------------------------- SkillsManagerPanel --
@@ -322,9 +328,9 @@ export class SkillsManagerPanel implements Component {
   render(width: number): string[] {
     const fns = panelThemeFns(this.theme)
     const wrap = Math.max(2, width - 2)
-    let title = '⚙ Skills Manager'
+    let title = t('skillsmgr.title')
     if (this.hasUnsavedChanges) {
-      title += ` (${this.pendingChanges.size} unsaved)`
+      title += t('skillsmgr.unsaved', { n: this.pendingChanges.size })
     }
     const lines: string[] = [
       fns.accent(BOLD + clipToWidth(title, wrap) + RESET),
@@ -338,7 +344,7 @@ export class SkillsManagerPanel implements Component {
 
     const filtered = this.getFilteredRows()
     if (filtered.length === 0) {
-      lines.push(fns.muted(clipToWidth(`No matches for '${this.filterQuery}'`, wrap)))
+      lines.push(fns.muted(clipToWidth(t('skillsmgr.noMatches', { query: this.filterQuery }), wrap)))
       lines.push('')
       lines.push(fns.subtle(clipToWidth(this.footer, wrap)))
       return lines
@@ -356,8 +362,8 @@ export class SkillsManagerPanel implements Component {
 
     // Column layout: On icon (●/○) | Skill name (flex)
     const columns: readonly TableColumn[] = [
-      { key: 'on', title: 'On', width: 2 },
-      { key: 'name', title: 'Skill', flex: true },
+      { key: 'on', title: t('skillsmgr.col.on'), width: 2 },
+      { key: 'name', title: t('skillsmgr.col.skill'), flex: true },
     ]
     const widths = columnWidths(wrap - MARKER_W, columns)
     lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
@@ -518,13 +524,13 @@ export class SkillsManagerPanel implements Component {
   private get footer(): string {
     let hint: string
     if (this.confirming) {
-      hint = 'Discard unsaved changes? Y/N'
+      hint = t('skillsmgr.footer.confirm')
     } else if (this.filterQuery !== '') {
-      hint = `Filter: ${this.filterQuery} · Backspace clear · Esc clear filter`
+      hint = t('skillsmgr.footer.filter', { query: this.filterQuery })
     } else if (this.hasUnsavedChanges) {
-      hint = '↑↓ nav · Space toggle · Enter apply · Esc discard'
+      hint = t('skillsmgr.footer.dirty')
     } else {
-      hint = '↑↓ nav · PgUp/PgDn page · Home/End jump · Space toggle · Enter apply · Esc back'
+      hint = t('skillsmgr.footer.idle')
     }
     const scroll = this.scrollText(this.getFilteredRows())
     return hint + scroll
@@ -609,12 +615,12 @@ export class SkillsManagerPanel implements Component {
    * after the list comes back).
    */
   loadAvailableSkills(notice?: string): void {
-    this.setStatus(notice ?? 'Scanning public skills…')
+    this.setStatus(notice ?? t('skillsmgr.scanning'))
     void this.scanPublicSkills()
       .then(entries => {
         this.availableEntries = entries
         if (entries.length === 0) {
-          this.setStatus('No public skills found in ~/.agents/skills/.')
+          this.setStatus(t('skillsmgr.empty'))
         } else {
           this.setRows(entries.map(e => ({
             name: e.name,
@@ -628,7 +634,7 @@ export class SkillsManagerPanel implements Component {
         }
       })
       .catch(() => {
-        this.setStatus('Could not read ~/.agents/skills/.')
+        this.setStatus(t('skillsmgr.readError'))
       })
   }
 

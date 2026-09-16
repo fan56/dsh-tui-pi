@@ -11,6 +11,7 @@ import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { PresetEntry, PresetState } from './preset.ts'
 import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { Component, OverlayHandle, TUI } from '@earendil-works/pi-tui'
+import { t } from './i18n/index.ts'
 import { wrapFramedOverlay } from './frame.ts'
 import {
   buildModelRows,
@@ -32,11 +33,16 @@ export type PickEffortResult =
   | { kind: 'cancelled' }
   | { kind: 'effort'; effort: ReasoningEffortId | 'default' }
 
-/** First row of the effort picker: explicitly no effort override. */
-const DEFAULT_EFFORT_ROW: PickerItem = {
-  value: 'default',
-  label: '(provider default)',
-  description: 'adapter default behavior — clears the effort override',
+/**
+ * First row of the effort picker: explicitly no effort override. Built per
+ * call (not a module constant) so the label resolves in the active language.
+ */
+function defaultEffortRow(): PickerItem {
+  return {
+    value: 'default',
+    label: t('sel.effort.default'),
+    description: t('sel.effort.defaultDesc'),
+  }
 }
 
 /** The standard framed-overlay mount every picker here uses. */
@@ -62,7 +68,7 @@ interface PickerItem {
 /** Columns of a label + description table under the auto layout. */
 function labelDescriptionColumns(title: string, rows: readonly PickerItem[], cap = 28): readonly TableColumn[] {
   return autoColumns(
-    [{ key: 'label', title, cap }, { key: 'description', title: 'Description' }],
+    [{ key: 'label', title, cap }, { key: 'description', title: t('sel.col.description') }],
     rows,
     itemText,
   )
@@ -95,7 +101,7 @@ export function openEffortPicker(
   afterShow?: () => void,
 ): Promise<{ effort: ReasoningEffortId | 'default' } | undefined> {
   const rows: PickerItem[] = [
-    DEFAULT_EFFORT_ROW,
+    defaultEffortRow(),
     ...efforts.map(effort => ({
       value: effort.id,
       label: effort.name,
@@ -108,8 +114,8 @@ export function openEffortPicker(
       ? undefined
       : rows.findIndex(row => row.value === selectedEffort)
     const list = new TablePanel(theme, {
-      title: '● Reasoning effort',
-      columns: labelDescriptionColumns('Effort', rows, 24),
+      title: t('sel.title.effort'),
+      columns: labelDescriptionColumns(t('sel.col.effort'), rows, 24),
       rows,
       renderCell: itemCell,
       preselect: preselect !== undefined && preselect >= 0 ? preselect : undefined,
@@ -205,8 +211,8 @@ export function pickPermission(
   const items = permissionItems(presets, current)
   return new Promise((resolve, reject) => {
     const list = new TablePanel(theme, {
-      title: '● Permission preset',
-      columns: labelDescriptionColumns('Preset', items),
+      title: t('sel.title.permission'),
+      columns: labelDescriptionColumns(t('sel.col.preset'), items),
       rows: items,
       renderCell: itemCell,
       preselect: current === undefined
@@ -234,9 +240,6 @@ export function pickPermission(
     }
   })
 }
-
-/** Footer hints of the model picker with the favorites/hidden/filter keys. */
-const MODEL_PICKER_FOOTER = '↑↓ navigate · Enter select · f favorite · h hide · / filter · Esc back'
 
 /**
  * Open the model picker overlay. Resolves with the picked selection, or
@@ -288,8 +291,8 @@ export async function pickModel(
     // Auto layout: MODEL fits its content, PROVIDER runs to the right edge.
     const columns: readonly TableColumn[] = autoColumns(
       [
-        { key: 'model', title: 'Model', cap: 40 },
-        { key: 'provider', title: 'Provider' },
+        { key: 'model', title: t('sel.col.model'), cap: 40 },
+        { key: 'provider', title: t('sel.col.provider') },
       ],
       models,
       (model, key) => (key === 'provider' ? model.provider : model.name === '' ? model.id : model.name),
@@ -302,7 +305,7 @@ export async function pickModel(
     let statusTimer: ReturnType<typeof setTimeout> | undefined
     const initialRows = buildModelRows(models, favorites, hidden)
     const options: TablePanelOptions<ModelRow> = {
-      title: '● Model',
+      title: t('sel.title.model'),
       columns,
       rows: initialRows,
       renderCell: (row, column) => {
@@ -314,7 +317,7 @@ export async function pickModel(
       isSelectable: row => row.kind === 'model',
       specialRow: (row, width) => {
         if (row.kind === 'divider') return '─'.repeat(Math.max(1, width))
-        if (row.kind === 'hiddenHeader') return `─ Hidden (${String(row.count)}) ─`
+        if (row.kind === 'hiddenHeader') return t('sel.hidden.header', { count: String(row.count) })
         return undefined
       },
       dimRow: row => row.kind === 'model' && row.section === 'hidden',
@@ -328,7 +331,7 @@ export async function pickModel(
         && row.model.id === current?.model)),
       onSelect: row => { if (row.kind === 'model') settle(row.model) },
       onCancel: () => settle(undefined),
-      footer: MODEL_PICKER_FOOTER,
+      footer: t('sel.footer.model'),
       status: () => persistStatus,
       filter: {
         getQuery: () => query,
@@ -368,7 +371,7 @@ export async function pickModel(
 
     /** Show one failure message for a few seconds, then clear the status row. */
     const flashPersistFailure = (message: string): void => {
-      persistStatus = `✘ save failed: ${message}`
+      persistStatus = t('sel.status.saveFailed', { message })
       clearTimeout(statusTimer)
       statusTimer = setTimeout(() => { persistStatus = undefined; tui.requestRender() }, 4000)
     }
@@ -510,12 +513,12 @@ export function pickPreset(
   const rows: PickerItem[] = state.roster.map(p => ({
     value: p.id,
     label: p.name,
-    description: p.description ?? (p.trust === 'system' ? 'shipped preset' : 'user preset'),
+    description: p.description ?? (p.trust === 'system' ? t('sel.preset.shipped') : t('sel.preset.user')),
   }))
   return new Promise(resolve => {
     const list = new TablePanel(theme, {
-      title: '● Agent preset',
-      columns: labelDescriptionColumns('Preset', rows),
+      title: t('sel.title.preset'),
+      columns: labelDescriptionColumns(t('sel.col.preset'), rows),
       rows,
       renderCell: itemCell,
       preselect: Math.max(0, state.index),

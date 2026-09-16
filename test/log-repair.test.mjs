@@ -37,8 +37,8 @@ import {
   verifyClean,
 } from '../lib/log-repair.js'
 import {
-  REPAIR_CONFIRM_OPTIONS,
   initialRepairConfirmState,
+  repairConfirmOptions,
   repairConfirmOutcome,
   updateRepairConfirm,
 } from '../lib/repair-dialog.js'
@@ -447,8 +447,8 @@ test('repairFailureNotice: failed names the blocker; repaired/clean proceed sile
 test('repair dialog: Repair & resume is preselected; Enter confirms it directly', () => {
   const state = initialRepairConfirmState()
   assert.equal(state.selected, 0)
-  assert.equal(REPAIR_CONFIRM_OPTIONS[0].title, 'Repair & resume')
-  assert.equal(REPAIR_CONFIRM_OPTIONS[1].title, 'Cancel')
+  assert.equal(repairConfirmOptions()[0].title, 'Repair & resume')
+  assert.equal(repairConfirmOptions()[1].title, 'Cancel')
   const confirmed = updateRepairConfirm(state, ENTER)
   assert.equal(confirmed.settled, 'confirm')
   assert.equal(repairConfirmOutcome(confirmed), 'repair')

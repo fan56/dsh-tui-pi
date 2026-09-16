@@ -9,11 +9,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { lightTheme } from '../lib/theme/index.js'
 import {
-  STOP_CONFIRM_FOOTER,
   STOP_CONFIRM_OPTION_IDS,
   StopConfirmPanel,
   initialStopConfirmState,
   openStopConfirmDialog,
+  stopConfirmFooter,
   stopConfirmOptions,
   stopConfirmOutcome,
   stopConfirmTitle,
@@ -121,7 +121,7 @@ test('panel: renders title, body points, both options and the footer', () => {
   assert.ok(flat.includes('1 subagent is running'))
   assert.ok(flat.includes('Stop everything'))
   assert.ok(flat.includes('keep everything running'))
-  assert.ok(flat.includes(STOP_CONFIRM_FOOTER))
+  assert.ok(flat.includes(stopConfirmFooter()))
 })
 
 test('panel: the first terminal key fires onFinish exactly once with the outcome', () => {

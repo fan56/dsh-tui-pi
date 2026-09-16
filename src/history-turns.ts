@@ -22,11 +22,13 @@
  * outright: the replay-path rule (iron rule 9) — the assembled message carries
  * the full text.
  *
- * Pure and dependency-free apart from the event types, so it is unit-testable
+ * Pure and dependency-free apart from the event types (plus the one `t()`
+ * lookup in the tool-summary label), so it is unit-testable
  * without a terminal or a session store.
  */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { t } from './i18n/index.ts'
 
 /** One completed `turn/start … turn/end` bracket of a session log. */
 export interface HistoryTurn {
@@ -200,7 +202,8 @@ export function matchesTurnFilter(turn: HistoryTurn, query: string): boolean {
 
 /**
  * The `⚙ N tool calls: read×2, edit×1` summary of one turn's tool/call names,
- * in first-appearance order. Empty string for a tool-less turn.
+ * in first-appearance order. Empty string for a tool-less turn. (The `t()`
+ * dependency is the one UI-string lookup — the fold itself stays pure.)
  */
 export function toolCallSummary(names: readonly string[]): string {
   if (names.length === 0) return ''
@@ -208,7 +211,8 @@ export function toolCallSummary(names: readonly string[]): string {
   for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1)
   const parts = [...counts.entries()].map(([name, count]) => `${name}×${count}`)
   const total = names.length
-  return `${total} tool call${total === 1 ? '' : 's'}: ${parts.join(', ')}`
+  const label = total === 1 ? t('turns.toolCallOne') : t('turns.toolCallMany')
+  return `${total} ${label}: ${parts.join(', ')}`
 }
 
 /**

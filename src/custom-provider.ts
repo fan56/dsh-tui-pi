@@ -21,6 +21,7 @@
  */
 
 import type { Component, TUI } from '@earendil-works/pi-tui'
+import { t } from './i18n/index.ts'
 import { EditField, type CommitResult } from './settings.ts'
 import type { ProviderCatalogEntry } from './provider-catalog.ts'
 import type { TuiTheme } from './theme/index.ts'
@@ -38,8 +39,10 @@ export const SUPPORTED_PROTOCOLS = ['openai-completions', 'openai-responses', 'a
 export function customProviderEntry(): ProviderCatalogEntry {
   return {
     id: CUSTOM_PROVIDER_ID,
-    name: 'Custom provider…',
-    hint: 'base URL + API key + models — any OpenAI/Anthropic-compatible gateway',
+    name: t('custprov.entry.name'),
+    // Runtime-built entry: the hint resolves NOW (unlike the static catalog,
+    // whose frozen-table hints carry i18n keys until render time).
+    hint: t('custprov.entry.hint'),
     catalogRoute: false,
   }
 }
@@ -60,12 +63,12 @@ export type FieldOutcome =
  */
 export function parseCustomProviderId(text: string, takenIds: ReadonlySet<string>): FieldOutcome {
   const id = text.trim().toLowerCase()
-  if (id === '') return { kind: 'error', error: 'Provider id must not be empty' }
-  if (id.length < 2 || id.length > 40) return { kind: 'error', error: 'Provider id must be 2–40 characters' }
+  if (id === '') return { kind: 'error', error: t('custprov.error.idEmpty') }
+  if (id.length < 2 || id.length > 40) return { kind: 'error', error: t('custprov.error.idLength') }
   if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
-    return { kind: 'error', error: 'Use lowercase letters, digits and dashes only (no dots, no spaces)' }
+    return { kind: 'error', error: t('custprov.error.idChars') }
   }
-  if (takenIds.has(id)) return { kind: 'error', error: `"${id}" already exists — pick another route id` }
+  if (takenIds.has(id)) return { kind: 'error', error: t('custprov.error.idTaken', { id }) }
   return { kind: 'value', value: id }
 }
 
@@ -73,7 +76,7 @@ export function parseCustomProviderId(text: string, takenIds: ReadonlySet<string
 export function parseCustomDisplayName(text: string): FieldOutcome {
   const name = text.trim().replace(/\s+/g, ' ')
   if (name === '') return { kind: 'value', value: '' }
-  if (name.length > 40) return { kind: 'error', error: 'Display name must be at most 40 characters' }
+  if (name.length > 40) return { kind: 'error', error: t('custprov.error.nameLength') }
   return { kind: 'value', value: name }
 }
 
@@ -87,7 +90,7 @@ export function parseCustomProtocol(text: string): FieldOutcome {
   if (value === '') return { kind: 'value', value: SUPPORTED_PROTOCOLS[0] }
   const match = SUPPORTED_PROTOCOLS.find(protocol => protocol === value)
   if (match === undefined) {
-    return { kind: 'error', error: `Protocol must be one of: ${SUPPORTED_PROTOCOLS.join(', ')}` }
+    return { kind: 'error', error: t('custprov.error.protocol', { list: SUPPORTED_PROTOCOLS.join(', ') }) }
   }
   return { kind: 'value', value: match }
 }
@@ -95,9 +98,9 @@ export function parseCustomProtocol(text: string): FieldOutcome {
 /** Base URL validation: an http(s) URL without spaces or a fragment. */
 export function parseCustomBaseUrl(text: string): FieldOutcome {
   const url = text.trim()
-  if (url === '') return { kind: 'error', error: 'Base URL must not be empty' }
+  if (url === '') return { kind: 'error', error: t('custprov.error.baseUrlEmpty') }
   if (!/^https?:\/\/\S+$/.test(url)) {
-    return { kind: 'error', error: 'Base URL must start with http:// or https:// and contain no spaces' }
+    return { kind: 'error', error: t('custprov.error.baseUrlFormat') }
   }
   return { kind: 'value', value: url }
 }
@@ -109,9 +112,9 @@ export function parseCustomBaseUrl(text: string): FieldOutcome {
  */
 export function parseCustomModels(text: string): FieldOutcome {
   const ids = [...new Set(text.split(/[\s,]+/).map(id => id.trim()).filter(id => id !== ''))]
-  if (ids.length === 0) return { kind: 'error', error: 'List at least one model id (comma-separated)' }
-  if (ids.some(id => id.length > 80)) return { kind: 'error', error: 'Each model id must be at most 80 characters' }
-  if (ids.length > 50) return { kind: 'error', error: 'At most 50 models in the initial list' }
+  if (ids.length === 0) return { kind: 'error', error: t('custprov.error.modelsEmpty') }
+  if (ids.some(id => id.length > 80)) return { kind: 'error', error: t('custprov.error.modelLength') }
+  if (ids.length > 50) return { kind: 'error', error: t('custprov.error.modelsMax') }
   return { kind: 'value', value: ids.join(',') }
 }
 
@@ -131,7 +134,7 @@ export function buildCustomEntry(draft: CustomProviderDraft): ProviderCatalogEnt
   return {
     id: draft.id,
     name: draft.displayName !== '' ? draft.displayName : draft.id,
-    hint: 'hand-declared route',
+    hint: t('custprov.hint.declared'),
     catalogRoute: false,
     api: draft.api,
     baseURL: draft.baseURL,
@@ -200,42 +203,45 @@ export class CustomProviderFlow implements Component {
   private specs(): StepSpec[] {
     return [
       {
-        label: 'Provider id',
-        subtitle: 'route key for settings.yaml — also derives the credential ref (e.g. acme-gateway → ACME_GATEWAY_API_KEY)',
+        label: t('custprov.step.id'),
+        subtitle: t('custprov.step.idHint'),
         initial: this.draft.id,
         parse: text => parseCustomProviderId(text, this.options.takenIds),
       },
       {
-        label: 'Display name (optional)',
-        subtitle: 'shown in /model and Models — empty uses the route id',
+        label: t('custprov.step.displayName'),
+        subtitle: t('custprov.step.displayNameHint'),
         initial: this.draft.displayName,
         parse: parseCustomDisplayName,
       },
       {
-        label: 'API protocol',
-        subtitle: `one of ${SUPPORTED_PROTOCOLS.join(' · ')} — empty defaults to ${SUPPORTED_PROTOCOLS[0]}`,
+        label: t('custprov.step.protocol'),
+        subtitle: t('custprov.step.protocolHint', {
+          list: SUPPORTED_PROTOCOLS.join(' · '),
+          default: SUPPORTED_PROTOCOLS[0],
+        }),
         initial: this.draft.api,
         parse: parseCustomProtocol,
       },
       {
-        label: 'Base URL',
-        subtitle: 'the gateway endpoint, e.g. https://gateway.internal.example/v1',
+        label: t('custprov.step.baseUrl'),
+        subtitle: t('custprov.step.baseUrlHint'),
         initial: this.draft.baseURL,
         parse: parseCustomBaseUrl,
       },
       {
-        label: 'Models',
-        subtitle: 'comma-separated wire model ids, e.g. acme-large, acme-think',
+        label: t('custprov.step.models'),
+        subtitle: t('custprov.step.modelsHint'),
         initial: this.draft.models,
         parse: parseCustomModels,
       },
       {
-        label: 'API key',
-        subtitle: `stored as the derived ref — never written to settings.yaml`,
+        label: t('custprov.step.apiKey'),
+        subtitle: t('custprov.step.apiKeyHint'),
         initial: '',
         secret: true,
         parse: text => text.trim() === ''
-          ? { kind: 'error', error: 'API key must not be empty' }
+          ? { kind: 'error', error: t('custprov.error.keyEmpty') }
           : { kind: 'value', value: text.trim() },
       },
     ]
@@ -252,7 +258,7 @@ export class CustomProviderFlow implements Component {
     // commit abandons the whole flow (the key-editor contract).
     let committedThisStep = false
     return new EditField(this.tui, {
-      title: `Custom provider ${this.step + 1}/${total} · ${spec.label}`,
+      title: t('custprov.step.title', { current: this.step + 1, total, label: spec.label }),
       subtitle: spec.subtitle,
       initial: spec.initial,
       ...(spec.secret === true ? { secret: true } : {}),

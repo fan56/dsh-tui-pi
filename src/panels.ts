@@ -44,6 +44,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
+import { t } from './i18n/index.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth, ELLIPSIS, visibleWidth } from './text.ts'
 
@@ -468,7 +469,7 @@ export class TablePanel<T> implements Component {
     // An empty body (e.g. an applied filter matching nothing) renders a hint
     // row between the rules instead of a blank gap.
     if (rows.length === 0) {
-      lines.push(fns.muted(clipToWidth(`  ${this.options.emptyHint ?? 'No matching models'}`, width)))
+      lines.push(fns.muted(clipToWidth(`  ${this.options.emptyHint ?? t('panel.empty.models')}`, width)))
     }
     lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), width)))
 
@@ -476,9 +477,9 @@ export class TablePanel<T> implements Component {
     // query stays visible as a reminder until cleared.
     const query = this.options.filter?.getQuery() ?? ''
     if (this.filterInput) {
-      lines.push(fns.accent(BOLD + clipToWidth(`Filter: ${query}_`, width) + RESET))
+      lines.push(fns.accent(BOLD + clipToWidth(t('panel.filter.input', { query }), width) + RESET))
     } else if (query !== '') {
-      lines.push(fns.attention(clipToWidth(`Filter: ${query}`, width)))
+      lines.push(fns.attention(clipToWidth(t('panel.filter.active', { query }), width)))
     }
     // Transient status message (e.g. a failed pref write), FieldPanel-style.
     const statusLine = this.options.status?.()
@@ -486,8 +487,8 @@ export class TablePanel<T> implements Component {
 
     lines.push('')
     const footerLine = this.filterInput
-      ? 'Enter apply · Esc clear filter'
-      : `${footer ?? '↑↓ navigate · Enter select · Esc back'}${scrollInfo(controller, rows.length)}`
+      ? t('panel.footer.filtering')
+      : `${footer ?? t('panel.footer.navigate')}${scrollInfo(controller, rows.length)}`
     lines.push(fns.subtle(clipToWidth(footerLine, width)))
     return lines
   }
@@ -601,8 +602,8 @@ export class FieldPanel implements Component {
     // fields / BOTTOM ┴) with the │ separator on every row; the ✎
     // affordance rides at the head of the value cell.
     const columns: readonly TableColumn[] = [
-      { key: 'field', title: 'Field', width: this.keyWidth },
-      { key: 'value', title: 'Value', flex: true },
+      { key: 'field', title: t('panel.col.field'), width: this.keyWidth },
+      { key: 'value', title: t('panel.col.value'), flex: true },
     ]
     const widths = columnWidths(wrap - MARKER_W, columns)
     lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┬'), wrap)))
@@ -627,7 +628,7 @@ export class FieldPanel implements Component {
       lines.push(fns.attention(clipToWidth(statusLine, wrap)))
     }
     lines.push('')
-    lines.push(fns.subtle(clipToWidth(footer ?? '↑↓ field · Enter edit · Esc back', wrap)))
+    lines.push(fns.subtle(clipToWidth(footer ?? t('panel.footer.field'), wrap)))
     return lines
   }
 
@@ -682,10 +683,10 @@ export class ViewerPanel implements Component {
       out.push(fns.muted(clipToWidth(line === '' ? ' ' : line, wrap)))
     }
     if (lines.length > maxLines) {
-      out.push(fns.subtle(clipToWidth(`… ${lines.length - maxLines} more line(s)`, wrap)))
+      out.push(fns.subtle(clipToWidth(t('panel.viewer.more', { count: lines.length - maxLines }), wrap)))
     }
     out.push('')
-    out.push(fns.subtle(footer ?? '  Esc to close'))
+    out.push(fns.subtle(footer ?? `  ${t('panel.viewer.close')}`))
     return out
   }
 
@@ -794,7 +795,7 @@ export class SettingsListPanel implements Component {
     ]
     const rows = this.filtered()
     if (rows.length === 0) {
-      lines.push(fns.muted('  No matching settings'))
+      lines.push(fns.muted(`  ${t('panel.empty.settings')}`))
       lines.push('')
       lines.push(fns.subtle(clipToWidth(this.hint(footer, enableSearch === true), wrap)))
       return lines
@@ -811,13 +812,13 @@ export class SettingsListPanel implements Component {
       ? autoColumns(
           [
             // The label may not starve the value column below its flex floor.
-            { key: 'label', title: 'Setting', cap: Math.max(4, usable - visibleWidth(TABLE_SEP) - MIN_FLEX_WIDTH) },
-            { key: 'value', title: 'Value' },
+            { key: 'label', title: t('panel.col.setting'), cap: Math.max(4, usable - visibleWidth(TABLE_SEP) - MIN_FLEX_WIDTH) },
+            { key: 'value', title: t('panel.col.value') },
           ],
           this.rows,
           (row, key) => (key === 'value' ? row.value : row.label),
         )
-      : [{ key: 'label', title: 'Setting', flex: true }]
+      : [{ key: 'label', title: t('panel.col.setting'), flex: true }]
     const widths = columnWidths(wrap - MARKER_W, columns)
     const seps = columns.length > 1 ? TABLE_SEP : ''
     // The booktabs trio seals the table right under the title (no gap row):
@@ -925,10 +926,10 @@ export class SettingsListPanel implements Component {
 
   /** Base footer hint; swaps to the filter hint while a query is active. */
   private hint(footer: string | undefined, searchable: boolean): string {
-    if (this.filterQuery !== '') return `Filter: ${this.filterQuery} · Backspace clear · Esc clear filter`
+    if (this.filterQuery !== '') return t('panel.filter.hint', { query: this.filterQuery })
     return footer ?? (searchable
-      ? '↑↓ navigate · Enter select · Type to search · Esc back'
-      : '↑↓ navigate · Enter select · Esc back')
+      ? t('panel.footer.search')
+      : t('panel.footer.navigate'))
   }
 }
 
