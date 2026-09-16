@@ -46,6 +46,7 @@
     "templates",
     "assets",
     "themes",
+    "locales",
     "skills",
     "README.md",
     "LICENSE"

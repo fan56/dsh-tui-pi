@@ -28,6 +28,7 @@ import {
 } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { DEFAULT_FOOTER_HINTS, type FooterHints } from './footer.ts'
+import { t } from './i18n/index.ts'
 import { DEFAULT_PANEL_HEIGHT, isPanelHeight, type PanelHeight } from './activity.ts'
 import { narrowStringList } from './model-list.ts'
 import type { IconSet } from './icons.ts'
@@ -58,6 +59,9 @@ export type CacheHitMode = 'lastMessage' | 'session'
 
 /** The footer CH default: per-message, matching the pi-tui footer. */
 export const DEFAULT_CACHE_HIT_MODE: CacheHitMode = 'lastMessage'
+
+/** The UI language default: the bundled English catalog. */
+export const DEFAULT_LANGUAGE = 'en'
 
 /** Validate an unknown `cacheHitMode` value (anything else narrows to the default). */
 export function narrowCacheHitMode(value: unknown): CacheHitMode {
@@ -120,101 +124,72 @@ export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({
 
 /** Schema of the `dsh-tui` settings section. */
 const THEME_SETTINGS_SCHEMA = z.object({
+  language: z
+    .string()
+    .default(DEFAULT_LANGUAGE)
+    .description(t('settings.language.description')),
   theme: z
     .string()
     .default('auto')
-    .description(
-      "Terminal color scheme ('auto' follows the terminal, 'light'/'dark' are "
-      + 'the GitHub palettes, any other value names a registered custom theme)',
-    ),
+    .description(t('settings.theme.description')),
   panelHeight: z
     .union(['1', '5', '7', '10', 'all'])
     .default(DEFAULT_PANEL_HEIGHT)
-    .description(
-      "Think/tool panel height ('1' = one row: identifier + elapsed + last line, "
-      + "right-truncated; '5'/'7'/'10' = boxed header + content rows, borders add 2 more; "
-      + "'all' = full content — streaming reasoning shows a 200-line live tail, "
-      + 'tool results cap at 2000 lines)',
-    ),
+    .description(t('settings.panelHeight.description')),
   // `z.natural()` is schemastery's constraint for a non-negative integer
   // (the `z.number().int().min(0)` intent — no `.int()` chain exists here).
   maxAgents: z
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxAgents)
-    .description('Max concurrently running subagents (0 = unlimited)'),
+    .description(t('settings.maxAgents.description')),
   maxRounds: z
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxRounds)
-    .description('Max assistant messages per subagent before the TUI sends a summary request (0 = unlimited)'),
+    .description(t('settings.maxRounds.description')),
   maxRoundsGrace: z
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace)
-    .description(
-      'Rounds a subagent may keep running after the summary request before the '
-      + 'TUI force-stops it (0 = warn only, never force-stop)',
-    ),
+    .description(t('settings.maxRoundsGrace.description')),
   disableSubagent: z
     .boolean()
     .default(DEFAULT_SUBAGENT_LIMITS.disableSubagent)
-    .description(
-      'Disable the native subagent tool (delegation goes through registered '
-      + 'agents, ~/.dsh/agents/*.md via use_agent); subagent_fork/workflow/'
-      + 'ralph stay available',
-    ),
+    .description(t('settings.disableSubagent.description')),
   registeredOnly: z
     .boolean()
     .default(DEFAULT_SUBAGENT_LIMITS.registeredOnly)
-    .description(
-      'Fence EVERY spawn tool except use_agent: delegation may only create '
-      + 'subagents backed by a registered agent definition (~/.dsh/agents/'
-      + '*.md); the ad-hoc paths (subagent, subagent_fork, workflow, ralph) '
-      + 'are denied at the guard',
-    ),
+    .description(t('settings.registeredOnly.description')),
   footerHints: z
     .object({
-      send: z.boolean().default(true).description('Show "Enter: send" in the footer hint bar'),
-      stop: z.boolean().default(true).description('Show "Esc ×2: stop" in the footer hint bar'),
-      quit: z.boolean().default(true).description('Show "Ctrl+C ×2: quit" in the footer hint bar'),
-      quitEmpty: z.boolean().default(true).description('Show "Ctrl+D: quit (empty)" in the footer hint bar'),
-      subagents: z.boolean().default(true).description('Show "Ctrl+G: subagents" in the footer hint bar'),
-      search: z.boolean().default(true).description('Show "Ctrl+Shift+F: search" in the footer hint bar'),
-      history: z.boolean().default(true).description('Show "↑↓: history" in the footer hint bar'),
+      send: z.boolean().default(true).description(t('settings.footerHints.send.description')),
+      stop: z.boolean().default(true).description(t('settings.footerHints.stop.description')),
+      quit: z.boolean().default(true).description(t('settings.footerHints.quit.description')),
+      quitEmpty: z.boolean().default(true).description(t('settings.footerHints.quitEmpty.description')),
+      subagents: z.boolean().default(true).description(t('settings.footerHints.subagents.description')),
+      search: z.boolean().default(true).description(t('settings.footerHints.search.description')),
+      history: z.boolean().default(true).description(t('settings.footerHints.history.description')),
     })
     .default({ ...DEFAULT_FOOTER_HINTS })
-    .description('Footer shortcut hints to display (toggle each one on/off)'),
+    .description(t('settings.footerHints.description')),
   cacheHitMode: z
     .union(['lastMessage', 'session'])
     .default(DEFAULT_CACHE_HIT_MODE)
-    .description(
-      "Footer CH segment scope: 'lastMessage' = hit rate of the latest assistant message "
-      + "(matches the pi-tui footer); 'session' = cumulative over the whole session's input traffic. "
-      + 'Applies on the next footer repaint',
-    ),
+    .description(t('settings.cacheHitMode.description')),
   iconSet: z
     .union(['auto', 'nerdfont', 'plain'])
     .default('auto')
-    .description(
-      "Icon set for the risky glyphs ('auto' = pick nerdfont when a Nerd Font "
-      + "is detected at startup, plain otherwise; 'nerdfont' = powerline PUA "
-      + 'glyphs (U+E0B0 separator, stop, heavy circle); plain = safe Unicode '
-      + 'stand-ins (▸ ■ ●) — auto is the recommended default)',
-    ),
+    .description(t('settings.iconSet.description')),
   rememberPreset: z
     .boolean()
     .default(true)
-    .description(
-      'Remember the last /preset selection per workspace and start the next '
-      + 'launch in the same directory on it (instead of the server default). '
-      + 'false always starts on the server-side default preset',
-    ),
+    .description(t('settings.rememberPreset.description')),
   favoriteModels: z
     .array(z.string())
     .default([])
-    .description('Favorite models (provider/id keys) pinned to the top of the /model picker'),
+    .description(t('settings.favoriteModels.description')),
   hiddenModels: z
     .array(z.string())
     .default([])
-    .description('Hidden models (provider/id keys) moved to the Hidden section of the /model picker'),
+    .description(t('settings.hiddenModels.description')),
   // Plain z.number() (not z.natural()) on purpose: the settings service
   // validates the stored section against this schema at registration and
   // fails LOUD, so a range-constrained schema would let one hand-edited
@@ -227,75 +202,53 @@ const THEME_SETTINGS_SCHEMA = z.object({
       maxCount: z
         .number()
         .default(RETENTION_MAX_COUNT)
-        .description(
-          'Session log retention: keep at most this many sessions (<= 0 disables the janitor); '
-          + 'outranks DSH_TUI_RETENTION_MAX_COUNT; applies at next startup',
-        ),
+        .description(t('settings.retention.maxCount.description')),
       maxAgeDays: z
         .number()
         .default(RETENTION_MAX_AGE_DAYS)
-        .description(
-          'Session log retention: delete logs untouched for more than this many days (> 0); '
-          + 'outranks DSH_TUI_RETENTION_MAX_AGE_DAYS; applies at next startup',
-        ),
+        .description(t('settings.retention.maxAgeDays.description')),
       minIdleHours: z
         .number()
         .default(RETENTION_MIN_IDLE_HOURS)
-        .description(
-          'Session log retention: count-rule-only idle guard in hours (>= 0); '
-          + 'outranks DSH_TUI_RETENTION_MIN_IDLE_HOURS; applies at next startup',
-        ),
+        .description(t('settings.retention.minIdleHours.description')),
     })
     .default({
       maxCount: RETENTION_MAX_COUNT,
       maxAgeDays: RETENTION_MAX_AGE_DAYS,
       minIdleHours: RETENTION_MIN_IDLE_HOURS,
     })
-    .description('Startup session-log janitor for ~/.dsh/sessions (explicit values here outrank the DSH_TUI_RETENTION_* env vars)'),
+    .description(t('settings.retention.description')),
   resume: z
     .object({
       maxAgeDays: z
         .number()
         .default(RESUME_MAX_AGE_DAYS)
-        .description(
-          'Resume picker: only sessions with log activity inside this window get a row (> 0); '
-          + 'outranks DSH_TUI_RESUME_MAX_AGE_DAYS',
-        ),
+        .description(t('settings.resume.maxAgeDays.description')),
       minBytes: z
         .number()
         .default(RESUME_MIN_BYTES)
-        .description(
-          'Resume picker: minimum compressed log size for a row (>= 0); '
-          + 'outranks DSH_TUI_RESUME_MIN_BYTES',
-        ),
+        .description(t('settings.resume.minBytes.description')),
     })
     .default({ maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES })
-    .description('Resume picker display filter (explicit values here outrank the DSH_TUI_RESUME_* env vars)'),
+    .description(t('settings.resume.description')),
   askUser: z
     .object({
       idleMinutes: z
         .number()
         .default(ASK_USER_IDLE_MINUTES_DEFAULT)
-        .description(
-          'Ask User panel: auto-answer the focused question after this many minutes without a single keypress — '
-          + 'unanswered questions take the recommended option (first in the list), plans are never auto-approved; '
-          + '<= 0 disables the no-input rule; outranks DSH_TUI_ASK_USER_IDLE_MINUTES',
-        ),
+        .description(t('settings.askUser.idleMinutes.description')),
       absoluteMinutes: z
         .number()
         .default(ASK_USER_ABSOLUTE_MINUTES_DEFAULT)
-        .description(
-          'Ask User panel: hard cap per question — after this many minutes the question is auto-answered even '
-          + 'if the user keeps interacting (the panel must never hold a run hostage); <= 0 disables the cap; '
-          + 'outranks DSH_TUI_ASK_USER_ABSOLUTE_MINUTES',
-        ),
+        .description(t('settings.askUser.absoluteMinutes.description')),
     })
     .default({ idleMinutes: ASK_USER_IDLE_MINUTES_DEFAULT, absoluteMinutes: ASK_USER_ABSOLUTE_MINUTES_DEFAULT })
-    .description('Ask User question panel timeouts (explicit values here outrank the DSH_TUI_ASK_USER_* env vars)'),
+    .description(t('settings.askUser.description')),
 })
 
 /** Composition entry below the user layer: fall back to the defaults. */
 const THEME_SETTINGS_ENTRY: {
+  language: string
   theme: ThemePreference
   panelHeight: PanelHeight
   maxAgents: number
@@ -313,6 +266,7 @@ const THEME_SETTINGS_ENTRY: {
   resume: { maxAgeDays: number; minBytes: number }
   askUser: { idleMinutes: number; absoluteMinutes: number }
 } = {
+  language: DEFAULT_LANGUAGE,
   theme: 'auto',
   panelHeight: DEFAULT_PANEL_HEIGHT,
   maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,
@@ -357,13 +311,13 @@ let registrationPromise: Promise<void> | undefined
  *
  * @param ctx - plugin context; does nothing while no settings service is mounted.
  * @param onPreferenceChange - hot-reload sink for committed `dsh-tui` theme,
- * panel-height, footer-hints and icon-set changes; `undefined` when the
+ * panel-height, footer-hints, icon-set and language changes; `undefined` when the
  * namespace is already registered (a reloaded plugin instance, a second mount
  * of this bundle) or registration fails.
  */
 export function registerThemeSettings(
   ctx: Context,
-  onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, iconSet: IconSet) => void,
+  onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, iconSet: IconSet, language: string) => void,
 ): void {
   registrationPromise = new Promise<void>(resolve => {
     ctx.inject(['settings'], (sctx) => {
@@ -385,10 +339,10 @@ export function registerThemeSettings(
         })
         if (onPreferenceChange !== undefined) {
           scope.watch((next) => {
-            // The resolved section is `{ theme: ..., panelHeight: ...,
-            // footerHints: {...}, iconSet: ... }` — narrow the unknown to the
-            // observed fields.
-            const section = next as { theme?: unknown; panelHeight?: unknown; footerHints?: unknown; iconSet?: unknown }
+            // The resolved section is `{ language: ..., theme: ...,
+            // panelHeight: ..., footerHints: {...}, iconSet: ... }` — narrow
+            // the unknown to the observed fields.
+            const section = next as { language?: unknown; theme?: unknown; panelHeight?: unknown; footerHints?: unknown; iconSet?: unknown }
             const theme = section.theme
             const panelHeight = section.panelHeight
             onPreferenceChange(
@@ -396,6 +350,7 @@ export function registerThemeSettings(
               isPanelHeight(panelHeight) ? panelHeight : DEFAULT_PANEL_HEIGHT,
               narrowFooterHints(section.footerHints),
               narrowIconSet(section.iconSet),
+              narrowLanguage(section.language),
             )
           })
         }
@@ -430,6 +385,11 @@ function narrowFooterHints(value: unknown): FooterHints {
 /** Validate an unknown `iconSet` value (anything else narrows to 'auto'). */
 function narrowIconSet(value: unknown): IconSet {
   return value === 'nerdfont' || value === 'plain' ? value : 'auto'
+}
+
+/** Validate an unknown `language` value (anything else narrows to the 'en' fallback). */
+export function narrowLanguage(value: unknown): string {
+  return typeof value === 'string' && value !== '' ? value : DEFAULT_LANGUAGE
 }
 
 /** Validate an unknown `rememberPreset` value (anything else narrows to true). */
@@ -473,6 +433,7 @@ async function registeredDescriptor(ctx: Context): Promise<SettingsDescriptor | 
  * flight, the settings service is absent, or the namespace has not landed.
  */
 async function readResolvedSection(ctx: Context): Promise<{
+  language?: unknown
   theme?: unknown
   panelHeight?: unknown
   footerHints?: unknown
@@ -486,6 +447,7 @@ async function readResolvedSection(ctx: Context): Promise<{
   // the field itself — narrow the unknown to the observed fields.
   return (await registeredDescriptor(ctx))?.value as
     | {
+        language?: unknown
         theme?: unknown
         panelHeight?: unknown
         footerHints?: unknown
@@ -543,6 +505,19 @@ export async function readFooterHintsPreference(ctx: Context): Promise<FooterHin
  */
 export async function readIconSetPreference(ctx: Context): Promise<IconSet> {
   return narrowIconSet((await readResolvedSection(ctx))?.iconSet)
+}
+
+/**
+ * Read the persisted UI language (the startup snapshot).
+ *
+ * @param ctx - plugin context.
+ * @returns the resolved `dsh-tui` language value, or DEFAULT_LANGUAGE ('en')
+ * when the settings service is absent or the namespace/value cannot be read.
+ * Whether the id is actually installed is decided by the i18n registry
+ * (initI18n degrades unknown ids to 'en').
+ */
+export async function readLanguagePreference(ctx: Context): Promise<string> {
+  return narrowLanguage((await readResolvedSection(ctx))?.language)
 }
 
 /**
@@ -730,6 +705,7 @@ async function writeDshTuiPreference(
   ctx: Context,
   key: 'theme' | 'panelHeight' | 'maxAgents' | 'maxRounds' | 'maxRoundsGrace' | 'disableSubagent'
     | 'registeredOnly'
+    | 'language'
     | 'favoriteModels' | 'hiddenModels',
   value: string | number | boolean | string[],
 ): Promise<string | undefined> {
@@ -761,6 +737,16 @@ async function writeDshTuiPreference(
  */
 export async function writeThemePreference(ctx: Context, pref: ThemePreference): Promise<string | undefined> {
   return writeDshTuiPreference(ctx, 'theme', pref)
+}
+
+/**
+ * Persist the UI language to the `dsh-tui` settings namespace. The namespace
+ * is `applies: 'live'`, so the commit (observed through the registration's
+ * watch hook) hot-applies the language to the running TUI.
+ * @returns undefined on success, the failure message otherwise.
+ */
+export async function writeLanguagePreference(ctx: Context, id: string): Promise<string | undefined> {
+  return writeDshTuiPreference(ctx, 'language', id)
 }
 
 /**

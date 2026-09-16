@@ -51,14 +51,17 @@ import {
   readAskUserExplicit,
   readFooterHintsPreference,
   readIconSetPreference,
+  readLanguagePreference,
   readPanelHeightPreference,
   readRememberPreset,
   readSessionManagementExplicit,
   readSubagentLimits,
   readThemePreference,
   registerThemeSettings,
+  writeLanguagePreference,
   writeThemePreference,
 } from './theme-settings.ts'
+import { currentLocale, initI18n, listLocales, setLocale, t } from './i18n/index.ts'
 import {
   loadWorkspacePresets,
   rememberedPresetFor,
@@ -174,7 +177,7 @@ const SKILL_RESOURCE_BASE = {
 const SKILL_INVOCATION = { modelInvocable: true, userInvocable: true } as const
 
 /** Routing description; must stay identical to the SKILL.md frontmatter (asserted in tests). */
-const SKILL_DESCRIPTION = 'dsh TUI 增强套件（@aiwayds/dsh-tui-pi）使用与配置指南。凡涉及 TUI 主题/面板/footer、子代理并发与轮数限制、模型收藏与隐藏、会话保留清理与 /resume 过滤、ask_user_question 超时、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 17 键（theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser）、DSH_TUI_* 环境变量、快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。'
+const SKILL_DESCRIPTION = 'dsh TUI 增强套件使用与配置指南。凡涉及 TUI 主题/面板/footer、界面语言、子代理并发与轮数限制、模型收藏与隐藏、会话保留与 /resume 过滤、ask_user 超时、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 18 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser）、DSH_TUI_* 环境变量、快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、语言、language、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。'
 
 const SKILL_CANDIDATE: SkillCandidate = {
   name: SKILL_PROVIDER_NAME,
@@ -325,7 +328,8 @@ export function apply(ctx: Context): void {
     // setTheme replay that follows already renders at that new height.
     // applyTheme carries the theme-bundle identity guard, so a height-only
     // commit never triggers a second rebuild.
-    registerThemeSettings(ctx, (pref, height, footerHints, iconSet) => {
+    registerThemeSettings(ctx, (pref, height, footerHints, iconSet, language) => {
+      setLocale(language)
       applyPanelHeightRef?.(height)
       applyThemeRef?.(pref)
       applyFooterHintsRef?.(footerHints)
@@ -364,6 +368,12 @@ export function apply(ctx: Context): void {
     const themePreference = await readThemePreference(ctx)
     const panelHeight = await readPanelHeightPreference(ctx)
     const footerHints = await readFooterHintsPreference(ctx)
+    // UI language (`dsh-tui.language`, default 'en'): discover the language
+    // files and activate the persisted id BEFORE the TUI's first frame, so
+    // the boot UI speaks it from the start. The registration's watch hook
+    // re-applies later commits live via setLocale. An unknown id degrades to
+    // 'en' inside initI18n.
+    initI18n({ id: await readLanguagePreference(ctx), warn: message => emitNotice(message) })
     // Icon-set self-adaptation: probe the platform once at startup (the
     // memoised snapshot shared with every later 'auto' resolution), resolve
     // the persisted mode against it and push the result into src/icons.ts
@@ -1808,6 +1818,36 @@ export function apply(ctx: Context): void {
       return { kind: 'success' as const, text: `Theme: ${picked} — applied.` }
     }
     registerLocalCommand('theme', 'Set the terminal color scheme (applies immediately)', themeHandler)
+
+    // /language — switch the UI language. Language files live in the bundled
+    // locales/ directory plus the user's ~/.dsh/locales (one JSON file per
+    // language; adding one needs no code). `/language` lists what is
+    // installed; `/language <id>` activates it live (the next repaint speaks
+    // it) and persists the choice to `dsh-tui.language`.
+    const languageHandler: LocalCommandHandler = async rawInput => {
+      const arg = rawInput.trim()
+      const installed = listLocales().map(locale => `${locale.id} (${locale.name})`).join(', ')
+      if (arg === '') {
+        const active = currentLocale()
+        return {
+          kind: 'success' as const,
+          text: `${t('command.language.current', { id: active.id, name: active.name })}\n${t('command.language.installed', { list: installed })}`,
+        }
+      }
+      if (!setLocale(arg)) {
+        return { kind: 'error' as const, text: t('command.language.unknown', { id: arg, list: installed }) }
+      }
+      const persistError = await writeLanguagePreference(ctx, arg)
+      const active = currentLocale()
+      const switched = t('command.language.switched', { name: active.name, id: active.id })
+      return {
+        kind: 'success' as const,
+        text: persistError === undefined
+          ? switched
+          : `${switched} ${t('command.language.persistFailed', { error: persistError })}`,
+      }
+    }
+    registerLocalCommand('language', t('command.language.description'), languageHandler)
 
     // /reload: hot-reload this plugin from the current source — re-imports the
     // module and its dependencies (picking up src changes after `pnpm build`)
