@@ -1300,11 +1300,33 @@ export function apply(ctx: Context): void {
       current: () => bridge.getSelection(),
     })
 
+    /**
+     * The host session-title seam (`@deepseek-ai/dsh-session-title`), read
+     * structurally like every other optional host service: the host base
+     * bundle mounts it (with the first-prompt LLM provider), but a stripped
+     * profile without it must only degrade the /session panel to read-only,
+     * never crash it. The rename error contract is duck-typed by name — the
+     * class itself lives behind a module graph (zod) this plugin
+     * deliberately does not import.
+     */
+    const sessionTitleSeam = ((): {
+      get(session: unknown): { title: string } | undefined
+      rename(session: unknown, title: string): { title: string }
+    } | undefined => {
+      try {
+        return ctx.get('sessionTitle') as { get(session: unknown): { title: string } | undefined, rename(session: unknown, title: string): { title: string } } | undefined
+      } catch {
+        return undefined
+      }
+    })()
+
     const sessionHandler: LocalCommandHandler = async () => {
       const agent = bridge.getAgent()
       const stats = bridge.getStats()
       const selection = bridge.getSelection()
       const header = agent?.session.header
+      const liveSession = agent?.session
+      const titleOf = liveSession === undefined ? undefined : sessionTitleSeam?.get(liveSession)?.title
       await showSessionInfo(ui.tui, ui.theme, {
         id: agent === undefined ? undefined : String(agent.session.id),
         cwd: header?.cwd,
@@ -1322,10 +1344,27 @@ export function apply(ctx: Context): void {
         status: agent === undefined ? 'none' : agentStatus,
         eventCount: agent === undefined ? undefined : agent.session.seq,
         parentSession: header?.parentSession === undefined ? undefined : String(header.parentSession),
-      }, refocusEditor)
+        title: titleOf,
+        canRename: liveSession !== undefined && sessionTitleSeam !== undefined,
+      }, refocusEditor, liveSession === undefined || sessionTitleSeam === undefined
+        ? undefined
+        : (title) => {
+            try {
+              const snapshot = sessionTitleSeam.rename(liveSession, title)
+              return { ok: true, note: `renamed to "${snapshot.title}"`, title: snapshot.title }
+            } catch (error) {
+              // The one input-blaming failure gets a panel-friendly phrase;
+              // anything else (disposed service, non-live session) rides its
+              // own message into the panel's note line.
+              if (error instanceof Error && error.name === 'SessionTitleInvalidError') {
+                return { ok: false, note: 'title normalizes to empty' }
+              }
+              throw error
+            }
+          })
       return { kind: 'success' as const, text: agent === undefined ? 'No active session.' : 'Session info shown.' }
     }
-    registerLocalCommand('session', 'Show the current session\'s info (id, model, stats)', sessionHandler)
+    registerLocalCommand('session', 'Show the current session\'s info (id, title, stats) and rename it (r)', sessionHandler)
 
     // /resume: pick a persisted session, validate its log, swap the live
     // agent for it, and rebuild transcript + stats from the stored events.

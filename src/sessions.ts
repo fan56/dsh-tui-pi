@@ -9,7 +9,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
-import { getKeybindings, type Component, type TUI } from '@earendil-works/pi-tui'
+import { getKeybindings, matchesKey, type Component, type TUI } from '@earendil-works/pi-tui'
 import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -52,7 +52,31 @@ export interface SessionPanelData {
   status: 'idle' | 'running' | 'none'
   eventCount: number | undefined
   parentSession: string | undefined
+  /**
+   * Latest session title text (the host's folded `session/title` snapshot).
+   * Rendered on the panel's heading line — the height budget (20 rows for a
+   * 24-row terminal) has no spare row for a table entry.
+   */
+  title: string | undefined
+  /** Whether the rename affordance is wired (live session + title service mounted). */
+  canRename: boolean
 }
+
+/** Result of one rename attempt, phrased for the panel's note line. */
+export interface RenameOutcome {
+  ok: boolean
+  note: string
+  /** The accepted (normalized) title, on success — the panel re-renders its heading from it. */
+  title?: string
+}
+
+/**
+ * The synchronous rename contract the caller hands the panel. Sync on
+ * purpose: `SessionTitleService.rename` appends a log event synchronously
+ * and throws synchronously, so the caller translates that into an outcome
+ * without the panel needing an async/pend state.
+ */
+export type SessionRenameFn = (title: string) => RenameOutcome
 
 /** Fit cap for the FIELD column (the longest label is "cache read/write"). */
 const FIELD_CAP = 12
@@ -84,21 +108,32 @@ export function sessionInfoRows(data: SessionPanelData): ReadonlyArray<{ field: 
 }
 
 /**
- * One-shot read-only info panel in the shared FW auto-table style: FIELD
- * fits its content, VALUE runs to the right edge and clips (never wraps),
+ * One-shot info panel in the shared FW auto-table style: FIELD fits its
+ * content (capped), VALUE runs to the right edge and clips (never wraps),
  * width-exact padded cells under the booktabs rule trio — the same table
- * language as the /resume picker and every other panel. Esc/Enter hides the
- * overlay and resolves.
+ * language as the /resume picker and every other panel. Esc closes; when
+ * `onRename` is wired, `r` enters an inline rename edit on the same 20-row
+ * budget (the input line replaces the hint line, never a table row):
+ * Enter commits through {@link SessionRenameFn}, Esc returns to the table.
  */
 export class SessionInfoPanel implements Component {
   private readonly theme: TuiTheme
   private readonly data: SessionPanelData
   private readonly onClose: () => void
+  private readonly onRename: SessionRenameFn | undefined
+  /** Rename edit state: only one of these is live at a time. */
+  private editing = false
+  private buffer = ''
+  /** Accepted/failed rename note; shown on the hint line until the next keypress. */
+  private note: RenameOutcome | undefined
+  /** The live heading title after a committed rename (the snapshot data is stale then). */
+  private titleOverride: string | undefined
 
-  constructor(theme: TuiTheme, data: SessionPanelData, onClose: () => void) {
+  constructor(theme: TuiTheme, data: SessionPanelData, onClose: () => void, onRename?: SessionRenameFn) {
     this.theme = theme
     this.data = data
     this.onClose = onClose
+    this.onRename = onRename
   }
 
   invalidate(): void {}
@@ -106,10 +141,15 @@ export class SessionInfoPanel implements Component {
   render(width: number): string[] {
     // Scope note rides on the title line (no extra row: the panel must stay
     // at 20 rows so the framed overlay keeps its bottom border on a 24-row
-    // terminal). The token totals are per provider/model route segment — they
-    // reset on a route change — while messages/events are session-wide.
+    // terminal). The heading carries the session title when one exists (same
+    // zero-row trick); the token totals are per provider/model route segment
+    // — they reset on a route change — while messages/events are session-wide.
     const fns = panelThemeFns(this.theme)
-    const lines: string[] = [fns.accent(BOLD + clipToWidth('ⓘ session · tokens: current route', width) + RESET)]
+    const title = this.titleOverride ?? this.data.title
+    const heading = title !== undefined && title !== ''
+      ? `ⓘ ${title} · tokens: current route`
+      : 'ⓘ session · tokens: current route'
+    const lines: string[] = [fns.accent(BOLD + clipToWidth(heading, width) + RESET)]
     if (this.data.id === undefined) {
       lines.push('')
       lines.push(fns.muted(clipToWidth('no active session — send a prompt or /resume one', width)))
@@ -152,13 +192,89 @@ export class SessionInfoPanel implements Component {
       lines.push(`${' '.repeat(MARKER_W)}${fieldCell}${TABLE_SEP}${paintedValue}`)
     }
     lines.push(fns.subtle(clipToWidth(tableRuleLine(widths, '┴'), width)))
-    lines.push(fns.subtle(clipToWidth('Esc to close', width)))
+    lines.push(this.hintLine(width, fns))
     return lines
   }
 
+  /** The panel's last line: the rename input while editing, else the key hint (with a transient note). */
+  private hintLine(width: number, fns: ReturnType<typeof panelThemeFns>): string {
+    if (this.editing) {
+      const cursor = '▏'
+      const body = this.buffer === ''
+        ? clipToWidth(`rename ▸ ${cursor} (type a title)`, width)
+        : clipToWidth(`rename ▸ ${this.buffer}${cursor}`, width)
+      const failed = this.note !== undefined && !this.note.ok ? `✗ ${this.note.note} · ` : ''
+      const suffix = clipToWidth(`${failed}Enter save · Esc cancel`, Math.max(width - visibleWidth(body) - 1, 0))
+      return fns.accent(clipToWidth(`${body} ${suffix}`, width))
+    }
+    if (this.note !== undefined) {
+      const mark = this.note.ok ? '✓' : '✗'
+      const next = this.data.canRename ? ' · r rename · Esc to close' : ' · Esc to close'
+      return fns.accent(clipToWidth(`${mark} ${this.note.note}${next}`, width))
+    }
+    const hint = this.data.canRename ? 'r rename · Esc to close' : 'Esc to close'
+    return fns.subtle(clipToWidth(hint, width))
+  }
+
   handleInput(data: string): void {
-    if (getKeybindings().matches(data, 'tui.select.cancel') || getKeybindings().matches(data, 'tui.select.confirm')) {
+    const kb = getKeybindings()
+    if (this.editing) {
+      if (kb.matches(data, 'tui.select.cancel')) {
+        this.editing = false
+        this.buffer = ''
+        this.note = undefined
+        return
+      }
+      if (kb.matches(data, 'tui.select.confirm')) {
+        this.commitRename()
+        return
+      }
+      if (data === '\x7f' || matchesKey(data, 'backspace')) {
+        this.buffer = this.buffer.slice(0, -1)
+        this.note = undefined
+        return
+      }
+      // Printable accumulation, paste-tolerant: an IME composition or a
+      // bracketed paste arrives as one multi-char chunk — accept it whole
+      // when every char is printable (control keys were matched above).
+      if (data.length > 0 && [...data].every(ch => ch.charCodeAt(0) >= 0x20 && ch.charCodeAt(0) !== 0x7f)) {
+        this.buffer += data
+        this.note = undefined
+      }
+      return
+    }
+    if (this.data.canRename && data === 'r') {
+      this.editing = true
+      this.buffer = this.titleOverride ?? this.data.title ?? ''
+      this.note = undefined
+      return
+    }
+    this.note = undefined
+    if (kb.matches(data, 'tui.select.cancel') || kb.matches(data, 'tui.select.confirm')) {
       this.onClose()
+    }
+  }
+
+  /** Commit the edit through the caller's rename fn; a failure keeps the edit open. */
+  private commitRename(): void {
+    if (this.onRename === undefined) return
+    const title = this.buffer.trim()
+    if (title === '') {
+      this.note = { ok: false, note: 'title is empty' }
+      return
+    }
+    let outcome: RenameOutcome
+    try {
+      outcome = this.onRename(title)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      outcome = { ok: false, note: message }
+    }
+    this.note = outcome
+    if (outcome.ok) {
+      this.titleOverride = outcome.title ?? title
+      this.editing = false
+      this.buffer = ''
     }
   }
 }
@@ -168,20 +284,24 @@ export class SessionInfoPanel implements Component {
  * returns to `restoreFocus` on close — it must re-focus the CURRENT editor
  * instance, which may have been rebuilt under a theme hot-swap while the
  * panel was open (pi-tui's hide would otherwise restore focus to the stale
- * pre-overlay editor and swallow subsequent input).
+ * pre-overlay editor and swallow subsequent input). `onRename` wires the
+ * panel's `r` rename edit; omit it (or leave `canRename` false in the data)
+ * when no live session or no title service exists and the panel stays
+ * read-only.
  */
 export async function showSessionInfo(
   tui: TUI,
   theme: TuiTheme,
   data: SessionPanelData,
   restoreFocus: () => void,
+  onRename?: SessionRenameFn,
 ): Promise<void> {
   await new Promise<void>(resolve => {
     const panel = new SessionInfoPanel(theme, data, () => {
       overlay.hide()
       restoreFocus()
       resolve()
-    })
+    }, onRename)
     // maxHeight only ever slices (never stretches), and the framed overlay
     // needs 4 extra rows for its borders: cap high so the bottom border
     // survives on small terminals (24 rows: 20 panel rows + 4 frame rows).

@@ -773,3 +773,109 @@ test('pickPersistedSession: candidates hidden by the filter resolve empty-filter
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// /session rename: the panel's `r` edit writes through the caller's rename
+// fn (the host session-title seam). The panel owns the edit state machine —
+// `r` enters, printable keys accumulate, backspace erases, Enter commits,
+// Esc cancels back to the table, a second Esc closes — all inside the
+// panel's fixed 20-row budget (the input line REPLACES the hint line).
+
+async function renameHarness(extraData = {}, rename = undefined) {
+  const { SessionInfoPanel } = await import('../lib/sessions.js')
+  const { buildTheme } = await import('../lib/theme/index.js')
+  const { githubDark } = await import('../lib/theme/palette.js')
+  const theme = buildTheme(githubDark)
+  const calls = []
+  const onClose = () => { calls.push('close') }
+  const onRename = rename === undefined
+    ? undefined
+    : title => {
+        calls.push(['rename', title])
+        const outcome = rename(title)
+        if (!(outcome instanceof Error)) return outcome
+        throw outcome
+      }
+  const panel = new SessionInfoPanel(
+    theme,
+    { ...fullPanelData, canRename: onRename !== undefined, title: undefined, ...extraData },
+    onClose,
+    onRename,
+  )
+  return { panel, calls }
+}
+
+test('SessionInfoPanel shows the title on the heading line at the same 20 rows', async () => {
+  const { panel } = await renameHarness({ title: 'ledger audit' })
+  const lines = panel.render(80)
+  assert.equal(lines.length, 20, 'the title rides the heading — no extra row')
+  assert.match(lines[0], /ledger audit/, 'heading carries the title')
+  assert.match(lines[0], /tokens: current route/, 'scope note survives')
+})
+
+test('SessionInfoPanel hint offers rename only when canRename is wired', async () => {
+  const wired = (await renameHarness({}, () => ({ ok: true, note: 'ok' }))).panel.render(80).at(-1)
+  assert.match(wired, /r rename/, 'wired panel advertises `r`')
+  const bare = (await renameHarness({ canRename: false }, undefined)).panel
+  assert.doesNotMatch(bare.render(80).at(-1), /r rename/, 'read-only panel keeps the plain hint')
+})
+
+test('SessionInfoPanel rename: r opens the edit, typing accumulates, Enter commits', async () => {
+  const { panel, calls } = await renameHarness({}, title => ({ ok: true, note: `renamed to "${title}"`, title }))
+  panel.handleInput('r')
+  assert.doesNotMatch(panel.render(80).at(-1), /Esc to close/, 'edit mode replaces the hint line')
+  for (const ch of 'weekly sync') panel.handleInput(ch)
+  panel.handleInput('\x7f') // backspace: 'weekly syn'
+  panel.handleInput('\r') // commit
+  assert.deepEqual(calls.flat(), ['rename', 'weekly syn'], 'the edited buffer reaches the rename fn')
+  const lines = panel.render(80)
+  assert.match(lines[0], /weekly syn/, 'heading shows the accepted title')
+  assert.match(lines.at(-1), /✓/, 'success note on the hint line')
+})
+
+test('SessionInfoPanel rename: paste-tolerant input (CJK chunk lands whole)', async () => {
+  const { panel, calls } = await renameHarness({}, title => ({ ok: true, note: 'ok', title }))
+  panel.handleInput('r')
+  panel.handleInput('周会纪要') // one IME/paste chunk, not per-key
+  panel.handleInput('\r')
+  assert.deepEqual(calls, [['rename', '周会纪要']])
+})
+
+test('SessionInfoPanel rename: empty commit fails in place, Esc cancels back, second Esc closes', async () => {
+  const { panel, calls } = await renameHarness({}, () => ({ ok: true, note: 'ok' }))
+  panel.handleInput('r')
+  panel.handleInput('\r') // empty buffer → refused, edit stays open
+  assert.match(panel.render(80).at(-1), /✗/, 'failure note in the edit line')
+  assert.deepEqual(calls, [], 'the rename fn never saw the empty buffer')
+  panel.handleInput('x')
+  assert.doesNotMatch(panel.render(80).at(-1), /✗/, 'a keypress clears the failure note')
+  panel.handleInput('\x1b') // cancel → view mode, panel still open
+  assert.match(panel.render(80).at(-1), /r rename/, 'back in view mode')
+  panel.handleInput('\x1b') // second Esc closes
+  assert.deepEqual(calls, ['close'])
+})
+
+test('SessionInfoPanel rename: a thrown rename keeps the edit open with the error', async () => {
+  const { panel, calls } = await renameHarness(
+    {},
+    () => new Error('service disposed'),
+  )
+  panel.handleInput('r')
+  panel.handleInput('x')
+  panel.handleInput('\r')
+  assert.equal(calls.length, 1, 'the rename fn ran')
+  const last = panel.render(80).at(-1)
+  assert.match(last, /✗/, 'failure note')
+  assert.match(last, /service disposed/, 'the error message rides the note')
+  // The buffer survives so the user can retry after fixing the cause.
+  panel.handleInput('\r')
+  assert.equal(calls.length, 2, 'retry commits the same buffer')
+})
+
+test('SessionInfoPanel ignores r when the rename seam is absent', async () => {
+  const { panel, calls } = await renameHarness({ canRename: false })
+  panel.handleInput('r') // no-op: falls through the key map
+  assert.doesNotMatch(panel.render(80).at(-1), /rename ▸/, 'no edit mode')
+  panel.handleInput('\x1b')
+  assert.deepEqual(calls, ['close'], 'Esc still closes the read-only panel')
+})
