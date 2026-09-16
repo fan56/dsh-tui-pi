@@ -485,7 +485,7 @@ test('SubagentViewerPanel Enter requests the steer flow and the footer advertise
   )
   // Running child: the footer names x ×2 as the stop; settled: close.
   assert.ok(panel.render(80).some(line => line.includes(viewerFooter(true))))
-  assert.match(viewerFooter(true), /x ×2 \/ k ×2 stop/)
+  assert.match(viewerFooter(true), /x ×2 stop/)
   assert.match(viewerFooter(false), /x ×2 close/)
   assert.match(viewerFooter(true), /Enter steer/)
   panel.handleInput('\r')
@@ -585,6 +585,31 @@ test('SubagentViewerPanel a fast x x (auto-repeat gap) never acts', async () => 
   panel.handleInput('x')
   assert.equal(cancelled.length, 0)
   assert.equal(closed, 0)
+})
+
+test('SubagentViewerPanel k ×2 is a no-op — x is the only stop key', async () => {
+  // The vim-mnemonic `k` was retired (plain letters stay free for future
+  // full-keyboard operation): a double k must neither stop nor close.
+  const tui = makeTui()
+  const cancelled = []
+  const bridge = {
+    ...makeBridge([liveView('a')]),
+    cancelChild: childId => { cancelled.push(childId); return true },
+  }
+  let closed = 0
+  const panel = new SubagentViewerPanel(
+    makeTheme(), bridge, 'a',
+    () => 0,
+    () => { closed += 1 },
+    () => tui.requestRender(),
+    () => {},
+  )
+  panel.handleInput('k')
+  await new Promise(resolve => setTimeout(resolve, PRESS_GAP_MS))
+  panel.handleInput('k')
+  await new Promise(resolve => setTimeout(resolve, PRESS_GAP_MS))
+  assert.deepEqual(cancelled, [], 'the retired key must not reach the cancel path')
+  assert.equal(closed, 0, 'the retired key must not close the panel either')
 })
 
 test('SubagentViewerPanel shows a transient notice and retires it on the next keypress', () => {

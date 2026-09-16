@@ -80,8 +80,8 @@ const CHILD_LOG_CAP = 2000
 export const STEER_SENT_NOTICE = 'Steer message sent'
 /** Notice shown when the target child can no longer receive steering. */
 export const STEER_ENDED_NOTICE = 'This subagent has ended — steering unavailable'
-/** Transcript footer for a RUNNING child: x ×2 or k ×2 stops it. */
-export const VIEWER_FOOTER_RUNNING = '↑↓ scroll · Esc close · x ×2 / k ×2 stop · Enter steer'
+/** Transcript footer for a RUNNING child: x ×2 stops it. */
+export const VIEWER_FOOTER_RUNNING = '↑↓ scroll · Esc close · x ×2 stop · Enter steer'
 /** Transcript footer for a SETTLED child: nothing to stop, x ×2 closes. */
 export const VIEWER_FOOTER_SETTLED = '↑↓ scroll · Esc close · x ×2 close · Enter steer'
 
@@ -576,8 +576,6 @@ export class SubagentViewerPanel implements Component {
   private timer: ReturnType<typeof setInterval> | undefined
   /** Timestamp of the last handled `x` press; 0 = none (the double-press arm). */
   private lastXPress = 0
-  /** Timestamp of the last handled `k` press; 0 = none (the double-press arm). */
-  private lastKPress = 0
   /** Current scroll offset into the transcript lines. */
   private scrollTop = 0
   /** Whether the view is pinned to the log tail (default, re-set on the bottom). */
@@ -704,29 +702,6 @@ export class SubagentViewerPanel implements Component {
     }
     if (kb.matches(data, 'tui.input.submit')) {
       this.onSteerRequested()
-      return
-    }
-    // `k` — arm/confirm the per-child stop with an explicit second press
-    // (same double-press arm the `x` stop uses, a distinct key so a user who
-    // has learned `x ×2` keeps it and a user who wants a mnemonic gets one).
-    // The notice names the target so the confirm is unambiguous.
-    if (data.toLowerCase() === 'k') {
-      const now = Date.now()
-      if (this.lastKPress !== 0 && now - this.lastKPress < MIN_DOUBLE_PRESS_GAP_MS) return
-      if (this.lastKPress !== 0 && now - this.lastKPress <= DOUBLE_PRESS_MS) {
-        this.lastKPress = 0
-        const running = this.bridge.getAgentViews().some(
-          view => view.childId === this.childId && view.outcome === undefined,
-        )
-        if (running && this.bridge.cancelChild(this.childId)) {
-          this.showNotice('⏹ canceling this subagent…')
-        } else {
-          this.showNotice('nothing running to stop')
-        }
-      } else {
-        this.lastKPress = now
-        this.showNotice('press k again to stop this subagent')
-      }
       return
     }
     if (kb.matches(data, 'tui.select.up')) this.scrollBy(-1)
