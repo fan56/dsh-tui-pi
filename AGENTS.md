@@ -279,28 +279,25 @@ docs/features/themes.md.
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` runs **1330 tests** across 79 files (verified by
-  `node --test test/*.mjs`; per-file totals
+- `pnpm test` runs **1367 tests** across 80 test files (per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals and the
   per-file list here. The suite is fully green.
-  - ask-user 119 + ask-user-timeout 24 + btw 45 + subagent-viewer 42 + subagent-policy 44 + retention 39 + skills 36 +
-  - live 35 + sessions 35 + session-reconcile 33 + history-viewer 33 + keymap 31 + model-profiles 31 +
-  - usage 26 + pending-echo 26 + clipboard 26 + login 25 + log-repair 25 +
-    startup-info 24 + skills-manager 24 + panels 24 +
-  - steer-flow 22 + preset 22 + theme 21 + model-list 21 + messages 20 + settings 19 +
-    welcome 18 + provider-catalog 17 + theme-settings 16 + theme-canvas 16 +
-    hotkeys 16 + agent-runtime 16 +
-  - text 15 + agent-manager 14 + history 13 + footer-hints 13 +
+  - ask-user 119 + subagent-policy 44 + btw 45 + subagent-viewer 42 + sessions 44 + retention 40 + skills 36 +
+  - live 39 + history-viewer 33 + session-reconcile 33 + keymap 31 + model-profiles 31 + clipboard 26 + usage 26 + pending-echo 26 +
+  - login 25 + ask-user-timeout 24 + log-repair 24 + panels 24 + skills-manager 24 + startup-info 24 +
+    preset 22 + steer-flow 22 + theme 22 + model-list 21 +
+  - messages 20 + settings 21 + welcome 18 + provider-catalog 17 + agent-runtime 16 + hotkeys 16 + theme-canvas 16 + theme-settings 16 +
+  - text 15 + theme-registry 15 + agent-manager 14 + history 13 + footer-hints 13 +
     stop-dialog 12 + session-ch-cache 12 + image-blocks 12 + custom-provider 12 +
-    theme-switch 11 + preset-dialog 11 + preflight-projcache 11 + frame 11 +
-  - session-dir 2 + workspace-presets 9 + permission 9 + history-turns 9 + history-fork 9 + commands 9 + append-system 9 +
-    notice-bridge 8 + font-detect 8 + dev-upgrade 8 +
-    repair-session-log 7 + remote-tail 7 + quotes 7 + icons 7 + host-version 7 +
-  - tokens 6 + subagent-status-tool 6 + reload 6 + queue-panel 6 + install-font 6 + bridge-stop 6 + selection-copy 5 +
-    markdown-latex 5 + mouse-mode 5 + projcache 5 + transcript-search 4 +
-    profile-apply 4 + schema-model 3 + plugin-inject 2 + skill 4.
+  - theme-switch 11 + preset-dialog 11 + preflight-projcache 12 + frame 11 +
+    i18n 10 + workspace-presets 9 + permission 9 + history-turns 9 + history-fork 9 + commands 9 + append-system 9 +
+  - notice-bridge 8 + font-detect 8 + dev-upgrade 8 + theme-picker 8 + language-ask 8 +
+    repair-session-log 7 + remote-tail 6 + quotes 7 + icons 7 + host-version 7 +
+  - hard-exit 3 + tokens 6 + subagent-status-tool 6 + reload 6 + queue-panel 6 + install-font 6 + bridge-stop 6 +
+    selection-copy 5 + markdown-latex 5 + mouse-mode 5 + projcache 5 + language-picker 5 +
+    transcript-search 4 + skill 4 + schema-model 3 + plugin-inject 2 + session-dir 2.
 - e2e is tmux-driven: `tmux new-session -d -s dsh-tui -x 140 -y 36`, launch
   `dsh --profile tui`, drive keys, `capture-pane` for assertions (scenarios
   under `e2e/scenarios/`). Keep the 24-row terminal case in the matrix —

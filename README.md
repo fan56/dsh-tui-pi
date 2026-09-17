@@ -28,6 +28,7 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**Themes**](docs/features/themes.md) — 20 built-in palettes (10 light + 10 dark) plus user theme discovery (`~/.dsh/themes/`); hot-switchable, `auto` follows your terminal.
 - [**Search, selection & images**](docs/features/search-selection-images.md) — `Ctrl+Shift+F` over the whole transcript, drag-select copies to the OS clipboard, attachments from web/Feishu render inline, LaTeX replies draw as Unicode math.
 - [**Slash commands**](docs/features/slash-commands.md) — `/model`, `/resume`, `/btw`, … plus everything dsh-native.
+- [**Settings browser & UI languages**](docs/features/settings-i18n.md) — `/settings` edits everything in place (alphabetical categories, per-provider model lists, a Subagent group); `/language` switches the UI language from any surface.
 - [**Startup plugin tree**](docs/features/startup-tree.md) — every profile plugin with its installed npm version, printed at launch.
 
 ---
@@ -39,7 +40,7 @@ dsh plugin --profile tui add @aiwayds/dsh-tui-pi
 dsh --profile tui          # launch (or: dsh-tui-pi)
 ```
 
-Legacy `session_projcache` records (missing `identity.isSeeded`/`identity.inheritedEventCount`, written before dsh 0.1.2-alpha.4 — predating the rc/stable floor of 0.1.5-rc.2 this plugin now targets) are migrated at the profile layer: the bundle patch replaces the stock `session-projection-cache` row with a wrapper (`@aiwayds/dsh-tui-pi/projcache`) that backfills the records while its module loads — strictly before the stock plugin could open the domain and crash the boot — so every `dsh --profile tui` start is covered, launcher or not. Migration is idempotent, backs up every rewritten file next to the original, and never blocks startup. The `dsh-tui-pi` launcher additionally runs the same migration as a CLI preflight before `exec dsh`.
+Legacy `session_projcache` records (written before dsh 0.1.2-alpha.4) are migrated automatically at profile load — idempotent, with per-file backups, never blocking startup; the `dsh-tui-pi` launcher runs the same preflight.
 
 Everything that used to need manual patching — the canvas background, the `@deepseek-ai` module closure, the compaction backend — now happens automatically. Upgrade an existing profile after a release:
 
@@ -60,20 +61,7 @@ The `dsh-tui-pi` bin shim is global and can stay; if you installed the package g
 
 The host cleans up the profile automatically: the `dsh.profile.bundles` entry is spliced and the whole patch layer goes away with the package — the stock `session-projection-cache` row re-enables, and the projcache wrapper, the `tool-ask-user` insert and its disable row all vanish.
 
-What stays on disk on purpose (deleting user data is destructive; a reinstall reuses all of it):
-
-- `~/.dsh/APPEND_SYSTEM.md` — auto-seeded system-prompt appendix (plugin-owned; delete by hand if unwanted)
-- `~/.dsh/tui-command-usage.json` — slash-command usage ranking
-- `~/.dsh/model-profiles.json` — model profiles (SHARED: read by dsh-subagent-registry and dsh-profile-switch; per-agent edits via /agents write it)
-- `~/.dsh/keybindings.json` — the dsh-tui app-key rows (host-shared file)
-- `~/.dsh/agents/*.md` and `~/.dsh/skills/` — user-editable agents/skills (shared with other plugins)
-- `.dsh-profile` pin files in project workspaces (written by /model profile pinning)
-- the `dsh-tui:` section of `~/.dsh/settings.yaml` — theme/panel/footer/retention/subagent limits
-- `~/.dsh/storages/session_projcache/` — the session projection cache, incl. `.bak-preflight-*` migration backups
-
-While the plugin runs, the retention janitor (default `maxCount: 100` / `maxAgeDays: 30`, configurable in the `dsh-tui` settings) deletes old session logs — uninstalling stops that, but already-deleted logs are gone.
-
-`scripts/install-font.mjs` mutates OS font/terminal state and has a documented backup; uninstall doesn't touch it.
+User data stays on disk on purpose (deleting it is destructive; a reinstall reuses all of it): `~/.dsh/APPEND_SYSTEM.md`, `tui-command-usage.json`, `model-profiles.json`, `keybindings.json`, `~/.dsh/agents/` + `~/.dsh/skills/`, workspace `.dsh-profile` pins, the `dsh-tui:` settings section, and the session projection cache (incl. `.bak-preflight-*` migration backups). While the plugin runs, the retention janitor (default `maxCount: 100` / `maxAgeDays: 30`) deletes old session logs — uninstalling stops that, but already-deleted logs are gone. `scripts/install-font.mjs` mutates OS font/terminal state and has a documented backup; uninstall doesn't touch it.
 
 ---
 
@@ -121,47 +109,20 @@ Remap any app key through `~/.dsh/keybindings.json` (a partial JSON map, live-ap
 
 ## Configuration
 
-Every knob lives under the `dsh-tui` settings namespace in `~/.dsh/settings.yaml` (note the section name: `dsh-tui`). Language / theme / panel height / footer hints / icon set are `applies: 'live'` — a committed change hot-applies to the running TUI, no restart:
+Everything lives under the `dsh-tui` namespace of `~/.dsh/settings.yaml` — but you rarely touch the file: **`/settings` browses and edits it in place** (searchable categories — Agent Presets / General / Models / Plugins / TUI — with live values, per-field descriptions, and an add-provider flow under Models). Language, theme, panel height, footer hints and icon set hot-apply on change; the rest reads at the next launch.
 
-| Key | Default | Meaning |
-|---|---|---|
-| `language` | `en` | UI language: the id of a language file from the bundled `locales/` dir or `~/.dsh/locales/` (shipped: `en`, `zh-CN`, `ja`, `ko`). `/language` lists and switches live; adding a language is one JSON file, no code |
-| `theme` | `auto` | Color scheme: `auto` (follow the terminal) / `light` / `dark` / any registered theme name (`/theme` writes back to the same key) |
-| `panelHeight` | `'1'` | Think/tool panel height: `'1'` / `'5'` / `'7'` / `'10'` / `'all'` (full content) |
-| `maxAgents` | `4` | Max concurrently running subagents, `0` = unlimited (hot-tunable in `/agents → l` limits) |
-| `maxRounds` | `75` | Max assistant messages per subagent before a wrap-up request is injected; `0` = unlimited |
-| `maxRoundsGrace` | `7` | Grace rounds after the wrap-up before the child is force-stopped (session preserved, resumable); `0` = warn only |
-| `disableSubagent` | `true` | Disable the native `subagent` tool; delegation goes through registered agents (`~/.dsh/agents/*.md`); `subagent_fork`/`workflow`/`ralph` stay available |
-| `footerHints` | all `true` | Per-segment footer hint toggles: `send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
-| `cacheHitMode` | `lastMessage` | Footer CH segment scope: `lastMessage` — the latest assistant message's cache-hit rate, matching the pi-tui footer (default); `session` — cumulative over the whole session |
-| `iconSet` | `auto` | `auto`/`nerdfont`/`plain` — powerline glyphs adapt to your font; install a Nerd Font with `node scripts/install-font.mjs` |
-| `rememberPreset` | `true` | Remember the last `/preset` selection **per workspace** (keyed by directory) and start the next launch there — the first session composes under it instead of the server-side default. `false` always starts on the server default. The memory itself lives in `$DSH_HOME/workspace-presets.json` |
-| `favoriteModels` | `[]` | Favorite models (`provider/id`), pinned to the top of the `/model` picker |
-| `hiddenModels` | `[]` | Hidden models (`provider/id`), moved to the picker's Hidden section (`f` favorites / `h` hides inside the picker — both persist to these keys) |
-
-Session-store knobs (env overrides `DSH_TUI_RETENTION_*` / `DSH_TUI_RESUME_*`; precedence: settings.yaml > env > default):
+Most knobs have sensible defaults and need no configuration. The few you might actually set:
 
 ```yaml
 dsh-tui:
-  retention:        # startup janitor for ~/.dsh/sessions — DELETES old logs. Once per startup.
-    maxCount: 100   # <= 0 disables the janitor
-    maxAgeDays: 30
-    minIdleHours: 24
-  resume:           # /resume display filter — only HIDES picker rows, never deletes.
-    maxAgeDays: 30
-    minBytes: 1024
-  askUser:          # ask_user_question auto-answer timeouts — the panel never waits forever.
-    idleMinutes: 5       # no-input window per question; <= 0 disables (DSH_TUI_ASK_USER_IDLE_MINUTES)
-    absoluteMinutes: 10  # hard cap per question even with input; <= 0 disables (DSH_TUI_ASK_USER_ABSOLUTE_MINUTES)
+  language: zh-CN   # UI language — or just /language (asks on any surface; bundled: en, zh-CN, ja, ko)
+  theme: auto       # auto / light / dark / any registered theme name — or /theme
+  maxAgents: 4      # subagent concurrency, 0 = unlimited (also tunable in /agents → l)
 ```
 
-On a timeout the focused question is auto-answered with the **recommended option** (first in the list); plans are never auto-approved, a half-typed answer is committed, and every automatic pick is noted to the model in the answer. Details: [Ask User Question → Timeouts](docs/features/ask-user-question.md#timeouts--the-panel-never-waits-forever).
+Adding a UI language is one JSON file in `~/.dsh/locales/` — a same-id file merges per key over the bundled one, a new id registers (details: [Settings browser & UI languages](docs/features/settings-i18n.md)). The session-store janitors (`retention` / `resume`) and ask-user timeouts (`askUser`) live in the same namespace with documented defaults.
 
-**UI languages.** Every user-visible string resolves through the i18n catalog: one flat JSON file per language (`locales/<id>.json` — `en.json` is the canonical template, `zh-CN.json`/`ja.json`/`ko.json` ship translated). `/language` lists the installed languages and `/language <id>` switches immediately (persisted to `dsh-tui.language`; the next repaint speaks it — the transcript backlog keeps the old language until it rebuilds). Drop your own file into `~/.dsh/locales/` to add or partially override a language (same id merges per key over the bundled one); Korean and Japanese ship built-in (`ja.json`, `ko.json`); adding another language is still just one file. `/settings` descriptions apply on restart.
-
-Key remaps live in `~/.dsh/keybindings.json` (keyboard section above); `DSH_TUI_COPY_ON_SELECT=0` keeps drag-selection visual-only.
-
-The plugin ships a bundled skill (`dsh-tui-pi-config`): ask the agent to "configure the TUI" and the guide loads automatically — it collects your choices interactively via ask_user_question (theme, panel height, subagent concurrency) and writes the `dsh-tui:` section for you. The full key table and the `DSH_TUI_*` env var list live in `skills/dsh-tui-pi-config/SKILL.md`.
+The plugin ships a bundled skill (`dsh-tui-pi-config`): ask the agent to "configure the TUI" and it collects your choices interactively and writes the section for you. **The full key table and the `DSH_TUI_*` env var list live in [skills/dsh-tui-pi-config/SKILL.md](skills/dsh-tui-pi-config/SKILL.md).**
 
 ---
 
@@ -170,7 +131,7 @@ The plugin ships a bundled skill (`dsh-tui-pi-config`): ask the agent to "config
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # emit lib/
-pnpm test     # unit tests, node --test against lib/ (pretest builds; 1,100+ tests across 60+ files — the current baseline lives in AGENTS.md)
+pnpm test     # unit tests, node --test against lib/ (pretest builds — the current baseline lives in AGENTS.md)
 ```
 
 `pi-tui` runs pristine from npm — no patches, no fork. See [AGENTS.md](AGENTS.md) for the iron rules and quality gates.

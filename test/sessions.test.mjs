@@ -20,7 +20,7 @@ import {
   isResumableSessionHeader,
   resolveResumeConfig,
   sessionInfoRows,
-  sortSessionsByLastUpdate,
+  orderSessionsByLastUpdate,
 } from '../lib/sessions.js'
 import { stashSessionIdForReload, takeStashedSessionId } from '../lib/session.js'
 import { resetNoticeBridge, setNoticeSink, takePendingNotices } from '../lib/notice-bridge.js'
@@ -276,7 +276,7 @@ function headerOf(id, createdAt) {
   return { version: 0, id: { toString: () => id }, sessionId: id, createdAt, cwd: '/tmp' }
 }
 
-test('sortSessionsByLastUpdate: mtime wins over createdAt, newest first', () => {
+test('orderSessionsByLastUpdate: mtime wins over createdAt, newest first', () => {
   const old = headerOf('old-but-fresh', 1_000)
   const fresh = headerOf('created-newer', 9_000)
   const stale = headerOf('created-older', 5_000)
@@ -286,14 +286,27 @@ test('sortSessionsByLastUpdate: mtime wins over createdAt, newest first', () => 
     ['created-older', { mtimeMs: 50_000, size: 4096 }],
     // 'created-newer' has no stat → falls back to createdAt 9_000 → last
   ])
-  const ordered = sortSessionsByLastUpdate([old, fresh, stale], updates)
+  const ordered = orderSessionsByLastUpdate([old, fresh, stale], updates)
   assert.deepEqual(ordered.map(h => h.sessionId), ['old-but-fresh', 'created-older', 'created-newer'])
 })
 
-test('sortSessionsByLastUpdate: empty map degrades to createdAt desc with deterministic ties', () => {
+test('orderSessionsByLastUpdate: empty map degrades to createdAt desc with deterministic ties', () => {
   const a = headerOf('a', 100)
   const b = headerOf('b', 200)
-  const ordered = sortSessionsByLastUpdate([a, b], new Map())
+  const ordered = orderSessionsByLastUpdate([a, b], new Map())
+  assert.deepEqual(ordered.map(h => h.sessionId), ['b', 'a'])
+})
+
+test('orderSessionsByLastUpdate: a corrupted (non-finite) stat cannot poison the ordering', () => {
+  const a = headerOf('a', 100)
+  const b = headerOf('b', 200)
+  const updates = new Map([
+    // NaN mtime from a corrupted stat must degrade to the header createdAt,
+    // never leak NaN into the comparator (a NaN would make sort unstable).
+    ['a', { mtimeMs: Number.NaN, size: 4096 }],
+    ['b', { mtimeMs: Infinity, size: 4096 }],
+  ])
+  const ordered = orderSessionsByLastUpdate([a, b], updates)
   assert.deepEqual(ordered.map(h => h.sessionId), ['b', 'a'])
 })
 

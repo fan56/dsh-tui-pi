@@ -620,17 +620,35 @@ export async function loadSessionLastUpdates(root: string = sessionLogRoot()): P
  * when a log file is known, else the header's `createdAt`. Ties fall back to
  * `createdAt` then the id, so the order is deterministic. Pure — the mtime
  * walk lives in `loadSessionLastUpdates`.
+ *
+ * The ordering is FIXED — no sort spec, no dynamic field, ever. Every key is
+ * coerced to a finite number (or a plain string) before the comparator sees
+ * it, so a corrupted log stat cannot inject a NaN into the ordering.
  */
-export function sortSessionsByLastUpdate(
+function lastUpdateSortKey(
+  header: SessionHeader,
+  logStats: ReadonlyMap<string, SessionLogStat>,
+): { mtime: number; created: number; id: string } {
+  const stat = logStats.get(String(header.id))
+  const mtime = typeof stat?.mtimeMs === 'number' && Number.isFinite(stat.mtimeMs)
+    ? stat.mtimeMs
+    : header.createdAt
+  const created = typeof header.createdAt === 'number' && Number.isFinite(header.createdAt)
+    ? header.createdAt
+    : 0
+  return { mtime, created, id: String(header.id) }
+}
+
+export function orderSessionsByLastUpdate(
   headers: readonly SessionHeader[],
   logStats: ReadonlyMap<string, SessionLogStat>,
 ): SessionHeader[] {
   return headers.slice().sort((a, b) => {
-    const at = logStats.get(String(a.id))?.mtimeMs ?? a.createdAt
-    const bt = logStats.get(String(b.id))?.mtimeMs ?? b.createdAt
-    if (bt !== at) return bt - at
-    if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt
-    return String(b.id).localeCompare(String(a.id))
+    const ka = lastUpdateSortKey(a, logStats)
+    const kb = lastUpdateSortKey(b, logStats)
+    if (kb.mtime !== ka.mtime) return kb.mtime - ka.mtime
+    if (kb.created !== ka.created) return kb.created - ka.created
+    return kb.id.localeCompare(ka.id)
   })
 }
 
@@ -877,7 +895,7 @@ export async function pickPersistedSession(
     minBytes: resumeConfig.minBytes,
     now: Date.now(),
   })
-  const ordered = sortSessionsByLastUpdate(visible, lastUpdates)
+  const ordered = orderSessionsByLastUpdate(visible, lastUpdates)
   if (ordered.length === 0) {
     return candidates.length === 0
       ? { kind: 'empty' }

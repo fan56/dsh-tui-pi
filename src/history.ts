@@ -95,7 +95,7 @@ import {
   PREVIEW_SESSION_CAP,
   RESUME_DIR_CAP,
   resumeRowTitle,
-  sortSessionsByLastUpdate,
+  orderSessionsByLastUpdate,
   type SessionPersistence,
 } from './sessions.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
@@ -501,7 +501,7 @@ async function buildSessionPickRows(ctx: Context, currentId: string | undefined)
   }
   const headers: SessionHeader[] = (await persistence.list()).map(headerOf).filter(isResumableSessionHeader)
   const lastUpdates = await loadSessionLastUpdates()
-  const ordered = sortSessionsByLastUpdate(headers, lastUpdates)
+  const ordered = orderSessionsByLastUpdate(headers, lastUpdates)
   const { previews, corruptIds } = await loadSessionPreviews(
     persistence,
     ordered.slice(0, PREVIEW_SESSION_CAP).map(header => header.id),

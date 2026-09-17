@@ -27,6 +27,7 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**Themes 主题**](docs/features/themes.md) —— 20 个内置配色（10 亮 + 10 暗）+ 用户主题目录发现（`~/.dsh/themes/`）；热切换，`auto` 跟随终端。
 - [**搜索、选择与图片**](docs/features/search-selection-images.md) —— `Ctrl+Shift+F` 全文搜索、划选复制到系统剪贴板、web/飞书附件内联渲染、LaTeX 转 Unicode 数学。
 - [**斜杠命令**](docs/features/slash-commands.md) —— `/model`、`/resume`、`/btw`、`/profile-switch`……外加全部 dsh 原生命令。
+- [**设置浏览器与界面语言**](docs/features/settings-i18n.md) —— `/settings` 就地浏览修改一切（字母序分类、每个 provider 的模型清单、Subagent 分组）；`/language` 在任意 surface 切换界面语言。
 - [**启动插件树**](docs/features/startup-tree.md) —— 启动即打印每个 profile 插件及其安装的 npm 版本。
 
 ---
@@ -57,20 +58,7 @@ dsh plugin --profile <name> remove @aiwayds/dsh-tui-pi
 
 宿主会自动清理 profile：`dsh.profile.bundles` 条目被剪除，整层 patch 随包一起消失——原生的 `session-projection-cache` 行恢复启用，projcache wrapper、`tool-ask-user` 插入及其禁用行全部随之消失。
 
-以下内容刻意留在磁盘上（删用户数据是破坏性的；重装会全部复用）：
-
-- `~/.dsh/APPEND_SYSTEM.md` —— 自动播种的系统提示词附录（插件所有；不想要就手动删除）
-- `~/.dsh/tui-command-usage.json` —— 斜杠命令使用排行
-- `~/.dsh/model-profiles.json` —— 模型档案（与其他插件共享——dsh-subagent-registry 也读它）
-- `~/.dsh/keybindings.json` —— dsh-tui 的 app 按键行（宿主共享文件）
-- `~/.dsh/agents/*.md` 与 `~/.dsh/skills/` —— 用户可编辑的 agents/skills（与其他插件共享）
-- 项目工作区里的 `.dsh-profile` 固定文件（由 /model profile 固定时写入）
-- `~/.dsh/settings.yaml` 的 `dsh-tui:` 段 —— 主题/面板/footer/保留策略/subagent 限制
-- `~/.dsh/storages/session_projcache/` —— 会话投影缓存，含 `.bak-preflight-*` 迁移备份
-
-插件运行期间，保留清理器（默认 `maxCount: 100` / `maxAgeDays: 30`，可在 `dsh-tui` 设置中调整）会删除旧会话日志——卸载后即停止，但已删除的日志找不回来。
-
-`scripts/install-font.mjs` 会改动 OS 字体/终端状态且有文档化的备份；卸载不会碰它。
+以下内容刻意留在磁盘上（删用户数据是破坏性的；重装会全部复用）：`~/.dsh/APPEND_SYSTEM.md`、`tui-command-usage.json`、`model-profiles.json`、`keybindings.json`、`~/.dsh/agents/` 与 `~/.dsh/skills/`、工作区 `.dsh-profile` 固定文件、`settings.yaml` 的 `dsh-tui:` 段、会话投影缓存（含 `.bak-preflight-*` 迁移备份）。插件运行期间，保留清理器（默认 `maxCount: 100` / `maxAgeDays: 30`）会删除旧会话日志——卸载后即停止，但已删除的日志找不回来。`scripts/install-font.mjs` 会改动 OS 字体/终端状态且有文档化的备份；卸载不会碰它。
 
 ---
 
@@ -117,47 +105,20 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 
 ## 配置
 
-全部旋钮都在 `~/.dsh/settings.yaml` 的 `dsh-tui` settings 命名空间下（注意段名是 `dsh-tui`）。语言 / 主题 / 面板高度 / footer 提示 / 图标集为 `applies: 'live'`——保存提交即热生效，无需重启：
+所有配置都在 `~/.dsh/settings.yaml` 的 `dsh-tui` 命名空间下——但你很少需要直接碰文件：**`/settings` 就地浏览修改**（可搜索的一级分类——Agent Presets / General / Models / Plugins / TUI——实时值、逐字段描述，Models 下还有 add-provider 流程）。语言、主题、面板高度、footer 提示、图标集改动即热生效；其余下次启动读取。
 
-| 键 | 默认 | 作用 |
-|---|---|---|
-| `language` | `en` | 界面语言：取内置 `locales/` 目录或 `~/.dsh/locales/` 下语言文件的 id（内置 `en`、`zh-CN`、`ja`、`ko`）。`/language` 列出并即时切换；加一种语言 = 一个 JSON 文件，零代码 |
-| `theme` | `auto` | 配色：`auto`（跟随终端）/`light`/`dark`/任意已注册主题名；`/theme` 写回同一段 |
-| `panelHeight` | `'1'` | think/tool 面板高度：`'1'`/`'5'`/`'7'`/`'10'`/`'all'`（完整内容） |
-| `maxAgents` | `4` | 并发子代理上限，`0` = 不限（`/agents → l` limits 面板可热调） |
-| `maxRounds` | `75` | 每个子代理的 assistant 消息数上限，到达后注入收尾请求；`0` = 不限 |
-| `maxRoundsGrace` | `7` | 收尾请求后的宽限轮数，超出即强制终止该子代理（会话保留可续聊/续跑）；`0` = 仅警告不终止 |
-| `disableSubagent` | `true` | 禁原生 `subagent` 工具，委派改走 `~/.dsh/agents/*.md` 注册代理；`subagent_fork`/`workflow`/`ralph` 不受影响 |
-| `footerHints` | 全 `true` | footer 快捷键提示分段开关：`send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
-| `cacheHitMode` | `lastMessage` | footer CH 段口径：`lastMessage`——最新一条 assistant 消息的缓存命中率（与 pi-tui footer 一致，默认）；`session`——全会话累计 |
-| `iconSet` | `auto` | `auto`/`nerdfont`/`plain`——powerline 字形自适应你的字体；用 `node scripts/install-font.mjs` 安装 Nerd Font |
-| `rememberPreset` | `true` | 按**工作区**（目录）记住最后一次 `/preset` 的选择，下次同目录启动直接用它——首个会话按它组合，而不是服务端默认。`false` 则始终用服务端默认。记忆本体存于 `$DSH_HOME/workspace-presets.json` |
-| `favoriteModels` | `[]` | 收藏模型（`provider/id`），钉在 `/model` 选择器顶部 |
-| `hiddenModels` | `[]` | 隐藏模型（`provider/id`），移入 `/model` 的 Hidden 区（选择器内 `f` 收藏 / `h` 隐藏，即写这两个键） |
-
-会话存储相关的旋钮（env 覆盖 `DSH_TUI_RETENTION_*` / `DSH_TUI_RESUME_*`；优先级：settings.yaml > env > 默认值）：
+大多数旋钮都有合理默认值，无需配置。真正可能会设的就几项：
 
 ```yaml
 dsh-tui:
-  retention:        # ~/.dsh/sessions 的启动清理器——删除旧日志。每次启动跑一次。
-    maxCount: 100   # <= 0 关闭清理器
-    maxAgeDays: 30
-    minIdleHours: 24
-  resume:           # /resume 显示过滤器——只隐藏选择器行，从不删除。
-    maxAgeDays: 30
-    minBytes: 1024
-  askUser:          # ask_user_question 自动应答超时——面板绝不无限等待。
-    idleMinutes: 5       # 每题无操作窗口；<= 0 关闭（DSH_TUI_ASK_USER_IDLE_MINUTES）
-    absoluteMinutes: 10  # 每题硬上限，有操作也生效；<= 0 关闭（DSH_TUI_ASK_USER_ABSOLUTE_MINUTES）
+  language: zh-CN   # 界面语言——或直接 /language（任意 surface 可答；内置 en、zh-CN、ja、ko）
+  theme: auto       # auto / light / dark / 任意已注册主题名——或 /theme
+  maxAgents: 4      # 子代理并发上限，0 = 不限（/agents → l 也可热调）
 ```
 
-超时后，聚焦的未答题目自动选**推荐项**（列表第一项）；计划审批绝不自动批准；打了一半的自由文本会被提交；每次自动作答都会在答案里向模型注明。详见 [Ask User Question → Timeouts](docs/features/ask-user-question.md#timeouts--the-panel-never-waits-forever)。
+新增界面语言就是往 `~/.dsh/locales/` 放一个 JSON 文件——同名 id 按键合并到内置文件之上，新 id 直接注册（详见[设置浏览器与界面语言](docs/features/settings-i18n.md)）。会话清理器（`retention` / `resume`）与 ask-user 超时（`askUser`）也在同一命名空间，默认值见文档。
 
-**界面语言（i18n）。**所有界面文案都走语言目录解析：每种语言一个扁平 JSON 文件（`locales/<id>.json`——`en.json` 是规范模板，`zh-CN.json` 为已翻译的中文）。`/language` 列出已装语言，`/language <id>` 即时切换（写回 `dsh-tui.language`；下一帧刷新即生效——已有对话内容保持原语言，直到重建）。把自建文件放进 `~/.dsh/locales/` 即可新增语言或局部覆盖（同名 id 按键合并到内置文件之上）；韩文（`ko`）/日文（`ja`）已内置；再加一种语言依然只是一个文件。`/settings` 里的描述文案重启后生效。
-
-按键重映射见 `~/.dsh/keybindings.json`（上文键盘一节）。
-
-插件内置了一个 skill（`dsh-tui-pi-config`）：直接让 agent「帮我配置 TUI」，指南会自动加载——以 ask_user_question 问答方式逐项收集（主题、面板高度、子代理并发）并代写 `dsh-tui:` 段；全键表与 `DSH_TUI_*` 环境变量清单见 `skills/dsh-tui-pi-config/SKILL.md`。
+插件内置了一个 skill（`dsh-tui-pi-config`）：直接让 agent「帮我配置 TUI」，它会问答式收集你的选择并代写配置段。**全键表与 `DSH_TUI_*` 环境变量清单见 [skills/dsh-tui-pi-config/SKILL.md](skills/dsh-tui-pi-config/SKILL.md)。**
 
 ---
 
@@ -166,7 +127,7 @@ dsh-tui:
 ```sh
 pnpm check    # tsc --noEmit
 pnpm build    # 输出 lib/
-pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；1100+ 测试、60+ 文件——当前基数见 AGENTS.md）
+pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；当前基数见 AGENTS.md）
 ```
 
 `pi-tui` 从 npm 原样运行——无补丁、无 fork。铁律与质量门禁见 [AGENTS.md](AGENTS.md)。

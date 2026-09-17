@@ -4,7 +4,7 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.20.0] - 2026-09-17
 
 ### Added
 - **UI languages — one JSON file per language, Chinese first.** Every
@@ -12,8 +12,14 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `locales/<id>.json` files (`en.json` is the canonical byte-identical
   template; `zh-CN.json`/`ja.json`/`ko.json` ship fully translated — 638 keys
   each across the footer, panels, dialogs, pickers, settings browser, hotkeys
-  manager, ask-user panel, subagent viewer, history/resume and every echo). `/language` lists
-  the installed languages and `/language <id>` switches live — the next
+  manager, ask-user panel, subagent viewer, history/resume and every echo).
+  `/language` **asks through the native ask-user panel** — the installed
+  languages become one question (the current language first and tagged, so
+  the panel's no-input timeout keeps it instead of switching); answering
+  works on any registered surface (the TUI, or a phone through dsh-feishu)
+  with first answer wins. `/language <id>` switches directly. The
+  `/settings` browser's `dsh-tui.language` row opens an in-place picker
+  instead of a raw text field. Switching applies live — the next
   repaint speaks the new language; the choice persists to the new
   `dsh-tui.language` key (18th key of the namespace, `applies: 'live'` via the
   settings watch hook, unknown ids fall back to `en`). Adding a language
@@ -27,6 +33,28 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (restart to re-translate those), already-rendered transcript rows keep the
   old language until a rebuild, and command descriptions in the autocomplete
   list apply on restart.
+- **Settings browser rebuilt — everything one level closer.** The `/settings`
+  first level is now alphabetical: Agent Presets · General · Models · Plugins
+  · TUI. The TUI namespace gets its own first-class category that drills
+  straight into its fields (no intermediate namespace list), with the
+  subagent knobs (`maxAgents` / `maxRounds` / `maxRoundsGrace` /
+  `disableSubagent` / `registeredOnly`) collapsed under a **Subagent** group
+  row (display-only grouping — settings.yaml paths never move). Settings
+  namespaces registered by dsh plugins group under **Plugins**, so the
+  catch-all *Other* category no longer appears. The Models category lists
+  each configured provider with its **configured model ids as the value
+  column** (empty when none are configured) and the API-key state in the
+  description.
+
+### Fixed
+- **Quitting can no longer hang the terminal.** Ctrl+C×2 (and every other
+  self-initiated exit) now goes through a guarded hard-exit: the exit is
+  deferred one event-loop turn off the callback stack, and a Worker-thread
+  watchdog SIGKILLs the process if the graceful exit has not landed within
+  3 s. Root cause (caught live with `sample`): `process.exit` drained the
+  libuv threadpool forever when a file-close completion raced the quit —
+  the process hung after printing the resume hint, holding the terminal
+  foreground with cooked mode restored but no shell to come back to.
 
 ## [2.19.0] - 2026-09-16
 

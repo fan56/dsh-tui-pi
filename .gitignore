@@ -25,3 +25,7 @@ screenshots/
 docs/showcase-*.md
 docs/market-submissions.md
 !assets/demos/*.mp4
+
+# --- Local tooling / scratch (never commit) ---
+.mimosa/
+.quit-test/
