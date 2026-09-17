@@ -73,10 +73,15 @@ export function preflightProjcache(dir: string, { check = false }: PreflightOpti
   const result = { checked: 0, fixed: 0 }
   if (!fs.existsSync(dir)) return result
 
-  for (const name of fs.readdirSync(dir)) {
+  // Containment root: every record path is resolved against it and must
+  // land strictly inside it; lstat (unlike stat) never follows a planted
+  // symlink out of the tree.
+  const root = path.resolve(dir)
+  for (const name of fs.readdirSync(root)) {
     if (!/^session-.*\.json$/.test(name)) continue
-    const file = path.join(dir, name)
-    if (!fs.statSync(file).isFile()) continue
+    const file = path.resolve(root, name)
+    if (file === root || !file.startsWith(root + path.sep)) continue
+    if (!fs.lstatSync(file).isFile()) continue
     result.checked++
 
     let text: string

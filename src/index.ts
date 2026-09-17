@@ -14,6 +14,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { hardExit } from './hard-exit.ts'
 // Types only (erased at emit). The runtime import is deliberately avoided:
 // the registry-published dsh-skill lib imports host-closure siblings
 // (@deepseek-ai/dsh-scope, dsh-llm — peers of it, but absent from a plugin
@@ -137,6 +138,7 @@ import { currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, 
 import { completedTurnSeed, openPresetConfirmDialog, performPresetSwitch } from './preset-dialog.ts'
 import { openStopConfirmDialog } from './stop-dialog.ts'
 import { registerAskUserProvider, resolveAskUserTimeouts } from './ask-user.ts'
+import { askLanguageChoice, type AskSeam, type LanguageOutcome } from './language-ask.ts'
 import { checkHostSupport } from './host-version.ts'
 
 export const name = 'dsh-tui-pi'
@@ -244,7 +246,7 @@ export function apply(ctx: Context): void {
     const check = checkHostSupport()
     if (!check.ok) {
       console.warn(check.message)
-      process.exit(1)
+      hardExit(1)
     }
     if (check.version === undefined) {
       console.warn('[dsh-tui-pi] could not resolve the dsh host version next to the plugin; skipping the host floor check.')
@@ -1823,23 +1825,19 @@ export function apply(ctx: Context): void {
 
     // /language — switch the UI language. Language files live in the bundled
     // locales/ directory plus the user's ~/.dsh/locales (one JSON file per
-    // language; adding one needs no code). `/language` lists what is
-    // installed; `/language <id>` activates it live (the next repaint speaks
-    // it) and persists the choice to `dsh-tui.language`.
-    const languageHandler: LocalCommandHandler = async rawInput => {
-      const arg = rawInput.trim()
-      const installed = listLocales().map(locale => `${locale.id} (${locale.name})`).join(', ')
-      if (arg === '') {
-        const active = currentLocale()
-        return {
-          kind: 'success' as const,
-          text: `${t('command.language.current', { id: active.id, name: active.name })}\n${t('command.language.installed', { list: installed })}`,
-        }
+    // language; adding one needs no code). Bare `/language` asks through the
+    // native ask-user panel (src/language-ask.ts) — the same docked question
+    // UI the model uses, so it answers on any registered surface (the TUI, a
+    // phone through dsh-feishu) with first answer wins. `/language <id>`
+    // switches directly. Either way the switch applies live (the next repaint
+    // speaks it) and persists the choice to `dsh-tui.language`.
+    const installedLanguages = (): string =>
+      listLocales().map(locale => `${locale.id} (${locale.name})`).join(', ')
+    const applyLanguage = async (id: string) => {
+      if (!setLocale(id)) {
+        return { kind: 'error' as const, text: t('command.language.unknown', { id, list: installedLanguages() }) }
       }
-      if (!setLocale(arg)) {
-        return { kind: 'error' as const, text: t('command.language.unknown', { id: arg, list: installed }) }
-      }
-      const persistError = await writeLanguagePreference(ctx, arg)
+      const persistError = await writeLanguagePreference(ctx, id)
       const active = currentLocale()
       const switched = t('command.language.switched', { name: active.name, id: active.id })
       return {
@@ -1848,6 +1846,37 @@ export function apply(ctx: Context): void {
           ? switched
           : `${switched} ${t('command.language.persistFailed', { error: persistError })}`,
       }
+    }
+    const languageHandler: LocalCommandHandler = async (rawInput, signal) => {
+      const arg = rawInput.trim()
+      if (arg !== '') return applyLanguage(arg)
+      const ask = ctx.get('userQuestions') as AskSeam | undefined
+      if (ask === undefined) {
+        return {
+          kind: 'error' as const,
+          text: t('command.language.unavailable', { list: installedLanguages() }),
+        }
+      }
+      // Scope the ask to the live session when there is one (only the
+      // surfaces driving it are asked); a fresh TUI asks agentless.
+      let outcome: LanguageOutcome
+      try {
+        outcome = await askLanguageChoice(ask, { agent: bridge.getAgent(), signal })
+      } catch (error) {
+        return {
+          kind: 'error' as const,
+          text: t('command.language.askFailed', {
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        }
+      }
+      if (outcome.kind === 'picked') return applyLanguage(outcome.id)
+      if (outcome.kind === 'unknown') {
+        return { kind: 'error' as const, text: t('command.language.unknown', { id: outcome.text, list: installedLanguages() }) }
+      }
+      // Picked the active language, declined the question, or it was never
+      // answered — nothing changed.
+      return { kind: 'success' as const, text: t('command.language.unchanged') }
     }
     registerLocalCommand('language', t('command.language.description'), languageHandler)
 
@@ -2090,6 +2119,9 @@ export function apply(ctx: Context): void {
      * (model/effort pickers, settings browser, session panel, resume list),
      * and plugin flows hold the editor just as long: /wiki onboard parks the
      * user in ask-user panels, /vault backup|restore push over the network.
+     * /language rides the same ask-user panel (src/language-ask.ts) — its
+     * auto-answer window is minutes, and with the timeouts disabled it waits
+     * indefinitely, so the generic guard must not cut it off mid-question.
      * The generic guard would fire mid-flow and echo a spurious
      * "aborted due to timeout" — those run with a never-aborting signal
      * instead.
@@ -2099,7 +2131,7 @@ export function apply(ctx: Context): void {
      * through this dispatcher, so their names belong here all the same
      * (dropping them in 2.16.0 re-introduced the timeout).
      */
-    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'history', 'theme', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'profile-switch', 'profile-cfg', 'wiki', 'vault'])
+    const MODAL_COMMANDS = new Set(['settings', 'model', 'think', 'session', 'resume', 'history', 'theme', 'language', 'permission', 'agents', 'subagents', 'login', 'logout', 'skills', 'preset', 'profile-switch', 'profile-cfg', 'wiki', 'vault'])
 
     /** Route one submitted line: dsh slash command first, model prompt second. */
     const submit = async (text: string): Promise<void> => {
@@ -2263,7 +2295,7 @@ export function apply(ctx: Context): void {
           // theme machinery is gone; dim is universally supported.
           process.stdout.write(`\n\x1b[2m${t('tui.exit.resumeHint', { command: formatResumeCommand(resolveProfileName(ctx), String(exitSessionId)) })}\x1b[0m\n`)
         }
-        process.exit(code)
+        hardExit(code)
       })()
       return exitTask
     }

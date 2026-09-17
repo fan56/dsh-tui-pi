@@ -229,7 +229,7 @@ export interface ProviderRowView {
   id: string
   /** Row label: profile displayName, else catalog name, else the route key. */
   label: string
-  /** Row value column: first listed model, a count, or `catalog`. */
+  /** Row value column: the configured model ids joined with ", "; empty when none. */
   summary: string
   /** Row description: one-line API-key state. */
   status: string
@@ -240,12 +240,14 @@ export interface ProviderRowView {
  * the environment lookup (`process.env`) and the (possibly undefined) profile
  * read out of the llm-pi-ai descriptor, so nothing here touches services.
  *
- * The summary rule: a profile with models shows the first model id (or a
- * count when the id is missing); a catalog route with no models serves the
- * installed catalog, so `catalog` is more honest than `0 models`; anything
- * else has no models at all. The status rule: no `apiKeyEnv` means the route
- * has no key address at all; otherwise the reference's presence in the
- * supplied environment decides `API key set` vs `API key missing`.
+ * The summary rule: the configured models' ids joined with ", " — one row per
+ * provider, so moving the selection up/down reads off that provider's own
+ * list. No models configured (a hand-declared route without a list, or the
+ * implicit `models: []` schema default on a catalog route) renders as an
+ * empty value column, never a count placeholder.
+ * The status rule: no `apiKeyEnv` means the route has no key address at all;
+ * otherwise the reference's presence in the supplied environment decides
+ * `API key set` vs `API key missing`.
  */
 export function providerRowView(
   id: string,
@@ -259,24 +261,11 @@ export function providerRowView(
   const displayName = p?.displayName
   const label = displayName !== undefined && displayName !== '' ? displayName : entry?.name ?? id
 
-  const models = p?.models
-  let summary: string
-  if (models !== undefined && models.length > 0) {
-    const first = models[0]?.id
-    const count = models.length === 1
-      ? t('provcatalog.summary.model', { count: models.length })
-      : t('provcatalog.summary.models', { count: models.length })
-    summary = typeof first === 'string' && first !== '' ? first : count
-  } else if (entry?.catalogRoute === true) {
-    // No models listed — including the implicit `models: []` that schema
-    // defaults put into every resolved profile: a catalog route serves the
-    // installed pi-ai catalog, so `catalog` beats a misleading `0 models`.
-    summary = t('provcatalog.summary.catalog')
-  } else {
-    // Hand-declared route (or unknown route key): nothing to serve without
-    // an explicit model list — `0 models` is the honest read here.
-    summary = t('provcatalog.summary.none')
-  }
+  const models = p?.models ?? []
+  const summary = models
+    .map(model => (typeof model?.id === 'string' ? model.id : ''))
+    .filter(modelId => modelId !== '')
+    .join(', ')
 
   const ref = p?.apiKeyEnv
   // Truthy presence: an empty-string env value means the key is not usable

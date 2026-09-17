@@ -83,14 +83,14 @@ test('discoverLocales: user file merges per-key over bundled and new ids registe
   // Same id as the bundled zh-CN: override one key, keep the rest.
   writeFileSync(
     join(userLocalesDir(home), 'zh-CN.json'),
-    JSON.stringify({ name: '简体中文（定制）', 'command.language.current': '现在的语言：{id}' }),
+    JSON.stringify({ name: '简体中文（定制）', 'command.language.unknown': '不认识的语言：{id}' }),
   )
   // A brand-new language: registers without any bundled twin.
   writeFileSync(join(userLocalesDir(home), 'ko.json'), '{"name":"한국어","greet":"안녕"}')
   const merged = discoverLocales({ home, warn: () => {} })
   const zh = merged.get('zh-CN')
   assert.equal(zh.name, '简体中文（定制）')
-  assert.equal(zh.strings['command.language.current'], '现在的语言：{id}')
+  assert.equal(zh.strings['command.language.unknown'], '不认识的语言：{id}')
   // The bundled twin's other keys survive the per-key merge.
   assert.equal(typeof zh.strings['command.language.description'], 'string')
   assert.equal(merged.get('ko').strings.greet, '안녕')
@@ -104,8 +104,8 @@ test('t(): falls back active → en → key, and interpolates {params}', () => {
   assert.equal(t('totally.missing.key'), 'totally.missing.key')
   // Interpolation replaces known params and leaves unknown ones visible.
   setLocale('en')
-  assert.equal(t('command.language.current', { id: 'en', name: 'English' }), 'Current language: en (English)')
-  assert.equal(t('command.language.current'), 'Current language: {id} ({name})')
+  assert.equal(t('command.language.unknown', { id: 'xx', list: 'a, b' }), 'Unknown language "xx". Installed: a, b')
+  assert.equal(t('command.language.unknown'), 'Unknown language "{id}". Installed: {list}')
 })
 
 test('t(): live switch to zh-CN translates, setLocale of an unknown id keeps current', () => {

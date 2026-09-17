@@ -11,7 +11,7 @@ import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { PresetEntry, PresetState } from './preset.ts'
 import type { LlmReasoningEffortInfo, LlmResolvedModelInfo, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { Component, OverlayHandle, TUI } from '@earendil-works/pi-tui'
-import { t } from './i18n/index.ts'
+import { t, listLocales } from './i18n/index.ts'
 import { wrapFramedOverlay } from './frame.ts'
 import {
   buildModelRows,
@@ -532,5 +532,42 @@ export function pickPreset(
       restoreFocus()
       resolve(picked)
     }
+  })
+}
+
+/**
+ * Build the UI-language picker table: one row per discovered locale (label =
+ * the display name in that language, description = the locale id), the
+ * current locale preselected. Used by the /settings browser's
+ * `dsh-tui.language` row (rendered in place as the edit submenu). The
+ * `/language` command itself goes through the native ask-user panel instead
+ * (src/language-ask.ts) — an in-place table here would be dismissed by the
+ * ask panel's overlay teardown, and the ask seam reaches every surface.
+ *
+ * @param status - optional panel status-line getter (e.g. an in-panel
+ *   persist-failure message for the settings browser, where the picker stays
+ *   open on a failed write).
+ */
+export function languagePickerPanel(
+  theme: TuiTheme,
+  current: string,
+  onPick: (id: string) => void,
+  onCancel: () => void,
+  status?: () => string | undefined,
+): Component {
+  const rows: PickerItem[] = listLocales().map(locale => ({
+    value: locale.id,
+    label: locale.name,
+    description: locale.id,
+  }))
+  return new TablePanel(theme, {
+    title: t('sel.title.language'),
+    columns: labelDescriptionColumns(t('sel.col.language'), rows, 24),
+    rows,
+    renderCell: itemCell,
+    preselect: Math.max(0, rows.findIndex(row => row.value === current)),
+    onSelect: row => onPick(row.value),
+    onCancel,
+    status,
   })
 }

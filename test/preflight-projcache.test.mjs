@@ -199,3 +199,21 @@ test('projcacheSessionsDir honors DSH_HOME and falls back to ~/.dsh', () => {
     else process.env.DSH_HOME = previous
   }
 })
+
+test('a planted symlink to an out-of-tree record is skipped, not followed', () => {
+  const { sessions: dir } = makeSessionsDir()
+  // A real record inside the tree stays fixable.
+  writeRecord(dir, 'session-inside.json', JSON.stringify({ id: 'inside' }))
+  // A symlink pointing OUT of the tree must never be read or rewritten.
+  const outside = path.join(path.dirname(dir), 'outside-secret.json')
+  fs.writeFileSync(outside, JSON.stringify({ id: 'outside' }))
+  fs.symlinkSync(outside, path.join(dir, 'session-evil.json'))
+  try {
+    const result = preflightProjcache(dir)
+    assert.equal(result.checked, 1, 'only the real file is checked')
+    assert.equal(JSON.parse(fs.readFileSync(outside, 'utf8')).id, 'outside')
+    assert.equal(fs.lstatSync(path.join(dir, 'session-evil.json')).isSymbolicLink(), true)
+  } finally {
+    fs.rmSync(outside)
+  }
+})

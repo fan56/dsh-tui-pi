@@ -37,6 +37,7 @@ import {
 import { CanvasTerminal } from './canvas-terminal.ts'
 import { defaultImpl, resolveCopyOnSelect, writeClipboard } from './clipboard.ts'
 import { CwdBorderEditor } from './editor.ts'
+import { hardExit } from './hard-exit.ts'
 import { mergeKeyBindings, resolveKeyAction, type KeyAction, type KeyBindings } from './keymap.ts'
 import { mouseDisableSequence, mouseEnableSequence, resolveMouseMode } from './mouse-mode.ts'
 import { consumeRightClickPaste } from './ask-user.ts'
@@ -518,7 +519,7 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
         // deliberately excluded: no terminal is attached in smoke mode, but a
         // repeat must never be an exit path by itself.)
         handle.dispose()
-        process.exit(130)
+        hardExit(130)
       }
     }
     return action.consumes ? { consume: true } : undefined

@@ -15,10 +15,12 @@ import {
   defaultValueFor,
   displayValue,
   fieldDescription,
+  FIELD_GROUPS,
   formatValue,
   parseNumberInput,
   parseStringInput,
   parseUnionInput,
+  slotFieldKeys,
   unionLiterals,
 } from '../lib/settings.js'
 import {
@@ -130,23 +132,35 @@ const KNOWN_NS = [
   'agent-loop',
   'web-search-deepseek',
   'agent-presets',
+  // Settings namespaces of the installed dsh plugins (Plugins category).
+  'mcp-adapter',
+  'topics',
+  'vault',
+  'model-sync',
+  'dsh-feishu',
+  'dsh-llm-proxy',
 ]
 
 test('categorizeNamespaces places the full known set with no other', () => {
   assert.deepEqual(categorizeNamespaces(KNOWN_NS), [
-    { id: 'general', label: 'General', namespaces: ['permission', 'dsh-tui'] },
-    { id: 'models', label: 'Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
-    { id: 'plugins', label: 'Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
     { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
+    { id: 'general', label: 'General', namespaces: ['permission'] },
+    { id: 'models', label: 'Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
+    {
+      id: 'plugins',
+      label: 'Plugins',
+      namespaces: ['shell', 'agent-loop', 'web-search-deepseek', 'mcp-adapter', 'topics', 'vault', 'model-sync', 'dsh-feishu', 'dsh-llm-proxy'],
+    },
+    { id: 'dsh-tui', label: 'TUI', namespaces: ['dsh-tui'] },
   ])
 })
 
 test('categorizeNamespaces buckets unknown namespaces into trailing other', () => {
   assert.deepEqual(categorizeNamespaces(['dsh-tui', 'future-thing', 'shell', 'llm-deepseek']), [
-    { id: 'general', label: 'General', namespaces: ['dsh-tui'] },
     { id: 'models', label: 'Models', namespaces: ['llm-deepseek'] },
-    { id: 'plugins', label: 'Plugins', namespaces: ['shell'] },
     { id: 'other', label: 'Other', namespaces: ['future-thing'] },
+    { id: 'plugins', label: 'Plugins', namespaces: ['shell'] },
+    { id: 'dsh-tui', label: 'TUI', namespaces: ['dsh-tui'] },
   ])
 })
 
@@ -160,11 +174,11 @@ test('categorizeNamespaces returns empty for empty input', () => {
   assert.deepEqual(categorizeNamespaces([]), [])
 })
 
-test('categorizeNamespaces orders categories general, models, plugins, agent, other', () => {
+test('categorizeNamespaces orders categories alphabetically by canonical label', () => {
   const shuffled = [...KNOWN_NS, 'future-thing'].sort()
   assert.deepEqual(
     categorizeNamespaces(shuffled).map(cat => cat.id),
-    ['general', 'models', 'plugins', 'agent', 'other'],
+    ['agent', 'general', 'models', 'other', 'plugins', 'dsh-tui'],
   )
 })
 
@@ -185,6 +199,35 @@ test('CATEGORY_MAP namespaces are unique across categories', () => {
   // Every mapped namespace resolves without loss through categorizeNamespaces.
   const resolved = new Set(categorizeNamespaces(all).flatMap(cat => cat.namespaces))
   assert.equal(resolved.size, all.length)
+})
+
+test('slotFieldKeys collapses grouped fields into one slot at the first member', () => {
+  const slots = slotFieldKeys('dsh-tui', [
+    'language', 'theme', 'maxAgents', 'maxRounds', 'footerHints', 'registeredOnly',
+  ])
+  assert.deepEqual(slots, [
+    { kind: 'field', key: 'language' },
+    { kind: 'field', key: 'theme' },
+    { kind: 'group', group: FIELD_GROUPS['dsh-tui'][0], members: ['maxAgents', 'maxRounds', 'registeredOnly'] },
+    { kind: 'field', key: 'footerHints' },
+  ])
+})
+
+test('slotFieldKeys passes through ungrouped namespaces and lists members in group order', () => {
+  // No groups for this namespace: every key passes through untouched.
+  assert.deepEqual(
+    slotFieldKeys('permission', ['a', 'b']).map(slot => slot.kind),
+    ['field', 'field'],
+  )
+  // Members list follows the group's declaration order, not the input order,
+  // and only keys actually present (hidden/unknown fields never show).
+  const slots = slotFieldKeys('dsh-tui', ['registeredOnly', 'maxRoundsGrace'])
+  assert.equal(slots.length, 1)
+  assert.equal(slots[0].kind, 'group')
+  assert.deepEqual(slots[0].members, ['maxRoundsGrace', 'registeredOnly'])
+  // Every declared group field is covered by exactly one group of its namespace.
+  const grouped = FIELD_GROUPS['dsh-tui'].flatMap(def => def.fields)
+  assert.equal(new Set(grouped).size, grouped.length, 'a field must belong to at most one group')
 })
 
 test('categoryDescription caps at max columns (width-aware clip)', () => {

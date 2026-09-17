@@ -6,8 +6,9 @@
  * schemastery schemas → resolved values) and renders it as nested FW list
  * panels (src/panels.ts SettingsListPanel), one level per schema depth:
  *
- *   level 0   category list (searchable): general / models / plugins / agent,
- *             then `other` for unmapped namespaces. Namespace→category comes
+ *   level 0   category list (searchable), alphabetical by canonical label:
+ *             Agent Presets / General / Models / Other / Plugins / TUI,
+ *             with `other` hidden when no namespace falls into it. Namespace→category comes
  *             from a static mapping (categorizeNamespaces) mirroring the web
  *             settings page: the web client slots namespaces into categories
  *             client-side and the data plane carries no category field, so
@@ -19,9 +20,13 @@
  *             model summary, API-key state) instead of the raw namespace —
  *             the original schema surface is hidden — plus dedicated
  *             llm-deepseek / agent-default-model rows and an add-provider
- *             flow (built-in directory → one API key → write)
+ *             flow (built-in directory → one API key → write). The
+ *             single-namespace dsh-tui category drills straight through to
+ *             its field list, titled by the category label.
  *   level 2+  schema walk, dispatched on node type:
- *             - object/dict → drill in (nested list; dicts get an add-key row)
+ *             - object/dict → drill in (nested list; dicts get an add-key
+ *               row); at a grouped namespace's root (FIELD_GROUPS) member
+ *               fields collapse into one virtual group drill row
  *             - boolean / all-literal union → Enter cycles the value
  *             - string/number/mixed union → inline Input editor
  *             - array / literal / const / unknown → read-only viewer
@@ -66,6 +71,8 @@ import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { t } from './i18n/index.ts'
 import { clipToWidth, visibleWidth } from './text.ts'
 import { wrapFramedOverlay } from './frame.ts'
+import { languagePickerPanel } from './selectors.ts'
+import { THEME_SETTINGS_NAMESPACE } from './theme-settings.ts'
 import {
   catalogEntry,
   deriveKeyRef,
@@ -104,17 +111,41 @@ export interface SettingsCategory {
  * Static namespace→category mapping, mirroring the web settings page's
  * client-side slot structure (see the module header): the data plane carries
  * no category field, so the slots are maintained here by hand. Namespaces not
- * listed anywhere fall into the trailing `other` category.
+ * listed anywhere fall into the trailing `other` category. Beyond the web
+ * page's own slots, the plugins category enumerates the settings namespaces
+ * of the dsh plugins installed in this ecosystem (mcp-adapter, topics, vault,
+ * model-sync, dsh-feishu, dsh-llm-proxy) so their rows group under Plugins
+ * instead of leaking into `other`.
  *
  * The `label`s here are the English source of truth: rows render through
  * `categoryLabel()` (t() at render time, keyed by category id), so the active
  * UI language translates them while search keeps matching whatever is
- * displayed.
+ * displayed. The first level is ordered by this canonical label
+ * (categorizeNamespaces sorts), not by map order.
  */
 export const CATEGORY_MAP: readonly SettingsCategory[] = [
-  { id: 'general', label: 'General', namespaces: ['permission', 'dsh-tui'] },
+  { id: 'dsh-tui', label: 'TUI', namespaces: ['dsh-tui'] },
+  { id: 'general', label: 'General', namespaces: ['permission'] },
   { id: 'models', label: 'Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
-  { id: 'plugins', label: 'Plugins', namespaces: ['shell', 'agent-loop', 'web-search-deepseek'] },
+  {
+    id: 'plugins',
+    label: 'Plugins',
+    namespaces: [
+      'shell',
+      'agent-loop',
+      'web-search-deepseek',
+      // Settings namespaces of installed dsh plugins — dsh-llm-proxy
+      // registers through settings.installSection, the rest through
+      // settings.register; plugins without a namespace never reach the
+      // settings browser.
+      'mcp-adapter',
+      'topics',
+      'vault',
+      'model-sync',
+      'dsh-feishu',
+      'dsh-llm-proxy',
+    ],
+  },
   { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
 ]
 
@@ -126,6 +157,7 @@ export const CATEGORY_MAP: readonly SettingsCategory[] = [
  * an entry.
  */
 const CATEGORY_LABEL_KEYS: Readonly<Record<string, () => string>> = {
+  'dsh-tui': () => t('settingsui.category.dsh-tui'),
   general: () => t('settingsui.category.general'),
   models: () => t('settingsui.category.models'),
   plugins: () => t('settingsui.category.plugins'),
@@ -142,6 +174,84 @@ function categoryLabel(cat: SettingsCategory): string {
 /** Cap for a category row's member-name description line. */
 export const CATEGORY_DESC_MAX = 60
 
+// --------------------------------------------------------------- field groups --
+
+/**
+ * UI-only virtual field groups: at the root of a grouped namespace, member
+ * fields collapse into one drill row (positioned at the group's first
+ * member) instead of sitting flat in the field list. Purely a settings
+ * BROWSER display regroup — the schema and the settings document keep their
+ * flat shape, so user config paths (`dsh-tui.maxAgents` etc.) never move.
+ *
+ * A virtual group has no single path of its own: its list carries no reset
+ * row (the namespace-level reset still covers the whole subtree), and its
+ * value column shows a member count.
+ */
+export interface FieldGroupDef {
+  id: string
+  /** i18n key of the group label (resolved through resolveFieldGroupLabel). */
+  labelKey: string
+  /** Schema field names grouped under this row, in display order. */
+  fields: readonly string[]
+}
+
+export const FIELD_GROUPS: Readonly<Record<string, readonly FieldGroupDef[]>> = {
+  'dsh-tui': [
+    {
+      id: 'subagent',
+      labelKey: 'settingsui.group.subagent',
+      fields: ['maxAgents', 'maxRounds', 'maxRoundsGrace', 'disableSubagent', 'registeredOnly'],
+    },
+  ],
+}
+
+/**
+ * Resolve one group's label to display text. The static tables carry i18n
+ * KEYS (module data must not freeze a language at import time); this switch
+ * enumerates them as literal t() call sites — which is also what the i18n
+ * coverage guard matches against. Anything else passes through `t()`
+ * unchanged, since a non-key falls back to itself.
+ */
+export function resolveFieldGroupLabel(labelKey: string): string {
+  switch (labelKey) {
+    case 'settingsui.group.subagent': return t('settingsui.group.subagent')
+    default: return t(labelKey)
+  }
+}
+
+/** One walked field: a plain schema key, or a collapsed group slot. */
+export type FieldSlot =
+  | { kind: 'field'; key: string }
+  | { kind: 'group'; group: FieldGroupDef; members: readonly string[] }
+
+/**
+ * Order schema field keys for display: grouped fields collapse into a single
+ * group slot at the position of the group's FIRST member present (members
+ * list only the keys actually present, in group-declaration order). Keys in
+ * no group pass through in order. Unknown/hidden keys never reach this
+ * function — the caller walks already-filtered rows.
+ */
+export function slotFieldKeys(ns: string, keys: readonly string[]): FieldSlot[] {
+  const groups = FIELD_GROUPS[ns]
+  if (groups === undefined || groups.length === 0) {
+    return keys.map(key => ({ kind: 'field' as const, key }))
+  }
+  const keySet = new Set(keys)
+  const emitted = new Set<string>()
+  const slots: FieldSlot[] = []
+  for (const key of keys) {
+    const group = groups.find(def => def.fields.includes(key))
+    if (group === undefined) {
+      slots.push({ kind: 'field', key })
+      continue
+    }
+    if (emitted.has(group.id)) continue
+    emitted.add(group.id)
+    slots.push({ kind: 'group', group, members: group.fields.filter(field => keySet.has(field)) })
+  }
+  return slots
+}
+
 /**
  * Namespaces the Models category reads and writes. dsh-settings
  * 0.1.2-alpha.3 removed the runtime settingsNamespace() helper: plain
@@ -154,8 +264,11 @@ const NS_LLM_DEEPSEEK = 'llm-deepseek'
 const NS_AGENT_DEFAULT_MODEL = 'agent-default-model'
 
 /**
- * Group a describe() namespace list into ordered categories — general, models,
- * plugins, agent, then `other` for everything unmapped. Categories with no
+ * Group a describe() namespace list into ordered categories. The result is
+ * sorted alphabetically by the canonical (English) label — Agent Presets,
+ * General, Models, Other, Plugins, TUI — so the first level reads the same
+ * regardless of CATEGORY_MAP order or the active UI language (sorting keys on
+ * the canonical label, never the t()-translated one). Categories with no
  * members are dropped, including `other` when nothing falls into it.
  *
  * Defensive: duplicate namespaces in the input count once (a namespace
@@ -175,7 +288,11 @@ export function categorizeNamespaces(nses: string[]): SettingsCategory[] {
   }
   const others = [...input].filter(ns => !mapped.has(ns))
   if (others.length > 0) categories.push({ id: 'other', label: 'Other', namespaces: others })
-  return categories
+  return categories.sort((a, b) => {
+    const la = a.label.toLowerCase()
+    const lb = b.label.toLowerCase()
+    return la < lb ? -1 : la > lb ? 1 : 0
+  })
 }
 
 /**
@@ -905,15 +1022,26 @@ class SettingsBrowser {
       description: this.categoryDescription(cat),
       submenu: cat.id === 'models'
         ? (_current, done) => this.openModelsSubmenu(done)
-        : (_current, done) => {
-              const list = this.namespaceList(
-                categoryLabel(cat),
-                this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
-                done,
-              )
-              this.nsList = list
-              return list
-            },
+        : cat.id === 'dsh-tui'
+          // Single-namespace category: drill straight into the config
+          // fields — no intermediate namespace list repeating the namespace
+          // name under the category that names it.
+          ? (_current, done) => {
+                const section = this.sectionList(THEME_SETTINGS_NAMESPACE, [], () => {
+                  this.refreshCategoryList()
+                  done()
+                }, categoryLabel(cat))
+                return section.list
+              }
+          : (_current, done) => {
+                const list = this.namespaceList(
+                  categoryLabel(cat),
+                  this.descriptors.filter(d => cat.namespaces.includes(d.ns)),
+                  done,
+                )
+                this.nsList = list
+                return list
+              },
     }))
     return new SettingsListPanel(this.theme, {
       title: t('settingsui.title'),
@@ -1272,12 +1400,16 @@ class SettingsBrowser {
   /**
    * Build the FW list panel for one schema node at `path` of `ns`.
    * `onExit` runs when the list is popped (Esc) — it must refresh the parent
-   * level and call the parent's submenu `done()`.
+   * level and call the parent's submenu `done()`. `title` overrides the
+   * default panel title (the namespace or path spelling) — the TUI category's
+   * direct drill uses it to title the fields with the category label instead
+   * of the raw namespace name.
    */
   private sectionList(
     ns: string,
     path: string[],
     onExit: () => void,
+    title?: string,
   ): { list: SettingsListPanel; refresh: () => void } {
     const root = this.root(ns)
     const desc = this.descriptor(ns)
@@ -1286,9 +1418,85 @@ class SettingsBrowser {
       : root
     const rows = node === undefined ? [] : this.buildRows(ns, node, path, desc?.value)
     const refresh = (): void => { this.refreshRows(rows, list) }
+    // Reset/add-key rows always lead; the field rows after them collapse
+    // into virtual groups at a grouped namespace's root (FIELD_GROUPS).
+    const structural = rows.filter(row => row.kind === 'reset' || row.kind === 'addkey')
+    const fields = rows.filter(row => row.kind !== 'reset' && row.kind !== 'addkey')
+    const slots = path.length === 0 && node?.type === 'object'
+      ? slotFieldKeys(ns, fields.map(row => row.path[row.path.length - 1]))
+      : undefined
+    let fieldItems: SettingsRow[]
+    if (slots === undefined) {
+      fieldItems = fields.map(row => this.rowItem(row, refresh))
+    } else {
+      const byKey = new Map(fields.map(row => [row.path[row.path.length - 1], row]))
+      fieldItems = []
+      for (const slot of slots) {
+        if (slot.kind === 'field') {
+          const row = byKey.get(slot.key)
+          if (row !== undefined) fieldItems.push(this.rowItem(row, refresh))
+        } else {
+          fieldItems.push(this.fieldGroupRow(ns, slot))
+        }
+      }
+    }
+    const items = [...structural.map(row => this.rowItem(row, refresh)), ...fieldItems]
+    const list = new SettingsListPanel(this.theme, {
+      title: title ?? (path.length === 0 ? ns : path.join('.')),
+      rows: items,
+      maxVisible: 12,
+      enableSearch: true,
+      onChange: (id, newValue) => { void this.onCycle(rows, list, id, newValue) },
+      onCancel: () => {
+        refresh()
+        onExit()
+      },
+    })
+    return { list, refresh }
+  }
+
+  /**
+   * The drill row of one virtual field group (see FIELD_GROUPS): value shows
+   * the member count, the description names the members, and Enter opens the
+   * group's field list.
+   */
+  private fieldGroupRow(ns: string, slot: { kind: 'group'; group: FieldGroupDef; members: readonly string[] }): SettingsRow {
+    const label = resolveFieldGroupLabel(slot.group.labelKey)
+    return {
+      id: `group:${slot.group.id}`,
+      label,
+      value: `{${t('settingsui.fields.count', { count: slot.members.length })}}`,
+      description: slot.members.join(' · '),
+      submenu: (_current, done) => {
+        const child = this.fieldGroupList(ns, label, slot.members, done)
+        return child.list
+      },
+    }
+  }
+
+  /**
+   * Field list of one virtual group: the member schema fields exactly as
+   * they would render flat, with the same cycle/input editing — minus the
+   * reset/add-key rows (a virtual group has no single path to reset; the
+   * namespace level still resets the whole subtree).
+   */
+  private fieldGroupList(
+    ns: string,
+    label: string,
+    members: readonly string[],
+    onExit: () => void,
+  ): { list: SettingsListPanel; refresh: () => void } {
+    const root = this.root(ns)
+    const rows: RowSpec[] = []
+    for (const name of members) {
+      const child = root !== undefined && root.type === 'object' ? root.dict?.[name] : undefined
+      if (child === undefined || fieldMeta(child).hidden === true) continue
+      rows.push(this.fieldRow(ns, child, [name], name))
+    }
+    const refresh = (): void => { this.refreshRows(rows, list) }
     const items = rows.map(row => this.rowItem(row, refresh))
     const list = new SettingsListPanel(this.theme, {
-      title: path.length === 0 ? ns : path.join('.'),
+      title: label,
       rows: items,
       maxVisible: 12,
       enableSearch: true,
@@ -1561,6 +1769,12 @@ class SettingsBrowser {
 
   /** Build the edit submenu for a leaf row; commits write to settings. */
   private inputSubmenu(row: RowSpec, refresh: () => void, done: () => void): Component {
+    // dsh-tui.language: pick from the discovered locales instead of typing a
+    // raw id — the same panel the /language command opens, writing through
+    // the standard mutate path (the watch hook applies the language live).
+    if (row.ns === THEME_SETTINGS_NAMESPACE && row.path.length === 1 && row.path[0] === 'language') {
+      return this.languageSubmenu(row, refresh, done)
+    }
     const meta = fieldMeta(row.node)
     const initial = row.secret === true || row.value === undefined || row.value === null
       ? ''
@@ -1580,6 +1794,48 @@ class SettingsBrowser {
       onDone: done,
       onError: message => this.onError(message),
     }, this.theme)
+  }
+
+  /**
+   * The language picker as the dsh-tui.language edit submenu: Enter picks
+   * and commits through the standard mutate path, Esc pops back. A failed
+   * write keeps the picker open with the error on the status line (the
+   * EditField ✘ contract, transplanted onto a table).
+   */
+  private languageSubmenu(row: RowSpec, refresh: () => void, done: () => void): Component {
+    let status: string | undefined
+    // A pick is single-shot: the commit is async, and a second Enter landing
+    // before it resolves would close the submenu twice — the second close
+    // returning to the LIST would then re-open the picker on the same row.
+    let settled = false
+    // Esc may close the picker while a commit is in flight (the EditField
+    // contract); a late failure then has no status line to land on and goes
+    // through onError instead of vanishing.
+    let closed = false
+    const cancel = (): void => { closed = true; done() }
+    return languagePickerPanel(
+      this.theme,
+      typeof row.value === 'string' ? row.value : '',
+      async picked => {
+        if (settled) return
+        settled = true
+        const result = await this.commitInput(row, refresh, { kind: 'value', value: picked })
+        if (result?.error !== undefined) {
+          if (closed) {
+            this.onError(result.error)
+            return
+          }
+          // The write failed with the picker still open — re-arm for a retry.
+          settled = false
+          status = t('sel.status.saveFailed', { message: result.error })
+          this.tui.requestRender()
+          return
+        }
+        if (!closed) done()
+      },
+      cancel,
+      () => status,
+    )
   }
 
   private parseFor(row: RowSpec, text: string): ParseOutcome {

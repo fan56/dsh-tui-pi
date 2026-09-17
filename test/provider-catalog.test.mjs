@@ -156,39 +156,38 @@ test('providerRowView picks displayName over catalog name over route key', () =>
   assert.equal(providerRowView('openai', entry, { displayName: '' }, {}).label, 'OpenAI')
 })
 
-test('providerRowView summarizes the stored model list', () => {
+test('providerRowView lists the stored model ids as the value column', () => {
   const entry = catalogEntry('opencode-go')
   assert.equal(
     providerRowView('opencode-go', entry, { models: [{ id: 'deepseek-v4-flash' }] }, {}).summary,
     'deepseek-v4-flash',
   )
+  // Several configured models: the whole list, joined with ", ".
   const many = providerRowView('x', undefined, { models: [{ id: 'a' }, { id: 'b' }] }, {})
-  assert.equal(many.summary, 'a')
-  // Hand-declared route with an explicit empty list: a real zero, not the
-  // catalog case (the route owns its models and declared none).
-  assert.equal(providerRowView('x', undefined, { models: [] }, {}).summary, '0 models')
-  // A model entry without an id falls back to the count (singular form).
-  assert.equal(providerRowView('x', undefined, { models: [{ name: 'Anon' }] }, {}).summary, '1 model')
+  assert.equal(many.summary, 'a, b')
+  // Entries without an id are dropped from the list, not counted.
+  assert.equal(providerRowView('x', undefined, { models: [{ name: 'Anon' }] }, {}).summary, '')
   assert.equal(
-    providerRowView('x', undefined, { models: [{ name: 'A' }, { name: 'B' }] }, {}).summary,
-    '2 models',
+    providerRowView('x', undefined, { models: [{ id: 'a' }, { name: 'Anon' }, { id: 'c' }] }, {}).summary,
+    'a, c',
   )
 })
 
-test('providerRowView reports catalog-served routes without an explicit list', () => {
+test('providerRowView leaves the value column empty without configured models', () => {
   const entry = catalogEntry('opencode-go')
-  // No models in the profile: the installed catalog serves them.
-  assert.equal(providerRowView('opencode-go', entry, { apiKeyEnv: 'OPENCODE_GO_API_KEY' }, {}).summary, 'catalog')
+  // No models in the profile: a catalog route serves the installed catalog,
+  // but nothing is CONFIGURED — the value column stays empty.
+  assert.equal(providerRowView('opencode-go', entry, { apiKeyEnv: 'OPENCODE_GO_API_KEY' }, {}).summary, '')
   // The runtime-resolved profile shape: schemastery's implicit array default
-  // fills `models: []` — still the catalog case, never `0 models`.
+  // fills `models: []` — empty all the same.
   assert.equal(
     providerRowView('opencode-go', entry, { apiKeyEnv: 'OPENCODE_GO_API_KEY', models: [] }, {}).summary,
-    'catalog',
+    '',
   )
-  // A hand-declared route with no models has nothing to serve.
-  assert.equal(providerRowView('acme', undefined, {}, {}).summary, '0 models')
+  // A hand-declared route with no models has nothing configured either.
+  assert.equal(providerRowView('acme', undefined, {}, {}).summary, '')
   // Non-object profiles are treated as absent.
-  assert.equal(providerRowView('x', undefined, 'junk', {}).summary, '0 models')
+  assert.equal(providerRowView('x', undefined, 'junk', {}).summary, '')
 })
 
 test('providerRowView reports the API-key state from the supplied environment', () => {
