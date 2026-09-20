@@ -144,6 +144,12 @@ pnpm test     # 单元测试，node --test 对 lib/ 执行（pretest 构建；�
 
 ---
 
+## 兼容性说明
+
+dsh 0.1.5-rc.2 时代保存、且 subagent 完成通知携带 reasoning 内容的会话，在 dsh 0.1.6 宿主下 `/resume` 恢复时首个模型请求会序列化失败（上游 B-21，宿主数据问题、非插件缺陷）。遇到此情况请改开新会话，不要在 0.1.6 下恢复该旧会话。
+
+---
+
 ## 致谢
 
 [Ask User Question](docs/features/ask-user-question.md) 交互的灵感来自 [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-ask-user-question)（改编自本 TUI 的停靠面板与 dsh `userQuestions` provider 架构；这里的全部代码均为原创）。

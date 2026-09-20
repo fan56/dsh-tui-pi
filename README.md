@@ -148,6 +148,12 @@ pnpm test     # unit tests, node --test against lib/ (pretest builds — the cur
 
 ---
 
+## Compatibility note
+
+Resuming, under a dsh 0.1.6 host, a session saved under dsh 0.1.5-rc.2 whose subagent completion notices carried reasoning content fails to serialize the first model request (upstream B-21 — host-side data issue, not a plugin defect). If `/resume` fails this way, start a new session instead.
+
+---
+
 ## Credits
 
 The [Ask User Question](docs/features/ask-user-question.md) interaction is inspired by [juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-ask-user-question) (adapted to this TUI's docked-panel and dsh `userQuestions` provider architecture; all code here is original).

@@ -4,6 +4,14 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Compatibility note (README): resuming under dsh 0.1.6 a session saved under
+  0.1.5-rc.2 with reasoning content in subagent completion notices fails to
+  serialize the first model request (upstream B-21, host-side data issue) —
+  start a new session instead.
+
 ## [2.20.0] - 2026-09-17
 
 ### Added
