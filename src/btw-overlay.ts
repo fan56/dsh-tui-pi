@@ -14,7 +14,13 @@
 import { getKeybindings, Markdown, Text, type Component, type TUI } from '@earendil-works/pi-tui'
 import { PanelHost, panelThemeFns } from './panels.ts'
 import { BOLD, RESET, ansiFg, type TuiTheme } from './theme/index.ts'
-import type { BtwController, BtwRunState } from './btw.ts'
+import {
+  btwAnswerWindow,
+  btwScrollBy,
+  type BtwController,
+  type BtwRunState,
+  type BtwScrollState,
+} from './btw.ts'
 import { clipToWidth } from './text.ts'
 
 /**
@@ -23,7 +29,10 @@ import { clipToWidth } from './text.ts'
  * FramedOverlay chrome eats 4, fixed rows are 4 (title + 2 blanks + status),
  * and the question rows come out of the remainder per frame — an overlay
  * taller than that just shows a roomier answer. Overflow of the answer
- * itself is a named tail window (the newest rows stay visible).
+ * itself is a scroll window pinned to the tail: ↑/↓ line-scroll and
+ * PgUp/PgDn page it, a scroll-up detaches from the tail and reaching the
+ * bottom re-attaches (the SubagentViewerPanel contract; the math lives in
+ * btw.ts). The default state renders exactly the historical tail window.
  */
 const BTW_ANSWER_BASE_BUDGET = 11
 const BTW_ANSWER_MIN_BUDGET = 3
@@ -33,23 +42,31 @@ export class BtwOverlayPanel implements Component {
   private readonly controller: BtwController
   private readonly theme: () => TuiTheme
   private readonly onClose: () => void
+  private readonly requestRender: () => void
   private readonly question: Text
   /** Streaming view — one Text, setText per change (AGENTS.md #2). */
   private readonly answerText: Text
   private streamedText = ''
   /** Built once when the run settles; never re-parsed per frame. */
   private finalMarkdown: Markdown | undefined
+  /** Answer-window scroll state (tail-pinned by default; math in btw.ts). */
+  private scroll: BtwScrollState = { scrollTop: 0, followEnd: true }
+  /** Answer line count / window budget of the last render — the scroll range. */
+  private lineCount = 0
+  private bodyRows = 0
 
   constructor(
     run: BtwRunState,
     controller: BtwController,
     theme: () => TuiTheme,
     onClose: () => void,
+    requestRender: () => void,
   ) {
     this.run = run
     this.controller = controller
     this.theme = theme
     this.onClose = onClose
+    this.requestRender = requestRender
     this.question = new Text(run.question, 1, 0)
     this.answerText = new Text('', 1, 0)
   }
@@ -74,13 +91,13 @@ export class BtwOverlayPanel implements Component {
         this.streamedText = this.run.answerText
       }
       if (this.run.answerText !== '') {
-        lines.push(...tailWindow(this.answerText.render(wrap), budget, wrap))
+        this.pushAnswerWindow(lines, this.answerText.render(wrap), budget, wrap, fns)
       } else {
         lines.push(fns.muted(clipToWidth('Thinking…', wrap)))
       }
       lines.push('')
       lines.push(fns.subtle(clipToWidth(
-        `Running alongside the main task · Esc close${queued > 0 ? ` · ${queued} queued` : ''}`,
+        `Running alongside the main task · Esc close${this.scrollHint()}${queued > 0 ? ` · ${queued} queued` : ''}`,
         wrap,
       )))
       return lines
@@ -97,26 +114,59 @@ export class BtwOverlayPanel implements Component {
           color: text => ansiFg(this.theme().palette.fgDefault) + text + RESET,
         })
       }
-      lines.push(...tailWindow(this.finalMarkdown.render(wrap), budget, wrap))
+      this.pushAnswerWindow(lines, this.finalMarkdown.render(wrap), budget, wrap, fns)
     }
     lines.push('')
     lines.push(fns.subtle(clipToWidth(
-      `Not kept in the session · /btw reopens this answer${queued > 0 ? ` · ${queued} queued` : ''}`,
+      `Not kept in the session · /btw reopens this answer${this.scrollHint()}${queued > 0 ? ` · ${queued} queued` : ''}`,
       wrap,
     )))
     return lines
   }
 
   handleInput(data: string): void {
-    if (getKeybindings().matches(data, 'tui.select.cancel')) this.onClose()
+    const kb = getKeybindings()
+    if (kb.matches(data, 'tui.select.cancel')) {
+      this.onClose()
+      return
+    }
+    if (kb.matches(data, 'tui.select.up')) this.scrollAnswer(-1)
+    else if (kb.matches(data, 'tui.select.down')) this.scrollAnswer(1)
+    else if (kb.matches(data, 'tui.select.pageUp')) this.scrollAnswer(-this.bodyRows)
+    else if (kb.matches(data, 'tui.select.pageDown')) this.scrollAnswer(this.bodyRows)
   }
-}
 
-/** Last rows that fit the budget; the hidden count is named above the tail. */
-function tailWindow(rendered: string[], budget: number, wrap: number): string[] {
-  if (rendered.length <= budget) return rendered
-  const hidden = rendered.length - budget
-  return [clipToWidth(`… ${hidden} lines above`, wrap), ...rendered.slice(-budget)]
+  /**
+   * Push the answer window (visible slice + hidden-row markers) and persist
+   * the clamped scroll state. The markers are extra rows beyond the budget,
+   * like the historical tail-window marker was.
+   */
+  private pushAnswerWindow(
+    out: string[],
+    rendered: string[],
+    budget: number,
+    wrap: number,
+    fns: ReturnType<typeof panelThemeFns>,
+  ): void {
+    const win = btwAnswerWindow(rendered, budget, this.scroll)
+    this.scroll = win.state
+    this.lineCount = rendered.length
+    this.bodyRows = budget
+    if (win.above > 0) out.push(fns.subtle(clipToWidth(`… ${win.above} lines above`, wrap)))
+    out.push(...win.lines)
+    if (win.below > 0) out.push(fns.subtle(clipToWidth(`… ${win.below} lines below`, wrap)))
+  }
+
+  /** Footer hint — only when the answer actually overflows the window. */
+  private scrollHint(): string {
+    return this.lineCount > this.bodyRows ? ' · ↑↓ scroll' : ''
+  }
+
+  /** Scroll the answer window over the last rendered answer; repaint. */
+  private scrollAnswer(delta: number): void {
+    this.scroll = btwScrollBy(this.scroll, delta, this.lineCount, this.bodyRows)
+    this.requestRender()
+  }
 }
 
 /**
@@ -158,7 +208,11 @@ export class BtwOverlayWire {
     this.host?.close()
     this.host = new PanelHost(this.tui, this.theme(), close)
     controller.setOverlayOpen(true)
-    this.host.open(new BtwOverlayPanel(run, controller, this.theme, close), '70%', '80%')
+    this.host.open(
+      new BtwOverlayPanel(run, controller, this.theme, close, () => this.tui.requestRender()),
+      '70%',
+      '80%',
+    )
   }
 
   /** Called by cancelAll — the overlay's run is gone either way. */

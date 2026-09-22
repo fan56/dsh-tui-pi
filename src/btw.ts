@@ -17,10 +17,10 @@
  * docs/adr/0001-btw-tui-owned-command.md.
  *
  * Split: pure decision layer here — arg parsing, snapshot assembly, the queue
- * state machine, stream consumption and the controller, all over structural
- * slices so the matrix runs without a terminal (test/btw.test.mjs). The
- * overlay component + PanelHost glue live in btw-overlay.ts; the command
- * wiring in index.ts.
+ * state machine, stream consumption, the controller, and the answer-window
+ * scroll math, all over structural slices so the matrix runs without a
+ * terminal (test/btw.test.mjs). The overlay component + PanelHost glue live
+ * in btw-overlay.ts; the command wiring in index.ts.
  */
 
 import { createUserMessage, type Message, type ReasoningEffortId } from '@deepseek-ai/dsh-llm'
@@ -553,4 +553,77 @@ function resolveOverride(modelOverride: string): BtwSelection | undefined {
   const slash = modelOverride.indexOf('/')
   if (slash <= 0 || slash === modelOverride.length - 1) return undefined
   return { provider: modelOverride.slice(0, slash), model: modelOverride.slice(slash + 1) }
+}
+
+// ------------------------------------------------------------- answer scroll --
+
+/**
+ * Scroll state of the overlay's answer window. The default is the tail
+ * (`followEnd` — streaming growth keeps the newest rows on screen); an
+ * explicit scroll-up detaches, and reaching the bottom re-attaches (the
+ * SubagentViewerPanel contract).
+ */
+export interface BtwScrollState {
+  /** Rendered answer lines above the window top. */
+  scrollTop: number
+  /** Whether the window is pinned to the answer tail. */
+  followEnd: boolean
+}
+
+/** Max scroll offset of a `bodyRows` window over `lineCount` lines. */
+function btwMaxScroll(lineCount: number, bodyRows: number): number {
+  return Math.max(0, lineCount - bodyRows)
+}
+
+/**
+ * One scroll step over the last rendered answer (`lineCount`/`bodyRows` are
+ * the render-pass caches): clamped to the range, re-attached to the tail
+ * when the window reaches the bottom. Pure — the caller keeps the result.
+ */
+export function btwScrollBy(
+  state: BtwScrollState,
+  lines: number,
+  lineCount: number,
+  bodyRows: number,
+): BtwScrollState {
+  const maxScroll = btwMaxScroll(lineCount, bodyRows)
+  const start = state.followEnd ? maxScroll : state.scrollTop
+  const next = Math.max(0, Math.min(maxScroll, start + lines))
+  return { scrollTop: next, followEnd: next === maxScroll }
+}
+
+/** The clamped answer window of one render pass. */
+export interface BtwAnswerWindow {
+  /** The clamped state to keep for the next pass (content may grow/swap). */
+  state: BtwScrollState
+  /** Visible rows — the hidden markers are the overlay's business, not ours. */
+  lines: string[]
+  /** Rendered lines hidden above the window (0 = starts at the top). */
+  above: number
+  /** Rendered lines hidden below the window (0 = reaches the bottom). */
+  below: number
+}
+
+/**
+ * Slice the visible answer window and clamp `state` against the freshly
+ * rendered line count: a stale `scrollTop` (content shrank on settle, or the
+ * window outgrew the answer) re-attaches to the tail; otherwise a detached
+ * window stays anchored to its top line while streaming growth piles new
+ * rows below it. The default (tail-pinned) state slices exactly the last
+ * `budget` rows — the historical tail window.
+ */
+export function btwAnswerWindow(
+  rendered: readonly string[],
+  budget: number,
+  state: BtwScrollState,
+): BtwAnswerWindow {
+  const maxScroll = btwMaxScroll(rendered.length, budget)
+  const followEnd = state.followEnd || state.scrollTop >= maxScroll
+  const scrollTop = followEnd ? maxScroll : state.scrollTop
+  return {
+    state: { scrollTop, followEnd },
+    lines: rendered.slice(scrollTop, scrollTop + budget),
+    above: scrollTop,
+    below: maxScroll - scrollTop,
+  }
 }

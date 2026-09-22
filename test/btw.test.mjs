@@ -14,7 +14,9 @@
  * - a stream without a proper finish chunk is an error, never a silent success;
  * - cancelAll aborts the run, drops the queue and asks the glue to close the
  *   overlay, and never overwrites the Last-btw slot;
- * - a settled run whose overlay closed is pruned; a streaming one survives.
+ * - a settled run whose overlay closed is pruned; a streaming one survives;
+ * - the answer window is tail-pinned by default (the historical tail window);
+ *   ↑/↓ scrolls it — detach on scroll-up, re-attach on reaching the bottom.
  */
 
 import test from 'node:test'
@@ -25,6 +27,8 @@ import {
   BTW_SNAPSHOT_DEFAULT_MESSAGES,
   BtwController,
   BtwQueue,
+  btwAnswerWindow,
+  btwScrollBy,
   buildBtwMessages,
   buildBtwSnapshot,
   consumeBtwStream,
@@ -596,4 +600,67 @@ test('controller: dispose aborts everything without overlay ceremony', async () 
   rig.controller.dispose()
   assert.equal(rig.controller.currentRun, undefined)
   assert.equal(rig.calls.closeRequests, 0)
+})
+
+// --------------------------------------------------- answer scroll window --
+// The overlay's answer window (src/btw.ts): tail-pinned by default — the
+// historical tail window — with ↑/↓ line-scroll (PgUp/PgDn page through the
+// same step), detach on scroll-up and re-attach on reaching the bottom.
+
+const TAIL = { scrollTop: 0, followEnd: true }
+const ten = () => Array.from({ length: 10 }, (_, i) => `l${i}`)
+
+test('btwAnswerWindow: content within the budget renders whole, tail-pinned', () => {
+  const win = btwAnswerWindow(['a', 'b', 'c'], 5, TAIL)
+  assert.deepEqual(win.lines, ['a', 'b', 'c'])
+  assert.equal(win.above, 0)
+  assert.equal(win.below, 0)
+  assert.deepEqual(win.state, TAIL)
+})
+
+test('btwAnswerWindow: overflow pins to the tail and names the hidden rows above', () => {
+  const win = btwAnswerWindow(ten(), 3, TAIL)
+  assert.deepEqual(win.lines, ['l7', 'l8', 'l9'])
+  assert.equal(win.above, 7)
+  assert.equal(win.below, 0)
+  assert.deepEqual(win.state, { scrollTop: 7, followEnd: true })
+})
+
+test('btwAnswerWindow: a detached window slices mid-content and names both hidden runs', () => {
+  const win = btwAnswerWindow(ten(), 3, { scrollTop: 4, followEnd: false })
+  assert.deepEqual(win.lines, ['l4', 'l5', 'l6'])
+  assert.equal(win.above, 4)
+  assert.equal(win.below, 3)
+  assert.deepEqual(win.state, { scrollTop: 4, followEnd: false })
+})
+
+test('btwAnswerWindow: streaming growth piles rows BELOW a detached window', () => {
+  const grown = [...ten(), 'l10', 'l11']
+  const win = btwAnswerWindow(grown, 3, { scrollTop: 6, followEnd: false })
+  assert.deepEqual(win.lines, ['l6', 'l7', 'l8'])
+  assert.equal(win.above, 6)
+  // Two grown rows both land below the anchored window (below ran 1 → 3).
+  assert.equal(win.below, 3)
+})
+
+test('btwAnswerWindow: a stale scrollTop past the shrunken content re-attaches to the tail', () => {
+  const win = btwAnswerWindow(['x', 'y'], 3, { scrollTop: 6, followEnd: false })
+  assert.deepEqual(win.lines, ['x', 'y'])
+  assert.deepEqual(win.state, { scrollTop: 0, followEnd: true })
+})
+
+test('btwScrollBy: up detaches from the tail, down back to the bottom re-attaches', () => {
+  let state = TAIL
+  state = btwScrollBy(state, -1, 10, 3)
+  assert.deepEqual(state, { scrollTop: 6, followEnd: false })
+  state = btwScrollBy(state, 1, 10, 3)
+  assert.deepEqual(state, { scrollTop: 7, followEnd: true })
+})
+
+test('btwScrollBy: clamped at both ends; inert without overflow', () => {
+  // From the tail, a five-line jump up lands at 2 (max scroll 7).
+  assert.deepEqual(btwScrollBy(TAIL, -5, 10, 3), { scrollTop: 2, followEnd: false })
+  assert.deepEqual(btwScrollBy({ scrollTop: 6, followEnd: false }, 99, 10, 3), { scrollTop: 7, followEnd: true })
+  // No overflow → nothing to scroll, still tail-pinned.
+  assert.deepEqual(btwScrollBy(TAIL, -3, 3, 5), TAIL)
 })
