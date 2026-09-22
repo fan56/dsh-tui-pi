@@ -55,7 +55,7 @@ jobs:
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Install dsh CLI (rolling rc/stable line — newest of latest/next, never alpha)
+      - name: Install dsh CLI (rolling rc/stable line — newest of latest/next, never alpha; falls back to the other tag on a broken publish wave)
         run: |
           # Policy (2026-09-03): the alpha line is retired for CI. Resolve the
           # newest of the `latest` (stable) and `next` (rc) dist-tags at
@@ -68,7 +68,28 @@ jobs:
             DSH_VERSION="$RC"
           fi
           echo "dsh closure: ${DSH_VERSION}"
-          npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" --no-audit --no-fund
+          # A publish wave can land INCOMPLETE on npm (e.g. next=0.1.5-rc.3
+          # shipped without dsh-client-ui-sidebar-documentpreview@rc.3, so the
+          # global install dies on ETARGET). That is upstream's breakage, not
+          # ours: when the resolved version won't install, fall back to the
+          # other dist-tag's version. The run only stays red when BOTH ends
+          # are uninstallable — that is a real signal worth failing on.
+          if ! npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" --no-audit --no-fund; then
+            if [ "$DSH_VERSION" != "$STABLE" ]; then
+              ALT="$STABLE"
+            elif [ -n "$RC" ] && [ "$RC" != "$DSH_VERSION" ]; then
+              ALT="$RC"
+            else
+              ALT=""
+            fi
+            if [ -n "$ALT" ]; then
+              echo "::warning:: dsh@${DSH_VERSION} failed to install (incomplete upstream publish?) — falling back to ${ALT}"
+              npm install -g "@deepseek-ai/dsh@${ALT}" --no-audit --no-fund
+            else
+              echo "::error:: dsh@${DSH_VERSION} failed to install and no other dist-tag to fall back to"
+              exit 1
+            fi
+          fi
 
       # Point node_modules/@deepseek-ai/* at the installed CLI's closure so
       # tsc sees exactly the type graph the host runs (one cordis instance —
