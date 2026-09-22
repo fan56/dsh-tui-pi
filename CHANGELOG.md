@@ -6,11 +6,29 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-09-22
+
 ### Added
+- **Scrollable answer window in the `/btw` overlay.** A long answer used to
+  render as a fixed tail window (only the newest rows visible, `… N lines
+  above`); the window now scrolls: `↑`/`↓` line-scroll, PgUp/PgDn page. The
+  view stays pinned to the tail while streaming (newest rows always on
+  screen); an explicit scroll-up detaches so you can read back through the
+  answer while it keeps growing, and reaching the bottom re-attaches. Both
+  ends of the overflow are named (`… N lines above` / `… N lines below`),
+  and the footer carries an `↑↓ scroll` hint only when the answer actually
+  overflows the window. Esc semantics unchanged — closing never stops the
+  run.
+
+### Notes
 - Compatibility note (README): resuming under dsh 0.1.6 a session saved under
   0.1.5-rc.2 with reasoning content in subagent completion notices fails to
   serialize the first model request (upstream B-21, host-side data issue) —
   start a new session instead.
+- CI hardening (no shipped-code change): the dsh CLI the CI installs is now
+  the publish wave's own closure (npm overrides pin every `@deepseek-ai/*`
+  range to its base version) with a dist-tag fallback, so an incomplete
+  upstream publish wave can no longer redden CI.
 
 ## [2.20.0] - 2026-09-17
 
