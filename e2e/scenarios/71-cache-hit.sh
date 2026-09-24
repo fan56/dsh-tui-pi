@@ -22,7 +22,7 @@
 #   2. after turn one the segment shows 90% (both modes agree on one sample);
 #   3. after turn two the DEFAULT mode (lastMessage, the pi-tui semantics)
 #      shows 20% — the stale 90% and the cumulative 55% must both be absent;
-#   4. committing `cacheHitMode: session` into the container's settings.yaml
+#   4. committing `cacheHitMode: session` into the container's active profile patch
 #      (an external edit, live-applied through the settings watch hook)
 #      flips the same segment to 55% without a restart.
 #
@@ -34,15 +34,15 @@ scenario 'footer CH: lastMessage default (pi-tui semantics) + live session-mode 
 
 # --- host guard -------------------------------------------------------------
 # Like 68/69: this scenario permanently mutates dsh config (writes
-# cacheHitMode into settings.yaml) — container's throwaway ~/.dsh only.
+# cacheHitMode into the profile patch) — container's throwaway ~/.dsh only.
 if [ ! -d /e2e/scenarios ]; then
   warn 'host environment detected — skipping (persists cacheHitMode into ~/.dsh; container only)'
   summary
   exit 0
 fi
 
-if ! grep -qF 'mock-llm' "$HOME/.dsh/settings.yaml" 2>/dev/null; then
-  warn 'mock-llm route missing from settings.yaml (run 68-ask-user first) — skipping'
+if ! grep -qF 'mock-llm' "$HOME/.dsh/profiles/tui/cordis.patch.yml" 2>/dev/null; then
+  warn 'mock-llm route missing from the profile patch (run 68-ask-user first) — skipping'
   summary
   exit 0
 fi
@@ -115,23 +115,18 @@ assert_not_contains 'the previous message rate does not stick (sample follows th
 assert_not_contains 'the session-cumulative rate does not leak into lastMessage mode' 'CH55\.0%' "$PANE"
 
 # --- 4. external settings edit flips the mode live -----------------------------
-# An external settings.yaml edit is a committed change (the namespace is
+# An external settings edit is a committed change (the namespace is
 # applies:'live') — the footer re-reads the mode on every render, so the
-# segment flips on the next repaint without a restart.
-SETTINGS="$HOME/.dsh/settings.yaml"
-if grep -qF 'cacheHitMode' "$SETTINGS"; then
-  sed -i 's/^\(  *cacheHitMode: *\).*/\1session/' "$SETTINGS"
-elif grep -q '^dsh-tui:' "$SETTINGS"; then
-  awk '{print} /^dsh-tui:/ && !inserted {print "  cacheHitMode: session"; inserted=1}' "$SETTINGS" >"$SETTINGS.tmp" \
-    && mv "$SETTINGS.tmp" "$SETTINGS"
-else
-  { printf 'dsh-tui:\n  cacheHitMode: session\n'; cat "$SETTINGS"; } >"$SETTINGS.tmp" \
-    && mv "$SETTINGS.tmp" "$SETTINGS"
-fi
+# segment flips on the next repaint without a restart. Since dsh
+# 0.1.7-rc.1 the durable settings store is the active profile's
+# cordis.patch.yml (settings.yaml sections are gone), so the edit goes
+# through the structured patch upsert helper.
+SETTINGS="$HOME/.dsh/profiles/tui/cordis.patch.yml"
+node /e2e/lib/patch-setting.mjs dsh-tui cacheHitMode=session
 if grep -q 'cacheHitMode: session' "$SETTINGS"; then
-  ok 'settings.yaml now carries cacheHitMode: session'
+  ok 'profile patch now carries cacheHitMode: session'
 else
-  bad 'cacheHitMode: session did not land in settings.yaml'
+  bad 'cacheHitMode: session did not land in the profile patch'
 fi
 
 wait_pane 'session mode flips the footer to the cumulative rate (live apply)' 15 'CH55\.0%'

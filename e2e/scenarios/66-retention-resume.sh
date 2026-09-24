@@ -79,7 +79,7 @@ info "persistence backend entry (nested-or-flat): $PERSISTENCE_ENTRY"
 
 # --- in-script helper: write a single seeded session directory -----------------
 # Layout matches dsh's session-persistence backend:
-#   $HOME/.dsh/sessions/<project>/<id>/session.v3.jsonl.zstd
+#   $HOME/.dsh/sessions/<project>/<id>/session.v4.jsonl.zstd
 #
 # `<project>` is the path-ENCODED cwd (per dsh-session-persistence-jsonl
 # `projectKey`): every `/` (and `\`, `:`) becomes `-`, leading `-` runs are
@@ -123,7 +123,7 @@ info "persistence backend entry (nested-or-flat): $PERSISTENCE_ENTRY"
 seed_session() {
   local project="$1" id="$2" preview="$3" size_bytes="${4:-}"
   local dir="$HOME/.dsh/sessions/$project/$id"
-  local out="$dir/session.v3.jsonl.zstd"
+  local out="$dir/session.v4.jsonl.zstd"
   mkdir -p "$dir"
   local now_ms
   now_ms="$(date +%s)000"
@@ -148,8 +148,10 @@ instance.compression = "zstd";
 // dsh 0.1.5-rc.1: the encoder now takes the logical header directly plus
 // an inherited-event-count argument, and the header must already stamp
 // the current format version. The old storage wrapper object is gone.
+// dsh 0.1.7-rc.1: the current Session format version is v4 — encodeCurrent
+// refuses any other ("encodeCurrent requires Session format v4").
 const meta = {
-  version: 3,
+  version: 4,
   id,
   createdAt: Number(nowMs),
   cwd: "/app",
@@ -271,10 +273,10 @@ seed_session "$PROJ" a1e2f3a4-0005-4000-8000-00000000aa05 'fresh survivor' >/dev
 # Backdate every artifact so the age rule's mtime test sees them as >2 days old.
 BACKDATE_TS="$(date -d '-10 days' +%Y%m%d%H%M.%S)"
 touch -t "$BACKDATE_TS" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0001-4000-8000-00000000aa01/session.v3.jsonl.zstd" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0002-4000-8000-00000000aa02/session.v3.jsonl.zstd" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0003-4000-8000-00000000aa03/session.v3.jsonl.zstd" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0004-4000-8000-00000000aa04/session.v3.jsonl.zstd"
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0001-4000-8000-00000000aa01/session.v4.jsonl.zstd" \
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0002-4000-8000-00000000aa02/session.v4.jsonl.zstd" \
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0003-4000-8000-00000000aa03/session.v4.jsonl.zstd" \
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0004-4000-8000-00000000aa04/session.v4.jsonl.zstd"
 
 # Edge fixtures: a flat file at the sessions root (must NOT be treated as a
 # session) and an empty subdir inside the project bucket (must NOT be
@@ -365,7 +367,7 @@ scenario 'Phase B: retention MAX_COUNT=0 disables the janitor'
 # so this dir must survive (it would be removed by the age rule from Phase A).
 seed_session "$PROJ" a1e2f3a4-0006-4000-8000-00000000aa06 'doomed old log' >/dev/null
 touch -t "$BACKDATE_TS" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0006-4000-8000-00000000aa06/session.v3.jsonl.zstd"
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0006-4000-8000-00000000aa06/session.v4.jsonl.zstd"
 
 # The test wants MAX_COUNT=0 to be the explicit "off" hatch. Set MIN_IDLE_HOURS
 # to 0 too so the (theoretical) age-rule's idle guard does not gate us; the
@@ -409,8 +411,8 @@ seed_session "$PROJ" \
 # never the decompressed body). ls -la into stdout so any future debug
 # session has the ground truth without re-running the seeder.
 ls -la \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0007-4000-8000-00000000aa07/session.v3.jsonl.zstd" \
-  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0008-4000-8000-00000000aa08/session.v3.jsonl.zstd"
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0007-4000-8000-00000000aa07/session.v4.jsonl.zstd" \
+  "$HOME/.dsh/sessions/$PROJ/a1e2f3a4-0008-4000-8000-00000000aa08/session.v4.jsonl.zstd"
 
 # Plain launch — no retention/resume env. The picker's defaults (30d / 1KB)
 # must drop stub (size) and keep alpha.

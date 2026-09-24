@@ -50,7 +50,7 @@ RUN test -n "${DSH_VERSION}" \
  && npm install -g --no-fund --no-audit \
       pnpm@${PNPM_VERSION} \
       "@deepseek-ai/dsh@${DSH_VERSION}" \
- && dsh --version || true
+ && (dsh --version || true)
 
 WORKDIR /app
 

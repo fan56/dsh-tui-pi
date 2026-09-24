@@ -33,6 +33,7 @@
 // poll; curl ships in the e2e image).
 
 import http from 'node:http'
+import { writeFileSync } from 'node:fs'
 
 const args = process.argv.slice(2)
 const portFlag = args.indexOf('--port')
@@ -284,6 +285,10 @@ function handleChat(req, res, body) {
   const wantsUsage = bodyText.includes('include_usage')
   const stream = bodyText.includes('"stream":true') || bodyText.includes('"stream": true')
   log(`chat path=${req.url} phase=${phase} stream=${stream}`)
+  if (process.env.MOCK_DUMP_DIR && bodyText.includes('role":"tool')) {
+    writeFileSync(`${process.env.MOCK_DUMP_DIR}/last-tool-result-body.json`, bodyText)
+    log(`dumped tool-result body to ${process.env.MOCK_DUMP_DIR}/last-tool-result-body.json`)
+  }
 
   if (!stream) {
     const message = phase === 'ask'

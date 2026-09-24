@@ -602,6 +602,23 @@ test('collectRetentionCandidates walks directories only and takes the newest log
   }
 })
 
+test('collectRetentionCandidates recognizes the v4 artifact names (dsh 0.1.7-rc.1 log layout)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-ret-'))
+  try {
+    // The current host generation: compressed v4 name.
+    await makeSession(dir, 'proj-a', 'sess-v4', 444, 'session.v4.jsonl.zstd')
+    // Raw v4 sibling naming.
+    await makeSession(dir, 'proj-b', 'sess-v4-raw', 445, 'session.v4.jsonl')
+    const candidates = await collectRetentionCandidates(dir)
+    const byId = new Map(candidates.map(c => [c.id, c]))
+    assert.equal(candidates.length, 2)
+    assert.equal(byId.get('sess-v4').mtimeMs, 444)
+    assert.equal(byId.get('sess-v4-raw').mtimeMs, 445)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('collectRetentionCandidates resolves an empty list for a missing root', async () => {
   const candidates = await collectRetentionCandidates(join(tmpdir(), 'dsh-tui-nope-' + Date.now()))
   assert.deepEqual(candidates, [])

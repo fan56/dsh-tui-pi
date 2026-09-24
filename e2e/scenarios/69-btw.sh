@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Scenario 69 — /btw side questions (v1.1.0), driven fully offline through
-# the local mock LLM that 68-ask-user.sh committed into settings.yaml (route
+# the local mock LLM that 68-ask-user.sh committed into the profile patch (route
 # mock-llm -> http://127.0.0.1:8642/v1, default model mock-chat).
 #
 # Covers the /btw decision layer (src/btw.ts) + overlay (src/btw-overlay.ts):
@@ -46,14 +46,15 @@ set -u
 scenario 'btw: side questions over the mock LLM (idle, queue, overlay, not-persisted)'
 
 # --- guards -------------------------------------------------------------------
-# Container-only: needs the mock route 68 committed into settings.yaml plus a
+# Container-only: needs the mock route 68 committed into the active profile
+# patch (profiles/tui/cordis.patch.yml) plus a
 # throwaway ~/.dsh — on the host it would depend on (or poison) live config.
 if [ ! -d /e2e/scenarios ]; then
   warn 'host environment detected — skipping (needs the container mock route + throwaway ~/.dsh)'
   summary
   exit 0
 fi
-if ! grep -qF 'mock-llm' "$HOME/.dsh/settings.yaml" 2>/dev/null; then
+if ! grep -qF 'mock-llm' "$HOME/.dsh/profiles/tui/cordis.patch.yml" 2>/dev/null; then
   warn 'mock-llm route not configured (68-ask-user must run first) — skipping'
   summary
   exit 0

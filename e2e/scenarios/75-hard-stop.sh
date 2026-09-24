@@ -24,31 +24,35 @@
 #   4. the viewer header shows `⚡ injected` (stage 1 ran) next to
 #      `⏻ hard-stopped @7` (stage 2 fired at the frozen cap + grace).
 #
-# Container-only: mutates settings.yaml (dsh-tui limits) and ~/.dsh/agents.
+# Container-only: mutates the dsh-tui limits (active profile patch) and ~/.dsh/agents.
 set -u
 . "$(dirname "$0")/../lib/common.sh"
 scenario 'hard-stop ladder: wrap-up ignored, force-stopped at cap+grace'
 
 if [ ! -d /e2e/scenarios ]; then
-  warn 'host environment detected — skipping (mutates settings.yaml and ~/.dsh/agents; container only)'
+  warn 'host environment detected — skipping (mutates dsh-tui limits and ~/.dsh/agents; container only)'
   summary
   exit 0
 fi
 
-if ! grep -qF 'mock-llm' "$HOME/.dsh/settings.yaml" 2>/dev/null; then
-  warn 'settings.yaml has no mock-llm route (scenario 68 must run first) — skipping'
+if ! grep -qF 'mock-llm' "$HOME/.dsh/profiles/tui/cordis.patch.yml" 2>/dev/null; then
+  warn 'profile patch has no mock-llm route (scenario 68 must run first) — skipping'
   summary
   exit 0
 fi
 
 # --- the registry plugin: use_agent's home ----------------------------------
+# Version floor 0.12.1: rc.1-compatible contract AND the leaf-deny fix —
+# 0.12.0's stock deny list named dsh-tool-ralph, which rc.1 no longer
+# registers while its tools.restrict() is fail-fast, so every leaf dispatch
+# aborted before the child started (zero hs-loop phases).
 # `dsh plugin add` does NOT auto-bundle dependencies: scenario 10 installs
 # tui-pi alone, so the registry package sits in profile node_modules but is
 # never LOADED — use_agent is unknown to the model (ToolNotFoundError).
 # Install it as a real bundle member, exactly what a real user does.
 if ! grep -qF '@aiwayds/dsh-subagent-registry' "$HOME/.dsh/profiles/tui/package.json" 2>/dev/null \
   || ! grep -qF '@aiwayds/dsh-subagent-registry' <(dsh plugin --profile tui list 2>/dev/null); then
-  if npm pack @aiwayds/dsh-subagent-registry@0.10.0 --registry=https://registry.npmjs.org --pack-destination /tmp >/dev/null 2>&1 \
+  if npm pack @aiwayds/dsh-subagent-registry@0.12.1 --registry=https://registry.npmjs.org --pack-destination /tmp >/dev/null 2>&1 \
     && REG_TGZ="$(ls /tmp/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)" && [ -n "$REG_TGZ" ] \
     && timeout 300 dsh plugin --profile tui add "$REG_TGZ" >/tmp/reg-add.log 2>&1; then
     ok "registry plugin installed into the tui profile ($(basename "$REG_TGZ"))"
@@ -101,18 +105,12 @@ EOF
 ok 'seeded agent file looper.md (deep: 0, maxRounds: 5)'
 
 # --- policy settings: global cap TIGHTER than the per-agent tier ------------
-SETTINGS="$HOME/.dsh/settings.yaml"
-sed -i '' -e '/^  maxRounds:/d' -e '/^  maxRoundsGrace:/d' "$SETTINGS" 2>/dev/null \
-  || sed -i -e '/^  maxRounds:/d' -e '/^  maxRoundsGrace:/d' "$SETTINGS"
-if grep -q '^dsh-tui:' "$SETTINGS"; then
-  sed -i '' "/^dsh-tui:/a\\
-  maxRounds: 3\\
-  maxRoundsGrace: 2" "$SETTINGS" 2>/dev/null \
-    || sed -i "/^dsh-tui:/a\\  maxRounds: 3\\n  maxRoundsGrace: 2" "$SETTINGS"
-else
-  printf '\ndsh-tui:\n  maxRounds: 3\n  maxRoundsGrace: 2\n' >> "$SETTINGS"
-fi
-if grep -q '^  maxRounds: 3$' "$SETTINGS" && grep -q '^  maxRoundsGrace: 2$' "$SETTINGS"; then
+# Since dsh 0.1.7-rc.1 the durable settings store is the active profile's
+# cordis.patch.yml (the settings.yaml sections are gone), so the limits go
+# through the structured patch upsert helper (dsh-tui entry config).
+SETTINGS="$HOME/.dsh/profiles/tui/cordis.patch.yml"
+node /e2e/lib/patch-setting.mjs dsh-tui maxRounds=3 maxRoundsGrace=2
+if grep -q 'maxRounds: 3' "$SETTINGS" && grep -q 'maxRoundsGrace: 2' "$SETTINGS"; then
   ok 'policy limits staged: global maxRounds 3 + grace 2 (per-agent 5 must win)'
 else
   bad 'failed to stage the dsh-tui policy limits; tail:'

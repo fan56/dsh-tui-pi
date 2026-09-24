@@ -6,7 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **`SESSION_LOG_FILE_NAMES` now carries the v4 artifact names** (`session.v4.jsonl[.zstd]`, dsh 0.1.7-rc.1's current Session format generation). Every store walk that stats the log — the retention janitor's mtime walk, the /resume size-floor and last-update map, `locateSessionLog` — was blind to every v4 session on an rc.1 host: the janitor never deleted aged sessions, and the resume byte floor judged every row as unknown-size. Surfaced by the podman e2e retention scenario (four "survived age rule" failures); a v4-name fixture test pins the list.
+
 ### Changed
+- **e2e scenario suite rides the 0.1.7-rc.1 storage layout.** The settings assertions read the active profile's `cordis.patch.yml` (rc.1 removed the `~/.dsh/settings.yaml` sections; theme/login/limits persist through the per-entry profile patch now) with a structured upsert helper (`e2e/lib/patch-setting.mjs`); the retention seeder stamps Session format v4 (`encodeCurrent` refuses v3) and lays down `session.v4.jsonl.zstd` artifacts; the hard-stop ladder's registry pin moves to 0.12.1 (the leaf-deny fix — 0.12.0's stock deny list named the unregistered `ralph` and rc.1's fail-fast `tools.restrict()` aborted every dispatch); scenarios 69/71/75 run for real under the mock route instead of skipping on a stale settings.yaml probe. The e2e Containerfile no longer swallows a failed `npm install -g` behind `|| true` — a poisoned-but-cached layer made pnpm vanish for every later rebuild.
 - **Sibling bundle ranges ride the 0.1.7-rc.1 wave.** All nine `@aiwayds/*`
   dependencies move to the newly published minors (`ask-router ^0.5.0`,
   `dcp ^0.12.0`, `llm-proxy ^0.6.0`, `llm-stats ^0.7.0`, `mcp-adapter

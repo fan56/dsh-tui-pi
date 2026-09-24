@@ -225,17 +225,20 @@ export function sessionStoreRoot(): string {
  * generations: the host names the artifact after its format generation
  * (`session.v<NNN>.jsonl` since the V3 format, `session.jsonl` for the
  * legacy V0 era) plus the compression suffix. Walks that pick ONE file
- * prefer the CURRENT generation over a preserved legacy one — keep the v3
- * names LAST so `locateSessionLog`'s `.slice().reverse()` tries them
- * first. Single source of truth for every walk of the store — the /resume
- * mtime walk (src/sessions.ts) imports this; two private copies already
- * drifted once.
+ * prefer the CURRENT generation over a preserved legacy one — keep the
+ * newest generation LAST so `locateSessionLog`'s `.slice().reverse()`
+ * tries it first (the current host generation is v4 since dsh
+ * 0.1.7-rc.1). Single source of truth for every walk of the store — the
+ * /resume mtime walk (src/sessions.ts) imports this; two private copies
+ * already drifted once.
  */
 export const SESSION_LOG_FILE_NAMES = [
   'session.jsonl',
   'session.jsonl.zstd',
   'session.v3.jsonl',
   'session.v3.jsonl.zstd',
+  'session.v4.jsonl',
+  'session.v4.jsonl.zstd',
 ] as const
 
 /**

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Scenario 4 — theme switch review: the /theme picker overlay, the canvas
 # repaint to the opposite palette (verified through capture -e SGR runs),
-# the persisted preference in ~/.dsh/settings.yaml, and persistence across
+# the persisted preference in the active profile's cordis.patch.yml, and persistence across
 # a full TUI restart.
 #
 # Navigation model (src/selectors.ts): rows are [auto, github-light,
@@ -17,7 +17,7 @@ set -u
 . "$(dirname "$0")/../lib/common.sh"
 scenario 'theme switch (picker / canvas repaint / persistence)'
 
-SETTINGS_YAML="$HOME/.dsh/settings.yaml"
+PROFILE_PATCH="$HOME/.dsh/profiles/tui/cordis.patch.yml"
 
 # Always restart env-free so the preference — not an env pin — owns the
 # display for the whole scenario.
@@ -52,10 +52,10 @@ else
 fi
 wait_pane 'selection notice rendered (Theme: github-light — applied)' 10 'Theme: github-light'
 wait_gone 'theme picker closed after selection' 10 "$MARKER_THEME_ROWS"
-if [[ -f "$SETTINGS_YAML" ]] && grep -q 'light' "$SETTINGS_YAML"; then
-  ok 'preference persisted to settings.yaml (light)'
+if [[ -f "$PROFILE_PATCH" ]] && grep -q 'light' "$PROFILE_PATCH"; then
+  ok 'preference persisted to the profile patch (light)'
 else
-  bad 'settings.yaml missing or has no light preference'
+  bad 'profile patch missing or has no light preference'
 fi
 
 # --- switch back to dark ------------------------------------------------------
@@ -73,11 +73,11 @@ else
   bad 'dark canvas SGR not found after switching to dark'
 fi
 wait_pane 'selection notice rendered (Theme: github-dark — applied)' 10 'Theme: github-dark'
-if [[ -f "$SETTINGS_YAML" ]] && grep -q 'dark' "$SETTINGS_YAML" \
-  && ! grep -q 'light' "$SETTINGS_YAML"; then
-  ok 'preference persisted to settings.yaml (dark, light gone)'
+if [[ -f "$PROFILE_PATCH" ]] && grep -q 'dark' "$PROFILE_PATCH" \
+  && ! grep -q 'light' "$PROFILE_PATCH"; then
+  ok 'preference persisted to the profile patch (dark, light gone)'
 else
-  bad 'settings.yaml does not reflect the dark preference'
+  bad 'profile patch does not reflect the dark preference'
 fi
 
 # --- persistence across a restart ---------------------------------------------

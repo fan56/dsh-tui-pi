@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Scenario 65 — the 0.21 UX batch: /login's "Custom provider…" chained form
-# (open → six fields → commit into the container's settings.yaml → close;
+# (open → six fields → commit into the container's active profile patch → close;
 # Esc abandon path) and the registered-subagents rule in the seeded
 # APPEND_SYSTEM.md. The ask-user dock panel and the maxRounds ⚡ markers
 # need a live LLM turn and are covered elsewhere (unit suites + host smoke).
@@ -84,22 +84,22 @@ send Escape # close the flow either way (no-op when it already exited)
 sleep 2
 esc_until_gone 'the login flow closes after the custom commit' "$MARKER_FORM_STEP1|$MARKER_ADD_PROVIDER"
 
-if grep -qF 'acme-gateway' "$HOME/.dsh/settings.yaml" 2>/dev/null; then
-  ok 'settings.yaml carries the hand-declared acme-gateway profile'
+if grep -qF 'acme-gateway' "$HOME/.dsh/profiles/tui/cordis.patch.yml" 2>/dev/null; then
+  ok 'profile patch carries the hand-declared acme-gateway profile'
 else
-  bad 'settings.yaml lacks the acme-gateway profile; llm section tail:'
-  grep -A6 'llm-pi-ai' "$HOME/.dsh/settings.yaml" 2>/dev/null | tail -8 | sed 's/^/    | /' \
+  bad 'profile patch lacks the acme-gateway profile; file tail:'
+  grep -A6 'llm-pi-ai' "$HOME/.dsh/profiles/tui/cordis.patch.yml" 2>/dev/null | tail -8 | sed 's/^/    | /' \
     || printf '    | (no llm-pi-ai section)\n'
 fi
-if grep -qF 'ACME_GATEWAY_API_KEY' "$HOME/.dsh/settings.yaml" 2>/dev/null; then
+if grep -qF 'ACME_GATEWAY_API_KEY' "$HOME/.dsh/profiles/tui/cordis.patch.yml" 2>/dev/null; then
   ok 'the profile derives the ACME_GATEWAY_API_KEY credential ref'
 else
   bad 'the derived credential ref is missing from the profile'
 fi
-if grep -qF 'sk-e2e-test-key' "$HOME/.dsh/settings.yaml" 2>/dev/null; then
-  bad 'the API key leaked into settings.yaml (must live in credentials only)'
+if grep -qF 'sk-e2e-test-key' "$HOME/.dsh/profiles/tui/cordis.patch.yml" 2>/dev/null; then
+  bad 'the API key leaked into the profile patch (must live in credentials only)'
 else
-  ok 'the API key never lands in settings.yaml'
+  ok 'the API key never lands in the profile patch'
 fi
 
 # --- Esc at step 1 abandons the whole flow -------------------------------------

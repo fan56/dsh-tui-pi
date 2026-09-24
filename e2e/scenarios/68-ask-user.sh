@@ -38,7 +38,7 @@ scenario 'ask-user: one question at a time + tab strip + Ctrl+T fold'
 # --- host guard -------------------------------------------------------------
 # This scenario permanently mutates dsh config: /model persists mock-chat as
 # the DEFAULT model (persistDefaultModel) and /login commits the mock-llm
-# route (http://127.0.0.1:8642) into settings.yaml. Run on the host that
+# route (http://127.0.0.1:8642) into the active profile patch. Run on the host that
 # would poison the live ~/.dsh with a dead route — so it must only run
 # inside the e2e container, whose ~/.dsh is throwaway. Same detection as
 # 70-steer-injection.sh, inverted: skip (warn, not fail) when NOT in it.
@@ -106,10 +106,10 @@ sleep 2
 esc_until_gone 'login flow closes after the mock provider commit' \
   "$MARKER_FORM_STEP1|$MARKER_ADD_PROVIDER"
 
-if grep -qF 'mock-llm' "$HOME/.dsh/settings.yaml" 2>/dev/null; then
-  ok 'settings.yaml carries the hand-declared mock-llm route'
+if grep -qF 'mock-llm' "$HOME/.dsh/profiles/tui/cordis.patch.yml" 2>/dev/null; then
+  ok 'profile patch carries the hand-declared mock-llm route'
 else
-  bad 'settings.yaml lacks the mock-llm route'
+  bad 'profile patch lacks the mock-llm route'
 fi
 
 # --- /model: select mock-chat via the picker's '/' filter --------------------
