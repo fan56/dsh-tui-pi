@@ -6,6 +6,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Sibling bundle ranges ride the 0.1.7-rc.1 wave.** All nine `@aiwayds/*`
+  dependencies move to the newly published minors (`ask-router ^0.5.0`,
+  `dcp ^0.12.0`, `llm-proxy ^0.6.0`, `llm-stats ^0.7.0`, `mcp-adapter
+  ^0.5.0`, `model-sync ^0.6.0`, `profile-switch ^0.2.0`,
+  `subagent-registry ^0.12.0`, `web-search-anysearch ^0.5.0`) — 0.x carets
+  cannot cross a minor, so the floor bump is required for the wave's
+  settings/message-model adaptations to install together.
+
 ### Added
 - **Renderer support for the 0.1.7 message model.** `developer/message`
   events (the new tool-addition / tool-removal blocks) render as one
