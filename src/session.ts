@@ -103,6 +103,14 @@ const CHILD_LOG_CAP = 2000
  */
 const ROUND_RECONCILE_MS = 600
 
+/**
+ * One-shot cold-start re-seed delay (see the constructor's late-seed leg 2):
+ * the first-boot legacy settings.yaml import is fs-local and runs right
+ * after the loader settles, so by this point the composed default is final.
+ * Overridable via the constructor `lateSeedMs` option (test seam).
+ */
+const LATE_DEFAULT_SEED_MS = 2500
+
 /** Tail marker for `llm/retry` events (no text content — the row shows it is re-working). */
 const RETRY_MARKER = '↻ retry'
 
@@ -262,6 +270,13 @@ export class DshSessionBridge {
   /** Agent preset id to pass to `meta.agentPreset` on the next `createSession`. */
   private agentPreset: string | undefined
   private selection: ModelSelection | undefined
+  /**
+   * Whether `selectionRef.current` holds a LIVE USER choice (`/model`,
+   * `/think`) rather than a seed. The document-updated re-seed must never
+   * clobber a user pick, but MUST be allowed to replace its own earlier
+   * seed (see the cold-start comments in the constructor).
+   */
+  private selectionUserPinned = false
   /** Mutable live selection installed into the agent; `/model` mutates `current`. */
   private readonly selectionRef: ModelSelectionRef = { current: undefined, assembled: undefined }
   /** Mirror of the agent's `agent/status`; `isRunning()` reads this. */
@@ -370,15 +385,47 @@ export class DshSessionBridge {
   constructor(ctx: Context, callbacks: BridgeCallbacks, options: {
     remoteTailOptions?: { intervalMs?: number; decode?(file: string): Promise<string> }
     promoteIntervalMs?: number
+    lateSeedMs?: number
   } = {}) {
     this.ctx = ctx
     this.callbacks = callbacks
     this.remoteTailOptions = options.remoteTailOptions ?? {}
     this.promoteIntervalMs = options.promoteIntervalMs ?? 1000
-    // Footer shows provider/model from the very first frame — read the cwd
-    // pin (if any) else the composed default selection eagerly; a session
-    // created later refreshes it the same way.
-    this.selection = this.pinnedRouteSelection() ?? this.composedDefaultSelection()
+    // Footer cold start: seed ONLY the cwd `.dsh-profile` pin here — the pin
+    // reads local files, so it is stable from the very first frame. The
+    // composed default (`agentDefaultModel`) is deliberately NOT read yet: on
+    // a host first boot the legacy settings.yaml import lands asynchronously
+    // AFTER this constructor, and an eager read would freeze the built-in
+    // default into `selectionRef.current` — which seedSelectionFromDefault
+    // then treats as a live user choice and refuses to overwrite. The footer
+    // renders its empty-model branch until the re-seeds below fill it;
+    // "the footer may arrive a little late" is the agreed trade (session
+    // creation itself re-seeds anyway).
+    this.selection = this.pinnedRouteSelection()
+    // Late seed, leg 1 — `settings/document-updated`: once the settings
+    // document settles (the first-boot settings.yaml import, a /settings
+    // write, …), force a re-seed while it is still safe: no live session
+    // (a session is bound to the selection it was created under) and no
+    // user choice (a /model pick outranks every default). FORCE matters:
+    // the first document-updated can fire while the import has NOT landed
+    // yet (the host's first describe pass), and that early seed leaves the
+    // built-in default in `selectionRef.current` — a plain re-seed would
+    // treat it as a live choice and keep it frozen. Forcing re-derives the
+    // composed default, which by the import's own event is the imported
+    // value. Idempotent and inert once a session exists or the user chose.
+    this.disposers.push(ctx.on('settings/document-updated', () => {
+      if (this.handle === undefined && !this.selectionUserPinned) this.seedSelectionFromDefault(true)
+    }))
+    // Late seed, leg 2 — one-shot unref timer: belt-and-braces for the
+    // ordering where every document-updated fires before this constructor's
+    // subscription arms (or none follows the import). The first-boot import
+    // is fs-local and runs right after the loader settles, so a few seconds
+    // in, the composed default is final; one recompute converges the footer.
+    const lateSeed = setTimeout(() => {
+      if (this.handle === undefined && !this.selectionUserPinned) this.seedSelectionFromDefault(true)
+    }, options.lateSeedMs ?? LATE_DEFAULT_SEED_MS)
+    lateSeed.unref?.()
+    this.disposers.push(() => clearTimeout(lateSeed))
     this.disposers.push(ctx.on('session/event', (session: Session, event: SessionEvent) => {
       const sessionKey = String(session.id)
       // Discover subagent children by session header — the deployment may
@@ -1760,15 +1807,22 @@ export class DshSessionBridge {
    * 2. the composed global default (`agent-default-model`), which must not
    *    clobber a live user choice: `/model`/`/think` before the first prompt
    *    write the ref, and that choice survives session creation (pin absent).
+   *
+   * `force` (the cold-start re-seed path) skips the "keep the existing ref"
+   * branch in 2: an earlier seed may have captured the BUILT-IN default
+   * before the first-boot settings import landed, and that stale seed is not
+   * a user choice — the composed default is re-derived instead. A pin or a
+   * user choice is unaffected (pins re-apply at 1; callers guard user
+   * choices before forcing).
    */
-  private seedSelectionFromDefault(): void {
+  private seedSelectionFromDefault(force = false): void {
     const pinned = this.pinnedRouteSelection()
     if (pinned !== undefined) {
       this.selection = pinned
       this.selectionRef.current = { ...pinned }
       return
     }
-    if (this.selectionRef.current !== undefined) {
+    if (!force && this.selectionRef.current !== undefined) {
       this.selection = { ...this.selectionRef.current }
       return
     }
@@ -1864,6 +1918,7 @@ export class DshSessionBridge {
 
   /** Apply a live model switch (`/model` selector outcome). */
   setSelection(next: ModelSelection): void {
+    this.selectionUserPinned = true
     this.selectionRef.current = { ...next }
     this.selection = { ...next }
   }
