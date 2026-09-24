@@ -199,14 +199,14 @@ test('buildBtwSnapshot: an empty event log yields an empty snapshot', () => {
 
 // ------------------------------------------------------------- buildBtwMessages --
 
-test('buildBtwMessages: appends the question as a plugin-sourced user message', () => {
+test('buildBtwMessages: appends the question as a tui-pi-sourced user message', () => {
   const snapshot = buildBtwSnapshot([userEvent('u1', 'hi')], 5)
   const messages = buildBtwMessages(snapshot, 'what is that?')
   assert.equal(messages.length, 2)
   assert.deepEqual(messages[0], snapshot[0])
   assert.equal(messages[1].role, 'user')
   assert.deepEqual(messages[1].content, [{ type: 'text', text: 'what is that?' }])
-  assert.deepEqual(messages[1].source, { kind: 'plugin', plugin: 'dsh-tui-pi:btw' })
+  assert.deepEqual(messages[1].source, { kind: 'dsh-tui-pi', surface: 'btw' })
 })
 
 test('buildBtwMessages: works on an empty snapshot', () => {
@@ -382,7 +382,7 @@ test('controller: submit starts a run, streams, settles into the slot', async ()
   assert.equal(rig.calls.streamOptions[0].model, 'm')
   assert.equal(rig.calls.streamOptions[0].system.length > 0, true)
   assert.equal(rig.calls.streamOptions[0].messages.length, 2)
-  assert.deepEqual(rig.calls.streamOptions[0].messages[1].source, { kind: 'plugin', plugin: 'dsh-tui-pi:btw' })
+  assert.deepEqual(rig.calls.streamOptions[0].messages[1].source, { kind: 'dsh-tui-pi', surface: 'btw' })
 
   const last = rig.controller.last
   assert.deepEqual(last, { question: 'q?', answer: 'hello world', modelLabel: 'p/m' })

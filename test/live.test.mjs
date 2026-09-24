@@ -593,9 +593,11 @@ const toolCallEvent = (callId, name, rawArguments) => ({
   type: 'tool/call',
   data: { turn: 0, step: 0, callId, name, arguments: rawArguments },
 })
+// dsh 0.1.7 shape: a tool result is a role 'tool' message — toolCallId and
+// isError live on the message; content is the flat result block list.
 const toolResultEvent = (callId, text, isError = false) => ({
   type: 'tool/result',
-  data: { turn: 0, step: 0, message: { content: [{ toolCallId: callId, isError, content: [{ type: 'text', text }] }] } },
+  data: { turn: 0, step: 0, message: { role: 'tool', toolCallId: callId, isError, content: [{ type: 'text', text }] } },
 })
 
 test('think panel: one row — identifier + elapsed + last content line, refreshed in place', () => {

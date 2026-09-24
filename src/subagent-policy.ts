@@ -51,6 +51,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+// Loads the MessageSourceMap augmentation declaring this plugin's own
+// 'dsh-tui-pi' producer kind (dsh 0.1.7 removed the shared 'plugin' kind).
+import type {} from './source-kind.ts'
 import { readSubagentLimits } from './theme-settings.ts'
 import type { SteerableAgent } from './subagent-viewer.ts'
 
@@ -618,7 +621,7 @@ export function applySubagentPolicy(
       try {
         const message = createUserMessage({
           content: [{ type: 'text', text: wrapupMessage(cap, grace) }],
-          source: { kind: 'plugin', plugin: 'dsh-tui-pi' },
+          source: { kind: 'dsh-tui-pi', surface: 'wrapup' },
         })
         if (agent.status === 'running') agent.steer(message)
         else agent.followup(message)

@@ -1,8 +1,8 @@
 # Themes
 
-The TUI ships **20 built-in themes** (10 light + 10 dark) defined as JSON files under `themes/`, plus **user theme discovery**: drop a `.json` file into your user theme directory and it registers automatically — no restart, no config edit. `/theme` lists every registered theme (built-in and user), hot-swaps mid-session, and persists the choice in `settings.yaml` (`dsh-tui.theme`). `auto` detects your terminal and follows live light/dark switches; `DSH_TUI_THEME` pins a scheme by name.
+The TUI ships **20 built-in themes** (10 light + 10 dark) defined as JSON files under `themes/`, plus **user theme discovery**: drop a `.json` file into your user theme directory and it registers automatically — no restart, no config edit. `/theme` lists every registered theme (built-in and user), hot-swaps mid-session, and persists the choice in the plugin's entry config (the `dsh-tui` entry of your profile patch; `dsh-tui.theme`). `auto` detects your terminal and follows live light/dark switches; `DSH_TUI_THEME` pins a scheme by name.
 
-*`/theme` mid-session — pick any registered theme; the choice persists in `settings.yaml`:*
+*`/theme` mid-session — pick any registered theme; the choice persists in the plugin's entry config:*
 
 https://github.com/user-attachments/assets/af4d6df9-e0b8-4146-ba88-c0159b01c209
 
@@ -116,8 +116,8 @@ a non-boolean `dark`) is skipped with a warning — it never crashes the TUI.
 
 - **`/theme`** — lists **every** registered theme (the `auto`/`light`/`dark`
   rows plus all 20 built-ins and your user themes). The selection persists to
-  `dsh-tui.theme` in `~/.dsh/settings.yaml` and hot-applies.
-- **`dsh-tui.theme` in `~/.dsh/settings.yaml`** — `auto` (follow the
+  `dsh-tui.theme` in the plugin's entry config and hot-applies.
+- **`dsh-tui.theme` in the plugin's entry config** — `auto` (follow the
   terminal) / `light` / `dark` / **any registered theme name**.
 - **`DSH_TUI_THEME`** — pins the scheme at launch, outranking the preference:
   `light` / `dark` / any registered theme name (e.g. `DSH_TUI_THEME=dracula`).

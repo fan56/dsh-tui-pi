@@ -10,7 +10,6 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { Context } from '@deepseek-ai/cordis'
 import {
   applyIconSet,
   arrowRight,
@@ -19,9 +18,13 @@ import {
   stopIcon,
   sunglassesIcon,
 } from '../lib/icons.js'
+import { Context } from '@deepseek-ai/cordis'
+import { createVolatile } from '@deepseek-ai/cosmokit'
 import {
+  bindTuiConfig,
   readIconSetPreference,
-  registerThemeSettings,
+  resolveTuiSettings,
+  subscribeThemeSettings,
   THEME_SETTINGS_NAMESPACE,
 } from '../lib/theme-settings.js'
 
@@ -81,75 +84,70 @@ test('accessors honor an explicit set argument over the resolved set', () => {
 // ------------------------------------------------------- settings chain (iconSet) --
 
 /**
- * Minimal fake of the settings-provider surface theme-settings.ts touches:
- * describe()/register()/mutate() plus watcher delivery on commit, mirroring
- * test/theme-settings.test.mjs (that file owns the theme/height cases; this
- * harness only covers the iconSet field).
+ * Fake of the settings-service surface (mirroring test/theme-settings.test.mjs,
+ * which owns the chain cases; this harness only covers the iconSet field):
+ * a mutate applies the path ops, swaps the volatile references (the loader's
+ * volatile-only commit) and emits `settings/document-updated` — the real
+ * commit sequence between the write and the sink.
  */
-function makeSettings() {
-  const descriptors = []
-  const watchers = new Map()
+function makeHarness(ctx) {
+  const section = {}
   let revision = 0
   return {
-    describe() { return descriptors },
-    register(ns, schema, options) {
-      descriptors.push({ ns, schema, revision, value: options?.base ?? {}, applies: options?.applies })
-      const list = []
-      watchers.set(ns, list)
-      return { watch: cb => { list.push(cb); return () => {} } }
+    describe() {
+      return [{ ns: THEME_SETTINGS_NAMESPACE, revision, value: section, user: undefined }]
     },
     async mutate(ns, ops) {
-      const descriptor = descriptors.find(d => d.ns === ns)
-      if (descriptor === undefined) throw new Error('namespace not registered')
-      const value = { ...descriptor.value }
       for (const op of ops) {
         const [key] = op.path
         if (key === undefined) continue
-        if (op.op === 'set') value[key] = op.value
-        if (op.op === 'unset') delete value[key]
+        if (op.op === 'set') section[key] = op.value
+        if (op.op === 'unset') delete section[key]
       }
-      descriptor.value = value
       revision += 1
-      descriptor.revision = revision
-      for (const cb of watchers.get(ns) ?? []) cb(value, {})
+      bindTuiConfig(configFrom(section))
+      ctx.emit('settings/document-updated', ns, revision)
       return undefined
     },
   }
 }
 
-/** One tick: the registration rides the inject fiber. */
-const settle = () => new Promise(resolve => setImmediate(resolve))
+/** Volatile references over the committed section (defaults fill the rest). */
+function configFrom(section) {
+  const base = resolveTuiSettings({})
+  const out = {}
+  for (const [key, ref] of Object.entries(base)) {
+    out[key] = key in section ? createVolatile(section[key]) : ref
+  }
+  return out
+}
 
 test('dsh-tui.iconSet defaults to auto and narrows unknown values', async () => {
   const ctx = new Context()
-  const settings = makeSettings()
+  bindTuiConfig(resolveTuiSettings({}))
+  const settings = makeHarness(ctx)
   ctx.provide('settings', settings)
   const sink = []
-  registerThemeSettings(ctx, (pref, height, hints, iconSet) => { sink.push(iconSet) })
-  await settle()
+  subscribeThemeSettings(ctx, (pref, height, hints, iconSet) => { sink.push(iconSet) })
 
-  // Base entry default is 'auto'.
+  // Schema default is 'auto'.
   assert.equal(await readIconSetPreference(ctx), 'auto', 'unset iconSet resolves to auto')
 
-  // Unknown values narrow to 'auto' (both in the read and the watch sink).
+  // Unknown values narrow to 'auto' (both in the read and the hot-apply sink).
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['iconSet'], value: 'neon' }])
-  await settle()
-  assert.deepEqual(sink, ['auto'], 'unknown iconSet narrows to auto in the watch')
+  assert.deepEqual(sink, ['auto'], 'unknown iconSet narrows to auto in the sink')
   assert.equal(await readIconSetPreference(ctx), 'auto')
 
-  // Valid pins pass through and reach the watch sink.
+  // Valid pins pass through and reach the sink.
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['iconSet'], value: 'plain' }])
-  await settle()
   assert.deepEqual(sink, ['auto', 'plain'])
   assert.equal(await readIconSetPreference(ctx), 'plain')
 
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['iconSet'], value: 'nerdfont' }])
-  await settle()
   assert.deepEqual(sink, ['auto', 'plain', 'nerdfont'])
   assert.equal(await readIconSetPreference(ctx), 'nerdfont')
 
   // Unsetting the field falls back to 'auto'.
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['iconSet'] }])
-  await settle()
   assert.equal(await readIconSetPreference(ctx), 'auto')
 })

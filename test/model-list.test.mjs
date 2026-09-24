@@ -10,6 +10,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
+import { createVolatile } from '@deepseek-ai/cosmokit'
 import {
   buildModelRows,
   canHideModelRow,
@@ -20,8 +21,9 @@ import {
 } from '../lib/model-list.js'
 import { ListController, TablePanel } from '../lib/panels.js'
 import {
+  bindTuiConfig,
   readModelPrefs,
-  registerThemeSettings,
+  resolveTuiSettings,
   THEME_SETTINGS_NAMESPACE,
   writeModelPref,
 } from '../lib/theme-settings.js'
@@ -361,44 +363,46 @@ test('TablePanel.focusRow reports a miss; the caller fallback resync keeps the c
 // --------------------------------------------------- settings read/write --
 
 /**
- * Minimal fake of the settings-provider surface (same shape as
- * theme-settings.test.mjs): describe/register/mutate with watcher delivery.
+ * Fake of the settings-service surface (same shape as theme-settings.test.mjs):
+ * a mutate applies the path ops AND swaps the volatile references — the
+ * loader's volatile-only commit — so the read/write round trip is driven
+ * without a loader.
  */
-function makeSettings() {
-  const descriptors = []
+function makeHarness(ctx) {
+  const section = {}
   let revision = 0
   return {
     describe() {
-      return descriptors
-    },
-    register(ns, schema, opts) {
-      descriptors.push({ ns, schema, revision, value: opts?.base ?? {}, applies: opts?.applies })
-      return { watch: () => () => {} }
+      return [{ ns: THEME_SETTINGS_NAMESPACE, revision, value: section, user: undefined }]
     },
     async mutate(ns, ops) {
-      const descriptor = descriptors.find(d => d.ns === ns)
-      if (descriptor === undefined) throw new Error('namespace not registered')
-      const value = { ...descriptor.value }
       for (const op of ops) {
-        if (op.op === 'set') value[op.path[0]] = op.value
-        if (op.op === 'unset') delete value[op.path[0]]
+        if (op.op === 'set') section[op.path[0]] = op.value
+        if (op.op === 'unset') delete section[op.path[0]]
       }
-      descriptor.value = value
       revision += 1
-      descriptor.revision = revision
+      bindTuiConfig(configFrom(section))
+      ctx.emit('settings/document-updated', ns, revision)
+      return undefined
     },
   }
 }
 
-/** One tick: the registration rides the inject fiber. */
-const settle = () => new Promise(resolve => setImmediate(resolve))
+/** Volatile references over the committed section (defaults fill the rest). */
+function configFrom(section) {
+  const base = resolveTuiSettings({})
+  const out = {}
+  for (const [key, ref] of Object.entries(base)) {
+    out[key] = key in section ? createVolatile(section[key]) : ref
+  }
+  return out
+}
 
 test('readModelPrefs defaults to empty lists and writeModelPref round-trips via mutate', async () => {
   const ctx = new Context()
-  const settings = makeSettings()
+  bindTuiConfig(resolveTuiSettings({}))
+  const settings = makeHarness(ctx)
   ctx.provide('settings', settings)
-  registerThemeSettings(ctx)
-  await settle()
 
   assert.deepEqual(await readModelPrefs(ctx), { favoriteModels: [], hiddenModels: [] })
 
@@ -409,17 +413,16 @@ test('readModelPrefs defaults to empty lists and writeModelPref round-trips via 
     hiddenModels: ['d/gone'],
   })
 
-  // The write landed as a namespace path mutation, not a whole-file rewrite.
+  // The write landed as an entry path mutation, not a whole-file rewrite.
   const section = settings.describe().find(d => d.ns === THEME_SETTINGS_NAMESPACE).value
   assert.deepEqual(section.favoriteModels, ['zhipu/glm-4.7', 'd/a'])
 })
 
 test('readModelPrefs narrows malformed values; settings-less deployments degrade', async () => {
   const ctx = new Context()
-  const settings = makeSettings()
+  bindTuiConfig(resolveTuiSettings({}))
+  const settings = makeHarness(ctx)
   ctx.provide('settings', settings)
-  registerThemeSettings(ctx)
-  await settle()
 
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [
     { op: 'set', path: ['favoriteModels'], value: ['ok', 42, null, {}, 'also-ok'] },
@@ -430,8 +433,10 @@ test('readModelPrefs narrows malformed values; settings-less deployments degrade
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['favoriteModels'] }])
   assert.deepEqual((await readModelPrefs(ctx)).favoriteModels, [])
 
-  // No settings service: reads degrade empty, writes report instead of throwing.
+  // No bound entry config: reads degrade empty; no settings service: writes
+  // report instead of throwing.
   const bare = new Context()
+  bindTuiConfig(undefined)
   assert.deepEqual(await readModelPrefs(bare), { favoriteModels: [], hiddenModels: [] })
   assert.equal(
     await writeModelPref(bare, 'favoriteModels', ['d/a']),

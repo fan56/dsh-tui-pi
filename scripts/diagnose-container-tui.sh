@@ -181,10 +181,10 @@ if [ -n "$TUI_PKG_DIR" ] && [ -f "$TUI_PKG_DIR/cordis.patch.yml" ]; then
   cat "$TUI_PKG_DIR/cordis.patch.yml" | sed 's/^/    /'
   echo "    --- end ---"
 
-  if grep -q "tui-pi" "$TUI_PKG_DIR/cordis.patch.yml"; then
-    ok "Bundle id 'tui-pi' present in patch"
+  if grep -q "id: dsh-tui" "$TUI_PKG_DIR/cordis.patch.yml"; then
+    ok "Bundle id 'dsh-tui' present in patch"
   else
-    fail "Bundle id 'tui-pi' NOT found in cordis.patch.yml"
+    fail "Bundle id 'dsh-tui' NOT found in cordis.patch.yml"
   fi
 else
   fail "cordis.patch.yml NOT found in plugin package"

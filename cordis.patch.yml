@@ -1,5 +1,7 @@
 # dsh-tui-pi bundle patch: mounts the pi-style TUI plugin over the profile's
-# base bundle under the stable plugin id `tui-pi`. The plugin renders the
+# base bundle under the stable plugin entry id `dsh-tui` (kept identical to
+# the legacy settings.yaml section name so the one-time 0.1.7 settings import
+# finds it — see the note at the insert below). The plugin renders the
 # terminal UI in-process with @earendil-works/pi-tui and talks to the dsh tree
 # directly (ctx.agents / ctx.commands / session events), keeping dsh's slash
 # commands untouched.
@@ -47,7 +49,14 @@
   disabled: true
 
 - insert:
-    - id: tui-pi
+    # Entry id `dsh-tui` (NOT the package-derived `tui-pi`): the settings
+    # descriptor's `ns` IS the profile entry id under dsh 0.1.7, and the
+    # legacy `settings.yaml` document is imported once per profile by matching
+    # section name → entry id. Mounting as `dsh-tui` lets the one-time import
+    # (settings.yaml → renamed .imported → sections merged into the matching
+    # entry's config) pick up every existing `dsh-tui:` preference without a
+    # migration shim.
+    - id: dsh-tui
       name: '@aiwayds/dsh-tui-pi'
     - id: profile-switch
       name: '@aiwayds/dsh-profile-switch'

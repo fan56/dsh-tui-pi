@@ -6,6 +6,90 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Renderer support for the 0.1.7 message model.** `developer/message`
+  events (the new tool-addition / tool-removal blocks) render as one
+  system-class `ⓘ` line (`+name` / `-name`) in the transcript and join the
+  remote-view durable rows; `system/message` stays non-conversational and
+  renders nothing. Tool results follow the new role `'tool'` message shape —
+  `toolCallId` / `isError` read at message level, content is the flat block
+  list — everywhere (ToolPanel settle, subagent viewer, occupancy pricing).
+- **The `/agents → l` limits panel mirrors the official subagent caps.** Two
+  read-only rows show the dsh-subagent plugin's live
+  `maxActiveSubagents` (default 8) and `maxDepth` (default 1) — read through
+  the settings forms when the entry is loaded, annotated `n/a` when it is
+  not — alongside this TUI's own `maxAgents` / `maxRounds` /
+  `maxRoundsGrace` / fence toggles, which stay editable here. `AgentView.mode`
+  accepts the catalog v1 `'unknown'` arm so catalog-derived children render
+  tolerantly.
+- **Session log V4 regression tests** (test/projcache.test.mjs): the
+  projection-cache wrapper keeps V4-era records byte-identical, backfilled
+  pre-V4 records stay schema-valid (fold-ineligible cache miss, never a boot
+  failure), and the official `dsh-session-format-v3-to-v4` header migration
+  edge runs and passes its target validator.
+- **Plugin Manager metadata.** Added `icon.svg` and `locale/{en,zh-CN,ja,ko}.json` (`meta.title`/`meta.description` per the official `readPluginMeta` contract, which reads only the singular `locale/` dir — the bundled `locales/` i18n is untouched); `package.json` now declares the `icon`, files, and exports entries.
+
+### Changed
+- **Producer sources declare their own kind.** dsh 0.1.7 removed the shared
+  `'plugin'` MessageSource kind; this plugin now injects its btw
+  side-questions, maxRounds wrap-ups and Ctrl+G steers as
+  `source: { kind: 'dsh-tui-pi', surface: … }` (src/source-kind.ts). The
+  injection markers (`⚡`) recognize BOTH spellings, so pre-0.1.7 session
+  logs replay with their markers intact on resume.
+- `snapshotEvents()` call sites (replay/resume/fork/export/history viewer —
+  15 hits) are annotated and kept on purpose: they re-consume raw events,
+  which the 0.1.7 projection / `handle.read()` successor does not serve
+  (soft-deprecated upstream, runtime unaffected).
+- **Agent presets read the 0.1.7 registry; Cordis picker semantics updated;
+  directory presets retired.** The `/preset` roster now comes from the host's
+  `agentPresets` registry (`@deepseek-ai/dsh-agent-preset-registry`,
+  `remoteExportList()` — the same face as the remote `agentPresets.list`
+  RPC), so the roster follows the deployment's declared bundle-patch presets:
+  `isDefault` is registry-provided (no longer guessed), the shipped order is
+  `standard` / `ptc` / `minimal` / `cordis`, and a declaration that fails to
+  activate stays listed with a ⚠ badge and its reason. `cordis` renders
+  under its new upstream meaning — the plugin/preset **authoring** slot
+  ("Creator"; the dynamic define/run tools were removed upstream) — and
+  `ptc` rides the new PTC runtime (`workflow-ptc`/`ptc-runtime`). The `trust`
+  field is gone (removed upstream with the old presets package). The 0.1.5
+  directory scan (`agent.cordis.yml` + `preset.yml` roots) is dead upstream
+  and survives only as a deprecated fallback for pre-0.1.7 hosts; on a 0.1.7
+  host it finds nothing and `/preset` disables gracefully. **Users of
+  directory presets:** re-declare yours as a bundle-patch row with the SAME
+  id (see docs/features/preset-switch.md) — old directory presets are not
+  read anymore, and sessions recorded under an id the registry no longer
+  declares fail to resume. Switch / fork-at-turn / rememberPreset
+  (workspace-presets.json) semantics are unchanged. The `/settings → Agent
+  Presets` category now targets the registry's profile entry
+  (`agent-preset-registry`: new-task default + picker toggle) instead of the
+  removed `agent-presets` namespace.
+- **dsh 0.1.7 settings migration — the configuration surface moved to the
+  plugin's declared Config schema.** dsh-settings 0.1.7 removed the runtime
+  `register` / watch API and the `settings.yaml` document. The plugin now
+  declares its whole user-facing configuration as a static `Config` schema
+  (every field `.volatile()`), the loader projects it into the settings
+  surface, and `apply(ctx, config)` receives the live volatile references —
+  all readers (`readThemePreference`, `readSubagentLimits`, `readModelPrefs`,
+  …) go through `.get()` and no longer touch the settings service. The
+  `dsh-tui` keys, defaults and semantics are unchanged.
+- **Hot-reload rides `settings/document-updated`.** The 0.1.5 watch hook is
+  replaced by the document-updated subscription: a committed volatile-only
+  write (the `/theme` picker, `/settings`, `/language`, `/model` favorites,
+  `/agents → l` limits) swaps the references in place and hot-applies with
+  no restart — the old `'live'`/`'restart'` split is gone, everything is
+  live. The `/settings` browser keeps its revision-guarded `mutate` write
+  path and now lists settings-bearing plugin entries by their profile entry
+  ids.
+- **Entry id `dsh-tui` (was `tui-pi`)** in the bundle patch: the settings
+  namespace IS the profile entry id under 0.1.7, so mounting as `dsh-tui`
+  lets the one-time legacy import pick up every existing value. On the first
+  0.1.7 boot the removed `~/.dsh/settings.yaml` is renamed
+  `settings.yaml.imported` and its `dsh-tui:` section merges into the
+  profile's `dsh-tui` entry config automatically — no user action needed.
+- Dependency floor: `@deepseek-ai/dsh-settings` / `dsh-skill` /
+  `dsh-user-questions` peers raised to `>=0.1.7-rc.1` (devDeps pinned
+  `0.1.7-rc.1`).
+
 ## [2.21.0] - 2026-09-22
 
 ### Added

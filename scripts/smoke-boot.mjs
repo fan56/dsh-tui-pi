@@ -175,8 +175,8 @@ const remove = spawnSync('dsh', ['plugin', '--profile', 'smoke', 'remove', ownNa
 if (remove.status !== 0 || remove.error) fail('dsh plugin remove failed', `${remove.stdout}\n${remove.stderr}`)
 const dumpAfter = spawnSync('dsh', ['--profile', 'smoke', '--dump-config'], { cwd: profile, encoding: 'utf8', env: dshEnv })
 if (dumpAfter.status !== 0 || dumpAfter.error) fail('dsh --dump-config failed after removal', `${dumpAfter.stdout}\n${dumpAfter.stderr}`)
-if (dumpAfter.stdout.includes('tui-pi')) {
-  fail('the composed tree still contains tui-pi entries after removal (bundles entry not spliced / patch layer not dropped)', dumpAfter.stdout)
+if (dumpAfter.stdout.includes('dsh-tui')) {
+  fail('the composed tree still contains dsh-tui entries after removal (bundles entry not spliced / patch layer not dropped)', dumpAfter.stdout)
 }
 // The stock row must still be composed (it comes from dsh-base) but enabled
 // again — `disabled: true` may not appear anywhere inside its own entry

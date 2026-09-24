@@ -25,6 +25,9 @@ const TURN_END = 'turn/end'
  * deltas excluded (see module doc for the display contract). */
 const DURABLE_TYPES: ReadonlySet<string> = new Set([
   'user/message',
+  // dsh 0.1.7's developer tool-change rows render system-class ⓘ lines in
+  // the local transcript — kept here so a remote view stays in parity.
+  'developer/message',
   'assistant/message',
   'tool/call',
   'tool/result',

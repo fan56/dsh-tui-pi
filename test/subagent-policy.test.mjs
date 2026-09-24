@@ -24,14 +24,31 @@ import {
   installSpawnToolFence,
   markTuiSurface,
 } from '../lib/subagent-policy.js'
+import { bindTuiConfig, resolveTuiSettings } from '../lib/theme-settings.js'
+import { createVolatile } from '@deepseek-ai/cosmokit'
 
 /**
- * Fake settings provider: one `dsh-tui` section with the given limits. The
- * disableSubagent fence defaults to OFF here so the legacy maxAgents/maxRounds
- * scenarios below exercise the cap in isolation; the fence has its own tests.
+ * Fake settings service + entry-config binding for the given limits. Under
+ * the 0.1.7 declare-Config model the policy reads the limits from the bound
+ * volatile references (`readSubagentLimits` → `.get()`), so seeding a limit
+ * means binding references over a section — the fake describe() only stands
+ * in for the service's presence. The disableSubagent fence defaults to OFF
+ * here so the legacy maxAgents/maxRounds scenarios below exercise the cap in
+ * isolation; the fence has its own tests.
  */
 function makeSettings(limits) {
-  return { describe: () => [{ ns: 'dsh-tui', value: { disableSubagent: false, ...limits } }] }
+  bindTuiConfig(configFrom({ disableSubagent: false, ...limits }))
+  return { describe: () => [{ ns: 'dsh-tui', value: {}, user: undefined }] }
+}
+
+/** Volatile references over a plain section (schema defaults fill the rest). */
+function configFrom(section) {
+  const base = resolveTuiSettings({})
+  const out = {}
+  for (const [key, ref] of Object.entries(base)) {
+    out[key] = key in section ? createVolatile(section[key]) : ref
+  }
+  return out
 }
 
 /**
@@ -151,9 +168,11 @@ test('the guard is disabled when maxAgents is 0 and defaults apply without setti
   assert.equal(zero.captured.guard({ name: 'subagent' }), undefined, 'maxAgents 0: never denied')
   zeroPolicy.dispose()
 
-  // No settings service: the documented defaults still gate the guard. The
+  // No settings service: the documented defaults still gate the guard (the
+  // bound references carry the schema defaults even without one). The
   // fence is ALSO on by default, so the registry tool (`use_agent`) is the
   // probe that reaches the cap check - the native names are fenced off first.
+  bindTuiConfig(resolveTuiSettings({}))
   const bare = makeCtx()
   const busy = applySubagentPolicy(bare.ctx, makeState({ live: [{ label: 'a' }, { label: 'b' }, { label: 'c' }, { label: 'd' }] }))
   assert.equal(typeof bare.captured.guard({ name: 'use_agent', agent: tuiAgent() }), 'string', 'settings-less: default cap enforced')
@@ -301,8 +320,8 @@ test('onRoundCount injects the summary request exactly once at the round cap', a
   const message = followups[0]
   assert.equal(message.content[0].type, 'text')
   assert.equal(message.content[0].text, wrapupMessage(3, 7), 'the summary message text names the cap')
-  assert.equal(message.source.kind, 'plugin', 'message is plugin-sourced')
-  assert.equal(message.source.plugin, 'dsh-tui-pi', 'message carries the plugin name')
+  assert.equal(message.source.kind, 'dsh-tui-pi', 'message is tui-pi-sourced (0.1.7 producer kind)')
+  assert.equal(message.source.surface, 'wrapup', 'message names its producing surface')
 
   // Later round counts — including the wrap-up's OWN assistant message, which
   // pushes the count past maxRounds (max+1, max+2, …) — never re-inject.
@@ -390,8 +409,11 @@ test('onRoundCount lands the wrap-up splice after the publication window closes'
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   ctx.provide('settings', {
-    describe: () => [{ ns: 'dsh-tui', value: { maxAgents: 4, maxRounds: 1, disableSubagent: false } }],
+    describe: () => [{ ns: 'dsh-tui', value: {}, user: undefined }],
   })
+  // 0.1.7: the policy reads the limits from the bound volatile references,
+  // not the descriptor value — seed maxRounds 1 through the references.
+  bindTuiConfig(configFrom({ maxAgents: 4, maxRounds: 1, disableSubagent: false }))
   const session = ctx.sessions.create(SessionId('wrap-child'), { meta: { cwd: process.cwd() } })
   // A real durable inbox splice over the mounted session: dsh 0.1.5-rc.1
   // removed the constructible `Inbox` runtime class (the interface is

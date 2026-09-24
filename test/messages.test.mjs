@@ -196,15 +196,60 @@ test('tool calls and reasoning render nothing in the transcript (the fixed panel
   const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
   renderer.applyEvent({ type: 'tool/call', data: { turn: 0, step: 0, callId: 'a', name: 'read', arguments: '{"path": "src/welcome.ts"}' }, ts: 0, seq: 1 })
   renderer.applyStreamChunk(0, 1, { type: 'reasoning-delta', text: 'thinking hard' })
+  // dsh 0.1.7 shape: the result is a role 'tool' message (toolCallId/isError
+  // at message level, flat content blocks).
   renderer.applyEvent({
     type: 'tool/result',
-    data: { turn: 0, step: 0, callId: 'a', message: { content: [{ toolCallId: 'a', isError: false, content: [{ type: 'text', text: 'ok' }] }] } },
+    data: { turn: 0, step: 0, message: { role: 'tool', toolCallId: 'a', isError: false, content: [{ type: 'text', text: 'ok' }] } },
     ts: 0, seq: 2,
   })
   renderer.applyEvent({ type: 'assistant/message', data: { turn: 0, step: 1, message: { content: [{ type: 'reasoning', text: 'all done' }] } }, ts: 0, seq: 3 })
   // After the welcome banner's 5 children the transcript stays empty — no
   // tool cards, no thinking panels, no blocks at all.
   assert.equal(doc.children.length, 5, 'only the welcome banner renders')
+})
+
+test('developer tool-change messages render one system-class ⓘ line (dsh 0.1.7)', () => {
+  const doc = new Container()
+  const renderer = new TranscriptRenderer(doc, lightTheme, () => {})
+  const before = doc.children.length
+  renderer.applyEvent({
+    type: 'developer/message',
+    data: {
+      turn: 0, step: 1,
+      message: { role: 'developer', content: [
+        { type: 'tool-addition', toolName: 'fs' },
+        { type: 'tool-addition', toolName: 'bash' },
+        { type: 'tool-removal', toolName: 'workflow' },
+      ] },
+    },
+    ts: 0, seq: 4,
+  })
+  // Exactly one ⓘ row, styled subtle (never a chat bubble).
+  const added = doc.children.slice(before)
+  assert.equal(added.length, 1, 'exactly one transcript row')
+  const plain = stripAnsi(added[0].render(200).join('\n'))
+  assert.ok(plain.includes('ⓘ'), 'system-class ⓘ marker')
+  assert.ok(plain.includes('+fs'), 'tool addition names its tool')
+  assert.ok(plain.includes('+bash'), 'every addition listed')
+  assert.ok(plain.includes('-workflow'), 'tool removal prefixed with a dash')
+
+  // An empty developer message renders nothing.
+  const beforeEmpty = doc.children.length
+  renderer.applyEvent({
+    type: 'developer/message',
+    data: { turn: 0, step: 2, message: { role: 'developer', content: [] } },
+    ts: 0, seq: 5,
+  })
+  assert.equal(doc.children.length, beforeEmpty, 'empty developer message renders nothing')
+
+  // The system prompt surface event never grows transcript content.
+  renderer.applyEvent({
+    type: 'system/message',
+    data: { turn: 0, step: 0, message: { role: 'system', content: [{ type: 'text', text: 'be helpful' }] } },
+    ts: 0, seq: 6,
+  })
+  assert.equal(doc.children.length, beforeEmpty, 'system/message renders nothing')
 })
 
 

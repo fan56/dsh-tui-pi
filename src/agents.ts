@@ -52,7 +52,7 @@ import {
 } from './agent-runtime.ts'
 import { EditField, type ParseOutcome } from './settings.ts'
 import type { SubagentPolicyStats } from './subagent-policy.ts'
-import { readSubagentLimits, writeSubagentLimit } from './theme-settings.ts'
+import { readOfficialSubagentLimits, readSubagentLimits, writeSubagentLimit } from './theme-settings.ts'
 import {
   autoColumns,
   FieldPanel,
@@ -506,11 +506,16 @@ export async function openAgentManager(
 
     /**
      * The subagent-limits panel: the live `maxAgents` / `maxRounds` values
-     * (0 = unlimited), editable like the field rows. Esc returns to the table
-     * — from here the limits are reachable even with no agent files at all.
+     * (0 = unlimited), editable like the field rows, plus two READ-ONLY rows
+     * mirroring the official dsh-subagent plugin's 0.1.7 caps
+     * (`maxActiveSubagents` / `maxDepth`, read through the settings forms —
+     * editable in /settings, not here; an unreadable entry shows n/a).
+     * Esc returns to the table — from here the limits are reachable even
+     * with no agent files at all.
      */
     const showLimits = (): void => {
       const limits = readSubagentLimits(ctx)
+      const official = readOfficialSubagentLimits(ctx)
       const stats = getStats?.()
       const fields = [
         { key: 'maxAgents', value: t('agentsmg.limits.maxAgents', { n: limits.maxAgents }), editable: true },
@@ -518,9 +523,20 @@ export async function openAgentManager(
         { key: 'maxRoundsGrace', value: t('agentsmg.limits.maxRoundsGrace', { n: limits.maxRoundsGrace }), editable: true },
         { key: 'disableSubagent', value: t('agentsmg.limits.disableSubagent', { value: limits.disableSubagent ? t('agentsmg.on') : t('agentsmg.off') }), editable: true },
         { key: 'registeredOnly', value: t('agentsmg.limits.registeredOnly', { value: limits.registeredOnly ? t('agentsmg.on') : t('agentsmg.off') }), editable: true },
+        {
+          key: 'maxActiveSubagents',
+          value: t('agentsmg.limits.maxActiveSubagents', { n: official.maxActiveSubagents ?? t('agentsmg.limits.unread') }),
+          editable: false,
+        },
+        {
+          key: 'maxDepth',
+          value: t('agentsmg.limits.maxDepth', { n: official.maxDepth ?? t('agentsmg.limits.unread') }),
+          editable: false,
+        },
       ]
       const content: string[] = [
         t('agentsmg.limits.intro'),
+        t('agentsmg.limits.officialNote'),
         ...(stats !== undefined
           ? [t('agentsmg.limits.runtime', {
               live: stats.live,
@@ -545,6 +561,10 @@ export async function openAgentManager(
         onEdit: index => {
           if (index === 3) toggleDisableSubagent()
           else if (index === 4) toggleRegisteredOnly()
+          else if (index >= 5) {
+            // Read-only mirror of the official subagent plugin's own config.
+            limitsStatus = t('agentsmg.limits.officialReadOnly')
+          }
           else editLimit(index === 0 ? 'maxAgents' : index === 1 ? 'maxRounds' : 'maxRoundsGrace')
         },
         // With no agent files the table has nothing to go back to — Esc then

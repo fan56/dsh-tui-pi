@@ -23,10 +23,7 @@ import {
   slotFieldKeys,
   unionLiterals,
 } from '../lib/settings.js'
-import {
-  THEME_SETTINGS_NAMESPACE,
-  registerThemeSettings,
-} from '../lib/theme-settings.js'
+import { Config, THEME_SETTINGS_NAMESPACE } from '../lib/theme-settings.js'
 
 test('formatValue handles every JSON kind', () => {
   assert.equal(formatValue(undefined), '(unset)')
@@ -128,38 +125,40 @@ const KNOWN_NS = [
   'llm-deepseek',
   'llm-pi-ai',
   'agent-default-model',
-  'shell',
+  'bash-sandbox',
+  'pwsh-sandbox',
   'agent-loop',
   'web-search-deepseek',
-  'agent-presets',
-  // Settings namespaces of the installed dsh plugins (Plugins category).
-  'mcp-adapter',
-  'topics',
-  'vault',
-  'model-sync',
+  'agent-preset-registry',
+  // Settings-bearing entry ids of the installed dsh plugins (Plugins
+  // category) — under dsh 0.1.7 the descriptor ns IS the profile entry id.
+  'dsh-mcp-adapter',
+  'dsh-topics-memory',
+  'dsh-vault',
+  'dsh-model-sync',
   'dsh-feishu',
   'dsh-llm-proxy',
 ]
 
 test('categorizeNamespaces places the full known set with no other', () => {
   assert.deepEqual(categorizeNamespaces(KNOWN_NS), [
-    { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
+    { id: 'agent', label: 'Agent Presets', namespaces: ['agent-preset-registry'] },
     { id: 'general', label: 'General', namespaces: ['permission'] },
     { id: 'models', label: 'Models', namespaces: ['llm-deepseek', 'llm-pi-ai', 'agent-default-model'] },
     {
       id: 'plugins',
       label: 'Plugins',
-      namespaces: ['shell', 'agent-loop', 'web-search-deepseek', 'mcp-adapter', 'topics', 'vault', 'model-sync', 'dsh-feishu', 'dsh-llm-proxy'],
+      namespaces: ['bash-sandbox', 'pwsh-sandbox', 'agent-loop', 'web-search-deepseek', 'dsh-mcp-adapter', 'dsh-topics-memory', 'dsh-vault', 'dsh-model-sync', 'dsh-feishu', 'dsh-llm-proxy'],
     },
     { id: 'dsh-tui', label: 'TUI', namespaces: ['dsh-tui'] },
   ])
 })
 
 test('categorizeNamespaces buckets unknown namespaces into trailing other', () => {
-  assert.deepEqual(categorizeNamespaces(['dsh-tui', 'future-thing', 'shell', 'llm-deepseek']), [
+  assert.deepEqual(categorizeNamespaces(['dsh-tui', 'future-thing', 'bash-sandbox', 'llm-deepseek']), [
     { id: 'models', label: 'Models', namespaces: ['llm-deepseek'] },
     { id: 'other', label: 'Other', namespaces: ['future-thing'] },
-    { id: 'plugins', label: 'Plugins', namespaces: ['shell'] },
+    { id: 'plugins', label: 'Plugins', namespaces: ['bash-sandbox'] },
     { id: 'dsh-tui', label: 'TUI', namespaces: ['dsh-tui'] },
   ])
 })
@@ -183,9 +182,9 @@ test('categorizeNamespaces orders categories alphabetically by canonical label',
 })
 
 test('categorizeNamespaces dedupes duplicate input namespaces', () => {
-  assert.deepEqual(categorizeNamespaces(['shell', 'shell', 'llm-deepseek', 'llm-deepseek']), [
+  assert.deepEqual(categorizeNamespaces(['bash-sandbox', 'bash-sandbox', 'llm-deepseek', 'llm-deepseek']), [
     { id: 'models', label: 'Models', namespaces: ['llm-deepseek'] },
-    { id: 'plugins', label: 'Plugins', namespaces: ['shell'] },
+    { id: 'plugins', label: 'Plugins', namespaces: ['bash-sandbox'] },
   ])
   // A duplicated unknown namespace shows up once in other, too.
   assert.deepEqual(categorizeNamespaces(['future-thing', 'future-thing']), [
@@ -245,41 +244,36 @@ test('categoryDescription caps at max columns (width-aware clip)', () => {
 
 test('categoryDescription joins empty or duplicated members', () => {
   assert.equal(categoryDescription([]), '')
-  assert.equal(categoryDescription(['llm-deepseek', 'llm-deepseek', 'shell']), 'llm-deepseek, shell')
+  assert.equal(categoryDescription(['llm-deepseek', 'llm-deepseek', 'bash-sandbox']), 'llm-deepseek, bash-sandbox')
 })
 
-test('dsh-tui theme is a free string (input row), panelHeight stays an all-literal union (cycle row)', async () => {
-  // Minimal settings fake (describe/register only): the registration stores
-  // the schema; rehydrate walks it exactly like the /settings browser's
-  // SettingsBrowser.root → nodeAtPath path.
-  const descriptors = []
-  const ctx = new Context()
-  ctx.provide('settings', {
-    describe: () => descriptors,
-    register(ns, schema, options) {
-      descriptors.push({ ns, schema, value: options?.base ?? {}, applies: options?.applies })
-      return { watch: () => () => {} }
-    },
-  })
-  registerThemeSettings(ctx, () => {})
-  await new Promise(resolve => setImmediate(resolve))
+test('the Config schema renders theme as a free string and panelHeight as an all-literal union', () => {
+  // The entry config is DECLARED (static Config), not registered: serialize
+  // it exactly like the host's describe() does and walk it like the
+  // /settings browser's SettingsBrowser.root → nodeAtPath path.
+  const root = rehydrateSchema(Config.toJSON())
 
-  const desc = descriptors.find(d => d.ns === THEME_SETTINGS_NAMESPACE)
-  assert.ok(desc !== undefined, 'dsh-tui namespace registered')
-  const root = rehydrateSchema(desc.schema)
+  // Every field is volatile — the settings browser lists only volatile
+  // fields, and the legacy settings.yaml import rejects a section carrying
+  // any non-volatile field.
+  for (const [key, node] of Object.entries(Config.toJSON().dict ?? {})) {
+    assert.equal(node.meta?.volatile, true, `Config.${key} must be volatile`)
+  }
 
-  // Theme field: a free string now — custom theme names (one-dark, a
-  // user's own file in ~/.dsh/themes) are valid preferences, so the schema
-  // can no longer be an all-literal union. rowKindFor maps it to 'input'
-  // (inline text editor) instead of 'cycle'; the /theme picker is the
-  // friendly entry point.
+  // Theme field: a free string — custom theme names (one-dark, a user's own
+  // file in ~/.dsh/themes) are valid preferences, so the schema can not be an
+  // all-literal union. rowKindFor maps it to 'input' (inline text editor)
+  // instead of 'cycle'; the /theme picker is the friendly entry point.
   const theme = nodeAtPath(root, ['theme'])
   assert.equal(theme.type, 'string', 'theme node is a free string')
 
-  // PanelHeight field: same mechanism as before, the five configurable
-  // heights stay an all-literal union.
+  // PanelHeight field: the five configurable heights stay an all-literal
+  // union → cycle row.
   const panelHeight = nodeAtPath(root, ['panelHeight'])
   assert.equal(panelHeight.type, 'union', 'panelHeight node is a union')
   assert.deepEqual(unionLiterals(panelHeight), { values: ['1', '5', '7', '10', 'all'], all: true },
     'panelHeight is an all-literal union over the five heights → cycle row')
+
+  // The grouped subagent fields survive serialization with their labels.
+  assert.deepEqual(unionLiterals(nodeAtPath(root, ['cacheHitMode'])), { values: ['lastMessage', 'session'], all: true })
 })

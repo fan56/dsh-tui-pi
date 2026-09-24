@@ -24,7 +24,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { SettingsProvider } from '@deepseek-ai/dsh-settings'
+import type { SettingsForms } from '@deepseek-ai/dsh-settings'
 import { type OverlayHandle, type TUI } from '@earendil-works/pi-tui'
 import { wrapFramedOverlay } from './frame.ts'
 import { autoColumns, TablePanel } from './panels.ts'
@@ -298,7 +298,7 @@ function takenRouteIds(ctx: Context): Set<string> {
 }
 
 /** Serialized llm-pi-ai profile write for /login (revision read at execution time). */
-async function writeProviderProfile(settings: SettingsProvider, entry: ProviderCatalogEntry): Promise<string | undefined> {
+async function writeProviderProfile(settings: SettingsForms, entry: ProviderCatalogEntry): Promise<string | undefined> {
   try {
     await settings.mutate(
       LLM_PI_AI_NS,
@@ -318,7 +318,7 @@ async function writeProviderProfile(settings: SettingsProvider, entry: ProviderC
  * conflict from a concurrent removal counts too: the desired state already
  * holds, so the profile is re-read and a vanished entry reports success.
  */
-async function removeProviderProfile(settings: SettingsProvider, id: string): Promise<string | undefined> {
+async function removeProviderProfile(settings: SettingsForms, id: string): Promise<string | undefined> {
   const profileSection = (): unknown => {
     const desc = settings.describe().find(d => d.ns === LLM_PI_AI_NS)
     const providers = (desc?.value as { providers?: unknown } | undefined)?.providers

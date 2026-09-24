@@ -46,6 +46,9 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 // whole-list snapshot (declared by dsh-tool-todo since alpha.3 moved it out
 // of dsh-session; the root entry re-exports the types module).
 import type {} from '@deepseek-ai/dsh-tool-todo'
+// Loads the MessageSourceMap augmentation declaring this plugin's own
+// 'dsh-tui-pi' producer kind (dsh 0.1.7 removed the shared 'plugin' kind).
+import type {} from './source-kind.ts'
 import {
   Editor,
   getKeybindings,
@@ -149,13 +152,13 @@ export function resolveInjectionRoute(
 }
 
 /**
- * Build the injected user message: plain text content with the plugin source
+ * Build the injected user message: plain text content with the tui-pi source
  * marker — same shape as the maxRounds wrap-up injection.
  */
 export function buildSteerMessage(text: string) {
   return createUserMessage({
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'dsh-tui-pi' },
+    source: { kind: 'dsh-tui-pi', surface: 'steer' },
   })
 }
 
@@ -298,11 +301,14 @@ export function eventLine(event: SessionEvent, callNames: Map<string, string>): 
       callNames.set(event.data.callId, event.data.name)
       return `⚙ ${event.data.name}${event.data.arguments !== '' ? ` ${toolSubject(event.data.arguments)}` : ''}`
     case 'tool/result': {
-      const block = event.data.message.content[0]
-      const toolCallId = block?.toolCallId ?? ''
+      // dsh 0.1.7: the result message is role 'tool' — toolCallId/isError
+      // live on the MESSAGE now (the old tool-result block is gone), and
+      // `message.content` IS the result block list (flat text blocks).
+      const message = event.data.message
+      const toolCallId = message.toolCallId
       const name = callNames.get(toolCallId) ?? `tool:${toolCallId.slice(0, 8)}`
-      const isError = event.data.error !== undefined || (block?.isError ?? false)
-      const text = resultPreview(block?.content)
+      const isError = event.data.error !== undefined || (message.isError ?? false)
+      const text = resultPreview(message.content)
       return `${isError ? '✘' : '✔'} ${name}${text !== '' ? `: ${text}` : ''}`
     }
     case 'subagent/descriptor': {

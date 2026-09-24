@@ -109,8 +109,10 @@ const RETRY_MARKER = '↻ retry'
 /**
  * Estimated tokens of a `tool/result` event's text payload (the tool output
  * that enters the next request). Defensive: reads through an `unknown` shape
- * and never throws. The result body lives in `data.message.content[*].content`
- * as `{ type: 'text', text }` blocks (plus any inline `isError` marker).
+ * and never throws. dsh 0.1.7: the result is a role 'tool' message whose
+ * `message.content` IS the flat `{ type: 'text', text }` block list — the
+ * old nested `content[*].content` tool-result block shape is gone (a V3 log
+ * is migrated to V4 framing before it can be read).
  */
 function estimateToolResultTokens(data: unknown): number {
   const content = (data as { message?: { content?: unknown } }).message?.content
@@ -118,12 +120,8 @@ function estimateToolResultTokens(data: unknown): number {
   const parts: string[] = []
   for (const block of content) {
     if (block === null || typeof block !== 'object') continue
-    const inner = (block as { content?: unknown }).content
-    if (!Array.isArray(inner)) continue
-    for (const item of inner) {
-      const b = item as { type?: unknown; text?: unknown }
-      if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text)
-    }
+    const b = block as { type?: unknown; text?: unknown }
+    if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text)
   }
   return estimateTextTokens(parts.join('\n'))
 }
@@ -595,6 +593,12 @@ export class DshSessionBridge {
     for (const childId of this.childSessions) {
       const session = sessions.get(SessionId(childId))
       if (session === undefined) continue
+      // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in
+      // favor of projection registration / handle.read() pagination. Kept on
+      // this HOT path deliberately — the reconcile is already incremental
+      // (the reconciledLen watermark scans only new events per tick), and the
+      // projection successor serves folds, not raw assistant/message counts.
+      // (T14 review.)
       const events = session.snapshotEvents()
       const len = events.length
       let from = this.reconciledLen.get(childId) ?? 0
@@ -1174,7 +1178,9 @@ export class DshSessionBridge {
    * session in its place. The caller replays `handle.agent.session.snapshotEvents()`
    * through `replay()` to rebuild stats/transcript — clear the transcript
    * BEFORE replaying (the renderer's echo dedupe must not see replayed user
-   * messages next to a stale local echo). Serialized: concurrent calls share
+   * messages next to a stale local echo). (snapshotEvents is dsh 0.1.7
+   * soft-deprecated upstream; the raw-event replay call sites keep it with a
+   * T14 note each.) Serialized: concurrent calls share
    * the single in-flight resume.
    */
   async resume(sessionId: SessionId): Promise<AgentHandle> {

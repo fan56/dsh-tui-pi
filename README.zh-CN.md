@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**动态上下文修剪（DCP）**](docs/features/dcp.md) —— 上下文自动保持在窗口内，零 LLM 调用。
 - [**持久上下文**](docs/features/persistent-context.md) —— 你的基本规则随每个请求生效，热应用无需重启。
 - [**模型 profile 与收藏**](docs/features/model-profiles.md) —— 按项目切换整套模型配置，选择器保持精简。
-- [**Agent preset 切换**](docs/features/preset-switch.md) —— `/preset` 在内置 agent 组合（`standard`、`minimal`……）间切换；切换需确认并会开启新会话（当前会话仍可 /resume 恢复）；preset 到底管什么。
+- [**Agent preset 切换**](docs/features/preset-switch.md) —— `/preset` 在宿主 0.1.7 registry 声明的 agent 预设（`standard`、`minimal`……）间切换；切换需确认并会开启新会话（当前会话仍可 /resume 恢复）；preset 到底管什么，以及 0.1.5 目录预设如何迁移（同 id bundle patch 重建）。
 - [**Sessions 会话与恢复**](docs/features/sessions-resume.md) —— 会话自动保持整洁、几次按键恢复；跨进程写者守卫保证日志单写者。
 - [**Themes 主题**](docs/features/themes.md) —— 20 个内置配色（10 亮 + 10 暗）+ 用户主题目录发现（`~/.dsh/themes/`）；热切换，`auto` 跟随终端。
 - [**搜索、选择与图片**](docs/features/search-selection-images.md) —— `Ctrl+Shift+F` 全文搜索、划选复制到系统剪贴板、web/飞书附件内联渲染、LaTeX 转 Unicode 数学。
@@ -58,7 +58,7 @@ dsh plugin --profile <name> remove @aiwayds/dsh-tui-pi
 
 宿主会自动清理 profile：`dsh.profile.bundles` 条目被剪除，整层 patch 随包一起消失——原生的 `session-projection-cache` 行恢复启用，projcache wrapper、`tool-ask-user` 插入及其禁用行全部随之消失。
 
-以下内容刻意留在磁盘上（删用户数据是破坏性的；重装会全部复用）：`~/.dsh/APPEND_SYSTEM.md`、`tui-command-usage.json`、`model-profiles.json`、`keybindings.json`、`~/.dsh/agents/` 与 `~/.dsh/skills/`、工作区 `.dsh-profile` 固定文件、`settings.yaml` 的 `dsh-tui:` 段、会话投影缓存（含 `.bak-preflight-*` 迁移备份）。插件运行期间，保留清理器（默认 `maxCount: 100` / `maxAgeDays: 30`）会删除旧会话日志——卸载后即停止，但已删除的日志找不回来。`scripts/install-font.mjs` 会改动 OS 字体/终端状态且有文档化的备份；卸载不会碰它。
+以下内容刻意留在磁盘上（删用户数据是破坏性的；重装会全部复用）：`~/.dsh/APPEND_SYSTEM.md`、`tui-command-usage.json`、`model-profiles.json`、`keybindings.json`、`~/.dsh/agents/` 与 `~/.dsh/skills/`、工作区 `.dsh-profile` 固定文件、profile patch 里的 `dsh-tui` entry 配置（0.1.7 前的 `settings.yaml` 段会以 `settings.yaml.imported` 保留）、会话投影缓存（含 `.bak-preflight-*` 迁移备份）。插件运行期间，保留清理器（默认 `maxCount: 100` / `maxAgeDays: 30`）会删除旧会话日志——卸载后即停止，但已删除的日志找不回来。`scripts/install-font.mjs` 会改动 OS 字体/终端状态且有文档化的备份；卸载不会碰它。
 
 ---
 
@@ -105,18 +105,23 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 
 ## 配置
 
-所有配置都在 `~/.dsh/settings.yaml` 的 `dsh-tui` 命名空间下——但你很少需要直接碰文件：**`/settings` 就地浏览修改**（可搜索的一级分类——Agent Presets / General / Models / Plugins / TUI——实时值、逐字段描述，Models 下还有 add-provider 流程）。语言、主题、面板高度、footer 提示、图标集改动即热生效；其余下次启动读取。
+所有配置都在 profile 的 `cordis.patch.yml` 里本插件 `dsh-tui` entry 的 `config:` 段（dsh 0.1.7 会把插件声明的 Config schema 中所有 volatile 字段投影进设置面）——但你很少需要直接碰文件：**`/settings` 就地浏览修改**（可搜索的一级分类——Agent Presets / General / Models / Plugins / TUI——实时值、逐字段描述，Models 下还有 add-provider 流程）。语言、主题、面板高度、footer 提示、图标集改动即热生效；其余下次启动读取。
 
 大多数旋钮都有合理默认值，无需配置。真正可能会设的就几项：
 
 ```yaml
-dsh-tui:
-  language: zh-CN   # 界面语言——或直接 /language（任意 surface 可答；内置 en、zh-CN、ja、ko）
-  theme: auto       # auto / light / dark / 任意已注册主题名——或 /theme
-  maxAgents: 4      # 子代理并发上限，0 = 不限（/agents → l 也可热调）
+- id: dsh-tui         # profile patch 里本插件的 entry 行
+  config:
+    language: zh-CN   # 界面语言——或直接 /language（任意 surface 可答；内置 en、zh-CN、ja、ko）
+    theme: auto       # auto / light / dark / 任意已注册主题名——或 /theme
+    maxAgents: 4      # 子代理并发上限，0 = 不限（/agents → l 也可热调）
 ```
 
-新增界面语言就是往 `~/.dsh/locales/` 放一个 JSON 文件——同名 id 按键合并到内置文件之上，新 id 直接注册（详见[设置浏览器与界面语言](docs/features/settings-i18n.md)）。会话清理器（`retention` / `resume`）与 ask-user 超时（`askUser`）也在同一命名空间，默认值见文档。
+`/agents → l` 还会以只读行镜像**官方** dsh-subagent 上限（`maxActiveSubagents`，默认 8；`maxDepth`，默认 1）——它们属于 `subagent` 插件 entry，在 `/settings` 里改；面板自家的行（maxAgents / maxRounds / maxRoundsGrace / 两个围栏）仍在此处热编辑。
+
+从 dsh 0.1.5 升级？旧 `~/.dsh/settings.yaml` 的 `dsh-tui:` 段会在首次 0.1.7 启动时自动导入 profile（原文件保留在同目录的 `settings.yaml.imported`）。
+
+新增界面语言就是往 `~/.dsh/locales/` 放一个 JSON 文件——同名 id 按键合并到内置文件之上，新 id 直接注册（详见[设置浏览器与界面语言](docs/features/settings-i18n.md)）。会话清理器（`retention` / `resume`）与 ask-user 超时（`askUser`）也在同一 entry config 里，默认值见文档。
 
 插件内置了一个 skill（`dsh-tui-pi-config`）：直接让 agent「帮我配置 TUI」，它会问答式收集你的选择并代写配置段。**全键表与 `DSH_TUI_*` 环境变量清单见 [skills/dsh-tui-pi-config/SKILL.md](skills/dsh-tui-pi-config/SKILL.md)。**
 

@@ -214,6 +214,17 @@ export class TranscriptRenderer {
         this.dropStreaming()
         this.renderUserMessage(event)
         break
+      case 'developer/message':
+        // dsh 0.1.7's new incremental agent-change surface (tool additions /
+        // removals): rendered system-class — a subtle ⓘ line, never chat.
+        this.renderDeveloperMessage(event)
+        break
+      case 'system/message':
+        // The rendered system prompt is model-facing surface bookkeeping,
+        // not conversation — the transcript never grows a block for it
+        // (same stance the pre-0.1.7 renderer took when no such event
+        // existed).
+        break
       case 'assistant/message':
         this.finalizeStreaming()
         this.renderAssistantMessage(event)
@@ -222,6 +233,8 @@ export class TranscriptRenderer {
       case 'tool/result':
         // Tool activity renders in the fixed ToolPanel above the chat input
         // (live-widgets.ts routes these); the transcript never grows blocks.
+        // dsh 0.1.7: a tool result is now a role 'tool' message whose
+        // toolCallId/isError live at message level — still ToolPanel-only.
         break
       case 'todo/write':
         // Todos render in the fixed live widget (LiveWidgets), not the
@@ -640,6 +653,28 @@ export class TranscriptRenderer {
   private renderImages(blocks: readonly ImageBlockLike[]): void {
     if (blocks.length === 0) return
     renderImageAttachments(this.doc, blocks, this.theme, { requestRender: () => this.requestRender() })
+  }
+
+  /**
+   * Render one `developer/message` event — dsh 0.1.7's incremental agent
+   * session changes — system-class (like injected context): one subtle `ⓘ`
+   * line, never a chat bubble. The content vocabulary is the new
+   * tool-addition/tool-removal blocks (`+ name` / `- name`; the schema lives
+   * in the referenced request header, so the name is all the transcript
+   * needs) plus any plain text blocks; unknown block types fall through as
+   * their type tag so a future producer stays visible, never silent.
+   */
+  private renderDeveloperMessage(event: SessionEvent & { type: 'developer/message' }): void {
+    const parts: string[] = []
+    for (const block of event.data.message.content) {
+      if (block.type === 'tool-addition') parts.push(`+${block.toolName}`)
+      else if (block.type === 'tool-removal') parts.push(`-${block.toolName}`)
+      else if (block.type === 'text' && block.text.trim() !== '') parts.push(clipToWidth(block.text.trim(), 100))
+      else if (block.type !== 'reasoning') parts.push(`[${block.type}]`)
+    }
+    if (parts.length === 0) return
+    const line = `ⓘ ${t('misc.developerTools', { changes: parts.join(' ') })}`
+    this.appendLine(ansiFg(this.theme.palette.fgSubtle) + clipToWidth(line, 120) + RESET)
   }
 
   private renderUserText(text: string): void {

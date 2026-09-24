@@ -1,30 +1,43 @@
 /**
- * Theme settings: persists the user's theme preference, the think/tool panel
- * height, and the subagent concurrency/rounds limits under the `dsh-tui`
- * settings namespace, surfaced by the /settings browser and the /theme
- * command. The theme and panel-height preferences are read once at TUI
- * startup (`readThemePreference` / `readPanelHeightPreference`); the subagent
- * limits are read live at every policy decision (`readSubagentLimits`). The
- * namespace is marked `applies: 'live'`: a committed change (the /theme
- * picker, the /settings browser, an external edit) is pushed through the
- * watch hook, so the running TUI repaints without a restart.
+ * Theme settings: the dsh-tui entry configuration — the user's theme
+ * preference, the think/tool panel height, the UI language, the footer-hint
+ * selection, the icon-set mode and the subagent concurrency/rounds limits.
  *
- * The session-management sections (`retention`, `resume`) ride the same
- * namespace but are read from the descriptor's USER layer
- * (`readSessionManagementExplicit`), not the resolved value: only a field
- * the user explicitly wrote to settings.yaml is an override — the resolved
- * value's baked-in defaults must not shadow the DSH_TUI_RETENTION_* /
- * DSH_TUI_RESUME_* environment variables (precedence: settings explicit >
- * env > default; the janitor consumes its values at next startup, the
- * /resume filter at every picker open).
+ * dsh 0.1.7 model (breaking change from 0.1.5): the runtime
+ * namespace-registration API is GONE. A plugin declares its
+ * user-facing configuration as a `static Config` schema; the loader projects
+ * every `.volatile()` field into the settings surface (describe / update /
+ * mutate) and hands the resolved values to `apply(ctx, config)` — volatile
+ * fields arrive as live `Volatile<T>` references. Declaration IS
+ * registration: there is nothing to register at runtime anymore.
+ *
+ * Reading: `config.field.get()` — a deep-frozen snapshot, refreshed IN PLACE
+ * by the loader on every volatile-only commit (the fiber never remounts, the
+ * references stay identical), so a value read is always current.
+ *
+ * Hot-apply: the plugin subscribes to `settings/document-updated` (the
+ * 0.1.5 per-namespace watch-hook replacement) and re-reads the references on
+ * every event. The
+ * event also fires for this TUI's own writes; every sink downstream is an
+ * idempotent no-op on an unchanged value (theme-bundle identity guard, same
+ * height, same hints), so the echo is harmless.
+ *
+ * Session-management sections (`retention`, `resume`, `askUser`) keep their
+ * USER-layer precedence seam: only a field the user explicitly wrote into the
+ * profile patch (`cordis.patch.yml` → entry `dsh-tui` → `config:`; the 0.1.5
+ * `settings.yaml` document is auto-imported there once on first 0.1.7 boot)
+ * is an override — the resolved value's baked-in defaults must not shadow the
+ * DSH_TUI_RETENTION_* / DSH_TUI_RESUME_* / DSH_TUI_ASK_USER_* environment
+ * variables (precedence: settings explicit > env > default). Those readers
+ * go through `settings.describe()[].user`, the only channel exposing the raw
+ * explicit layer.
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import {
   SettingsConflictError,
-  type SettingsDescriptor,
+  type SettingsForms,
   type SettingsPathOp,
-  type SettingsProvider,
 } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { DEFAULT_FOOTER_HINTS, type FooterHints } from './footer.ts'
@@ -35,18 +48,16 @@ import type { IconSet } from './icons.ts'
 import { RETENTION_MAX_AGE_DAYS, RETENTION_MAX_COUNT, RETENTION_MIN_IDLE_HOURS } from './retention.ts'
 import { RESUME_MAX_AGE_DAYS, RESUME_MIN_BYTES } from './sessions.ts'
 import { ASK_USER_ABSOLUTE_MINUTES_DEFAULT, ASK_USER_IDLE_MINUTES_DEFAULT } from './ask-user.ts'
-import { emitNotice } from './notice-bridge.ts'
 import type { ThemePreference } from './theme/index.ts'
 
 /**
- * Settings namespace carrying the persisted dsh-tui preferences.
+ * Settings entry id carrying the persisted dsh-tui preferences.
  *
- * dsh-settings 0.1.2-alpha.3 removed the runtime settingsNamespace() helper
- * (and the SettingsNamespace constructor it returned): a plain literal is the
- * supported spelling — register() brand-checks it at the type level
- * (SettingsNamespaceInput) and validates the same lowercase-hyphenated pattern
- * at runtime (parseSettingsNamespace). Comparisons against a descriptor's
- * branded `ns` stay exact string equality.
+ * This is BOTH the profile patch entry id (cordis.patch.yml mounts this
+ * package as `- id: dsh-tui`) and the legacy settings.yaml section name —
+ * keeping them identical is what lets the 0.1.7 one-time settings.yaml
+ * import (`settings.yaml` → renamed `.imported`, sections merged into the
+ * matching entry's config) pick up every existing user value without a shim.
  */
 export const THEME_SETTINGS_NAMESPACE = 'dsh-tui'
 
@@ -106,13 +117,12 @@ export interface SubagentLimits {
 }
 
 /**
- * Default subagent limits, applied whenever the settings service, namespace,
- * or a field cannot be read. 4 concurrent children and 75 rounds per child
- * are the documented out-of-the-box behavior (75 rounds = 75 LLM
- * round-trips, headroom for heavy delegated tasks while still capping a
- * runaway child); the native `subagent` tool is disabled by default — the
- * TUI's user delegates through registered agents (toggle it in /agents → l
- * limits when the plain tool is needed again).
+ * Default subagent limits, applied whenever the entry config cannot be read.
+ * 4 concurrent children and 75 rounds per child are the documented
+ * out-of-the-box behavior (75 rounds = 75 LLM round-trips, headroom for heavy
+ * delegated tasks while still capping a runaway child); the native `subagent`
+ * tool is disabled by default — the TUI's user delegates through registered
+ * agents (toggle it in /agents → l limits when the plain tool is needed again).
  */
 export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({
   maxAgents: 4,
@@ -122,41 +132,111 @@ export const DEFAULT_SUBAGENT_LIMITS: SubagentLimits = Object.freeze({
   registeredOnly: false,
 })
 
-/** Schema of the `dsh-tui` settings section. */
-const THEME_SETTINGS_SCHEMA = z.object({
+/** Grouped session-log retention knobs (see resolveRetentionConfig). */
+export interface RetentionSettings {
+  maxCount: number
+  maxAgeDays: number
+  minIdleHours: number
+}
+
+/** Grouped /resume display-window knobs. */
+export interface ResumeSettings {
+  maxAgeDays: number
+  minBytes: number
+}
+
+/** Grouped ask-user auto-answer timeout knobs. */
+export interface AskUserSettings {
+  idleMinutes: number
+  absoluteMinutes: number
+}
+
+/**
+ * Runtime face of the `dsh-tui` entry config. Every field is `.volatile()` —
+ * user-editable through the settings surface and hot-applied without a
+ * plugin remount — so each arrives as a live `Volatile<T>` reference, read
+ * with `.get()`.
+ */
+export interface TuiSettings {
+  language: Volatile<string>
+  theme: Volatile<ThemePreference>
+  panelHeight: Volatile<PanelHeight>
+  maxAgents: Volatile<number>
+  maxRounds: Volatile<number>
+  maxRoundsGrace: Volatile<number>
+  disableSubagent: Volatile<boolean>
+  registeredOnly: Volatile<boolean>
+  footerHints: Volatile<FooterHints>
+  cacheHitMode: Volatile<CacheHitMode>
+  iconSet: Volatile<IconSet>
+  rememberPreset: Volatile<boolean>
+  favoriteModels: Volatile<string[]>
+  hiddenModels: Volatile<string[]>
+  retention: Volatile<RetentionSettings>
+  resume: Volatile<ResumeSettings>
+  askUser: Volatile<AskUserSettings>
+}
+
+/**
+ * The `dsh-tui` entry Config schema — the whole settings surface. Exported
+ * from the plugin root (src/index.ts re-exports it): the loader reads
+ * `plugin.Config` off the module namespace and validates + resolves the
+ * entry's config against it; every field is `.volatile()`, so the settings
+ * browser lists all of them and a legacy settings.yaml `dsh-tui:` section
+ * imports wholesale (an import carrying any non-volatile field would be
+ * rejected as a whole).
+ *
+ * Plain z.number() (not z.natural()) inside `retention`/`resume`/`askUser` on
+ * purpose, same as the 0.1.5 schema: a range-constrained field lets one
+ * hand-edited out-of-range number get the whole volatile-only update refused
+ * (the write is rejected and the raw value still lands on disk — see the
+ * dsh 0.1.7 "not volatile / validation" semantics), so the per-field range
+ * check happens in the readers (resolveRetentionConfig / resolveResumeConfig /
+ * resolveAskUserTimeouts), which fall back to env/defaults with one stderr
+ * line instead.
+ */
+export const Config = z.object({
   language: z
     .string()
     .default(DEFAULT_LANGUAGE)
+    .volatile()
     .description(t('settings.language.description')),
   theme: z
     .string()
     .default('auto')
+    .volatile()
     .description(t('settings.theme.description')),
   panelHeight: z
     .union(['1', '5', '7', '10', 'all'])
     .default(DEFAULT_PANEL_HEIGHT)
+    .volatile()
     .description(t('settings.panelHeight.description')),
   // `z.natural()` is schemastery's constraint for a non-negative integer
   // (the `z.number().int().min(0)` intent — no `.int()` chain exists here).
   maxAgents: z
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxAgents)
+    .volatile()
     .description(t('settings.maxAgents.description')),
   maxRounds: z
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxRounds)
+    .volatile()
     .description(t('settings.maxRounds.description')),
   maxRoundsGrace: z
     .natural()
     .default(DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace)
+    .volatile()
     .description(t('settings.maxRoundsGrace.description')),
   disableSubagent: z
     .boolean()
     .default(DEFAULT_SUBAGENT_LIMITS.disableSubagent)
+    .volatile()
     .description(t('settings.disableSubagent.description')),
   registeredOnly: z
     .boolean()
     .default(DEFAULT_SUBAGENT_LIMITS.registeredOnly)
+    .volatile()
     .description(t('settings.registeredOnly.description')),
   footerHints: z
     .object({
@@ -169,34 +249,33 @@ const THEME_SETTINGS_SCHEMA = z.object({
       history: z.boolean().default(true).description(t('settings.footerHints.history.description')),
     })
     .default({ ...DEFAULT_FOOTER_HINTS })
+    .volatile()
     .description(t('settings.footerHints.description')),
   cacheHitMode: z
     .union(['lastMessage', 'session'])
     .default(DEFAULT_CACHE_HIT_MODE)
+    .volatile()
     .description(t('settings.cacheHitMode.description')),
   iconSet: z
     .union(['auto', 'nerdfont', 'plain'])
     .default('auto')
+    .volatile()
     .description(t('settings.iconSet.description')),
   rememberPreset: z
     .boolean()
     .default(true)
+    .volatile()
     .description(t('settings.rememberPreset.description')),
   favoriteModels: z
     .array(z.string())
     .default([])
+    .volatile()
     .description(t('settings.favoriteModels.description')),
   hiddenModels: z
     .array(z.string())
     .default([])
+    .volatile()
     .description(t('settings.hiddenModels.description')),
-  // Plain z.number() (not z.natural()) on purpose: the settings service
-  // validates the stored section against this schema at registration and
-  // fails LOUD, so a range-constrained schema would let one hand-edited
-  // out-of-range number take the whole dsh-tui namespace (theme, panel
-  // height, everything) down with it. The per-field range check happens in
-  // the readers (resolveRetentionConfig / resolveResumeConfig), which fall
-  // back to env/defaults with one stderr line instead.
   retention: z
     .object({
       maxCount: z
@@ -217,6 +296,7 @@ const THEME_SETTINGS_SCHEMA = z.object({
       maxAgeDays: RETENTION_MAX_AGE_DAYS,
       minIdleHours: RETENTION_MIN_IDLE_HOURS,
     })
+    .volatile()
     .description(t('settings.retention.description')),
   resume: z
     .object({
@@ -230,6 +310,7 @@ const THEME_SETTINGS_SCHEMA = z.object({
         .description(t('settings.resume.minBytes.description')),
     })
     .default({ maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES })
+    .volatile()
     .description(t('settings.resume.description')),
   askUser: z
     .object({
@@ -243,132 +324,39 @@ const THEME_SETTINGS_SCHEMA = z.object({
         .description(t('settings.askUser.absoluteMinutes.description')),
     })
     .default({ idleMinutes: ASK_USER_IDLE_MINUTES_DEFAULT, absoluteMinutes: ASK_USER_ABSOLUTE_MINUTES_DEFAULT })
+    .volatile()
     .description(t('settings.askUser.description')),
 })
 
-/** Composition entry below the user layer: fall back to the defaults. */
-const THEME_SETTINGS_ENTRY: {
-  language: string
-  theme: ThemePreference
-  panelHeight: PanelHeight
-  maxAgents: number
-  maxRounds: number
-  maxRoundsGrace: number
-  disableSubagent: boolean
-  registeredOnly: boolean
-  footerHints: FooterHints
-  cacheHitMode: CacheHitMode
-  iconSet: IconSet
-  rememberPreset: boolean
-  favoriteModels: string[]
-  hiddenModels: string[]
-  retention: { maxCount: number; maxAgeDays: number; minIdleHours: number }
-  resume: { maxAgeDays: number; minBytes: number }
-  askUser: { idleMinutes: number; absoluteMinutes: number }
-} = {
-  language: DEFAULT_LANGUAGE,
-  theme: 'auto',
-  panelHeight: DEFAULT_PANEL_HEIGHT,
-  maxAgents: DEFAULT_SUBAGENT_LIMITS.maxAgents,
-  maxRounds: DEFAULT_SUBAGENT_LIMITS.maxRounds,
-  maxRoundsGrace: DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace,
-  disableSubagent: DEFAULT_SUBAGENT_LIMITS.disableSubagent,
-  registeredOnly: DEFAULT_SUBAGENT_LIMITS.registeredOnly,
-  footerHints: { ...DEFAULT_FOOTER_HINTS },
-  cacheHitMode: DEFAULT_CACHE_HIT_MODE,
-  iconSet: 'auto',
-  rememberPreset: true,
-  favoriteModels: [],
-  hiddenModels: [],
-  retention: {
-    maxCount: RETENTION_MAX_COUNT,
-    maxAgeDays: RETENTION_MAX_AGE_DAYS,
-    minIdleHours: RETENTION_MIN_IDLE_HOURS,
-  },
-  resume: { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: RESUME_MIN_BYTES },
-  askUser: { idleMinutes: ASK_USER_IDLE_MINUTES_DEFAULT, absoluteMinutes: ASK_USER_ABSOLUTE_MINUTES_DEFAULT },
+/**
+ * The schema's own defaults, resolved ONCE as volatile references — the
+ * fallback for every reader while no entry config has been bound (a test
+ * driving `apply(ctx)` without a loader, or a read before `apply` ran).
+ */
+const DEFAULT_TUI_SETTINGS: TuiSettings = Config({}) as unknown as TuiSettings
+
+/** The live entry config handed to `apply` by the loader (undefined = not bound yet). */
+let boundConfig: TuiSettings | undefined
+
+/**
+ * Bind the loader-resolved entry config (the `config` parameter of
+ * `apply(ctx, config)`). Called once per plugin application; a `/reload`
+ * re-runs `apply` and re-binds. Volatile-only commits later swap the values
+ * behind the SAME references in place, so the bound object stays current
+ * without rebinding.
+ */
+export function bindTuiConfig(config: TuiSettings | undefined): void {
+  boundConfig = config
 }
 
-/**
- * In-flight namespace registration. The registration rides the settings
- * injection fiber, so a read issued right after `registerThemeSettings`
- * would not see the namespace yet; `readThemePreference` awaits this promise
- * (bounded) before describing. `undefined` until the first registration.
- */
-let registrationPromise: Promise<void> | undefined
+/** The config to read: the bound entry config, else the schema defaults. */
+function tuiConfig(): TuiSettings {
+  return boundConfig ?? DEFAULT_TUI_SETTINGS
+}
 
-/**
- * Register the `dsh-tui` settings namespace with the settings provider.
- *
- * This registers directly through the provider (not through a
- * section-install helper): the registration rides the scoped injection fiber
- * and disappears with the settings service. `onPreferenceChange`, when given,
- * receives every committed change (including this TUI's own writes) through
- * the scope's watch hook; callers guard re-applies by theme-bundle identity
- * and height change, so an echoed self-write is a no-op. No source thunk is
- * needed — the read helpers read the resolved values on demand at TUI
- * startup.
- *
- * @param ctx - plugin context; does nothing while no settings service is mounted.
- * @param onPreferenceChange - hot-reload sink for committed `dsh-tui` theme,
- * panel-height, footer-hints, icon-set and language changes; `undefined` when the
- * namespace is already registered (a reloaded plugin instance, a second mount
- * of this bundle) or registration fails.
- */
-export function registerThemeSettings(
-  ctx: Context,
-  onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, iconSet: IconSet, language: string) => void,
-): void {
-  registrationPromise = new Promise<void>(resolve => {
-    ctx.inject(['settings'], (sctx) => {
-      try {
-        // The namespace may already be registered (a reloaded plugin instance,
-        // a second mount of this bundle): `register` throws on duplicates, and
-        // the existing registration already serves the same schema — skip.
-        if (sctx.settings.describe().some((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)) {
-          resolve()
-          return
-        }
-        const scope = sctx.settings.register(THEME_SETTINGS_NAMESPACE, THEME_SETTINGS_SCHEMA, {
-          base: THEME_SETTINGS_ENTRY,
-          // 'live': a committed change takes effect immediately — the TUI
-          // hot-applies the theme bundle and the panel height via the watch
-          // hook below. 'restart' was the old contract, when every component
-          // baked its theme at startup.
-          applies: 'live',
-        })
-        if (onPreferenceChange !== undefined) {
-          scope.watch((next) => {
-            // The resolved section is `{ language: ..., theme: ...,
-            // panelHeight: ..., footerHints: {...}, iconSet: ... }` — narrow
-            // the unknown to the observed fields.
-            const section = next as { language?: unknown; theme?: unknown; panelHeight?: unknown; footerHints?: unknown; iconSet?: unknown }
-            const theme = section.theme
-            const panelHeight = section.panelHeight
-            onPreferenceChange(
-              typeof theme === 'string' && theme !== '' ? theme : 'auto',
-              isPanelHeight(panelHeight) ? panelHeight : DEFAULT_PANEL_HEIGHT,
-              narrowFooterHints(section.footerHints),
-              narrowIconSet(section.iconSet),
-              narrowLanguage(section.language),
-            )
-          })
-        }
-      } catch (error) {
-        // TUI startup awaits `registrationPromise` — it must settle no matter
-        // what, so a failed registration degrades to 'auto' instead of
-        // hanging. Leave a trace for the operator: this fires during
-        // apply(), before the TUI's notice sink exists, so the message goes
-        // through the shared bridge and surfaces above the footer once the
-        // first frame lands (never raw stderr — the alt-screen owns the
-        // terminal by then).
-        emitNotice(
-          `settings namespace registration failed: ${error instanceof Error ? error.message : String(error)}`,
-        )
-      }
-      resolve()
-    })
-  })
+/** Resolve an export of the Config schema into a `TuiSettings`-shaped object (test helper). */
+export function resolveTuiSettings(overrides: Record<string, unknown> = {}): TuiSettings {
+  return Config(overrides) as unknown as TuiSettings
 }
 
 /** Validate an unknown `footerHints` value into the typed shape (defaults win). */
@@ -397,171 +385,126 @@ function narrowRememberPreset(value: unknown): boolean {
   return typeof value === 'boolean' ? value : true
 }
 
-/**
- * The `dsh-tui` namespace descriptor, after waiting for the in-flight
- * registration — the shared plumbing of every async reader below.
- *
- * The registration is delivered through the settings injection fiber, so the
- * value may not be visible synchronously right after `registerThemeSettings`:
- * the settings service mounts asynchronously (its init sets up the provider,
- * a file watcher, ...), a tick after the registration request in the dsh
- * profile. Wait for the registration to land before describing — bounded, so
- * a settings-less deployment degrades to the defaults instead of hanging TUI
- * startup. Without a registration request there is nothing to wait for.
- *
- * @returns the descriptor, or `undefined` when no registration is in
- * flight, the settings service is absent, or the namespace has not landed.
- */
-async function registeredDescriptor(ctx: Context): Promise<SettingsDescriptor | undefined> {
-  if (registrationPromise === undefined) return undefined
-  let fallback: ReturnType<typeof setTimeout> | undefined
-  await Promise.race([
-    registrationPromise,
-    new Promise<void>(resolve => { fallback = setTimeout(resolve, 2000) }),
-  ])
-  if (fallback !== undefined) clearTimeout(fallback)
-  const settings = ctx.get('settings') as SettingsProvider | undefined
-  if (settings === undefined) return undefined
-  return settings.describe().find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)
+/** Validate an unknown `theme` value (custom theme names pass through). */
+function narrowTheme(value: unknown): ThemePreference {
+  return typeof value === 'string' && value !== '' ? value : 'auto'
 }
 
 /**
- * The resolved `dsh-tui` section as read from the settings provider, after
- * waiting for the in-flight registration (see `registeredDescriptor`).
+ * Subscribe the hot-reload sink to committed `dsh-tui` changes — the 0.1.7
+ * replacement of the 0.1.5 watch hook (the runtime registration call itself
+ * is gone: the static Config schema declares the entry config, the loader
+ * owns the projection).
  *
- * @returns the resolved section, or `undefined` when no registration is in
- * flight, the settings service is absent, or the namespace has not landed.
+ * `settings/document-updated` carries `(ns, revision)` and fires whenever the
+ * entry's raw config changed — the /theme picker, the /settings browser, an
+ * external patch edit, or this TUI's own write (the echo). The handler
+ * re-reads the live volatile references (the loader updated them in place
+ * before the event) and forwards the narrowed bundle to the sink; callers
+ * guard re-applies by theme-bundle identity and height change, so an echoed
+ * self-write is a no-op. The whole commit → references → event → `.get()`
+ * → sink chain is synchronous per event.
+ *
+ * @param ctx - plugin context; the subscription dies with the plugin fiber.
+ * @param onPreferenceChange - hot-reload sink for committed `dsh-tui` theme,
+ * panel-height, footer-hints, icon-set and language changes; `undefined`
+ * registers nothing.
  */
-async function readResolvedSection(ctx: Context): Promise<{
-  language?: unknown
-  theme?: unknown
-  panelHeight?: unknown
-  footerHints?: unknown
-  iconSet?: unknown
-  rememberPreset?: unknown
-  favoriteModels?: unknown
-  hiddenModels?: unknown
-} | undefined> {
-  // The descriptor's `value` is the whole resolved section
-  // (`{ theme: ..., panelHeight: ..., footerHints: {...}, iconSet: ... }`), not
-  // the field itself — narrow the unknown to the observed fields.
-  return (await registeredDescriptor(ctx))?.value as
-    | {
-        language?: unknown
-        theme?: unknown
-        panelHeight?: unknown
-        footerHints?: unknown
-        iconSet?: unknown
-        rememberPreset?: unknown
-        favoriteModels?: unknown
-        hiddenModels?: unknown
-      }
-    | undefined
+export function subscribeThemeSettings(
+  ctx: Context,
+  onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, iconSet: IconSet, language: string) => void,
+): void {
+  if (onPreferenceChange === undefined) return
+  ctx.on('settings/document-updated', (ns) => {
+    if (ns !== THEME_SETTINGS_NAMESPACE) return
+    const section = tuiConfig()
+    onPreferenceChange(
+      narrowTheme(section.theme.get()),
+      isPanelHeight(section.panelHeight.get()) ? section.panelHeight.get() : DEFAULT_PANEL_HEIGHT,
+      narrowFooterHints(section.footerHints.get()),
+      narrowIconSet(section.iconSet.get()),
+      narrowLanguage(section.language.get()),
+    )
+  })
 }
 
 /**
  * Read the persisted theme preference (the startup snapshot).
  *
- * @param ctx - plugin context.
- * @returns the resolved `dsh-tui` theme value, or `'auto'` when the settings
- * service is absent or the namespace/value cannot be read.
+ * @returns the live `dsh-tui` theme value, or `'auto'` when the entry config
+ * is not bound (a `Config`-less deployment always has the schema default).
  */
-export async function readThemePreference(ctx: Context): Promise<ThemePreference> {
-  const pref = (await readResolvedSection(ctx))?.theme
-  if (typeof pref === 'string' && pref !== '') return pref
-  return 'auto'
+export function readThemePreference(_ctx: Context): ThemePreference {
+  return narrowTheme(tuiConfig().theme.get())
 }
 
 /**
  * Read the persisted think/tool panel height (the startup snapshot).
  *
- * @param ctx - plugin context.
- * @returns the resolved `dsh-tui` panelHeight value, or DEFAULT_PANEL_HEIGHT
- * when the settings service is absent or the namespace/value cannot be read.
+ * @returns the live `dsh-tui` panelHeight value, or DEFAULT_PANEL_HEIGHT when
+ * the entry config is not bound.
  */
-export async function readPanelHeightPreference(ctx: Context): Promise<PanelHeight> {
-  const height = (await readResolvedSection(ctx))?.panelHeight
-  if (isPanelHeight(height)) return height
-  return DEFAULT_PANEL_HEIGHT
+export function readPanelHeightPreference(_ctx: Context): PanelHeight {
+  const height = tuiConfig().panelHeight.get()
+  return isPanelHeight(height) ? height : DEFAULT_PANEL_HEIGHT
 }
 
 /**
  * Read the persisted footer-hint selection (the startup snapshot).
  *
- * @param ctx - plugin context.
- * @returns the resolved `dsh-tui` footerHints object, or DEFAULT_FOOTER_HINTS
- * when the settings service is absent or the namespace/value cannot be read.
+ * @returns the live `dsh-tui` footerHints object, or DEFAULT_FOOTER_HINTS
+ * when the entry config is not bound.
  */
-export async function readFooterHintsPreference(ctx: Context): Promise<FooterHints> {
-  return narrowFooterHints((await readResolvedSection(ctx))?.footerHints)
+export function readFooterHintsPreference(_ctx: Context): FooterHints {
+  return narrowFooterHints(tuiConfig().footerHints.get())
 }
 
 /**
  * Read the persisted icon-set mode (the startup snapshot).
  *
- * @param ctx - plugin context.
- * @returns the resolved `dsh-tui` iconSet value, or `'auto'` when the settings
- * service is absent or the namespace/value cannot be read.
+ * @returns the live `dsh-tui` iconSet value, or `'auto'` when the entry
+ * config is not bound.
  */
-export async function readIconSetPreference(ctx: Context): Promise<IconSet> {
-  return narrowIconSet((await readResolvedSection(ctx))?.iconSet)
+export function readIconSetPreference(_ctx: Context): IconSet {
+  return narrowIconSet(tuiConfig().iconSet.get())
 }
 
 /**
  * Read the persisted UI language (the startup snapshot).
  *
- * @param ctx - plugin context.
- * @returns the resolved `dsh-tui` language value, or DEFAULT_LANGUAGE ('en')
- * when the settings service is absent or the namespace/value cannot be read.
- * Whether the id is actually installed is decided by the i18n registry
- * (initI18n degrades unknown ids to 'en').
+ * @returns the live `dsh-tui` language value, or DEFAULT_LANGUAGE ('en') when
+ * the entry config is not bound. Whether the id is actually installed is
+ * decided by the i18n registry (initI18n degrades unknown ids to 'en').
  */
-export async function readLanguagePreference(ctx: Context): Promise<string> {
-  return narrowLanguage((await readResolvedSection(ctx))?.language)
+export function readLanguagePreference(_ctx: Context): string {
+  return narrowLanguage(tuiConfig().language.get())
 }
 
 /**
  * Read the persisted preset-memory toggle (the startup snapshot). Default
  * TRUE: remembering is the out-of-the-box behavior; only an explicit
- * `dsh-tui.rememberPreset: false` turns it off.
+ * `rememberPreset: false` turns it off.
  *
- * @param ctx - plugin context.
- * @returns the resolved boolean, or `true` when the settings service is
- * absent or the namespace/value cannot be read.
+ * @returns the live boolean, or `true` when the entry config is not bound.
  */
-export async function readRememberPreset(ctx: Context): Promise<boolean> {
-  return narrowRememberPreset((await readResolvedSection(ctx))?.rememberPreset)
+export function readRememberPreset(_ctx: Context): boolean {
+  return narrowRememberPreset(tuiConfig().rememberPreset.get())
 }
 
 /**
- * Read the currently persisted preset-memory toggle, synchronously. Unlike
- * `readRememberPreset` (the startup snapshot), this describes whatever the
- * settings service exposes right now — the /preset switch path calls it at
- * every commit, so a `/settings` toggle applies without a restart.
- * @returns `true` when the service, namespace, or value is absent.
- */
-export function currentRememberPreset(ctx: Context): boolean {
-  const settings = ctx.get('settings') as SettingsProvider | undefined
-  if (settings === undefined) return true
-  return narrowRememberPreset((settings
-    .describe()
-    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { rememberPreset?: unknown }
-    | undefined)?.rememberPreset)
-}
-
-/**
- * Explicit session-management overrides as the user wrote them in
- * settings.yaml — the raw `user` layer of the descriptor, NOT the resolved
- * value. This distinction is the precedence seam: the resolved value bakes
- * the schema defaults in (a missing `retention.maxCount` resolves to 100),
- * so reading it would make the defaults outrank the DSH_TUI_RETENTION and
- * DSH_TUI_RESUME environment variables; only a
- * field PRESENT in the user layer is an explicit override
- * (`settings.yaml explicit > env > default`, honored by
- * `resolveRetentionConfig` / `resolveResumeConfig`). Fields stay `unknown`
- * — a hand-edited document can carry anything, and the resolvers narrow
- * per field with one stderr line on garbage.
+ * Explicit session-management overrides as the user wrote them into the
+ * profile patch (entry `dsh-tui` → `config:`) — the raw `user` layer of the
+ * settings descriptor, NOT the resolved value. This distinction is the
+ * precedence seam: the resolved value bakes the schema defaults in (a missing
+ * `retention.maxCount` resolves to 100), so reading it would make the
+ * defaults outrank the DSH_TUI_RETENTION and DSH_TUI_RESUME environment
+ * variables; only a field PRESENT in the user layer is an explicit override
+ * (`settings explicit > env > default`, honored by `resolveRetentionConfig` /
+ * `resolveResumeConfig`). Fields stay `unknown` — a hand-edited document can
+ * carry anything, and the resolvers narrow per field with one stderr line on
+ * garbage. The user layer rides `settings.describe()` — the only public
+ * channel for the raw explicit layer (volatile `.get()` reads expose the
+ * RESOLVED value only).
  */
 export interface SessionManagementExplicit {
   retention?: { maxCount?: unknown; maxAgeDays?: unknown; minIdleHours?: unknown }
@@ -569,23 +512,20 @@ export interface SessionManagementExplicit {
 }
 
 /**
- * Read the explicit `dsh-tui.retention` / `dsh-tui.resume` sections from
- * the settings document's user layer (see `SessionManagementExplicit`).
- * Awaits the namespace registration bounded (same plumbing as the theme
- * readers), so the startup retention pass can call it without hanging a
- * settings-less deployment.
+ * Read the explicit `dsh-tui.retention` / `dsh-tui.resume` sections from the
+ * settings document's user layer (see `SessionManagementExplicit`).
  *
+ * @param ctx - plugin context.
  * @returns ALWAYS the two-key shape — a section absent from the user
- * layer (or the whole service/namespace missing) reads as
+ * layer (or the whole service/entry missing) reads as
  * `{ retention: undefined, resume: undefined }`, never a bare
  * `undefined`, so callers destructure one stable shape. "Nothing
  * explicitly configured" (env/defaults govern) and "nothing to read at
  * all" are the same outcome for every consumer.
  */
-export async function readSessionManagementExplicit(
-  ctx: Context,
-): Promise<SessionManagementExplicit> {
-  const user = (await registeredDescriptor(ctx))?.user
+export function readSessionManagementExplicit(ctx: Context): SessionManagementExplicit {
+  const settings = ctx.get('settings') as SettingsForms | undefined
+  const user = settings?.describe().find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.user
   if (user === null || typeof user !== 'object') {
     return { retention: undefined, resume: undefined }
   }
@@ -604,11 +544,11 @@ export async function readSessionManagementExplicit(
 
 /**
  * Raw user-layer `dsh-tui.askUser` section — the explicit ask-user timeout
- * overrides as written in settings.yaml (see `readSessionManagementExplicit`
- * for why the USER layer, not the resolved value, is the precedence seam:
- * the resolved value's schema defaults must not shadow the
- * DSH_TUI_ASK_USER_* environment variables). `undefined` = nothing
- * explicitly configured (env/defaults govern).
+ * overrides as written into the profile patch (see
+ * `readSessionManagementExplicit` for why the USER layer, not the resolved
+ * value, is the precedence seam: the resolved value's schema defaults must
+ * not shadow the DSH_TUI_ASK_USER_* environment variables). `undefined` =
+ * nothing explicitly configured (env/defaults govern).
  */
 export interface AskUserTimeoutExplicit {
   idleMinutes?: unknown
@@ -617,16 +557,13 @@ export interface AskUserTimeoutExplicit {
 
 /**
  * Read the explicit `dsh-tui.askUser` section from the settings document's
- * user layer. Awaits the namespace registration bounded (same plumbing as
- * `readSessionManagementExplicit`), so an ask arriving during startup
- * cannot hang on a settings-less deployment. Returns `undefined` when the
- * section, the user layer, the namespace, or the whole service is absent —
- * "nothing explicitly configured" for the ask-user resolver.
+ * user layer. Returns `undefined` when the section, the user layer, the
+ * entry, or the whole service is absent — "nothing explicitly configured"
+ * for the ask-user resolver.
  */
-export async function readAskUserExplicit(
-  ctx: Context,
-): Promise<AskUserTimeoutExplicit | undefined> {
-  const user = (await registeredDescriptor(ctx))?.user
+export function readAskUserExplicit(ctx: Context): AskUserTimeoutExplicit | undefined {
+  const settings = ctx.get('settings') as SettingsForms | undefined
+  const user = settings?.describe().find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.user
   if (user === null || typeof user !== 'object') return undefined
   const section = (user as { askUser?: unknown }).askUser
   return section !== null && typeof section === 'object'
@@ -635,70 +572,53 @@ export async function readAskUserExplicit(
 }
 
 /**
- * Read the currently persisted footer-hint selection, synchronously.
- * Unlike `readFooterHintsPreference` (the startup snapshot), this does not
- * wait for the namespace registration - it describes whatever the settings
- * service exposes right now, so a caller can honor a live change immediately.
- * @returns DEFAULT_FOOTER_HINTS when the service, namespace, or value is absent.
+ * Read the currently persisted footer-hint selection, synchronously — the
+ * live volatile reference, so a committed change applies on the next read.
+ * @returns DEFAULT_FOOTER_HINTS when the entry config is not bound.
  */
-export function currentFooterHints(ctx: Context): FooterHints {
-  const settings = ctx.get('settings') as SettingsProvider | undefined
-  if (settings === undefined) return { ...DEFAULT_FOOTER_HINTS }
-  const hints = (settings
-    .describe()
-    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { footerHints?: unknown }
-    | undefined)?.footerHints
-  return narrowFooterHints(hints)
+export function currentFooterHints(_ctx: Context): FooterHints {
+  return narrowFooterHints(tuiConfig().footerHints.get())
 }
 
 /**
- * Read the currently persisted footer CH mode, synchronously. Unlike a
- * startup snapshot, this describes whatever the settings service exposes
- * right now — the footer calls it on every render, so a committed change
- * (the /settings browser, an external edit) applies on the next repaint.
- * @returns DEFAULT_CACHE_HIT_MODE when the service, namespace, or value is absent.
+ * Read the currently persisted footer CH mode, synchronously — the footer
+ * calls it on every render, so a committed change applies on the next repaint.
+ * @returns DEFAULT_CACHE_HIT_MODE when the entry config is not bound.
  */
-export function currentCacheHitMode(ctx: Context): CacheHitMode {
-  const settings = ctx.get('settings') as SettingsProvider | undefined
-  if (settings === undefined) return DEFAULT_CACHE_HIT_MODE
-  const mode = (settings
-    .describe()
-    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { cacheHitMode?: unknown }
-    | undefined)?.cacheHitMode
-  return narrowCacheHitMode(mode)
+export function currentCacheHitMode(_ctx: Context): CacheHitMode {
+  return narrowCacheHitMode(tuiConfig().cacheHitMode.get())
 }
 
 /**
- * Read the currently persisted theme preference, synchronously.
- * Unlike `readThemePreference` (the startup snapshot), this does not wait for
- * the namespace registration — it describes whatever the settings service
- * exposes right now, so the `/theme` picker preselects the live value, which
- * may have changed since startup (e.g. through the /settings browser).
- * @returns 'auto' when the service, namespace, or value cannot be read.
+ * Read the currently persisted theme preference, synchronously — the /theme
+ * picker preselects the live value.
+ * @returns 'auto' when the entry config is not bound.
  */
-export function currentThemePreference(ctx: Context): ThemePreference {
-  const settings = ctx.get('settings') as SettingsProvider | undefined
-  if (settings === undefined) return 'auto'
-  const pref = (settings
-    .describe()
-    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { theme?: unknown }
-    | undefined)?.theme
-  if (typeof pref === 'string' && pref !== '') return pref
-  return 'auto'
+export function currentThemePreference(_ctx: Context): ThemePreference {
+  return narrowTheme(tuiConfig().theme.get())
+}
+
+/**
+ * Read the currently persisted preset-memory toggle, synchronously — the
+ * /preset switch path calls it at every commit, so a `/settings` toggle
+ * applies immediately.
+ * @returns `true` when the entry config is not bound.
+ */
+export function currentRememberPreset(_ctx: Context): boolean {
+  return narrowRememberPreset(tuiConfig().rememberPreset.get())
 }
 
 /**
  * Persist one `dsh-tui` preference (theme, panelHeight, or a subagent limit)
- * to the settings namespace. The namespace is `applies: 'live'`, so the
- * commit (observed through the registration's watch hook) hot-applies the
- * change to the running TUI. Best-effort: a deployment without a settings
- * provider reports the failure; a failed write returns its error message for
- * the caller to surface. A concurrent writer moving the namespace rejects
- * with `SettingsConflictError` — retried once against a fresh revision; a
- * second conflict surfaces a friendly message instead of the raw error.
+ * through `settings.mutate` (the 0.1.7 spell of the same 0.1.5 write — the
+ * signature is unchanged). The write is volatile-only, so the loader commits
+ * it into the running references without remounting the plugin, and the
+ * `settings/document-updated` event hot-applies it to the TUI. Best-effort:
+ * a deployment without the settings service reports the failure; a failed
+ * write returns its error message for the caller to surface. A concurrent
+ * writer moving the entry rejects with `SettingsConflictError` — retried
+ * once against a fresh revision; a second conflict surfaces a friendly
+ * message instead of the raw error.
  * @returns undefined on success, the failure message otherwise.
  */
 async function writeDshTuiPreference(
@@ -709,11 +629,11 @@ async function writeDshTuiPreference(
     | 'favoriteModels' | 'hiddenModels',
   value: string | number | boolean | string[],
 ): Promise<string | undefined> {
-  const settings = ctx.get('settings') as SettingsProvider | undefined
+  const settings = ctx.get('settings') as SettingsForms | undefined
   if (settings === undefined) return 'Settings service is not available.'
-  // The descriptor carries the namespace's revision (optimistic-concurrency
-  // token for mutate) and proves the schema registration that validates the
-  // path below; the write rejects when the namespace is unregistered.
+  // The descriptor carries the entry's revision (optimistic-concurrency
+  // token for mutate) and proves the entry is live; the write rejects when
+  // it is not.
   const ops: SettingsPathOp[] = [{ op: 'set', path: [key], value }]
   for (let attempt = 0; ; attempt++) {
     const descriptor = settings.describe().find((d) => d.ns === THEME_SETTINGS_NAMESPACE)
@@ -730,9 +650,9 @@ async function writeDshTuiPreference(
 }
 
 /**
- * Persist the theme preference to the `dsh-tui` settings namespace. The
- * namespace is `applies: 'live'`, so the commit (observed through the
- * registration's watch hook) hot-applies the change to the running TUI.
+ * Persist the theme preference to the `dsh-tui` entry config. Volatile-only
+ * write: the commit hot-applies to the running TUI through the
+ * `settings/document-updated` subscription.
  * @returns undefined on success, the failure message otherwise.
  */
 export async function writeThemePreference(ctx: Context, pref: ThemePreference): Promise<string | undefined> {
@@ -740,9 +660,8 @@ export async function writeThemePreference(ctx: Context, pref: ThemePreference):
 }
 
 /**
- * Persist the UI language to the `dsh-tui` settings namespace. The namespace
- * is `applies: 'live'`, so the commit (observed through the registration's
- * watch hook) hot-applies the language to the running TUI.
+ * Persist the UI language to the `dsh-tui` entry config. Volatile-only
+ * write: the commit hot-applies to the running TUI.
  * @returns undefined on success, the failure message otherwise.
  */
 export async function writeLanguagePreference(ctx: Context, id: string): Promise<string | undefined> {
@@ -750,48 +669,75 @@ export async function writeLanguagePreference(ctx: Context, id: string): Promise
 }
 
 /**
- * Read the currently resolved subagent limits, synchronously. Unlike the
- * startup-snapshot readers, this does not wait for the namespace registration
- * — it describes whatever the settings service exposes right now, so every
- * policy decision (the guard at each spawn, `onRoundCount` at each child
- * assistant message)
- * reflects the latest committed value without a watcher. Missing settings
- * service or namespace, or a non-integer/negative field, degrades to the
- * defaults — a settings-less deployment keeps the documented caps.
+ * Read the currently resolved subagent limits, synchronously — the live
+ * volatile references, so every policy decision (the guard at each spawn,
+ * `onRoundCount` at each child assistant message) reflects the latest
+ * committed value without a watcher. An unbound entry config or a
+ * non-integer/negative field degrades to the defaults — a config-less
+ * deployment keeps the documented caps.
  */
-export function readSubagentLimits(ctx: Context): SubagentLimits {
-  const settings = ctx.get('settings') as SettingsProvider | undefined
-  if (settings === undefined) return { ...DEFAULT_SUBAGENT_LIMITS }
-  // The descriptor's `value` is the whole resolved section
-  // (`{ theme: ..., panelHeight: ..., maxAgents: ..., maxRounds: ...,
-  // disableSubagent: ... }`) — narrow the unknown to the observed fields.
-  const section = settings
-    .describe()
-    .find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.value as
-    | { maxAgents?: unknown; maxRounds?: unknown; maxRoundsGrace?: unknown; disableSubagent?: unknown; registeredOnly?: unknown }
-    | undefined
+export function readSubagentLimits(_ctx: Context): SubagentLimits {
+  const section = tuiConfig()
   const natural = (value: unknown, fallback: number): number =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
   return {
-    maxAgents: natural(section?.maxAgents, DEFAULT_SUBAGENT_LIMITS.maxAgents),
-    maxRounds: natural(section?.maxRounds, DEFAULT_SUBAGENT_LIMITS.maxRounds),
-    maxRoundsGrace: natural(section?.maxRoundsGrace, DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace),
-    disableSubagent: typeof section?.disableSubagent === 'boolean'
-      ? section.disableSubagent
+    maxAgents: natural(section.maxAgents.get(), DEFAULT_SUBAGENT_LIMITS.maxAgents),
+    maxRounds: natural(section.maxRounds.get(), DEFAULT_SUBAGENT_LIMITS.maxRounds),
+    maxRoundsGrace: natural(section.maxRoundsGrace.get(), DEFAULT_SUBAGENT_LIMITS.maxRoundsGrace),
+    disableSubagent: typeof section.disableSubagent.get() === 'boolean'
+      ? section.disableSubagent.get()
       : DEFAULT_SUBAGENT_LIMITS.disableSubagent,
-    registeredOnly: typeof section?.registeredOnly === 'boolean'
-      ? section.registeredOnly
+    registeredOnly: typeof section.registeredOnly.get() === 'boolean'
+      ? section.registeredOnly.get()
       : DEFAULT_SUBAGENT_LIMITS.registeredOnly,
   }
 }
 
 /**
+ * The OFFICIAL dsh-subagent plugin's own caps (dsh 0.1.7: `static Config`
+ * with volatile `maxActiveSubagents` — concurrent continuable children,
+ * default 8 — and `maxDepth` — default delegation depth, default 1). These
+ * are the host-side concurrency/depth limits that compose with — and are
+ * independent of — this TUI's own maxAgents/maxRounds policy knobs. This
+ * reader is DISPLAY-ONLY (the /agents limits panel shows the currently
+ * effective official caps; editing them belongs to /settings, which owns
+ * the `subagent` entry).
+ */
+export interface OfficialSubagentLimits {
+  /** Live official concurrent-children cap; undefined = entry not readable. */
+  maxActiveSubagents: number | undefined
+  /** Live official delegation depth; undefined = entry not readable. */
+  maxDepth: number | undefined
+}
+
+/**
+ * Read the official `subagent` entry's resolved config through the settings
+ * forms descriptor (the only public channel for ANOTHER entry's live
+ * values). Best-effort: no settings service, no such entry, or a malformed
+ * value reads as `undefined` per field — the panel then annotates the row
+ * instead of showing a number it cannot vouch for.
+ */
+export function readOfficialSubagentLimits(ctx: Context): OfficialSubagentLimits {
+  const settings = ctx.get('settings') as SettingsForms | undefined
+  const value = settings?.describe().find((d) => d.ns === 'subagent')?.value
+  const natural = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : undefined
+  if (value === null || typeof value !== 'object') {
+    return { maxActiveSubagents: undefined, maxDepth: undefined }
+  }
+  const section = value as { maxActiveSubagents?: unknown; maxDepth?: unknown }
+  return {
+    maxActiveSubagents: natural(section.maxActiveSubagents),
+    maxDepth: natural(section.maxDepth),
+  }
+}
+
+/**
  * Persist one subagent policy knob (maxAgents, maxRounds, or disableSubagent)
- * to the `dsh-tui` settings namespace. The namespace is `applies: 'live'`, so
- * the commit hot-applies without a restart — the policy reads
- * `readSubagentLimits` at the next decision point. Never throws: a deployment
- * without the settings provider, or an unregistered namespace, surfaces a
- * failure message for the caller.
+ * to the `dsh-tui` entry config. Volatile-only write: the commit hot-applies
+ * without a restart — the policy reads `readSubagentLimits` at the next
+ * decision point. Never throws: a deployment without the settings service
+ * surfaces a failure message for the caller.
  * @returns undefined on success, the failure message otherwise.
  */
 export async function writeSubagentLimit(
@@ -811,24 +757,23 @@ export interface ModelPrefs {
 }
 
 /**
- * Read the persisted model favorites/hiddens (the startup snapshot). Both
- * lists narrow through `narrowStringList` — a malformed or missing field
- * degrades to an empty list.
+ * Read the persisted model favorites/hiddens. Both lists narrow through
+ * `narrowStringList` — a malformed field degrades to an empty list.
  */
-export async function readModelPrefs(ctx: Context): Promise<ModelPrefs> {
-  const section = await readResolvedSection(ctx)
+export function readModelPrefs(_ctx: Context): ModelPrefs {
+  const section = tuiConfig()
   return {
-    favoriteModels: narrowStringList(section?.favoriteModels),
-    hiddenModels: narrowStringList(section?.hiddenModels),
+    favoriteModels: narrowStringList(section.favoriteModels.get()),
+    hiddenModels: narrowStringList(section.hiddenModels.get()),
   }
 }
 
 /**
  * Persist one model pref list (favoriteModels or hiddenModels) to the
- * `dsh-tui` settings namespace via `settings.mutate` (optimistic concurrency,
- * one retry on `SettingsConflictError`) — never a whole-file rewrite. The
- * caller invokes this on every f/h toggle, so each press lands immediately.
- * Best-effort: a deployment without the settings provider surfaces the
+ * `dsh-tui` entry config via `settings.mutate` (optimistic concurrency, one
+ * retry on `SettingsConflictError`) — never a whole-file rewrite. The caller
+ * invokes this on every f/h toggle, so each press lands immediately.
+ * Best-effort: a deployment without the settings service surfaces the
  * failure message; the in-panel state stays session-local either way.
  * @returns undefined on success, the failure message otherwise.
  */

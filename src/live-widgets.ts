@@ -346,12 +346,15 @@ export class LiveWidgets {
         this.thinkPanel.hide()
         break
       case 'tool/result': {
-        const block = event.data.message.content[0]
-        this.toolPanel.settle(block?.toolCallId ?? '', {
+        // dsh 0.1.7: the result message is role 'tool' — toolCallId/isError
+        // live on the MESSAGE (the old tool-result block is gone) and its
+        // `content` IS the flat result block list.
+        const message = event.data.message
+        this.toolPanel.settle(message.toolCallId, {
           error: event.data.error === undefined
             ? undefined
             : { name: event.data.error.name, code: event.data.error.code },
-          block: block === undefined ? undefined : { isError: block.isError, content: block.content },
+          block: { isError: message.isError, content: message.content },
         })
         break
       }

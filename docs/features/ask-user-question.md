@@ -18,7 +18,7 @@ When a timer fires:
 - Once nothing is left unanswered the panel settles immediately (the review page is a human double-check an absent human cannot do); a review-page timeout submits the answers already given. A transient footer notice reports what happened.
 - The panel footer shows a live `· auto in m:ss` countdown while a timer is armed.
 
-Configure through the `dsh-tui` settings namespace (precedence: settings.yaml > env > default; `<= 0` disables a rule; both rules off = wait forever):
+Configure through the `dsh-tui` entry config (precedence: explicit config > env > default; `<= 0` disables a rule; both rules off = wait forever):
 
 ```yaml
 dsh-tui:

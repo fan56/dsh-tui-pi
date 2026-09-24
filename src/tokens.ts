@@ -37,11 +37,13 @@ export function estimateTextTokens(text: string, mode: 'cjk' | 'ascii' = 'cjk'):
 
 /**
  * CJK-aware token estimate of a text block list (the content shape shared by
- * `user/message`, `assistant/message` and `tool/result` inner blocks).
+ * every dsh 0.1.7 message — `user/message`, `developer/message`,
+ * `assistant/message`, and `tool/result` messages all carry a flat block
+ * list; the old nested tool-result block is gone from the union).
  *
  * @param blocks - unknown-shaped content blocks; text blocks are counted,
- *   everything else (tool-call, tool-result, reasoning, …) contributes the
- *   text strings it carries, ignoring structural overhead.
+ *   everything else (tool-call, reasoning, tool-addition/removal, …)
+ *   contributes the text strings it carries, ignoring structural overhead.
  * @param mode - pricing mode, see {@link estimateTextTokens}.
  * @returns the estimated token count of the joined text.
  */
@@ -54,9 +56,6 @@ export function estimateContentTokens(blocks: unknown, mode: 'cjk' | 'ascii' = '
     if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text)
     else if (b.type === 'tool-call' && typeof (b as { arguments?: unknown }).arguments === 'string') {
       parts.push((b as { arguments: string }).arguments)
-    } else if (b.type === 'tool-result') {
-      const inner = (b as { content?: unknown }).content
-      if (Array.isArray(inner)) inner.forEach(collect)
     }
   }
   blocks.forEach(collect)

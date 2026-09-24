@@ -711,8 +711,22 @@ function textOfContent(content: unknown): string {
  * then the first assistant message. Synthetic context injects (workspace
  * instructions, runtime reminders) are skipped entirely — they precede the
  * first real prompt and read as noise.
+ *
+ * The skip list spells the 0.1.7 producer-kind vocabulary: the shared
+ * 'plugin' kind is gone (producers declare their own merge-extensible
+ * kinds), so the known synthetic kinds — 'system-prompt', 'tool',
+ * 'model-selection', 'user-approval', 'skill-invocation', 'ptc-mode',
+ * 'tool-registry' — are enumerated explicitly, and any UNKNOWN kind still
+ * falls through to the fallback tier (the documented consumer default).
  */
 export function previewOfEvents(events: readonly SessionEvent[]): string | undefined {
+  // Synthetic producer kinds whose user-role rows are never a session title.
+  // 'plugin' and 'agent-instructions' are the pre-0.1.7 spellings still
+  // present in migrated legacy logs.
+  const SYNTHETIC_KINDS = new Set([
+    'system-prompt', 'tool', 'model-selection', 'user-approval',
+    'skill-invocation', 'ptc-mode', 'tool-registry', 'plugin', 'agent-instructions',
+  ])
   let fallbackUser: string | undefined
   let fallbackAssistant: string | undefined
   for (const event of events) {
@@ -722,7 +736,7 @@ export function previewOfEvents(events: readonly SessionEvent[]): string | undef
       if (!text) continue
       const kind = message?.source?.kind
       if (kind === 'user') return text
-      if (kind === 'tool' || kind === 'plugin' || kind === 'agent-instructions') continue
+      if (kind !== undefined && SYNTHETIC_KINDS.has(kind)) continue
       if (fallbackUser === undefined) fallbackUser = text
     } else if (event.type === 'assistant/message') {
       const message = (event.data as { message?: { content?: unknown } }).message

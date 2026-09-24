@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**Dynamic context pruning (DCP)**](docs/features/dcp.md) — context stays within limits automatically, with zero LLM calls.
 - [**Persistent context**](docs/features/persistent-context.md) — your ground rules ride along on every request, hot-applied with no restart.
 - [**Model profiles & favorites**](docs/features/model-profiles.md) — profile switching lives in [dsh-profile-switch](https://github.com/fan56/dsh-profile-switch) now; this suite keeps the TUI read side (session seeding from the pin, live-selection bridge, scope-aware `/agents` edits) and the `/model` favorites that keep the picker small.
-- [**Agent preset switching**](docs/features/preset-switch.md) — `/preset` between the shipped agent compositions (`standard`, `minimal`, …); a switch is confirmed and starts a NEW session on the preset (the current one stays resumable); what a preset really gates.
+- [**Agent preset switching**](docs/features/preset-switch.md) — `/preset` between the agent presets the host's 0.1.7 registry declares (`standard`, `minimal`, …); a switch is confirmed and starts a NEW session on the preset (the current one stays resumable); what a preset really gates, and how to migrate a 0.1.5 directory preset (same-id bundle patch).
 - [**Sessions & resume**](docs/features/sessions-resume.md) — sessions stay tidy automatically and resume in a few keystrokes; the host's kernel write lease keeps the log single-writer across processes.
 - [**History browser**](docs/features/history.md) — `/history` opens a fixed two-pane look-back over the session: completed turns on the left, the selected turn's replies on the right; copy a prompt back to the editor, or cold-read any stored session without resuming it (read-only).
 - [**Themes**](docs/features/themes.md) — 20 built-in palettes (10 light + 10 dark) plus user theme discovery (`~/.dsh/themes/`); hot-switchable, `auto` follows your terminal.
@@ -61,7 +61,7 @@ The `dsh-tui-pi` bin shim is global and can stay; if you installed the package g
 
 The host cleans up the profile automatically: the `dsh.profile.bundles` entry is spliced and the whole patch layer goes away with the package — the stock `session-projection-cache` row re-enables, and the projcache wrapper, the `tool-ask-user` insert and its disable row all vanish.
 
-User data stays on disk on purpose (deleting it is destructive; a reinstall reuses all of it): `~/.dsh/APPEND_SYSTEM.md`, `tui-command-usage.json`, `model-profiles.json`, `keybindings.json`, `~/.dsh/agents/` + `~/.dsh/skills/`, workspace `.dsh-profile` pins, the `dsh-tui:` settings section, and the session projection cache (incl. `.bak-preflight-*` migration backups). While the plugin runs, the retention janitor (default `maxCount: 100` / `maxAgeDays: 30`) deletes old session logs — uninstalling stops that, but already-deleted logs are gone. `scripts/install-font.mjs` mutates OS font/terminal state and has a documented backup; uninstall doesn't touch it.
+User data stays on disk on purpose (deleting it is destructive; a reinstall reuses all of it): `~/.dsh/APPEND_SYSTEM.md`, `tui-command-usage.json`, `model-profiles.json`, `keybindings.json`, `~/.dsh/agents/` + `~/.dsh/skills/`, workspace `.dsh-profile` pins, the `dsh-tui` entry config in the profile patch (a pre-0.1.7 `settings.yaml` section lands there as `settings.yaml.imported`), and the session projection cache (incl. `.bak-preflight-*` migration backups). While the plugin runs, the retention janitor (default `maxCount: 100` / `maxAgeDays: 30`) deletes old session logs — uninstalling stops that, but already-deleted logs are gone. `scripts/install-font.mjs` mutates OS font/terminal state and has a documented backup; uninstall doesn't touch it.
 
 ---
 
@@ -109,18 +109,23 @@ Remap any app key through `~/.dsh/keybindings.json` (a partial JSON map, live-ap
 
 ## Configuration
 
-Everything lives under the `dsh-tui` namespace of `~/.dsh/settings.yaml` — but you rarely touch the file: **`/settings` browses and edits it in place** (searchable categories — Agent Presets / General / Models / Plugins / TUI — with live values, per-field descriptions, and an add-provider flow under Models). Language, theme, panel height, footer hints and icon set hot-apply on change; the rest reads at the next launch.
+Everything lives in the plugin's `dsh-tui` entry config inside your profile's `cordis.patch.yml` (dsh 0.1.7 projects every volatile field of a plugin's declared Config schema into the settings surface) — but you rarely touch the file: **`/settings` browses and edits it in place** (searchable categories — Agent Presets / General / Models / Plugins / TUI — with live values, per-field descriptions, and an add-provider flow under Models). Language, theme, panel height, footer hints and icon set hot-apply on change; the rest reads at the next launch.
 
 Most knobs have sensible defaults and need no configuration. The few you might actually set:
 
 ```yaml
-dsh-tui:
-  language: zh-CN   # UI language — or just /language (asks on any surface; bundled: en, zh-CN, ja, ko)
-  theme: auto       # auto / light / dark / any registered theme name — or /theme
-  maxAgents: 4      # subagent concurrency, 0 = unlimited (also tunable in /agents → l)
+- id: dsh-tui         # the plugin's entry row in the profile patch
+  config:
+    language: zh-CN   # UI language — or just /language (asks on any surface; bundled: en, zh-CN, ja, ko)
+    theme: auto       # auto / light / dark / any registered theme name — or /theme
+    maxAgents: 4      # subagent concurrency, 0 = unlimited (also tunable in /agents → l)
 ```
 
-Adding a UI language is one JSON file in `~/.dsh/locales/` — a same-id file merges per key over the bundled one, a new id registers (details: [Settings browser & UI languages](docs/features/settings-i18n.md)). The session-store janitors (`retention` / `resume`) and ask-user timeouts (`askUser`) live in the same namespace with documented defaults.
+`/agents → l` also mirrors the OFFICIAL dsh-subagent caps (`maxActiveSubagents`, default 8; `maxDepth`, default 1) as read-only rows — those belong to the `subagent` plugin entry and are edited in `/settings`, while the panel's own rows (maxAgents / maxRounds / maxRoundsGrace / the two fences) stay hot-editable here.
+
+Upgrading from dsh 0.1.5? Your old `~/.dsh/settings.yaml` `dsh-tui:` section is imported into the profile automatically on the first 0.1.7 boot (the original file is kept next to it as `settings.yaml.imported`).
+
+Adding a UI language is one JSON file in `~/.dsh/locales/` — a same-id file merges per key over the bundled one, a new id registers (details: [Settings browser & UI languages](docs/features/settings-i18n.md)). The session-store janitors (`retention` / `resume`) and ask-user timeouts (`askUser`) live in the same entry config with documented defaults.
 
 The plugin ships a bundled skill (`dsh-tui-pi-config`): ask the agent to "configure the TUI" and it collects your choices interactively and writes the section for you. **The full key table and the `DSH_TUI_*` env var list live in [skills/dsh-tui-pi-config/SKILL.md](skills/dsh-tui-pi-config/SKILL.md).**
 

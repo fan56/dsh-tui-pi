@@ -294,7 +294,7 @@ test('resolveInjectionRoute fails closed on an unexpected status shape', () => {
 test('buildSteerMessage carries the text content and the plugin source', () => {
   const message = buildSteerMessage('focus on the failing test')
   assert.deepEqual(message.content, [{ type: 'text', text: 'focus on the failing test' }])
-  assert.deepEqual(message.source, { kind: 'plugin', plugin: 'dsh-tui-pi' })
+  assert.deepEqual(message.source, { kind: 'dsh-tui-pi', surface: 'steer' })
   assert.equal(message.role, 'user')
 })
 

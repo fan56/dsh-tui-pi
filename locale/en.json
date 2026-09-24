@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-tui-pi",
+    "description": "Fully-featured pi-style terminal UI for dsh: history look-back & fork-at-turn, preset switching, live subagent steering, model profiles & themes."
+  }
+}

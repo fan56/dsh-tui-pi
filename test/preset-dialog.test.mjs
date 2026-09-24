@@ -30,8 +30,8 @@ const DOWN = '\x1b[B'
 const UP = '\x1b[A'
 
 const roster = [
-  { id: 'standard', name: 'Standard', trust: 'system', isDefault: true },
-  { id: 'minimal', name: 'Minimal', trust: 'user', isDefault: false },
+  { id: 'standard', name: 'Standard', isDefault: true },
+  { id: 'minimal', name: 'Minimal', isDefault: false },
 ]
 
 // ----------------------------------------------------------------- wording --

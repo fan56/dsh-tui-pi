@@ -1,6 +1,6 @@
 ---
 name: dsh-tui-pi-config
-description: "dsh TUI 增强套件使用与配置指南。凡涉及 TUI 主题/面板/footer、界面语言、子代理并发与轮数限制、模型收藏与隐藏、会话保留与 /resume 过滤、ask_user 超时、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 18 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser）、DSH_TUI_* 环境变量、快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、语言、language、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。"
+description: "dsh TUI 增强套件使用与配置指南。凡涉及 TUI 主题/面板/footer、界面语言、子代理并发与轮数限制、模型收藏与隐藏、会话保留与 /resume 过滤、ask_user 超时、preset 记忆，或要配置 dsh-tui 段时先读本指南：插件配置 entry `dsh-tui` 的 17 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser）、DSH_TUI_* 环境变量、快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、语言、language、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。"
 ---
 
 # dsh-tui-pi 使用指南（TUI 主题 / 子代理治理 / 会话管理）
@@ -9,10 +9,13 @@ description: "dsh TUI 增强套件使用与配置指南。凡涉及 TUI 主题/�
 > `/history` 回看与 fork、`/preset` 预设切换、会话保留清理、子代理并发治理。
 > 本插件同时是 `ask_user_question` 的 TUI 应答面——下面的向导交互在本 TUI 里原生成立。
 
-## 配置入口（settings.yaml 顶层 `dsh-tui:` 段）
+## 配置入口（profile patch 的 `dsh-tui` entry `config:` 段）
 
-在 `~/.dsh/settings.yaml` 写顶层 `dsh-tui:` 段（注意段名是 `dsh-tui`，不是 `dsh-tui-pi`）。
-语言 / 主题 / 面板高度 / footer 提示 / 图标集为 `applies: 'live'`——保存提交即热生效，无需重启。
+配置存放在 profile 的 `cordis.patch.yml` 里本插件 entry（id 固定为 `dsh-tui`，不是
+`dsh-tui-pi`）的 `config:` 段——**`/settings` 浏览器就地读写的就是这里**，一般不用手改。
+dsh 0.1.5 的 `~/.dsh/settings.yaml` 已移除：其顶层 `dsh-tui:` 段会在首次 0.1.7 启动时
+自动导入 profile（原文件保留为 `settings.yaml.imported`）。
+语言 / 主题 / 面板高度 / footer 提示 / 图标集均为 volatile 字段——保存提交即热生效，无需重启。
 
 | 键 | 类型 | 默认 | 作用 |
 |----|------|------|------|
@@ -52,7 +55,7 @@ description: "dsh TUI 增强套件使用与配置指南。凡涉及 TUI 主题/�
 | `DSH_TUI_BTW_CONTEXT_MESSAGES` | `/btw` 侧问快照的最近消息条数 |
 | `DSH_TUI_SKIP_HOST_CHECK` | `1` 跳过宿主版本下限检查（测试用） |
 
-retention/resume/askUser 组的优先级：**settings.yaml 显式值 > env > 默认**（只看 settings.yaml 里
+retention/resume/askUser 组的优先级：**显式配置值 > env > 默认**（只看 entry `config:` 段里
 实际写下的键，未写的键回落 env，再回落默认）。
 
 ## 交互式快速上手（ask_user_question）
@@ -64,7 +67,8 @@ retention/resume/askUser 组的优先级：**settings.yaml 显式值 > env > 默
 2. **面板高度**：`'1'`（单行摘要，推荐）／`'5'`／`'7'`／`'10'`／`'all'`（完整内容）。
 3. **子代理并发**：`maxAgents` 4（默认）／8／0（不限）。
 
-收集完把 `dsh-tui:` 段写进 `~/.dsh/settings.yaml`——**只写问过的键**，未问的键留在默认值。
+收集完把问过的键写进 profile patch 的 `dsh-tui` entry `config:` 段（或直接让用户走 `/settings`）——
+**只写问过的键**，未问的键留在默认值。
 用户要细调时再指向上面的全表：footerHints 分段、cacheHitMode、iconSet、
 favoriteModels/hiddenModels、retention/resume/askUser。
 
@@ -99,7 +103,7 @@ favoriteModels/hiddenModels、retention/resume/askUser。
 
 1. **图标乱码** → `iconSet: 'plain'`（或 `node scripts/install-font.mjs` 安装 Nerd Font 后用 `auto`/`nerdfont`）。
 2. **/resume 看不到老会话** → `resume.maxAgeDays`/`minBytes` 只是选择器显示口径，会话没丢；
-   放宽这两个键（settings.yaml 显式值或 env）即可看到。
+   放宽这两个键（显式配置值或 env）即可看到。
 3. **会话目录（~/.dsh/sessions）膨胀** → retention 三键治理；注意清理器**真删除**，
    与 resume 的"只隐藏"是两回事。
 4. **/model 选择器太长** → 把不用的挑进 `hiddenModels`；常用的钉顶 `favoriteModels`。

@@ -25,6 +25,9 @@
 
 import { createUserMessage, type Message, type ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { t } from './i18n/index.ts'
+// Loads the MessageSourceMap augmentation declaring this plugin's own
+// 'dsh-tui-pi' producer kind (dsh 0.1.7 removed the shared 'plugin' kind).
+import type {} from './source-kind.ts'
 
 // ------------------------------------------------------------ UI copy --
 
@@ -158,14 +161,14 @@ export function buildBtwSnapshot(events: readonly BtwSnapshotEvent[], limit: num
 
 /**
  * The side-call message list: the snapshot in order, then the question as a
- * plugin-sourced user message (it is not a real user turn of any session).
+ * tui-pi-sourced user message (it is not a real user turn of any session).
  */
 export function buildBtwMessages(snapshot: readonly Message[], question: string): Message[] {
   return [
     ...snapshot,
     createUserMessage({
       content: [{ type: 'text', text: question }],
-      source: { kind: 'plugin', plugin: 'dsh-tui-pi:btw' },
+      source: { kind: 'dsh-tui-pi', surface: 'btw' },
     }),
   ]
 }

@@ -102,28 +102,39 @@ export function isLlmRetry(event: SessionEvent): event is SessionEvent & { type:
 
 /**
  * Type guard for a dsh-dcp compaction notice. DCP appends ONE `user/message`
- * row per committed compaction with
+ * row per committed compaction carrying its producer identity on the message
+ * source — pre-0.1.7 logs spell it
  * `source: { kind: 'plugin', plugin: 'dsh-dcp', form: 'notice', summary }`
  * (the summary reads like `dcp: compacted N history items (~X tokens, …)`).
- * Recognized on the child's own log so the viewer can render a compaction-
- * specific marker row and the bridge can tally a per-child count.
+ * The legacy structural match below stays tolerant: dsh 0.1.7 producers
+ * declare their own merge-extensible MessageSource kinds, so a dsh-dcp
+ * release for 0.1.7 may surface under a `dsh-dcp` kind — matched here by
+ * name on either axis, with the `form: 'notice'` + `summary` shape still
+ * required on the legacy axis. Recognized on the child's own log so the
+ * viewer can render a compaction-specific marker row and the bridge can
+ * tally a per-child count.
  */
 export function isDcpCompactionNotice(event: SessionEvent): boolean {
   if (event.type !== 'user/message') return false
-  const source = (event.data as { source?: { kind?: string; plugin?: string; form?: string } }).source
+  const source = (event.data as { source?: { kind?: string; plugin?: string; form?: string; summary?: string } }).source
+  if (source?.kind === 'dsh-dcp' && source?.form === 'notice' && typeof source.summary === 'string') return true
   return source?.kind === 'plugin' && source?.plugin === 'dsh-dcp' && source?.form === 'notice'
 }
 
 /**
- * Type guard for a plugin-sourced injection from THIS plugin — the maxRounds
- * wrap-up or a Ctrl+G steer. The compact line and the viewer mark these with
- * `⚡` so the user can SEE that the policy fired (and judge whether the child
- * LLM obeyed it) instead of the injection landing invisibly.
+ * Type guard for an injection from THIS plugin — the maxRounds wrap-up or a
+ * Ctrl+G steer. The compact line and the viewer mark these with `⚡` so the
+ * user can SEE that the policy fired (and judge whether the child LLM
+ * obeyed it) instead of the injection landing invisibly. Matches BOTH
+ * producer spellings: dsh 0.1.7's own `kind: 'dsh-tui-pi'` (source-kind.ts)
+ * and the pre-0.1.7 `{ kind: 'plugin', plugin: 'dsh-tui-pi' }` still present
+ * in persisted V3-era session logs replayed on resume.
  */
 export function isTuiPluginInjection(event: SessionEvent): boolean {
   if (event.type !== 'user/message') return false
   const source = (event.data as { source?: { kind?: string; plugin?: string } }).source
-  return source?.kind === 'plugin' && source?.plugin === 'dsh-tui-pi'
+  return source?.kind === 'dsh-tui-pi'
+    || (source?.kind === 'plugin' && source?.plugin === 'dsh-tui-pi')
 }
 
 /**
@@ -142,8 +153,13 @@ export interface AgentView {
   readonly childId: string
   /** The delegating parent session id, when known (header discovery). */
   readonly parentSession?: string
-  /** Delegation mode from the child's `subagent/descriptor`, when known. */
-  readonly mode?: 'one-shot' | 'continuable'
+  /**
+   * Delegation mode from the child's `subagent/descriptor`, when known.
+   * `'unknown'` is the official SubagentCatalogEvent v1 / catalog-projection
+   * arm (v0 emitted known modes only): a child folded from catalog evidence
+   * rather than a descriptor renders tolerantly instead of dropping the tag.
+   */
+  readonly mode?: 'one-shot' | 'continuable' | 'unknown'
   /** Subagent type name from the child's `subagent/descriptor.provider`, when known. */
   readonly provider?: string
   /** Delegation label from `tool-workflow/agent-start` or the child's descriptor. */

@@ -46,6 +46,7 @@ import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickPreset, pickTheme } from './selectors.ts'
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
 import {
+  bindTuiConfig,
   currentCacheHitMode,
   currentRememberPreset,
   currentThemePreference,
@@ -58,10 +59,16 @@ import {
   readSessionManagementExplicit,
   readSubagentLimits,
   readThemePreference,
-  registerThemeSettings,
+  subscribeThemeSettings,
   writeLanguagePreference,
   writeThemePreference,
+  type TuiSettings,
 } from './theme-settings.ts'
+// The plugin's user-facing configuration schema. Exported at the module root:
+// the loader reads `plugin.Config` off the entry module and projects every
+// `.volatile()` field into the settings surface (the 0.1.7 replacement of the
+// 0.1.5 runtime registration call).
+export { Config } from './theme-settings.ts'
 import { currentLocale, initI18n, listLocales, setLocale, t } from './i18n/index.ts'
 import {
   loadWorkspacePresets,
@@ -179,7 +186,7 @@ const SKILL_RESOURCE_BASE = {
 const SKILL_INVOCATION = { modelInvocable: true, userInvocable: true } as const
 
 /** Routing description; must stay identical to the SKILL.md frontmatter (asserted in tests). */
-const SKILL_DESCRIPTION = 'dsh TUI 增强套件使用与配置指南。凡涉及 TUI 主题/面板/footer、界面语言、子代理并发与轮数限制、模型收藏与隐藏、会话保留与 /resume 过滤、ask_user 超时、preset 记忆，或要配置 dsh-tui 段时先读本指南：settings.yaml 顶层 `dsh-tui:` 段 18 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser）、DSH_TUI_* 环境变量、快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、语言、language、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。'
+const SKILL_DESCRIPTION = 'dsh TUI 增强套件使用与配置指南。凡涉及 TUI 主题/面板/footer、界面语言、子代理并发与轮数限制、模型收藏与隐藏、会话保留与 /resume 过滤、ask_user 超时、preset 记忆，或要配置 dsh-tui 段时先读本指南：插件配置 entry `dsh-tui` 的 17 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser）、DSH_TUI_* 环境变量、快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、语言、language、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。'
 
 const SKILL_CANDIDATE: SkillCandidate = {
   name: SKILL_PROVIDER_NAME,
@@ -234,7 +241,14 @@ export function stripFrontmatter(raw: string): string {
   return raw
 }
 
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: TuiSettings): void {
+  // Bind the loader-resolved entry config: every field is a live Volatile
+  // reference the loader swaps in place on a volatile-only commit, so every
+  // theme-settings reader (readThemePreference, readSubagentLimits, …) sees
+  // the latest committed values through `.get()` from here on. A test driving
+  // `apply(ctx)` without a loader passes nothing — the readers then degrade
+  // to the schema defaults.
+  bindTuiConfig(config)
   // Host floor guard, before any side effect: a host older than the peer
   // floor would only crash deeper in boot with raw TypeErrors (the
   // alpha-era and rc/stable-era host APIs diverged), so warn in plain
@@ -259,7 +273,7 @@ export function apply(ctx: Context): void {
   let handle: TuiHandle | undefined
   // Theme registry: bundled themes/ plus $DSH_HOME/themes (user overrides
   // bundled by name). Built ONCE per apply() and handed to every resolveTheme
-  // / pickTheme call site (startup, the settings watch sink, the /theme
+  // / pickTheme call site (startup, the settings hot-reload sink, the /theme
   // handler), so a custom theme named by DSH_TUI_THEME or by the persisted
   // preference resolves through the same snapshot. `themeUserNames` marks
   // which registry ids are user-owned (for the picker's "user theme" /
@@ -288,26 +302,27 @@ export function apply(ctx: Context): void {
   void ensureAppendSystemFile()
   void migrateAgentsMdTodoSection()
   /**
-   * Live theme hot-reload sink, wired to the settings watch hook: a committed
+   * Live theme hot-reload sink, wired to the settings/document-updated
+   * subscription: a committed
    * `dsh-tui` theme change (this TUI's /theme write included) is applied to
    * the running TUI. Set inside runTui once the renderer exists; the first
    * commit can only follow a user write, long after startup.
    */
   let applyThemeRef: ((pref: ThemePreference) => void) | undefined
   /**
-   * Live panel-height hot-reload sink, wired to the same watch hook: a
+   * Live panel-height hot-reload sink, wired to the same subscription: a
    * committed `dsh-tui` panelHeight change re-budgets the fixed think/tool
    * panels above the chat input. Armed inside runTui once the widgets exist.
    */
   let applyPanelHeightRef: ((height: PanelHeight) => void) | undefined
   /**
-   * Live footer-hints hot-reload sink, wired to the same watch hook: a
+   * Live footer-hints hot-reload sink, wired to the same subscription: a
    * committed `dsh-tui` footerHints change repaints the footer hint bar with
    * the new segment selection. Armed inside runTui once the TUI exists.
    */
   let applyFooterHintsRef: ((hints: FooterHints) => void) | undefined
   /**
-   * Live icon-set hot-reload sink, wired to the same watch hook: a committed
+   * Live icon-set hot-reload sink, wired to the same subscription: a committed
    * `dsh-tui` iconSet change re-resolves the risky glyphs (an 'auto' change
    * resolves against the startup font-detection snapshot) and repaints the
    * footer/notices/panels that carry them. Armed inside runTui once the TUI
@@ -318,19 +333,19 @@ export function apply(ctx: Context): void {
   ctx.effect(async () => {
     // The theme bundle is built once at TUI startup and held by every
     // component, so the persisted preference must land before startTui — the
-    // namespace registration rides the settings injection fiber and the read
-    // awaits it (bounded, degrades to the defaults without a settings
-    // service). The registration also watches the namespace: `applies:
-    // 'live'`, so later commits (the /theme picker, the /settings browser, an
-    // external edit) hot-apply through applyThemeRef / applyPanelHeightRef /
-    // applyFooterHintsRef.
+    // startup readers resolve the bound entry config synchronously (volatile
+    // references, already seeded by the loader before apply ran; a
+    // config-less deployment degrades to the schema defaults). The
+    // subscription below keeps later commits (the /theme picker, the
+    // /settings browser, an external patch edit) hot-applying through
+    // applyThemeRef / applyPanelHeightRef / applyFooterHintsRef.
     // Panel height FIRST, theme second: a single commit of both fields (a
-    // namespace-level reset, an external edit) must not replay at the wrong
+    // config reset, an external edit) must not replay at the wrong
     // height. setPanelHeight re-budgets the fixed think/tool panels; the
     // setTheme replay that follows already renders at that new height.
     // applyTheme carries the theme-bundle identity guard, so a height-only
     // commit never triggers a second rebuild.
-    registerThemeSettings(ctx, (pref, height, footerHints, iconSet, language) => {
+    subscribeThemeSettings(ctx, (pref, height, footerHints, iconSet, language) => {
       setLocale(language)
       applyPanelHeightRef?.(height)
       applyThemeRef?.(pref)
@@ -339,15 +354,13 @@ export function apply(ctx: Context): void {
     })
     // Session log retention (async, fire-and-forget): prune jsonl session
     // directories outside the retention window so the store the core only
-    // appends to never grows unbounded. Fired AFTER registerThemeSettings —
+    // appends to never grows unbounded. Fired AFTER subscribeThemeSettings —
     // the janitor resolves its knobs through the precedence chain
-    // (settings.yaml explicit > env > default), and reading settings means
-    // waiting for the namespace registration that just left; the bounded
-    // wait rides INSIDE the fire-and-forget pass (readSettings below), so
-    // the first frame is never blocked. Silent and non-fatal; the pass
-    // reports its result through the shared notice bridge (deferred to the
-    // TUI's sink, see setNoticeSink below); process-global one-shot so a
-    // /reload re-running apply does not start a second pass
+    // (settings explicit > env > default), where the explicit layer rides the
+    // settings service's describe() (readSettings below). Silent and
+    // non-fatal; the pass reports its result through the shared notice bridge
+    // (deferred to the TUI's sink, see setNoticeSink below); process-global
+    // one-shot so a /reload re-running apply does not start a second pass
     // (src/retention.ts).
     void runSessionRetentionOnce({
       getSessionId: () => {
@@ -362,9 +375,9 @@ export function apply(ctx: Context): void {
         const id = bridgeRef?.getResumingSessionId()
         return id === undefined ? undefined : String(id)
       },
-      // Explicit dsh-tui.retention overrides from settings.yaml (the user
-      // layer — readSessionManagementExplicit waits for the registration
-      // bounded, so a settings-less deployment degrades to env/defaults).
+      // Explicit dsh-tui.retention overrides from the profile patch (the
+      // descriptor's user layer — a settings-less deployment degrades to
+      // env/defaults).
       readSettings: async () => (await readSessionManagementExplicit(ctx))?.retention,
     })
     const themePreference = await readThemePreference(ctx)
@@ -372,9 +385,9 @@ export function apply(ctx: Context): void {
     const footerHints = await readFooterHintsPreference(ctx)
     // UI language (`dsh-tui.language`, default 'en'): discover the language
     // files and activate the persisted id BEFORE the TUI's first frame, so
-    // the boot UI speaks it from the start. The registration's watch hook
-    // re-applies later commits live via setLocale. An unknown id degrades to
-    // 'en' inside initI18n.
+    // the boot UI speaks it from the start. The settings/document-updated
+    // subscription re-applies later commits live via setLocale. An unknown id
+    // degrades to 'en' inside initI18n.
     initI18n({ id: await readLanguagePreference(ctx), warn: message => emitNotice(message) })
     // Icon-set self-adaptation: probe the platform once at startup (the
     // memoised snapshot shared with every later 'auto' resolution), resolve
@@ -384,7 +397,7 @@ export function apply(ctx: Context): void {
     const iconSetPreference = await readIconSetPreference(ctx)
     const nerdfontAvailable = await detectNerdFontAvailable()
     applyIconSet(resolveIconSet(iconSetPreference, nerdfontAvailable))
-    const presetRoster = await fetchPresetRoster()
+    const presetRoster = await fetchPresetRoster(ctx)
     // Preset memory (`dsh-tui.rememberPreset`, default ON): the last /preset
     // selection committed in THIS workspace (keyed by the session backend's
     // project key of the cwd) becomes the launch selection — runTui seeds it
@@ -437,21 +450,22 @@ export function apply(ctx: Context): void {
     const keyBindings = loadKeyBindings(keyFile)
     // Preset state: /preset owns the selection (Tab is deliberately unbound —
     // switching is an explicit, confirmed action). The roster is fetched once
-    // at startup from the api-proxy service; an empty roster (no service / no
-    // presets) disables the feature gracefully (/preset errors, footer shows
+    // at startup from the host's `agentPresets` registry (dsh 0.1.7
+    // declarative presets); an empty roster (no service / no presets)
+    // disables the feature gracefully (/preset errors, footer shows
     // plain "dsh"). The initial selection is the workspace's REMEMBERED
     // preset when preset memory is on and the id is still on the roster
-    // (initialPresetIndex prefers it), else the `standard` entry, else the
-    // first-scanned one. Without memory the launch selection is a local
-    // display only: before the user switches via /preset, NO
-    // `meta.agentPreset` is sent at session create, so the server-side
-    // default (`agent-presets.default` settings / deployment config)
-    // governs. WITH memory the remembered id is ALSO seeded into the bridge
-    // below (bridge.setAgentPreset), which is the point: the first session
-    // of the launch composes under the remembered preset, not the server
-    // default. We deliberately seed ONLY a remembered id, never
-    // DEFAULT_PRESET_ID — that would override the server-side default with
-    // a client-side assumption.
+    // (initialPresetIndex prefers it), else the roster's own default row,
+    // else `standard`, else the first-listed one. Without memory the launch
+    // selection is a local display only: before the user switches via
+    // /preset, NO `meta.agentPreset` is sent at session create, so the
+    // registry's deployment default (`default`/`selectedDefault` config of
+    // the agent-preset-registry entry) governs. WITH memory the remembered
+    // id is ALSO seeded into the bridge below (bridge.setAgentPreset), which
+    // is the point: the first session of the launch composes under the
+    // remembered preset, not the server default. We deliberately seed ONLY a
+    // remembered id, never DEFAULT_PRESET_ID — that would override the
+    // server-side default with a client-side assumption.
     const rememberedPresetEntry = rememberedPresetId !== undefined
       ? presetRoster.find(preset => preset.id === rememberedPresetId)
       : undefined
@@ -685,7 +699,7 @@ export function apply(ctx: Context): void {
       // to cancel (e.g. the task settled while the dialog was up).
       if (!cancelled && stoppedChildren === 0) renderer.renderNotice(t('tui.stop.nothingRunning'), 'info')
     }
-    // Arm the settings watch sink now that the renderer exists (see apply()).
+    // Arm the settings hot-reload sink now that the renderer exists (see apply()).
     applyThemeRef = (pref: ThemePreference): void => {
       themePreferenceRef = pref
       // 'auto' subscribes to the terminal's live color-scheme pushes; an
@@ -701,8 +715,7 @@ export function apply(ctx: Context): void {
       renderer.renderNotice(t('tui.keys.warningPrefix', { warning }), 'error')
     }
     // Arm the shared notice sink now that the TUI is up. Every operator
-    // trace that fired before this point — the settings-namespace
-    // registration failure, invalid dsh-tui.retention/resume values, a
+    // trace that fired before this point — invalid dsh-tui.retention/resume values, a
     // missing userQuestions service, the janitor's result line — has been
     // queueing on the bridge (src/notice-bridge.ts); registering here
     // drains that batch as stacked transient notices above the footer
@@ -723,7 +736,7 @@ export function apply(ctx: Context): void {
       // at every rebuild (the /agents limits panel hot-applies).
       () => readSubagentLimits(ctx).maxRounds,
     )
-    // Arm the panel-height watch sink now that the widgets exist: a committed
+    // Arm the panel-height hot-reload sink now that the widgets exist: a committed
     // panelHeight change re-budgets the think/tool panels — they are
     // self-drawing, so the next frame already renders at the new height.
     applyPanelHeightRef = (height: PanelHeight): void => {
@@ -832,6 +845,10 @@ export function apply(ctx: Context): void {
         liveWidgets.clear()
         const session = resumed.agent.session
         const adopted = 'adopted' in resumed && resumed.adopted === true
+        // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+        // projection registration / sessionPersistence.handle.read() pagination. Kept
+        // here deliberately — this path re-consumes RAW events (renderer/stats
+        // replay), which the projection successor does not serve. (T14 review.)
         bridge.replay(adopted ? session.snapshotEvents() : session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
         for (const text of bridge.takePendingRemoteFollowups()) {
           await bridge.prompt(text)
@@ -855,7 +872,7 @@ export function apply(ctx: Context): void {
     // child's cap and hard-stops it after the grace window — the per-agent
     // tier reads the agent file's frontmatter `maxRounds` through the
     // registry contract. Limits are read live from the `dsh-tui` settings
-    // namespace (/agents → l limits).
+    // entry config (/agents → l limits).
     const subagentPolicy = applySubagentPolicy(ctx, {
       getLive: () => bridge.getLiveChildren(),
       getRoundCount: childId => bridge.getRoundCount(childId),
@@ -1024,6 +1041,10 @@ export function apply(ctx: Context): void {
         const agent = bridge.getAgent()
         return agent === undefined
           ? []
+          // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+          // projection registration / sessionPersistence.handle.read() pagination. Kept
+          // here deliberately — this path re-consumes RAW events (renderer/stats
+          // replay), which the projection successor does not serve. (T14 review.)
           : buildBtwSnapshot(agent.session.snapshotEvents(), btwSnapshotLimit)
       },
       requestRender: () => ui.requestRender(),
@@ -1237,6 +1258,10 @@ export function apply(ctx: Context): void {
           // log is the stable source (dispose drops the registry handle), and
           // slicing here keeps the running turn out of the seed (the same
           // completed-turn rule /new obeys by cancelling it).
+          // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+          // projection registration / sessionPersistence.handle.read() pagination. Kept
+          // here deliberately — this path re-consumes RAW events (renderer/stats
+          // replay), which the projection successor does not serve. (T14 review.)
           const seed = completedTurnSeed(agent.session.snapshotEvents())
           if (seed.length === 0) {
             // No completed turn to carry — a fork is indistinguishable from a
@@ -1267,6 +1292,10 @@ export function apply(ctx: Context): void {
             // rebuild rides the same replay. `firstLiveSeq` excludes nothing
             // published (constructor seeds never emit).
             const session = handle.agent.session
+            // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+            // projection registration / sessionPersistence.handle.read() pagination. Kept
+            // here deliberately — this path re-consumes RAW events (renderer/stats
+            // replay), which the projection successor does not serve. (T14 review.)
             bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
             ui.requestRender()
           } catch (error) {
@@ -1384,9 +1413,10 @@ export function apply(ctx: Context): void {
       let picked: Awaited<ReturnType<typeof pickPersistedSession>>
       try {
         const currentId = bridge.getSessionId()
-        // Explicit dsh-tui.resume overrides from settings.yaml (the user
-        // layer): the picker resolves them against env/defaults per open,
-        // so a committed settings change applies to the next /resume.
+        // Explicit dsh-tui.resume overrides from the profile patch (the
+        // descriptor's user layer): the picker resolves them against
+        // env/defaults per open, so a committed settings change applies to
+        // the next /resume.
         const resumeSettings = (await readSessionManagementExplicit(ctx))?.resume
         picked = await pickPersistedSession(
           ctx, ui.tui, ui.theme,
@@ -1481,6 +1511,10 @@ export function apply(ctx: Context): void {
         // everything the other surface did. Cold resumes keep the firstLiveSeq
         // filter (seeded history replays once; live events re-arrive).
         const adopted = 'adopted' in resumed && resumed.adopted === true
+        // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+        // projection registration / sessionPersistence.handle.read() pagination. Kept
+        // here deliberately — this path re-consumes RAW events (renderer/stats
+        // replay), which the projection successor does not serve. (T14 review.)
         bridge.replay(adopted ? session.snapshotEvents() : session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
         ui.requestRender()
         return {
@@ -1559,6 +1593,10 @@ export function apply(ctx: Context): void {
           const id = bridge.getSessionId()
           return id === undefined ? undefined : String(id)
         },
+        // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+        // projection registration / sessionPersistence.handle.read() pagination. Kept
+        // here deliberately — this path re-consumes RAW events (renderer/stats
+        // replay), which the projection successor does not serve. (T14 review.)
         getLiveEvents: () => bridge.getAgent()?.session.snapshotEvents(),
         copyToEditor: text => {
           ui.editor.setText(text)
@@ -1589,6 +1627,10 @@ export function apply(ctx: Context): void {
             // the seed IS the point, so it replays in full (`firstLiveSeq`
             // covers seed + end-seed).
             const session = handle.agent.session
+            // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+            // projection registration / sessionPersistence.handle.read() pagination. Kept
+            // here deliberately — this path re-consumes RAW events (renderer/stats
+            // replay), which the projection successor does not serve. (T14 review.)
             bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
             ui.requestRender()
           } catch (error) {
@@ -1631,6 +1673,10 @@ export function apply(ctx: Context): void {
           renderer.clear()
           liveWidgets.clear()
           const session = resumed.agent.session
+          // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+          // projection registration / sessionPersistence.handle.read() pagination. Kept
+          // here deliberately — this path re-consumes RAW events (renderer/stats
+          // replay), which the projection successor does not serve. (T14 review.)
           bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
           ui.requestRender()
         } catch { /* best-effort: fall back to lazy session creation */ }
@@ -1654,6 +1700,10 @@ export function apply(ctx: Context): void {
           renderer.clear()
           liveWidgets.clear()
           const session = resumed.agent.session
+          // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+          // projection registration / sessionPersistence.handle.read() pagination. Kept
+          // here deliberately — this path re-consumes RAW events (renderer/stats
+          // replay), which the projection successor does not serve. (T14 review.)
           bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
           ui.requestRender()
         } catch (error: unknown) {
@@ -1676,6 +1726,10 @@ export function apply(ctx: Context): void {
       description: t('tui.cmd.export.description'),
       input: { hint: '[path]' },
       handler: async invocation => {
+        // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+        // projection registration / sessionPersistence.handle.read() pagination. Kept
+        // here deliberately — this path re-consumes RAW events (renderer/stats
+        // replay), which the projection successor does not serve. (T14 review.)
         const events = invocation.agent.session.snapshotEvents()
         const fallback = join(homedir(), 'Downloads', `dsh-session-${clipToWidth(String(invocation.agent.session.id), 8)}.jsonl`)
         const target = invocation.rawInput.trim() === '' ? fallback : resolve(invocation.rawInput.trim())
@@ -1726,6 +1780,10 @@ export function apply(ctx: Context): void {
         renderer.clear()
         liveWidgets.clear()
         const session = restored.agent.session
+        // dsh 0.1.7 soft-deprecation: snapshotEvents is deprecated upstream in favor of
+        // projection registration / sessionPersistence.handle.read() pagination. Kept
+        // here deliberately — this path re-consumes RAW events (renderer/stats
+        // replay), which the projection successor does not serve. (T14 review.)
         bridge.replay(session.snapshotEvents().filter(event => event.seq < session.firstLiveSeq))
       } catch (error) {
         const detail = messageOf(error)
@@ -1746,7 +1804,8 @@ export function apply(ctx: Context): void {
 
     // /settings: text-based configuration browser — the terminal counterpart
     // of the web GUI's settings surface. Enumerates ctx.settings.describe()
-    // and walks each namespace's schema (drill-ins, cycle rows, inline editors,
+    // (one descriptor per settings-bearing plugin entry) and walks each
+    // entry's schema (drill-ins, cycle rows, inline editors,
     // reset-to-defaults), writing through settings.mutate path ops.
     const settingsHandler: LocalCommandHandler = async () => {
       if (ctx.get('settings') === undefined) {
@@ -1785,11 +1844,12 @@ export function apply(ctx: Context): void {
     registerLocalCommand('skills', t('tui.cmd.skills.description'), skillsHandler)
 
     // /theme: pick a color scheme and apply it immediately — the choice is
-    // persisted to the dsh-tui settings namespace (`applies: 'live'`, so the
-    // watch hook would re-apply the same change anyway) and hot-swapped into
-    // the running TUI: footer hint, editor border and the whole transcript
-    // repaint on the next frame, no restart needed. The settings guard
-    // mirrors /settings: without the service there is nowhere to write.
+    // persisted to the dsh-tui entry config (a volatile-only write: the
+    // document-updated subscription re-applies the same value anyway, an
+    // idempotent echo) and hot-swapped into the running TUI: footer hint,
+    // editor border and the whole transcript repaint on the next frame, no
+    // restart needed. The settings guard mirrors /settings: without the
+    // service there is nowhere to write.
     const themeHandler: LocalCommandHandler = async () => {
       if (ctx.get('settings') === undefined) {
         return { kind: 'error' as const, text: t('tui.settings.unavailable') }
@@ -1937,7 +1997,7 @@ export function apply(ctx: Context): void {
 
     // /logout: unsubscribe a provider — pi-agent's /logout on the dsh side.
     // Lists the providers with a stored credential; on selection removes the
-    // key AND the settings.yaml provider entry, so the provider's models
+    // key AND the profile patch's llm-pi-ai provider entry, so the provider's models
     // leave /model right away (the llm-pi-ai adapter keeps a route
     // registered for every profile key). /login re-subscribes and serves
     // the installed catalog's current model list.
@@ -2041,12 +2101,12 @@ export function apply(ctx: Context): void {
     let footerHintsRef: FooterHints = footerHints
     const footerHint = new FooterHint(() => ui.theme, () => footerHintsRef)
     ui.footer.addChild(footerHint)
-    // Arm the footer-hints watch sink now that the TUI exists (see apply()).
+    // Arm the footer-hints hot-reload sink now that the TUI exists (see apply()).
     applyFooterHintsRef = (hints: FooterHints): void => {
       footerHintsRef = hints
       ui.requestRender()
     }
-    // Arm the icon-set watch sink: a committed iconSet change hot-applies the
+    // Arm the icon-set hot-reload sink: a committed iconSet change hot-applies the
     // risky glyphs (an 'auto' change resolves against the startup font-
     // detection snapshot, matching the startup glyph choice) and repaints the
     // footer/notices/panels that carry them on the next frame.

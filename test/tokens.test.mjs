@@ -53,7 +53,7 @@ test('estimateTextTokens ascii mode is the flat 4 chars/token meter (byte-identi
   assert.equal(estimateTextTokens('hello world', 'cjk'), estimateTextTokens('hello world', 'ascii'))
 })
 
-test('estimateContentTokens counts text blocks, tool-call arguments and tool-result inner text', () => {
+test('estimateContentTokens counts text blocks and tool-call arguments', () => {
   const textOnly = [{ type: 'text', text: 'abcd' }]
   assert.equal(estimateContentTokens(textOnly), 1, 'text block counted at its text length')
   // Two text blocks join with '\n' and price as one body.
@@ -71,9 +71,11 @@ test('estimateContentTokens handles unknown shapes defensively', () => {
   assert.equal(estimateContentTokens([]), 0, 'empty blocks -> 0')
   // Reasoning/unknown block types carry no counted text.
   assert.equal(estimateContentTokens([{ type: 'reasoning', text: 'x'.repeat(40) }]), 0,
-    'reasoning blocks are not priced (only text/tool-call/tool-result)')
-  // A tool-result block prices its inner text blocks.
+    'reasoning blocks are not priced (only text/tool-call)')
+  // dsh 0.1.7: the nested tool-result block is gone from the union — a
+  // tool-role message's content is the FLAT block list, and a legacy nested
+  // shape (only reachable from unmigrated V3 data) is no longer interpreted.
   assert.equal(estimateContentTokens([
     { type: 'tool-result', content: [{ type: 'text', text: 'ok' }, { type: 'text', text: 'done' }] },
-  ]), 2, 'tool-result inner text counted (6 chars -> ceil 1.5 = 2)')
+  ]), 0, 'legacy nested tool-result shape not interpreted (flat text blocks are, above)')
 })

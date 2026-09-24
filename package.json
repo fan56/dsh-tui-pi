@@ -19,6 +19,7 @@
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "icon": "./icon.svg",
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
@@ -29,7 +30,8 @@
       "default": "./lib/projcache.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "bin": {
     "dsh-tui-pi": "bin/dsh-tui-pi"
@@ -49,7 +51,9 @@
     "locales",
     "skills",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "icon.svg",
+    "locale/*.json"
   ],
   "scripts": {
     "link-closure": "node scripts/link-dsh-closure.mjs",
@@ -74,8 +78,9 @@
     "@earendil-works/pi-tui": "0.85.1"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-skill": ">=0.1.5-rc.2",
-    "@deepseek-ai/dsh-user-questions": ">=0.1.5-rc.2"
+    "@deepseek-ai/dsh-settings": ">=0.1.7-rc.1",
+    "@deepseek-ai/dsh-skill": ">=0.1.7-rc.1",
+    "@deepseek-ai/dsh-user-questions": ">=0.1.7-rc.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-skill": {
@@ -86,8 +91,9 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-skill": "0.1.5-rc.2",
-    "@deepseek-ai/dsh-user-questions": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-settings": "0.1.7-rc.1",
+    "@deepseek-ai/dsh-skill": "0.1.7-rc.1",
+    "@deepseek-ai/dsh-user-questions": "0.1.7-rc.1",
     "@types/node": "^24.0.0",
     "typescript": "~5.9.0"
   },

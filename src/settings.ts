@@ -2,8 +2,8 @@
  * Text-based settings browser — the terminal counterpart of the web GUI's
  * settings surface (schema-form driven there, pi-tui overlays here).
  *
- * Walks `ctx.settings.describe()` (registered namespaces → serialized
- * schemastery schemas → resolved values) and renders it as nested FW list
+ * Walks `ctx.settings.describe()` (settings-bearing plugin entries →
+ * serialized volatile-only schemastery schemas → resolved values) and renders it as nested FW list
  * panels (src/panels.ts SettingsListPanel), one level per schema depth:
  *
  *   level 0   category list (searchable), alphabetical by canonical label:
@@ -14,8 +14,8 @@
  *             client-side and the data plane carries no category field, so
  *             the mapping is maintained here by hand; `other` is hidden when
  *             empty.
- *   level 1   namespace list for the chosen category (searchable);
- *             description shows applies timing. The Models category is
+ *   level 1   entry list for the chosen category (searchable);
+ *             description shows the override state. The Models category is
  *             special-cased: it lists configured llm-pi-ai providers (label,
  *             model summary, API-key state) instead of the raw namespace —
  *             the original schema surface is hidden — plus dedicated
@@ -43,8 +43,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { getPath, nodeAtPath, rehydrateSchema, type SchemaNode } from './schema-model.ts'
 import type {
   SettingsDescriptor,
+  SettingsForms,
   SettingsPathOp,
-  SettingsProvider,
 } from '@deepseek-ai/dsh-settings'
 import {
   getKeybindings,
@@ -108,14 +108,20 @@ export interface SettingsCategory {
 }
 
 /**
- * Static namespace→category mapping, mirroring the web settings page's
+ * Static entry→category mapping, mirroring the web settings page's
  * client-side slot structure (see the module header): the data plane carries
- * no category field, so the slots are maintained here by hand. Namespaces not
+ * no category field, so the slots are maintained here by hand. Entry ids not
  * listed anywhere fall into the trailing `other` category. Beyond the web
- * page's own slots, the plugins category enumerates the settings namespaces
- * of the dsh plugins installed in this ecosystem (mcp-adapter, topics, vault,
- * model-sync, dsh-feishu, dsh-llm-proxy) so their rows group under Plugins
- * instead of leaking into `other`.
+ * page's own slots, the plugins category enumerates the settings-bearing
+ * entry ids of the dsh plugins installed in this ecosystem (dsh-mcp-adapter,
+ * dsh-topics-memory, dsh-vault, dsh-model-sync, dsh-feishu, dsh-llm-proxy) so
+ * their rows group under Plugins instead of leaking into `other`. Under
+ * dsh 0.1.7 the descriptor's `ns` IS the profile entry id (declare-Config
+ * model), so the table speaks entry ids: host entries keep their historical
+ * names (permission / llm-deepseek / llm-pi-ai / agent-default-model /
+ * bash-sandbox / pwsh-sandbox), while the migrated third-party plugins use
+ * their package-derived ids (the old `mcp-adapter`/`topics`/`vault`/
+ * `model-sync`/`shell` namespace spellings are gone).
  *
  * The `label`s here are the English source of truth: rows render through
  * `categoryLabel()` (t() at render time, keyed by category id), so the active
@@ -131,22 +137,27 @@ export const CATEGORY_MAP: readonly SettingsCategory[] = [
     id: 'plugins',
     label: 'Plugins',
     namespaces: [
-      'shell',
+      'bash-sandbox',
+      'pwsh-sandbox',
       'agent-loop',
       'web-search-deepseek',
-      // Settings namespaces of installed dsh plugins — dsh-llm-proxy
-      // registers through settings.installSection, the rest through
-      // settings.register; plugins without a namespace never reach the
-      // settings browser.
-      'mcp-adapter',
-      'topics',
-      'vault',
-      'model-sync',
+      // Settings-bearing entry ids of installed dsh plugins (the descriptor
+      // ns IS the profile entry id under the declare-Config model); a plugin
+      // without a volatile Config field never reaches the settings browser.
+      'dsh-mcp-adapter',
+      'dsh-topics-memory',
+      'dsh-vault',
+      'dsh-model-sync',
       'dsh-feishu',
       'dsh-llm-proxy',
     ],
   },
-  { id: 'agent', label: 'Agent Presets', namespaces: ['agent-presets'] },
+  // The 0.1.7 agent-preset registry's profile entry id (`agent-preset-registry`
+  // in the official bundle): its volatile Config fields (`selectedDefault` —
+  // the new-task default, `modeSelectionEnabled` — the new-session picker
+  // toggle) are the settings face of agent presets. The old `agent-presets`
+  // settings namespace died with settings.yaml in 0.1.7.
+  { id: 'agent', label: 'Agent Presets', namespaces: ['agent-preset-registry'] },
 ]
 
 /**
@@ -253,11 +264,9 @@ export function slotFieldKeys(ns: string, keys: readonly string[]): FieldSlot[] 
 }
 
 /**
- * Namespaces the Models category reads and writes. dsh-settings
- * 0.1.2-alpha.3 removed the runtime settingsNamespace() helper: plain
- * literals are the supported spelling — register()/mutate() brand-check them
- * at the type level (SettingsNamespaceInput) and validate the same pattern at
- * runtime (parseSettingsNamespace).
+ * Profile entry ids the Models category reads and writes. Under dsh 0.1.7
+ * the descriptor `ns` IS the profile entry id; these three host entries keep
+ * their historical spellings.
  */
 const NS_LLM_PI_AI = 'llm-pi-ai'
 const NS_LLM_DEEPSEEK = 'llm-deepseek'
@@ -902,7 +911,7 @@ export interface OpenSettingsBrowserOptions {
 
 /**
  * Open the modal settings browser. Resolves when it closes with the number of
- * committed writes, or -1 when no namespace is registered (nothing to show).
+ * committed writes, or -1 when no settings-bearing entry exists (nothing to show).
  */
 export async function openSettingsBrowser(options: OpenSettingsBrowserOptions): Promise<number> {
   const settings = options.ctx.get('settings')
@@ -915,7 +924,7 @@ class SettingsBrowser {
   private readonly ctx: Context
   private readonly tui: TUI
   private readonly theme: TuiTheme
-  private readonly settings: SettingsProvider
+  private readonly settings: SettingsForms
   private readonly restoreFocus: () => void
   private readonly onError: (message: string) => void
 
@@ -944,7 +953,7 @@ class SettingsBrowser {
   private closed: Promise<void>
   private closeResolve!: () => void
 
-  constructor(options: OpenSettingsBrowserOptions & { settings: SettingsProvider }) {
+  constructor(options: OpenSettingsBrowserOptions & { settings: SettingsForms }) {
     this.ctx = options.ctx
     this.tui = options.tui
     this.theme = options.theme

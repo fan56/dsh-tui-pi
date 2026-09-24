@@ -16,7 +16,10 @@
  * (live session → `session.snapshotEvents()`, stored session →
  * `sessionPersistence.inspect()` — a cold read, no writer lock, no agent
  * activation). A session that keeps running while the viewer is open does
- * NOT live-update; reopening refreshes.
+ * NOT live-update; reopening refreshes. (dsh 0.1.7 soft-deprecation:
+ * snapshotEvents is deprecated upstream — projection registration /
+ * handle.read() pagination is the successor; kept here because the browser
+ * consumes raw events, one read per open. T14 review.)
  *
  * Layout: ≥100 terminal columns renders an HStack (list ≈40% with a 30-column
  * floor, detail takes the remainder); narrower terminals stack the panes
@@ -399,7 +402,10 @@ export interface HistoryBrowserDeps {
   readonly theme: TuiTheme
   /** Current live session id, when one exists. */
   getSessionId(): string | undefined
-  /** Event snapshot of the live session (its agent's session.snapshotEvents()). */
+  /**
+   * Event snapshot of the live session (its agent's session.snapshotEvents() —
+   * dsh 0.1.7 soft-deprecated upstream; kept for this raw-event read, T14).
+   */
   getLiveEvents(): readonly SessionEvent[] | undefined
   /** Copy target: a plain editor setText (never submitted). */
   copyToEditor(text: string): void

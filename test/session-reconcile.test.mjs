@@ -299,7 +299,7 @@ test('messages appended after the latest assistant/message are CJK-estimated int
   // A tool result appended after it adds its text payload (16 chars -> 4).
   emit(handlers, session, {
     type: 'tool/result', seq: 4, time: 4,
-    data: { message: { content: [{ type: 'tool-result', content: [{ type: 'text', text: 'tool output here' }] }] } },
+    data: { message: { role: 'tool', toolCallId: 'c1', content: [{ type: 'text', text: 'tool output here' }] } },
   })
   assert.equal(bridge.getStats().contextTokens, 1100 + 2 + 3 + 4, 'tool result text priced after the last message')
 

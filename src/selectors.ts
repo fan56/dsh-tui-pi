@@ -502,7 +502,10 @@ export async function pickModel(
 /**
  * Open the agent preset picker overlay. Resolves with the picked preset id,
  * or `undefined` when cancelled. The row matching the current selection is
- * preselected; focus returns to `restoreFocus` on close.
+ * preselected; focus returns to `restoreFocus` on close. Broken declarations
+ * stay selectable but carry a broken badge + the registry's reason (the
+ * roster keeps broken rows visible — hiding them would make an activation
+ * failure look like a vanished preset).
  */
 export function pickPreset(
   tui: TUI,
@@ -512,8 +515,10 @@ export function pickPreset(
 ): Promise<string | undefined> {
   const rows: PickerItem[] = state.roster.map(p => ({
     value: p.id,
-    label: p.name,
-    description: p.description ?? (p.trust === 'system' ? t('sel.preset.shipped') : t('sel.preset.user')),
+    label: p.broken !== undefined ? `${p.name} ⚠` : p.name,
+    description: p.broken !== undefined
+      ? `${t('sel.preset.broken')}: ${p.broken}`
+      : p.description,
   }))
   return new Promise(resolve => {
     const list = new TablePanel(theme, {

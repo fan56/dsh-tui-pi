@@ -13,10 +13,24 @@ import assert from 'node:assert/strict'
 import { SUBAGENT_STATUS_TOOL_NAME, buildSubagentStatusTool, installSubagentStatusTool } from '../lib/subagent-status-tool.js'
 import { SPAWN_TOOLS, applySubagentPolicy } from '../lib/subagent-policy.js'
 import { TUI_SURFACE_KEY } from '../lib/subagent-policy.js'
+import { bindTuiConfig, resolveTuiSettings } from '../lib/theme-settings.js'
+import { createVolatile } from '@deepseek-ai/cosmokit'
 
-/** Fake settings provider: one `dsh-tui` section with the given limits. */
+/**
+ * Fake settings service + entry-config binding for the given limits: under
+ * the 0.1.7 declare-Config model the tool reads the limits from the bound
+ * volatile references, so seeding a limit means binding references over a
+ * section (the fake describe() only stands in for the service's presence).
+ */
 function makeSettings(limits) {
-  return { describe: () => [{ ns: 'dsh-tui', value: { disableSubagent: false, ...limits } }] }
+  const base = resolveTuiSettings({})
+  const out = {}
+  const section = { disableSubagent: false, ...limits }
+  for (const [key, ref] of Object.entries(base)) {
+    out[key] = key in section ? createVolatile(section[key]) : ref
+  }
+  bindTuiConfig(out)
+  return { describe: () => [{ ns: 'dsh-tui', value: {}, user: undefined }] }
 }
 
 /** Fake plugin ctx carrying only what the tool reads: settings + tools. */
