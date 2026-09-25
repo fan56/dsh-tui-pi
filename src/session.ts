@@ -430,45 +430,9 @@ export class DshSessionBridge {
       const sessionKey = String(session.id)
       // Discover subagent children by session header — the deployment may
       // never emit tool-workflow events (the firehose is not scope-filtered,
-      // so child sessions arrive here too). A session whose parent is a
-      // tracked session AND is marked as delegated is a child; the descriptor
-      // event later refines the label/provider.
-      //
-      // Guard: a child is `origin: 'subagent'` OR a delegation budget
-      // `delegationDepth > 0`. Both markers are written together by dsh's
-      // childSessionMeta (spawn AND in-process fork children alike), so in
-      // practice the origin alone carries the decision; the budget clause
-      // only future-proofs the gate against a child that carries the budget
-      // without the origin. The budget test MUST be a VALUE test, not a
-      // field-presence test: the jsonl persistence backend materialises
-      // `delegationDepth: 0` on every restored header (write `?? 0`, read
-      // unconditionally), so a presence test would pull user-facing
-      // `Session.fork` conversations and other non-child restored sessions
-      // onto the live board / Ctrl+G.
-      const header = session.header
-      if (header?.parentSession !== undefined
-        && (header.origin === 'subagent' || (header.delegationDepth ?? 0) > 0)
-        && this.trackedSessions.has(String(header.parentSession))
-        && !this.agentViews.has(sessionKey)) {
-        this.agentViews.set(sessionKey, {
-          childId: sessionKey,
-          parentSession: String(header.parentSession),
-          // Current dsh children always carry the origin, so in practice the
-          // label is `subagent <id8>`; the `fork` label only fires for the
-          // defensive budget-without-origin shape above.
-          label: header.origin === undefined
-            ? `fork ${sessionKey.slice(0, 8)}`
-            : `subagent ${sessionKey.slice(0, 8)}`,
-          startedAt: event.time,
-          tokens: 0,
-          rounds: 0,
-          retries: 0,
-          contextTokens: 0,
-        })
-        this.childSessions.add(sessionKey)
-        this.trackedSessions.add(sessionKey)
-        this.emitLive()
-      }
+      // so child sessions arrive here too). The gate is shared with the
+      // reconcile tick's live-store sweep (`reconcileLiveFromStore`).
+      if (this.adoptChildSession(session, event.time)) this.emitLive()
       // Fold workflow + child events for every tracked session.
       if (this.trackedSessions.has(sessionKey)) {
         this.foldTracked(sessionKey, event)
@@ -509,6 +473,10 @@ export class DshSessionBridge {
     // cap must still fire while the child works in the background.
     const reconcile = setInterval(() => {
       try {
+        // Live-store sweep first (dsh 0.1.7-rc.2 companion): a child adopted
+        // here is in childSessions before the round reconcile scans it, so a
+        // recovered child gets its rounds the same tick.
+        this.reconcileLiveFromStore()
         this.reconcileChildRounds()
         // The projection-backed reconciliation rides the same cadence but is
         // async and self-guarded (never overlaps itself).
@@ -523,6 +491,85 @@ export class DshSessionBridge {
 
   /** Whether a `reconcileLiveWithProjection` pass is already in flight. */
   private projectionReconcileInFlight = false
+
+  /**
+   * Shared child-adoption gate for the two discovery paths: the firehose
+   * `session/event` fold (constructor) and the reconcile tick's live-store
+   * sweep (`reconcileLiveFromStore`). A session whose parent is a tracked
+   * session AND is marked as delegated is a child; the descriptor event
+   * later refines the label/provider.
+   *
+   * Guard: a child is `origin: 'subagent'` OR a delegation budget
+   * `delegationDepth > 0`. Both markers are written together by dsh's
+   * childSessionMeta (spawn AND in-process fork children alike), so in
+   * practice the origin alone carries the decision; the budget clause
+   * only future-proofs the gate against a child that carries the budget
+   * without the origin. The budget test MUST be a VALUE test, not a
+   * field-presence test: the jsonl persistence backend materialises
+   * `delegationDepth: 0` on every restored header (write `?? 0`, read
+   * unconditionally), so a presence test would pull user-facing
+   * `Session.fork` conversations and other non-child restored sessions
+   * onto the live board / Ctrl+G.
+   *
+   * @returns whether a new view was adopted (caller emits).
+   */
+  private adoptChildSession(session: Session, startedAt: number): boolean {
+    const sessionKey = String(session.id)
+    const header = session.header
+    if (header?.parentSession === undefined
+      || (header.origin !== 'subagent' && (header.delegationDepth ?? 0) <= 0)
+      || !this.trackedSessions.has(String(header.parentSession))
+      || this.agentViews.has(sessionKey)) return false
+    this.agentViews.set(sessionKey, {
+      childId: sessionKey,
+      parentSession: String(header.parentSession),
+      // Current dsh children always carry the origin, so in practice the
+      // label is `subagent <id8>`; the `fork` label only fires for the
+      // defensive budget-without-origin shape above.
+      label: header.origin === undefined
+        ? `fork ${sessionKey.slice(0, 8)}`
+        : `subagent ${sessionKey.slice(0, 8)}`,
+      startedAt,
+      tokens: 0,
+      rounds: 0,
+      retries: 0,
+      contextTokens: 0,
+    })
+    this.childSessions.add(sessionKey)
+    this.trackedSessions.add(sessionKey)
+    return true
+  }
+
+  /**
+   * Live-store sweep — the corpus-level companion to
+   * `reconcileLiveWithProjection` (dsh 0.1.7-rc.2). `listDescendants` walked
+   * the complete Session corpus on rc.1 but recurses parent CATALOGS on
+   * rc.2, so a child whose catalog branch is corrupt/unreadable — or whose
+   * catalog entry is missing entirely — is omitted from the authoritative
+   * listing with no diagnostic row of its own. Every still-working child
+   * necessarily resides in the process, and the store's live list is the one
+   * enumeration that depends on no catalog: this sweep re-runs the shared
+   * adoption gate over `sessions.list()` each tick and picks up what both
+   * the firehose (burst-lost creation events) and the catalog walk missed.
+   * Merge discipline is the bridge-wide one — only ADD (the
+   * `agentViews.has` guard makes it idempotent and never resurrects a
+   * settled view); rounds/settlement continue through the ordinary fold
+   * paths once the child is in `childSessions`/`trackedSessions`. Cost is
+   * one header check per process-resident session per tick — no persistence
+   * read, and children of previous runs are not resident after a restart,
+   * so they cannot be resurrected onto the board.
+   */
+  private reconcileLiveFromStore(): void {
+    const sessions = this.ctx.get('sessions') as
+      | { list?(): readonly Session[] }
+      | undefined
+    if (sessions?.list === undefined) return
+    let changed = false
+    for (const session of sessions.list()) {
+      if (this.adoptChildSession(session, Date.now())) changed = true
+    }
+    if (changed) this.emitLive()
+  }
 
   /**
    * Correct the live view against the host's authoritative descendant
@@ -544,22 +591,42 @@ export class DshSessionBridge {
    * resurrect a settled continuable (its listing row is `inactive` while it
    * idles between turns). Runs best-effort: an absent/unshaped subagents
    * service or a throwing listing is silently skipped.
+   *
+   * dsh 0.1.7-rc.2: the listing recurses parent CATALOGS instead of walking
+   * the complete Session corpus — a child behind a corrupt/unreadable
+   * catalog branch is reported only as a branch diagnostic, and a truly
+   * catalog-less orphan is invisible (no row at all). Diagnostic rows are
+   * skipped here; the {@link reconcileLiveFromStore} sweep is the
+   * corpus-level companion that keeps such children off the blind spot.
    */
   private async reconcileLiveWithProjection(): Promise<void> {
     if (this.projectionReconcileInFlight) return
     const root = this.sessionId
     if (root === undefined) return
     // ctx.get (NOT property access) — see the sessions accessor note above.
+    // Inline rc.2 `SubagentDescendantListEntry` union: child rows (catalog
+    // walk) and branch diagnostics share the list; `kind` has been on every
+    // row since rc.1, so the discriminator is floor-safe.
     const subagents = this.ctx.get('subagents') as
       | {
           listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<
-            readonly {
-              readonly id: SessionId
-              readonly activity: 'running' | 'inactive'
-              readonly mode?: 'one-shot' | 'continuable'
-              readonly label?: string
-              readonly parentId?: SessionId
-            }[]
+            readonly (
+              | {
+                  readonly kind: 'child'
+                  readonly id: SessionId
+                  readonly activity: 'running' | 'inactive'
+                  readonly mode?: 'one-shot' | 'continuable'
+                  readonly label?: string
+                  readonly hasChildren?: boolean
+                  readonly parentId?: SessionId
+                  readonly depth?: number
+                }
+              | {
+                  readonly kind: 'diagnostic'
+                  readonly id: SessionId
+                  readonly reason: 'corrupt' | 'unsupported' | 'unavailable'
+                }
+            )[]
           >
         }
       | undefined
@@ -570,12 +637,21 @@ export class DshSessionBridge {
       const rootKey = String(root)
       let changed = false
       for (const entry of entries) {
+        // A branch diagnostic (corrupt/unavailable/unsupported) names no
+        // child row — skipping it here is what the sweep above covers for.
+        if (entry.kind === 'diagnostic') continue
         const childKey = String(entry.id)
-        if (childKey === rootKey || this.agentViews.has(childKey)) continue
+        if (childKey === rootKey) continue
         // A running child this bridge never discovered (burst, or its events
         // never bubbled). Register it header-discovery-shaped; descriptor
-        // refinement (label/mode/route) follows from the listing itself.
+        // refinement (label/mode/route) follows from the listing itself. A
+        // child already on the board needs no listing re-add — its own events
+        // drive the fold. (The existence guard lives HERE, not on the loop
+        // head: the settle arm below must still reach existing views — a
+        // loop-head guard made it dead code and stale one-shots lingered on
+        // the board holding maxAgents slots.)
         if (entry.activity === 'running') {
+          if (this.agentViews.has(childKey)) continue
           this.agentViews.set(childKey, {
             childId: childKey,
             parentSession: entry.parentId !== undefined ? String(entry.parentId) : undefined,

@@ -7,6 +7,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **The authoritative-listing settle arm was unreachable — stale one-shots lingered on the live board.** `reconcileLiveWithProjection`'s loop-head `agentViews.has(childKey)` guard skipped every row that already had a view, so the "settle an inactive one-shot the listing reports" branch (the maxAgents-slot guard for a missed `turn/end`) could never fire — `agentViews.get(childKey)` below it was always `undefined`. The existence guard moves into the running/add arm; the settle arm now reaches existing views. Surfaced by the dsh 0.1.7-rc.2 audit's live-board long-tail analysis; test-pinned both ways.
+- **Inline listing type rides the rc.2 shape.** `reconcileLiveWithProjection`'s inline `SubagentDescendantListEntry` now mirrors the rc.2 child/diagnostic union (`kind` discriminator, floor-safe since rc.1), and branch-diagnostic rows (`corrupt`/`unavailable`/`unsupported`) are skipped explicitly instead of falling through on absent fields.
+
+### Added
+- **Live-store sweep (`reconcileLiveFromStore`) — the corpus-level reconcile companion.** dsh 0.1.7-rc.2's `listDescendants` recurses parent CATALOGS instead of walking the complete Session corpus, so a child behind a corrupt/unreadable catalog branch — or without a catalog entry at all — is invisible to the authoritative listing with no diagnostic row of its own. Every still-working child necessarily resides in the process, so each reconcile tick now re-runs the shared child-adoption gate (factored out of the firehose discovery fold) over `sessions.list()` and adopts what both the firehose (burst-lost creation events) and the catalog walk missed. Merge discipline unchanged — only add, never resurrect (a settled view is skipped; children of previous runs are not resident after a restart). Cost is one header check per process-resident session per tick; no persistence read.
+
+## [2.23.1] - 2026-09-24
+
+> Entries below consolidated under 2.23.1: the 09-24 rc.1 wave tagged 2.22.0 → 2.23.1 back-to-back without retitling this section; the block covers all three.
+
+### Fixed
 - **`SESSION_LOG_FILE_NAMES` now carries the v4 artifact names** (`session.v4.jsonl[.zstd]`, dsh 0.1.7-rc.1's current Session format generation). Every store walk that stats the log — the retention janitor's mtime walk, the /resume size-floor and last-update map, `locateSessionLog` — was blind to every v4 session on an rc.1 host: the janitor never deleted aged sessions, and the resume byte floor judged every row as unknown-size. Surfaced by the podman e2e retention scenario (four "survived age rule" failures); a v4-name fixture test pins the list.
 
 ### Changed

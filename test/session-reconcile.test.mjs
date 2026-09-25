@@ -20,8 +20,12 @@ import { DshSessionBridge } from '../lib/session.js'
 function makeHarness() {
   const handlers = new Map()
   const childEvents = []
+  // Process-resident sessions (dsh 0.1.7-rc.2 live-store sweep input) — empty
+  // by default so the sweep is a no-op for every pre-existing test.
+  const live = []
   const sessions = {
     get(id) { return String(id) === 'child-1' ? { get seq() { return childEvents.length }, snapshotEvents: () => childEvents } : undefined },
+    list() { return live },
   }
   const ctx = {
     on(evt, fn) { handlers.set(evt, fn); return () => handlers.delete(evt) },
@@ -32,7 +36,7 @@ function makeHarness() {
       async create() { return { agent: { session: { id: 'root-session' } }, async dispose() {} } },
     },
   }
-  return { ctx, handlers, childEvents }
+  return { ctx, handlers, childEvents, live }
 }
 
 /** Feed one event through the bridge's captured `session/event` subscription. */
@@ -994,5 +998,122 @@ test('the reconcile does not disturb a child the firehose already refined', asyn
   bridge.reconcileChildRounds()
   assert.equal(bridge.getAgentViews()[0].label, '牛马狗', 'label unchanged by the reconcile')
   assert.equal(bridge.getAgentViews()[0].mode, 'one-shot', 'one-shot mode preserved')
+  await bridge.dispose()
+})
+
+// ---------------------------------------------------------------------------
+// Live-store sweep (dsh 0.1.7-rc.2): `listDescendants` recurses parent
+// catalogs, so a child behind a corrupt/unreadable catalog branch — or with
+// no catalog entry at all — is omitted from the authoritative listing with
+// no diagnostic row of its own. `reconcileLiveFromStore` re-runs the shared
+// adoption gate over `sessions.list()` (the process-resident sessions, the
+// one enumeration that needs no catalog) each reconcile tick.
+
+test('reconcileLiveFromStore adopts a live child the firehose never delivered', async () => {
+  const { ctx, handlers, live } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  // No firehose creation event, no workflow start: the child exists only in
+  // the live store (burst-lost creation events, or a catalog branch the
+  // rc.2 catalog walk cannot traverse).
+  live.push({ id: 'child-9', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } })
+  bridge.reconcileLiveFromStore()
+
+  const view = bridge.getAgentViews().find((v) => v.childId === 'child-9')
+  assert.ok(view, 'the orphan running child is adopted onto the live board')
+  assert.equal(view.parentSession, 'root-session', 'header-discovery-shaped view')
+  assert.equal(view.label, 'subagent child-9', 'label falls back to the id8 form')
+
+  // The adopted child folds ordinary events (rounds not dead at 0 — the
+  // maxRounds policy guards it from this tick on).
+  emit(handlers, { id: 'child-9', header: { origin: 'subagent', parentSession: 'root-session' } }, assistantMessage(1, 10))
+  assert.equal(bridge.getRoundCount('child-9'), 1, 'the adopted child folds its own events')
+
+  // Idempotent: a second sweep must not duplicate the view.
+  bridge.reconcileLiveFromStore()
+  assert.equal(bridge.getAgentViews().filter((v) => v.childId === 'child-9').length, 1, 'sweep is idempotent')
+  await bridge.dispose()
+})
+
+test('reconcileLiveFromStore skips non-children and never resurrects a settled view', async () => {
+  const { ctx, handlers, live } = makeHarness()
+  const bridge = new DshSessionBridge(ctx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  discoverViaParentWorkflow(handlers, 'child-1')
+  const childSession = { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } }
+  emit(handlers, childSession, { type: 'turn/end', seq: 2, time: 11, data: { turn: 1, reason: { kind: 'stop' } } })
+  assert.equal(bridge.getAgentViews().find((v) => v.childId === 'child-1').outcome, 'completed', 'precondition: child-1 settled')
+
+  // The store list replays the root itself, a non-delegated session (a
+  // user-facing fork — the value-test guard), a foreign-parent child and
+  // the SETTLED child-1. None of these may change the board.
+  live.push(
+    { id: 'root-session', header: {} },
+    { id: 'user-fork', header: { parentSession: 'root-session' } },
+    { id: 'child-1', header: { origin: 'subagent', parentSession: 'root-session', delegationDepth: 1 } },
+    { id: 'child-other', header: { origin: 'subagent', parentSession: 'untracked-parent', delegationDepth: 1 } },
+  )
+  bridge.reconcileLiveFromStore()
+
+  const views = bridge.getAgentViews()
+  assert.equal(views.filter((v) => v.childId === 'child-1').length, 1, 'the settled view is not duplicated')
+  assert.equal(views.find((v) => v.childId === 'child-1').outcome, 'completed', 'a settled view is never resurrected')
+  assert.equal(views.find((v) => v.childId === 'user-fork'), undefined, 'a delegation-marker-less session is not a child')
+  assert.equal(views.find((v) => v.childId === 'child-other'), undefined, 'a child of an untracked parent stays out of scope')
+  await bridge.dispose()
+})
+
+test('reconcileLiveWithProjection skips rc.2 diagnostic rows and folds child rows', async () => {
+  const { ctx, handlers } = makeHarness()
+  // rc.2 catalog-walk listing: branch diagnostics (no activity/mode) share
+  // the list with child rows.
+  const rows = [
+    { kind: 'diagnostic', id: 'child-x', reason: 'corrupt' },
+    { kind: 'diagnostic', id: 'child-y', reason: 'unavailable' },
+    { kind: 'child', id: 'child-2', activity: 'running', mode: 'continuable', label: 'worker', parentId: 'root-session', depth: 1, hasChildren: false },
+  ]
+  const subCtx = {
+    ...ctx,
+    get: (key) => (key === 'subagents' ? { listDescendants: async () => rows } : ctx.get(key)),
+  }
+  const bridge = new DshSessionBridge(subCtx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  await bridge.reconcileLiveWithProjection()
+
+  const views = bridge.getAgentViews()
+  assert.equal(views.find((v) => v.childId === 'child-x'), undefined, 'a diagnostic row never becomes a view')
+  assert.equal(views.find((v) => v.childId === 'child-y'), undefined, 'an unavailable branch is not fabricated into a child')
+  const running = views.find((v) => v.childId === 'child-2')
+  assert.ok(running, 'the running child row is adopted')
+  assert.equal(running.label, 'worker', 'the listing label refines the view')
+  assert.equal(running.parentSession, 'root-session', 'catalog parentId lands on the view')
+  await bridge.dispose()
+})
+
+test('reconcileLiveWithProjection settles an inactive one-shot the listing reports', async () => {
+  const { ctx, handlers } = makeHarness()
+  const rows = []
+  const subCtx = {
+    ...ctx,
+    get: (key) => (key === 'subagents' ? { listDescendants: async () => rows } : ctx.get(key)),
+  }
+  const bridge = new DshSessionBridge(subCtx, {
+    onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+  })
+  await bridge.ensureAgent()
+  discoverViaParentWorkflow(handlers, 'child-1')
+  assert.equal(bridge.getAgentViews().find((v) => v.childId === 'child-1').outcome, undefined, 'precondition: live view, not settled')
+
+  // The missed turn/end: the listing (catalog) reports the child inactive
+  // one-shot — the authoritative settle that keeps maxAgents slots honest.
+  rows.push({ kind: 'child', id: 'child-1', activity: 'inactive', mode: 'one-shot', label: 'workhorse', parentId: 'root-session', depth: 1 })
+  await bridge.reconcileLiveWithProjection()
+  assert.equal(bridge.getAgentViews().find((v) => v.childId === 'child-1').outcome, 'completed', 'the listing settles the stale one-shot view')
   await bridge.dispose()
 })
