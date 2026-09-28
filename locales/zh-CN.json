@@ -87,6 +87,7 @@
   "viewer.pickerFooter": "↑↓ 移动 · Enter 打开 · s 排序 · K 全部停止 · Esc 关闭",
   "viewer.truncated": "…历史已截断（上限 {cap} 条事件）",
   "viewer.hardStopped": "⏻ 已被 maxRounds 策略强制停止（第 {round} 轮 + 宽限耗尽，上限 {cap}）",
+  "viewer.hardStoppedEarly": "⏻ 被 maxRounds 策略强制停止（第 {round} 轮，检测到打转提前停止，上限 {cap}）",
   "viewer.noEvents": "  — 暂无事件 —",
   "viewer.canceling": "⏹ 正在停止该子代理……",
   "viewer.stopAllOne": "⏹ 全部停止：已取消 1 个子代理",

@@ -87,6 +87,7 @@
   "viewer.pickerFooter": "↑↓ navigate · Enter open · s sort · K stop all · Esc close",
   "viewer.truncated": "…history truncated ({cap} event cap)",
   "viewer.hardStopped": "⏻ hard-stopped by maxRounds policy (round {round} + grace exhausted, cap {cap})",
+  "viewer.hardStoppedEarly": "⏻ hard-stopped by maxRounds policy (round {round}, spin-detected early, cap {cap})",
   "viewer.noEvents": "  — no events yet —",
   "viewer.canceling": "⏹ canceling this subagent…",
   "viewer.stopAllOne": "⏹ stop-all: 1 subagent canceled",

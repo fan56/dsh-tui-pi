@@ -663,10 +663,13 @@ export class SubagentViewerPanel implements Component {
     // synthetic in-transcript line (render-layer composition, the same shape
     // as the dsh-dcp compaction marker), NOT a log event. It states the
     // round it fired at and the cap it enforced so the stop reads as policy,
-    // never as a mysterious failure.
+    // never as a mysterious failure. The early variant names the spin
+    // judgment instead of claiming a grace exhaustion that never happened.
     if (view?.hardStop !== undefined) {
       out.push(fns.subtle(clipToWidth(
-        t('viewer.hardStopped', { round: view.hardStop.round, cap: view.hardStop.cap }),
+        view.hardStop.early === true
+          ? t('viewer.hardStoppedEarly', { round: view.hardStop.round, cap: view.hardStop.cap })
+          : t('viewer.hardStopped', { round: view.hardStop.round, cap: view.hardStop.cap }),
         wrap,
       )))
     }

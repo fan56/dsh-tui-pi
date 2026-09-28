@@ -87,6 +87,7 @@
   "viewer.pickerFooter": "↑↓ 이동 · Enter 열기 · s 정렬 · K 전체 중지 · Esc 닫기",
   "viewer.truncated": "…기록이 잘렸습니다 ({cap}개 이벤트 제한)",
   "viewer.hardStopped": "⏻ maxRounds 정책에 의해 강제 중지되었습니다 (라운드 {round} + 유예 소진, 상한 {cap})",
+  "viewer.hardStoppedEarly": "⏻ maxRounds 정책에 의한 강제 중지(라운드 {round}, 제자리 감지 조기 중지, 상한 {cap})",
   "viewer.noEvents": "  — 아직 이벤트 없음 —",
   "viewer.canceling": "⏹ 이 서브에이전트를 취소하는 중…",
   "viewer.stopAllOne": "⏹ 전체 중지: 서브에이전트 1개를 취소했습니다",
