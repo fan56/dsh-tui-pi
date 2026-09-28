@@ -166,8 +166,12 @@ fi
 # from the marker row itself, then assert it sits below the cap.
 MARKER_LINE="$(printf '%s' "$PANE" | grep -oE 'round [0-9]+, spin-detected early, cap 60' | head -1)"
 EARLY_ROUND_NUM="$(printf '%s' "$MARKER_LINE" | grep -oE '[0-9]+' | head -1)"
-if [ -n "$EARLY_ROUND_NUM" ] && [ "$EARLY_ROUND_NUM" -lt 60 ]; then
-  ok "marker row names an early round below the cap — $MARKER_LINE"
+# The early stop's discriminator is GRACE NOT EATEN: the classic ladder
+# stops at cap+grace = 67, the early stop at or before the cap. The timing
+# of the third jev pass (30s debounce) can land the stop anywhere from the
+# floor+2 to the cap itself.
+if [ -n "$EARLY_ROUND_NUM" ] && [ "$EARLY_ROUND_NUM" -le 60 ]; then
+  ok "marker row names a round at/below the cap, grace never eaten — $MARKER_LINE"
 else
   bad "marker row round not parsed as <60 (marker='${MARKER_LINE:-none}', num='${EARLY_ROUND_NUM:-none}'); pane tail:"
   printf '%s\n' "$PANE" | tail -12 | sed 's/^/    | /'
