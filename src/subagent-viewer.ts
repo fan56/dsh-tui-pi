@@ -58,6 +58,7 @@ import {
 } from '@earendil-works/pi-tui'
 import type { AgentView } from './dsh-events.ts'
 import { isDcpCompactionNotice, isTuiPluginInjection } from './dsh-events.ts'
+import type { AttentionInfo } from './attention.ts'
 import { sunglassesIcon } from './icons.ts'
 import type { DshSessionBridge } from './session.ts'
 import { DOUBLE_PRESS_MS, MIN_DOUBLE_PRESS_GAP_MS } from './keymap.ts'
@@ -347,13 +348,17 @@ export function eventLines(events: readonly SessionEvent[]): string[] {
  * then the five most recent settled ones (newest settle first). Each row
  * reads `⠋ label [mode] · rounds N[/max] · model` with the token spend, the
  * dsh-dcp compaction count (when > 0) and elapsed seconds in the muted
- * description column.
+ * description column. The row order is the CALLER's sort (started-at
+ * default; attention-score or rounds order when toggled) — `attention` here
+ * only decorates: `⚠` marks a critical-tier ranking, `↻` marks a settled
+ * continuable child whose session survives for resume.
  */
 export function pickerItems(
   views: readonly AgentView[],
   getRoundCount: (childId: string) => number,
   maxRounds: number,
   getCompactionCount: (childId: string) => number = () => 0,
+  attention?: (childId: string) => AttentionInfo | undefined,
 ): SelectItem[] {
   const running = views.filter(view => view.outcome === undefined)
   const settled = views
@@ -380,11 +385,15 @@ export function pickerItems(
     // `⚡ injected` — a policy wrap-up (or steer) reached this child; shows
     // the injection landed even when the child LLM then ignored it.
     // `⏻ stopped` — the policy FORCE-stopped it (grace exhausted).
+    // `⚠` — the attention ranking ranks this child critical (heuristic base,
+    // jev upgrade); `↻` — a settled continuable child, resumable in place.
     const injected = view.injectedAt !== undefined ? ` ${t('viewer.injected')}` : ''
     const stopped = view.hardStop !== undefined ? ` ${t('viewer.stopped')}` : ''
+    const attentionMark = attention?.(view.childId)?.tier === 'critical' ? ' ⚠' : ''
+    const resumableMark = view.outcome !== undefined && view.mode === 'continuable' ? ' ↻' : ''
     return {
       value: view.childId,
-      label: `${statusGlyph(view)} ${view.label}${mode}: ${roundsText}${stopped}${injected}${modelShort !== undefined ? ` · ${modelShort}` : ''}`,
+      label: `${statusGlyph(view)} ${view.label}${mode}: ${roundsText}${stopped}${injected}${attentionMark}${resumableMark}${modelShort !== undefined ? ` · ${modelShort}` : ''}`,
       ...(description !== '' ? { description } : {}),
     }
   })
@@ -959,25 +968,29 @@ export async function openSubagentViewer(
     // the unbound method through to the pure item builder. `buildItems`
     // re-reads the limits live on every tick, so a maxRounds change
     // hot-applies while the picker stays open (no more open-time snapshot).
-    // `sortByRounds` (the `s` toggle) flips the row order to rounds
-    // descending — the "which child burns hottest" view.
+    // `sortByAttention` (default on, `r` toggles) orders running rows by the
+    // attention ranking — the "which child needs my eye first" view, the
+    // heuristic base with the jev upgrade when configured. `sortByRounds`
+    // (the `s` toggle) flips the row order to rounds descending — the "which
+    // child burns hottest" view — and wins while selected.
     let sortByRounds = false
+    let sortByAttention = true
+    const attentionLookup = (childId: string): AttentionInfo | undefined => bridge.getAttention(childId)
     const buildItems = (): SelectItem[] => {
       const views = [...bridge.getAgentViews()]
       if (sortByRounds) {
         views.sort((a, b) => bridge.getRoundCount(b.childId) - bridge.getRoundCount(a.childId))
-        return pickerItems(
-          views,
-          childId => bridge.getRoundCount(childId),
-          readSubagentLimits(ctx).maxRounds,
-          childId => bridge.getChildCompactionCount(childId),
-        )
+      } else if (sortByAttention) {
+        views.sort((a, b) =>
+          (attentionLookup(b.childId)?.score ?? 0) - (attentionLookup(a.childId)?.score ?? 0)
+          || a.startedAt - b.startedAt)
       }
       return pickerItems(
         views,
         childId => bridge.getRoundCount(childId),
         readSubagentLimits(ctx).maxRounds,
         childId => bridge.getChildCompactionCount(childId),
+        attentionLookup,
       )
     }
     const items = buildItems()
@@ -1002,6 +1015,10 @@ export async function openSubagentViewer(
         if (key === 's') {
           sortByRounds = !sortByRounds
           return true // rebuilt on the next tick; render immediately
+        }
+        if (key === 'r') {
+          sortByAttention = !sortByAttention
+          return true
         }
         if (key === 'K') {
           const stopped = bridge.cancelAllChildren()

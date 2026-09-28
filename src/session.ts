@@ -17,6 +17,8 @@ import { createUserMessage, type ReasoningEffortId, type StreamChunk, type Token
 import { SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
+import { AttentionBoard, type AttentionInfo, type AttentionRow } from './attention.ts'
+import type { AttentionJevSource } from './attention-jev.ts'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentView, SubagentDescriptorData } from './dsh-events.ts'
@@ -481,6 +483,9 @@ export class DshSessionBridge {
         // The projection-backed reconciliation rides the same cadence but is
         // async and self-guarded (never overlaps itself).
         void this.reconcileLiveWithProjection()
+        // Attention ranking re-observe (heuristic recompute is a map walk;
+        // the jev layer self-debounces inside its source).
+        this.updateAttention()
       } catch {
         // A throwing reconcile must never take the process down.
       }
@@ -814,6 +819,39 @@ export class DshSessionBridge {
     })
   }
 
+  /**
+   * Attach the attention ranking's jev upgrade source (heuristic-only when
+   * undefined) and the live maxRounds reader for the ranking's state table.
+   * Wired once by the host; the source self-debounces and self-guards.
+   */
+  attachAttentionSource(source: AttentionJevSource | undefined, capReader: () => number): void {
+    this.attentionSource = source
+    this.attentionCapReader = capReader
+  }
+
+  /** Re-observe the attention ranking; driven by the reconcile tick. */
+  private updateAttention(): void {
+    const views = this.getLiveChildren()
+    const cap = this.attentionCapReader?.() ?? 0
+    this.attentionBoard.update(views, cap)
+    this.attentionSource?.tick(this.attentionBoard, views, cap)
+  }
+
+  /** One child's current attention info (heuristic base; jev once it has judged). */
+  getAttention(childId: string): AttentionInfo | undefined {
+    return this.attentionBoard.get(childId)
+  }
+
+  /** All attention rows, highest score first (picker sort, status board). */
+  getAttentionRows(): readonly AttentionRow[] {
+    return this.attentionBoard.rows()
+  }
+
+  /** The guard deny-copy hint: the top attention-worthy live child, when one ranks above ok. */
+  getAttentionHint(): { label: string; detail: string } | undefined {
+    return this.attentionBoard.topHint()
+  }
+
   /** Children still running (`outcome` unset) — the live count the guard caps. */
   getLiveChildren(): readonly AgentView[] {
     return this.getAgentViews().filter(view => view.outcome === undefined)
@@ -1141,6 +1179,10 @@ export class DshSessionBridge {
 
   /** Hard stops the maxRounds policy executed, keyed by child session id. */
   private readonly hardStopRecords = new Map<string, { round: number; cap: number }>()
+  /** Attention ranking (heuristic base + optional jev layer) — see src/attention.ts. */
+  private readonly attentionBoard = new AttentionBoard()
+  private attentionSource: AttentionJevSource | undefined
+  private attentionCapReader: (() => number) | undefined
 
   /**
    * Whether ANY LLM work is in flight: the bridge's own mid-turn status OR

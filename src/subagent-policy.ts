@@ -293,6 +293,12 @@ export interface SubagentPolicyState {
   /** Whether one child already settled — a settled child is never re-awakened. */
   isSettled(childId: string): boolean
   /**
+   * The attention ranking's deny-copy hint (heuristic base, optional jev
+   * layer): the most attention-worthy live child, when one ranks above ok.
+   * Absent ⇒ the ranking has nothing to say and the denial copy stays as-is.
+   */
+  getAttentionHint?(): { label: string; detail: string } | undefined
+  /**
    * Forcibly stop one live child (the everything-stop's per-child idiom,
    * `cancel({kind:'user'}, {keepInbox:true})`): a one-shot run settles
    * `aborted` (the parent's tool call reports the cancellation with the
@@ -494,9 +500,18 @@ export function applySubagentPolicy(
       }
       stats.denied += 1
       const running = live.map((agent) => agent.label).join(', ')
+      // Attention-informed denial (Charter #6): when the ranking knows a
+      // live child that looks stalled/spinning, the denial names it — the
+      // model can surface "stop <label>" to the operator (or wait) instead
+      // of blindly parking the task. Pure advisory copy; the cap math above
+      // is untouched and the hint is undefined when the ranking is off.
+      const hint = state.getAttentionHint?.()
+      const hintLine = hint === undefined
+        ? ''
+        : ` The attention ranking flags "${hint.label}" (${hint.detail}) — if it looks wasted, surface stopping it to the operator (subagent viewer) to free a slot sooner.`
       return `Agent limit reached (${effective}/${maxAgents}): ${running} still running — do NOT retry the spawn now. `
         + 'Call subagent_status for the live board, record this task in the todo list (todo_write, status pending), '
-        + 'and execute it after a running agent finishes and frees a slot.'
+        + `and execute it after a running agent finishes and frees a slot.${hintLine}`
     }))
   }
 

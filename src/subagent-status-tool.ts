@@ -23,6 +23,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AgentView } from './dsh-events.ts'
 import type { SubagentPolicyStats } from './subagent-policy.ts'
+import type { AttentionRow } from './attention.ts'
 import { readSubagentLimits } from './theme-settings.ts'
 
 /** The global tool name — deliberately NOT in SPAWN_TOOLS: this spawns nothing. */
@@ -41,6 +42,13 @@ export interface SubagentRuntimeSource {
   views(): readonly AgentView[]
   /** The policy's admission counters. */
   stats(): SubagentPolicyStats
+  /**
+   * The attention ranking, highest score first (heuristic base, jev upgrade
+   * when configured) — absent when no child is ranked. The board renders it
+   * as a priority section so the model plans around the neediest child
+   * instead of treating every live row evenly.
+   */
+  attention?(): readonly AttentionRow[] | undefined
 }
 
 /** Structural slice of the tool registry's registration hook (`@deepseek-ai/dsh-tools`). */
@@ -118,10 +126,26 @@ export function buildSubagentStatusTool(ctx: Context, runtime: SubagentRuntimeSo
         .slice(0, SETTLED_ROWS)
       const head = `subagent board — live ${stats.live}/${cap} (dsh-tui.maxAgents, 0 = unlimited)`
         + ` · admitted ${stats.allowed} · denied ${stats.denied} · pruned ${stats.pruned} · in-flight ${stats.inFlight}`
+      const attention = runtime.attention?.() ?? []
+      const attentionRows = attention
+        .filter(row => row.info.tier !== 'ok')
+        .map(row => `attention: ${row.info.tier === 'critical' ? '⚠' : '·'} ${row.label} — ${row.info.source} score ${row.info.score.toFixed(2)}`
+          + `${row.info.tag !== undefined ? ` [${row.info.tag}]` : ''}, idle ${Math.round(row.stallMs / 1000)}s`)
+      // A settled continuable child keeps its session and inbox — resumable
+      // in place; the board names them so the model can point the operator
+      // at the recovery affordance instead of re-delegating from scratch.
+      const resumable = views.filter(view => view.outcome !== undefined && view.mode === 'continuable')
+      const resumableLine = resumable.length > 0
+        ? [`resumable continuable (sessions survive; ask the operator to resume in the subagent viewer): `
+          + resumable.map(view => `#${view.childId.slice(0, 8)} ${view.label}`).join(', ')]
+        : []
       const rows = [
+        ...(attentionRows.length > 0 ? [`--- attention (${attention[0]?.info.source ?? 'heuristic'}) ---`] : []),
+        ...attentionRows,
         ...live.map(view => renderRow('live', view, now)),
         ...(settled.length > 0 ? ['--- recent settles ---'] : []),
         ...settled.map(view => renderRow('done', view, now)),
+        ...resumableLine,
       ]
       const text = rows.length === 0
         ? `${head}\n(no children yet — the board is empty)`

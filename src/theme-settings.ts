@@ -166,6 +166,7 @@ export interface TuiSettings {
   maxRoundsGrace: Volatile<number>
   disableSubagent: Volatile<boolean>
   registeredOnly: Volatile<boolean>
+  jevAttention: Volatile<'auto' | 'off'>
   footerHints: Volatile<FooterHints>
   cacheHitMode: Volatile<CacheHitMode>
   iconSet: Volatile<IconSet>
@@ -238,6 +239,14 @@ export const Config = z.object({
     .default(DEFAULT_SUBAGENT_LIMITS.registeredOnly)
     .volatile()
     .description(t('settings.registeredOnly.description')),
+  // Attention ranking's jev layer (Charter #6, jev-optional): 'auto' uses
+  // jev when a key is configured and falls back to the always-on heuristic
+  // ranking otherwise; 'off' forces heuristic-only and never sends anything.
+  jevAttention: z
+    .union(['auto', 'off'])
+    .default('auto')
+    .volatile()
+    .description(t('settings.jevAttention.description')),
   footerHints: z
     .object({
       send: z.boolean().default(true).description(t('settings.footerHints.send.description')),
@@ -691,6 +700,18 @@ export function readSubagentLimits(_ctx: Context): SubagentLimits {
       ? section.registeredOnly.get()
       : DEFAULT_SUBAGENT_LIMITS.registeredOnly,
   }
+}
+
+/**
+ * The attention ranking's jev-layer mode (Charter #6): 'auto' (default) uses
+ * jev when a key is configured and the always-on heuristic ranking otherwise;
+ * 'off' forces heuristic-only and never sends anything off-machine. Defensive
+ * like the limits readers: anything but the two ids resolves to 'auto'.
+ */
+export function readJevAttentionMode(_ctx: Context): 'auto' | 'off' {
+  const section = tuiConfig()
+  const value = section.jevAttention.get()
+  return value === 'off' ? 'off' : 'auto'
 }
 
 /**

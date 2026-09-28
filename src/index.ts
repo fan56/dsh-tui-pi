@@ -53,6 +53,7 @@ import {
   readAskUserExplicit,
   readFooterHintsPreference,
   readIconSetPreference,
+  readJevAttentionMode,
   readLanguagePreference,
   readPanelHeightPreference,
   readRememberPreset,
@@ -107,6 +108,7 @@ import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import { emitNotice } from './notice-bridge.ts'
 import { applySubagentPolicy } from './subagent-policy.ts'
 import { installSubagentStatusTool } from './subagent-status-tool.ts'
+import { createJevAttentionSource } from './attention-jev.ts'
 import { openSubagentViewer } from './subagent-viewer.ts'
 import { openHistoryBrowser } from './history.ts'
 import { openForkAtTurnDialog } from './history-fork.ts'
@@ -878,6 +880,7 @@ export function apply(ctx: Context, config: TuiSettings): void {
       getRoundCount: childId => bridge.getRoundCount(childId),
       isSettled: childId => bridge.isChildSettled(childId),
       cancelChild: childId => bridge.cancelChild(childId),
+      getAttentionHint: () => bridge.getAttentionHint(),
     }, readAgentMaxRounds)
     // Wire the policy into the callback object the bridge ACTUALLY holds:
     // `bridgeCallbacksWithTakeover` is a spread copy taken before this point,
@@ -898,7 +901,22 @@ export function apply(ctx: Context, config: TuiSettings): void {
     ctx.effect(() => installSubagentStatusTool(ctx, {
       views: () => bridge.getAgentViews(),
       stats: () => subagentPolicy.getStats(),
+      attention: () => {
+        const rows = bridge.getAttentionRows()
+        return rows.length > 0 ? rows : undefined
+      },
     }) ?? (() => {}), 'dsh-tui-pi:subagent_status')
+
+    // Attention ranking's jev upgrade source (Charter #6, jev-optional): the
+    // bridge's reconcile tick re-observes the always-on heuristic ranking
+    // every 600ms; this source adds the debounced jev pass when the
+    // `jevAttention` setting is 'auto' AND a key is configured — otherwise
+    // everything stays heuristic and nothing leaves the machine. The probe
+    // degrades to heuristic-only when @aiwayds/dsh-jev-core is unresolvable.
+    bridge.attachAttentionSource(
+      createJevAttentionSource({ modeReader: () => readJevAttentionMode(ctx) }),
+      () => readSubagentLimits(ctx).maxRounds,
+    )
 
     // Ask-user-question provider: the upstream `dsh-tool-ask-user` tool calls
     // `ctx.userQuestions.ask()` while its tool call is pending, and the
