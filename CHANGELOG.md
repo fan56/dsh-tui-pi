@@ -13,6 +13,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - **Live-store sweep (`reconcileLiveFromStore`) — the corpus-level reconcile companion.** dsh 0.1.7-rc.2's `listDescendants` recurses parent CATALOGS instead of walking the complete Session corpus, so a child behind a corrupt/unreadable catalog branch — or without a catalog entry at all — is invisible to the authoritative listing with no diagnostic row of its own. Every still-working child necessarily resides in the process, so each reconcile tick now re-runs the shared child-adoption gate (factored out of the firehose discovery fold) over `sessions.list()` and adopts what both the firehose (burst-lost creation events) and the catalog walk missed. Merge discipline unchanged — only add, never resurrect (a settled view is skipped; children of previous runs are not resident after a restart). Cost is one header check per process-resident session per tick; no persistence read.
 
+### Changed
+- **`/model` rows aggregate by provider, alphabetical within.** The listing arrives as a `Promise.all` race across providers, so the picker's sections interleaved providers by resolve speed — a different shuffle every open. All three sections (Favorites, the main list, Hidden) now share one deterministic order through `compareListedModels`: providers alphabetically, then the MODEL column's label (name, falling back to id; id breaks label ties). Favorites are display-only sorting — the persisted `favoriteModels` list keeps its join order (favorite toggling is unaffected). Pinned by a jumbled-listing fixture test.
+
 ## [2.23.1] - 2026-09-24
 
 > Entries below consolidated under 2.23.1: the 09-24 rc.1 wave tagged 2.22.0 → 2.23.1 back-to-back without retitling this section; the block covers all three.

@@ -1,8 +1,10 @@
 /**
  * Pure model-list assembly for the /model picker — favorites pinned on top,
- * hidden models in a dim section at the bottom, everything between. No TUI
- * imports: every function here is plain data-in/data-out, so the ordering,
- * filtering and toggle semantics stay unit-testable without a terminal
+ * hidden models in a dim section at the bottom, everything between. Every
+ * section lists its models aggregated under their provider (providers
+ * alphabetical, models alphabetical within a provider). No TUI imports:
+ * every function here is plain data-in/data-out, so the ordering, filtering
+ * and toggle semantics stay unit-testable without a terminal
  * (test/model-list.test.mjs).
  */
 
@@ -40,6 +42,22 @@ export function matchesModelFilter(model: ListedModel, query: string): boolean {
 }
 
 /**
+ * Display order of every picker section: providers aggregate alphabetically,
+ * and within a provider models sort by the label the MODEL column shows
+ * (name, falling back to id) with the id as the tiebreak. The listing
+ * arrives from pickModel as a Promise.all race across providers, so the
+ * input order interleaves providers by resolve speed — this comparator is
+ * what makes the rows deterministic.
+ */
+export function compareListedModels(a: ListedModel, b: ListedModel): number {
+  const byProvider = a.provider.localeCompare(b.provider)
+  if (byProvider !== 0) return byProvider
+  const labelA = a.name === '' ? a.id : a.name
+  const labelB = b.name === '' ? b.id : b.name
+  return labelA.localeCompare(labelB) || a.id.localeCompare(b.id)
+}
+
+/**
  * Toggle `key` in `list`: remove when present, append when absent (join
  * order = favorite order). Returns a new array; the input is never mutated.
  */
@@ -68,14 +86,18 @@ export function narrowStringList(value: unknown): string[] {
 /**
  * Assemble the picker rows, top to bottom:
  *
- * 1. Favorites (`section: 'favorite'`, ★ prefix applied by renderCell), in
- *    join order — a favorited model is removed from every other section;
+ * 1. Favorites (`section: 'favorite'`, ★ prefix applied by renderCell) —
+ *    display order is the shared provider-grouped alphabetical order, not
+ *    the join order of the persisted `favoriteModels` list (persistence
+ *    keeps join order; only the rendering sorts). A favorited model is
+ *    removed from every other section;
  * 2. one full-width divider row — only when at least one favorite is visible
  *    AND something follows it;
- * 3. the remaining models (`section: 'normal'`) in listing order;
+ * 3. the remaining models (`section: 'normal'`) in the same order;
  * 4. the Hidden section — only without an active filter and when non-empty:
  *    a `hiddenHeader` row carrying the count, then the hidden models
- *    (`section: 'hidden'`, rendered dim) that are not also favorited.
+ *    (`section: 'hidden'`, rendered dim) that are not also favorited,
+ *    likewise in the shared order.
  *
  * An active `filter` keeps the pinned structure but leaves only matching
  * models per section; stale keys in `favorites`/`hidden` (models no longer
@@ -87,7 +109,8 @@ export function buildModelRows(
   hidden: readonly string[],
   filter = '',
 ): ModelRow[] {
-  const byKey = new Map(models.map(model => [modelKey(model), model]))
+  const sorted = [...models].sort(compareListedModels)
+  const byKey = new Map(sorted.map(model => [modelKey(model), model]))
   const favKeys = new Set(favorites)
   const hiddenSet = new Set(hidden)
 
@@ -95,16 +118,17 @@ export function buildModelRows(
     .map(key => byKey.get(key))
     .filter((model): model is ListedModel =>
       model !== undefined && matchesModelFilter(model, filter))
+    .sort(compareListedModels)
     .map(model => ({ kind: 'model', section: 'favorite', model }))
 
-  const normalRows: ModelRow[] = models
+  const normalRows: ModelRow[] = sorted
     .filter(model =>
       !favKeys.has(modelKey(model))
       && !hiddenSet.has(modelKey(model))
       && matchesModelFilter(model, filter))
     .map(model => ({ kind: 'model', section: 'normal', model }))
 
-  const hiddenModels = models.filter(model =>
+  const hiddenModels = sorted.filter(model =>
     hiddenSet.has(modelKey(model)) && !favKeys.has(modelKey(model)))
   const showHidden = filter.trim() === '' && hiddenModels.length > 0
 

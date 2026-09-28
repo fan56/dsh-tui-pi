@@ -14,6 +14,7 @@ import { createVolatile } from '@deepseek-ai/cosmokit'
 import {
   buildModelRows,
   canHideModelRow,
+  compareListedModels,
   matchesModelFilter,
   modelKey,
   narrowStringList,
@@ -85,6 +86,23 @@ test('matchesModelFilter is a case-insensitive substring match on name/id/provid
   assert.equal(matchesModelFilter(glm, 'kimi'), false)
 })
 
+test('compareListedModels: provider aggregates first, then the MODEL-column label, id tiebreak', () => {
+  const chat = { provider: 'deepseek', id: 'deepseek-chat', name: 'DeepSeek Chat' }
+  const glm = { provider: 'zhipu', id: 'glm-4.7', name: 'GLM-4.7' }
+  assert.ok(compareListedModels(chat, glm) < 0, 'provider aggregation outranks the label')
+  const reasoner = { provider: 'deepseek', id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' }
+  assert.ok(compareListedModels(chat, reasoner) < 0, 'label alphabetical within a provider')
+  // No hyphens/spaces in these labels: ICU collation orders '-' after ' ',
+  // which would entangle the fallback check with punctuation weighting.
+  const unnamed = { provider: 'deepseek', id: 'mmmmodel', name: '' }
+  const named = { provider: 'deepseek', id: 'zzz', name: 'Chat' }
+  assert.ok(compareListedModels(unnamed, named) > 0, 'empty name falls back to the id as the label')
+  const tieA = { provider: 'deepseek', id: 'a', name: 'Same Label' }
+  const tieB = { provider: 'deepseek', id: 'b', name: 'Same Label' }
+  assert.ok(compareListedModels(tieA, tieB) < 0, 'identical labels fall through to the id')
+  assert.equal(compareListedModels(chat, chat), 0)
+})
+
 // ---------------------------------------------------------- buildModelRows --
 
 test('buildModelRows: favorites → divider → normal → hidden header + hidden models', () => {
@@ -109,14 +127,49 @@ test('buildModelRows: no favorites means no divider row', () => {
   assert.ok(rows.every(row => row.section === 'normal'))
 })
 
-test('buildModelRows: favorites keep join order; stale keys are skipped', () => {
-  const rows = buildModelRows(MODELS, ['deepseek/deepseek-reasoner', 'ghost/old-model'], [])
+test('buildModelRows: favorites render sorted (join order is persistence-only); stale keys are skipped', () => {
+  const rows = buildModelRows(MODELS, ['zhipu/glm-4.7', 'deepseek/deepseek-reasoner', 'ghost/old-model'], [])
   assert.deepEqual(
     rows.filter(row => row.kind === 'model').map(row => row.model.id),
-    ['deepseek-reasoner', 'deepseek-chat', 'glm-4.7'],
-    'favorite first (join order), listing order after',
+    ['deepseek-reasoner', 'glm-4.7', 'deepseek-chat'],
+    'favorites re-sorted by provider/label (not the zhipu-first join order), normal after',
   )
-  assert.deepEqual(rows.map(row => row.kind), ['model', 'divider', 'model', 'model'])
+  assert.deepEqual(rows.map(row => row.kind), ['model', 'model', 'divider', 'model'])
+})
+
+// Listing order as pickModel collects it: a Promise.all race across
+// providers, interleaved by resolve speed.
+const JUMBLED = [
+  { provider: 'zhipu', id: 'glm-4.7', name: 'GLM-4.7' },
+  { provider: 'anthropic', id: 'claude-opus-4', name: 'Claude Opus 4' },
+  { provider: 'deepseek', id: 'deepseek-chat', name: 'DeepSeek Chat' },
+  { provider: 'anthropic', id: 'claude-haiku-4', name: 'Claude Haiku 4' },
+  { provider: 'zhipu', id: 'glm-4.5-air', name: 'GLM-4.5-Air' },
+  { provider: 'deepseek', id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+]
+
+test('buildModelRows aggregates every section by provider, alphabetical within', () => {
+  const rows = buildModelRows(
+    JUMBLED,
+    ['zhipu/glm-4.7', 'deepseek/deepseek-chat'],
+    ['anthropic/claude-opus-4', 'deepseek/deepseek-reasoner'],
+  )
+  assert.deepEqual(
+    rows.map(row =>
+      row.kind === 'model' ? `${row.section}:${row.model.provider}/${row.model.id}` : row.kind),
+    [
+      'favorite:deepseek/deepseek-chat',
+      'favorite:zhipu/glm-4.7',
+      'divider',
+      'normal:anthropic/claude-haiku-4',
+      'normal:zhipu/glm-4.5-air',
+      'hiddenHeader',
+      'hidden:anthropic/claude-opus-4',
+      'hidden:deepseek/deepseek-reasoner',
+    ],
+    'favorite/normal/hidden all provider-grouped alphabetical, not listing order',
+  )
+  assert.equal(rows.find(row => row.kind === 'hiddenHeader').count, 2)
 })
 
 test('buildModelRows: a favorited hidden model appears once, in favorites', () => {
