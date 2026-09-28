@@ -84,7 +84,7 @@
   "viewer.title": "● Sub-agents",
   "viewer.col.subagent": "Sub-agent",
   "viewer.col.stats": "Stats",
-  "viewer.pickerFooter": "↑↓ navigate · Enter open · s sort · K stop all · Esc close",
+  "viewer.pickerFooter": "↑↓ navigate · Enter open · r attention sort · s sort · K stop all · Esc close",
   "viewer.truncated": "…history truncated ({cap} event cap)",
   "viewer.hardStopped": "⏻ hard-stopped by maxRounds policy (round {round} + grace exhausted, cap {cap})",
   "viewer.hardStoppedEarly": "⏻ hard-stopped by maxRounds policy (round {round}, spin-detected early, cap {cap})",

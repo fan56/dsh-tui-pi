@@ -84,7 +84,7 @@
   "viewer.title": "● サブエージェント",
   "viewer.col.subagent": "サブエージェント",
   "viewer.col.stats": "統計",
-  "viewer.pickerFooter": "↑↓ 移動 · Enter 開く · s ソート · K 全部停止 · Esc 閉じる",
+  "viewer.pickerFooter": "↑↓ 移動 · Enter 開く · r 注目度ソート · s ラウンドソート · K 全停止 · Esc 閉じる",
   "viewer.truncated": "…履歴を切り詰め（イベント上限 {cap}）",
   "viewer.hardStopped": "⏻ maxRounds ポリシーで強制停止（ラウンド {round} + 猶予消費、上限 {cap}）",
   "viewer.hardStoppedEarly": "⏻ maxRounds ポリシーによる強制停止（ラウンド {round}、空転検知による早期停止、上限 {cap}）",
