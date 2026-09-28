@@ -117,6 +117,13 @@ interface ChildObservation {
   info: AttentionInfo
   /** Set on progress; cleared when a jev pass covers the child. */
   dirtyForJev: boolean
+  /**
+   * Consecutive jev passes whose spin verdict cleared the high segment
+   * (≥0.75). Progress resets it to 0 — those verdicts judged state the child
+   * has since left behind. The early-hard-stop ladder (ticket 05) acts on a
+   * streak of 2.
+   */
+  spinStreak: number
 }
 
 /** Heuristic inputs derived from one live view + the board's own observation of it. */
@@ -177,6 +184,7 @@ export class AttentionBoard {
         lastTokens: view.tokens,
         info: { score: 0, tier: 'ok', source: 'heuristic' },
         dirtyForJev: true,
+        spinStreak: 0,
       }
       observation.label = view.label
       if (progressed) {
@@ -184,6 +192,9 @@ export class AttentionBoard {
         observation.lastRounds = view.rounds
         observation.lastTokens = view.tokens
         observation.dirtyForJev = true
+        // A jev spin verdict judged the state BEFORE this progress; keeping
+        // the streak would let stale verdicts fire an early stop.
+        observation.spinStreak = 0
       }
       const input = { ...inputsFor(view, observation, now), cap }
       const score = heuristicAttentionScore(input)
@@ -209,7 +220,16 @@ export class AttentionBoard {
       const clamped = clamp01(score)
       observation.info = { score: clamped, tier: tierFor(clamped), source: 'jev', ...(tag !== undefined ? { tag } : {}) }
       observation.dirtyForJev = false
+      observation.spinStreak = tag === 'spinning' ? observation.spinStreak + 1 : 0
     }
+  }
+
+  /**
+   * Consecutive high-segment spin verdicts for one child (0 when untracked
+   * or after progress). The early-hard-stop ladder's 2-strike input.
+   */
+  spinStreak(childId: string): number {
+    return this.observations.get(childId)?.spinStreak ?? 0
   }
 
   /** Children whose state changed since their last jev judgment (the refresh's work list). */

@@ -842,6 +842,11 @@ export class DshSessionBridge {
     return this.attentionBoard.get(childId)
   }
 
+  /** Consecutive high-segment spin verdicts for one child (the early-stop 2-strike input). */
+  getSpinStreak(childId: string): number {
+    return this.attentionBoard.spinStreak(childId)
+  }
+
   /** All attention rows, highest score first (picker sort, status board). */
   getAttentionRows(): readonly AttentionRow[] {
     return this.attentionBoard.rows()
@@ -1167,18 +1172,18 @@ export class DshSessionBridge {
    * after a successful `cancelChild`; a stop that found nothing live is
    * deliberately not recorded (the child settled on its own in time).
    */
-  markChildHardStopped(childId: string, round: number, cap: number): void {
+  markChildHardStopped(childId: string, round: number, cap: number, early?: true): void {
     // The record lives in its OWN map, not on the view: fold updates spread
     // the view snapshot captured at their own event-dispatch time, and the
     // cancel races those events — a hardStop folded onto the view object was
     // observably overwritten by the in-flight `turn/end` spread. The map is
     // authoritative; getAgentViews composes it onto the returned views.
-    this.hardStopRecords.set(childId, { round, cap })
+    this.hardStopRecords.set(childId, { round, cap, ...(early !== undefined ? { early } : {}) })
     this.emitLive()
   }
 
   /** Hard stops the maxRounds policy executed, keyed by child session id. */
-  private readonly hardStopRecords = new Map<string, { round: number; cap: number }>()
+  private readonly hardStopRecords = new Map<string, { round: number; cap: number; early?: true }>()
   /** Attention ranking (heuristic base + optional jev layer) — see src/attention.ts. */
   private readonly attentionBoard = new AttentionBoard()
   private attentionSource: AttentionJevSource | undefined

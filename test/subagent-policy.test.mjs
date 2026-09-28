@@ -19,6 +19,7 @@ import {
   NATIVE_SPAWN_TOOLS,
   SPAWN_TOOLS,
   wrapupMessage,
+  wrapupMessageEarly,
   TUI_SURFACE_KEY,
   applySubagentPolicy,
   installSpawnToolFence,
@@ -1028,5 +1029,162 @@ test('the registeredOnly fence reason wins over the cap reason', () => {
   const denial = captured.guard({ name: 'subagent_fork', agent: tuiAgent() })
   assert.ok(denial.includes('Ad-hoc subagents are disabled'), 'the fence reason wins')
   assert.ok(!denial.includes('Agent limit reached'), 'no cap reason leaks through')
+  policy.dispose()
+})
+
+// ---- spin-detected early ladder (wayfinder ticket 05) --------------------
+//
+// The tighten-only legs consume the attention ranking's spin streak through
+// the state's optional getSpinStreak. Every test pins the inert-by-default
+// property first: without spin evidence the ladder behaves exactly as before.
+
+function spinState({ live = [], roundCounts = {}, settled = [], streaks = {} } = {}) {
+  const base = makeState({ live, roundCounts, settled })
+  return { ...base, getSpinStreak: (childId) => streaks[childId] ?? 0 }
+}
+
+test('spin streak 2 pulls the wrap-up forward past the rounds floor, streak 1 does not', async () => {
+  const followups = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 30 }),
+    agent: { followup: (msg) => followups.push(msg) },
+  })
+  const policy = applySubagentPolicy(ctx, spinState({ live: [{ childId: 'child-1', label: 'grinder' }], streaks: { 'child-1': 1 } }))
+
+  // Single strike below the floor and at the floor: inert.
+  policy.onRoundCount('child-1', 2)
+  await microtaskFlush()
+  assert.deepEqual(followups, [], 'streak 1 below floor: nothing')
+  policy.onRoundCount('child-1', 10) // the floor for cap 30 is max(10, 10) = 10
+  await microtaskFlush()
+  assert.deepEqual(followups, [], 'streak 1 at floor: still nothing — 2 strikes required')
+
+  // The second strike arms the early wrap-up at the very floor round.
+  const armed = applySubagentPolicy(ctx, spinState({ live: [{ childId: 'child-2', label: 'circler' }], streaks: { 'child-2': 2 } }))
+  armed.onRoundCount('child-2', 10)
+  await microtaskFlush()
+  assert.equal(followups.length, 1, 'streak 2 at floor: the early wrap-up fires')
+  assert.equal(followups[0].content[0].text, wrapupMessageEarly(), 'the early wrap-up text')
+  assert.equal(followups[0].source.surface, 'wrapup-early', 'the surface names the early variant')
+  policy.dispose()
+  armed.dispose()
+})
+
+test('a streak below the floor never fires the early wrap-up', async () => {
+  const followups = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 90 }), // floor = max(10, 30) = 30
+    agent: { followup: (msg) => followups.push(msg) },
+  })
+  const policy = applySubagentPolicy(ctx, spinState({ live: [{ childId: 'child-1', label: 'young' }], streaks: { 'child-1': 2 } }))
+  for (let round = 1; round <= 29; round++) policy.onRoundCount('child-1', round)
+  await microtaskFlush()
+  assert.deepEqual(followups, [], 'everything looks repetitive in a young child; the floor holds')
+  policy.dispose()
+})
+
+test('spin streak after a delivered wrap-up stops early — before the grace window', async () => {
+  const followups = []
+  const stopped = []
+  const records = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 20, maxRoundsGrace: 7 }),
+    agent: { followup: (msg) => followups.push(msg) },
+  })
+  let streak = 0
+  const state = {
+    ...makeState({ live: [{ childId: 'child-1', label: 'circler' }] }),
+    cancelChild: (childId) => { stopped.push(childId); return true },
+    getSpinStreak: () => streak,
+  }
+  const policy = applySubagentPolicy(ctx, state)
+  policy.onHardStop = (record) => records.push(record)
+
+  // Arm the early wrap-up at the floor (cap 20 → floor 10).
+  streak = 2
+  policy.onRoundCount('child-1', 10)
+  await microtaskFlush()
+  assert.equal(followups.length, 1, 'early wrap-up delivered')
+
+  // Still judged spinning on the next round: stop NOW — cap+grace is 27.
+  policy.onRoundCount('child-1', 11)
+  assert.deepEqual(stopped, ['child-1'], 'the early stop fires at round 11, not 27')
+  assert.equal(records.length, 1)
+  assert.equal(records[0].early, true, 'the record marks the early variant')
+  assert.equal(records[0].round, 11)
+  policy.dispose()
+})
+
+test('a normal cap wrap-up also stops early when the child keeps spinning through it', async () => {
+  const followups = []
+  const stopped = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 20, maxRoundsGrace: 7 }),
+    agent: { followup: (msg) => followups.push(msg) },
+  })
+  let streak = 0
+  const state = {
+    ...makeState({ live: [{ childId: 'child-1', label: 'burner' }] }),
+    cancelChild: (childId) => { stopped.push(childId); return true },
+    getSpinStreak: () => streak,
+  }
+  const policy = applySubagentPolicy(ctx, state)
+
+  streak = 0 // no spin evidence: the classic ladder
+  policy.onRoundCount('child-1', 20)
+  await microtaskFlush()
+  assert.equal(followups.length, 1, 'normal wrap-up at the cap')
+  policy.onRoundCount('child-1', 21)
+  assert.deepEqual(stopped, [], 'round 21 without spin evidence: grace holds (stop would be 27)')
+
+  streak = 2 // the ranking now judges it circling through the wrap-up
+  policy.onRoundCount('child-1', 22)
+  assert.deepEqual(stopped, ['child-1'], 'spin evidence short-circuits the remaining grace')
+  policy.dispose()
+})
+
+test('without spin evidence the ladder is byte-for-byte the old one (grace-exhausted stop)', async () => {
+  const followups = []
+  const stopped = []
+  const records = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 20, maxRoundsGrace: 7 }),
+    agent: { followup: (msg) => followups.push(msg) },
+  })
+  const state = {
+    ...makeState({ live: [{ childId: 'child-1', label: 'burner' }] }),
+    cancelChild: (childId) => { stopped.push(childId); return true },
+  }
+  const policy = applySubagentPolicy(ctx, state)
+  policy.onHardStop = (record) => records.push(record)
+
+  for (let round = 1; round <= 20; round++) policy.onRoundCount('child-1', round)
+  await microtaskFlush() // the stage-1 injection lands here (round 20)
+  for (let round = 21; round <= 27; round++) policy.onRoundCount('child-1', round)
+  assert.equal(followups.length, 1, 'wrap-up at 20 exactly once')
+  assert.deepEqual(stopped, ['child-1'], 'stop exactly at cap+grace = 27')
+  assert.equal(records[0].early, undefined, 'the classic record carries no early marker')
+  policy.dispose()
+})
+
+test('a settled child complying mid-flight is never early-stopped', async () => {
+  const followups = []
+  const stopped = []
+  const { ctx } = makeCtx({
+    settings: makeSettings({ maxAgents: 4, maxRounds: 20, maxRoundsGrace: 7 }),
+    agent: { followup: (msg) => followups.push(msg) },
+  })
+  const state = {
+    ...makeState({ live: [{ childId: 'child-1', label: 'circler' }], settled: [] }),
+    cancelChild: (childId) => { stopped.push(childId); return true },
+    getSpinStreak: () => 2,
+  }
+  const policy = applySubagentPolicy(ctx, state)
+  policy.onRoundCount('child-1', 10)
+  await microtaskFlush()
+  assert.equal(followups.length, 1)
+  state.isSettled = () => true // it complied right after the wrap-up
+  policy.onRoundCount('child-1', 11)
+  assert.deepEqual(stopped, [], 'a complied child settles, it is not stopped')
   policy.dispose()
 })

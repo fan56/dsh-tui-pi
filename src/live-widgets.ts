@@ -500,9 +500,10 @@ export class LiveWidgets {
     const width = Math.max(1, process.stdout.columns ?? 80)
     const glyph = AGENT_SPINNER_FRAMES[this.spinnerFrame % AGENT_SPINNER_FRAMES.length]
     const metaParts: string[] = []
-    // `⏻` — the maxRounds policy HARD-STOPPED this child (grace exhausted):
-    // policy enforcement, not a failure; visible at a glance next to `⚡`.
-    if (view.hardStop !== undefined) metaParts.push('⏻')
+    // `⏻` — the maxRounds policy HARD-STOPPED this child (grace exhausted,
+    // or the spin-detected early stop shown as `⏻!`): policy enforcement,
+    // not a failure; visible at a glance next to `⚡`.
+    if (view.hardStop !== undefined) metaParts.push(view.hardStop.early === true ? '⏻!' : '⏻')
     // `⚡` — a dsh-tui-pi injection (maxRounds wrap-up, steer) reached this
     // child; surfaced so a silently-ignored wrap-up is visible at a glance.
     if (view.injectedAt !== undefined) metaParts.push('⚡')

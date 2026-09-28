@@ -82,6 +82,19 @@ export const NATIVE_SPAWN_TOOLS: readonly string[] = [
 ]
 
 /**
+ * Spin-detected early-stop inputs (wayfinder ticket 05): a streak of this
+ * many consecutive high-segment spin verdicts arms the tighten-only ladder
+ * legs, and the wrap-up never fires before this round floor — everything
+ * looks repetitive in a young child's first rounds.
+ */
+export const EARLY_STOP_SPIN_STREAK = 2
+
+/** The early wrap-up's rounds floor: `max(10, ⌊cap/3⌋)` of the child's cap. */
+export function earlyFloor(cap: number): number {
+  return Math.max(10, Math.floor(cap / 3))
+}
+
+/**
  * Hide the plain `subagent` tool from ONE agent's tool catalog (best-effort).
  * The disableSubagent guard DENIES calls at execution; this additionally
  * makes the tool INVISIBLE to the model, so the agent sees the registered
@@ -264,6 +277,21 @@ export function wrapupMessage(maxRounds: number, grace: number): string {
 }
 
 /**
+ * The spin-detected early wrap-up (wayfinder ticket 05): the attention
+ * ranking judged this child circling twice while still far from its cap.
+ * Same ask as `wrapupMessage` — stop tools, return a summary — but the
+ * reason is unproductive repetition, not budget exhaustion, and the tone
+ * leaves a door open in case the judgment is wrong (a resumed continuable
+ * child re-enters the ladder fresh).
+ */
+export function wrapupMessageEarly(): string {
+  return 'This run appears to be going in circles — repeating work without forward progress, '
+    + 'as judged by the dsh-tui attention policy. Do NOT call any more tools. Finish NOW with what you have: '
+    + 'summarize what was accomplished, state clearly what remains undone, and return that summary as your final answer. '
+    + 'If this judgment looks wrong, say so in the summary and stop.'
+}
+
+/**
  * One child's cap resolution, cached at the first cap crossing: the
  * effective round cap and the grace window that follows the wrap-up.
  */
@@ -306,6 +334,12 @@ export interface SubagentPolicyState {
    * inbox survive for later resume. `false` when nothing live was found.
    */
   cancelChild(childId: string): boolean
+  /**
+   * The attention ranking's consecutive high-segment spin verdicts for one
+   * child (wayfinder ticket 05's 2-strike input). Absent/0 = no spin
+   * evidence; the early-stop legs stay inert.
+   */
+  getSpinStreak?(childId: string): number
 }
 
 /**
@@ -315,12 +349,14 @@ export interface SubagentPolicyState {
 export interface HardStopRecord {
   /** The child session id the stop was issued to. */
   readonly childId: string
-  /** Round count at which the stop fired (`cap + grace`). */
+  /** Round count at which the stop fired (`cap + grace`, or earlier when spin-detected). */
   readonly round: number
-  /** The cap that was exceeded (per-agent when one resolved, else global). */
+  /** The cap that was exceeded (per-agent when one resolved, else the global). */
   readonly cap: number
-  /** The grace window that was exhausted. */
+  /** The grace window of the ladder that fired. */
   readonly grace: number
+  /** Set when the stop fired BEFORE the grace window — the spin-detected early stop. */
+  readonly early?: true
 }
 
 /**
@@ -588,9 +624,35 @@ export function applySubagentPolicy(
     const caps = resolveCaps(childId, label)
     if (caps === undefined) return
     const { cap, grace } = caps
-    if (count < cap) return
-    // Stage 2: grace exhausted past a delivered wrap-up — force-stop.
+    // Spin-detected early ladder (wayfinder ticket 05): TIGHTEN-ONLY legs
+    // consuming the attention ranking's 2-strike spin streak. Never widens a
+    // cap, never adds grace, and stays completely inert without spin
+    // evidence (streak 0) — the ladder below is byte-for-byte the old one.
+    const spinStreak = state.getSpinStreak?.(childId) ?? 0
+    const spinArmed = spinStreak >= EARLY_STOP_SPIN_STREAK
     if (injected.has(childId)) {
+      const injectedRound = injectedRounds.get(childId)
+      const roundsSinceWrapup = injectedRound === undefined ? Number.POSITIVE_INFINITY : count - injectedRound
+      // Early stage 2: the wrap-up was delivered, at least one more round
+      // burned, and the child is STILL judged circling — stop now instead of
+      // eating the grace window. Applies to the normal cap wrap-up too (the
+      // streak only exists while jev keeps judging the child spinning, so
+      // the guard is the same 2-strike evidence).
+      if (grace > 0 && spinArmed && roundsSinceWrapup >= 1) {
+        if (hardStopped.has(childId)) return
+        if (state.isSettled(childId)) return // complied mid-flight: leave it
+        hardStopped.add(childId)
+        const stopped = state.cancelChild(childId)
+        if (stopped) {
+          try {
+            onHardStopSink?.({ childId, round: count, cap, grace, early: true })
+          } catch {
+            // A reporting failure must not touch the stop itself.
+          }
+        }
+        return
+      }
+      // Stage 2: grace exhausted past a delivered wrap-up — force-stop.
       if (grace <= 0) return // pure-soft mode: warn only, never stop
       if (count < cap + grace) return
       // Already stopped for this stage (the stop's own settlement events
@@ -611,6 +673,11 @@ export function applySubagentPolicy(
       }
       return
     }
+    // Early stage 1: far from the cap but the ranking judged the child
+    // circling twice — pull the wrap-up forward. The rounds floor keeps a
+    // young child (everything looks repetitive at round 2) out.
+    const earlyEligible = spinArmed && count >= earlyFloor(cap) && count < cap
+    if (count < cap && !earlyEligible) return
     // Stage 1 gate order: settle check BEFORE agent lookup (a finished child
     // must not be woken for a pointless wrap-up), agent lookup before the
     // defer (a missing handle is skipped silently — cold or transiently
@@ -635,8 +702,8 @@ export function applySubagentPolicy(
       if (ctx.agents.get(SessionId(childId)) !== agent || state.isSettled(childId)) return
       try {
         const message = createUserMessage({
-          content: [{ type: 'text', text: wrapupMessage(cap, grace) }],
-          source: { kind: 'dsh-tui-pi', surface: 'wrapup' },
+          content: [{ type: 'text', text: earlyEligible ? wrapupMessageEarly() : wrapupMessage(cap, grace) }],
+          source: { kind: 'dsh-tui-pi', surface: earlyEligible ? 'wrapup-early' : 'wrapup' },
         })
         if (agent.status === 'running') agent.steer(message)
         else agent.followup(message)
@@ -647,6 +714,7 @@ export function applySubagentPolicy(
         return
       }
       injected.add(childId)
+      injectedRounds.set(childId, count)
       // Remember the label the cap was resolved from: stage 2 counts arrive
       // after the child may have dropped off the live board.
       if (label !== undefined) injectedLabel.set(childId, label)
@@ -657,6 +725,8 @@ export function applySubagentPolicy(
   const resolvedCaps = new Map<string, ResolvedCaps>()
   /** Labels remembered at wrap-up time, for stage-2 resolution after settle-off. */
   const injectedLabel = new Map<string, string>()
+  /** Round count at which stage 1 fired — the early-stop "rounds since wrap-up" baseline. */
+  const injectedRounds = new Map<string, number>()
   /** Children whose stage-2 hard stop already fired (or found nothing to stop). */
   const hardStopped = new Set<string>()
   /** Optional host sink for hard-stop records (the `⏻` marker fold). */

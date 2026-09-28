@@ -294,3 +294,33 @@ test('jev source: state table is compact, factual, and hard-capped', () => {
   const huge = Array.from({ length: 200 }, (_, index) => makeView({ childId: `${String(index).padStart(8, 'f')}-0000`, label: `x`.repeat(200) }))
   assert.ok(buildAttentionState(huge, 75, 0, () => 0).length <= 1000)
 })
+
+// ---- spin streak (the early-stop 2-strike input, ticket 05) -------------
+
+test('board: spin streak counts consecutive spinning verdicts and resets on any other outcome', () => {
+  const { board } = boardWithClock()
+  board.update([makeView()], 75)
+  assert.equal(board.spinStreak('aaaaaaaa-1111'), 0)
+  board.applyJevScores([['aaaaaaaa-1111', 0.9, 'spinning']])
+  assert.equal(board.spinStreak('aaaaaaaa-1111'), 1)
+  board.applyJevScores([['aaaaaaaa-1111', 0.92, 'spinning']])
+  assert.equal(board.spinStreak('aaaaaaaa-1111'), 2, 'armed')
+  // A non-spinning verdict (or a no-tag one) breaks the streak.
+  board.applyJevScores([['aaaaaaaa-1111', 0.3, 'deep-work']])
+  assert.equal(board.spinStreak('aaaaaaaa-1111'), 0)
+  board.applyJevScores([['aaaaaaaa-1111', 0.9, 'spinning']])
+  board.applyJevScores([['aaaaaaaa-1111', 0.4, undefined]])
+  assert.equal(board.spinStreak('aaaaaaaa-1111'), 0, 'a tagless verdict resets too')
+})
+
+test('board: progress resets the spin streak — stale verdicts never fire an early stop', () => {
+  const { board } = boardWithClock()
+  const view = makeView()
+  board.update([view], 75)
+  board.applyJevScores([['aaaaaaaa-1111', 0.9, 'spinning']])
+  board.applyJevScores([['aaaaaaaa-1111', 0.9, 'spinning']])
+  assert.equal(board.spinStreak('aaaaaaaa-1111'), 2)
+  board.update([{ ...view, rounds: 3 }], 75) // the child moved on
+  assert.equal(board.spinStreak('aaaaaaaa-1111'), 0)
+  assert.equal(board.get('aaaaaaaa-1111')?.source, 'heuristic', 'the judgment falls back with the streak')
+})

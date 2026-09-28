@@ -881,6 +881,7 @@ export function apply(ctx: Context, config: TuiSettings): void {
       isSettled: childId => bridge.isChildSettled(childId),
       cancelChild: childId => bridge.cancelChild(childId),
       getAttentionHint: () => bridge.getAttentionHint(),
+      getSpinStreak: childId => bridge.getSpinStreak(childId),
     }, readAgentMaxRounds)
     // Wire the policy into the callback object the bridge ACTUALLY holds:
     // `bridgeCallbacksWithTakeover` is a spread copy taken before this point,
@@ -892,7 +893,7 @@ export function apply(ctx: Context, config: TuiSettings): void {
     // every render surface shows it as such. Assigned unconditionally — a
     // definedness check here would skip the wiring forever (the sink starts
     // unset by definition).
-    subagentPolicy.onHardStop = ({ childId, round, cap }) => bridge.markChildHardStopped(childId, round, cap)
+    subagentPolicy.onHardStop = ({ childId, round, cap, early }) => bridge.markChildHardStopped(childId, round, cap, early)
 
     // subagent_status: the model-facing live board — served from the same
     // bridge views and policy counters the TUI renders, so the model never

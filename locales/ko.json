@@ -101,6 +101,7 @@
   "viewer.hardStoppedAt": "⏻ @{round} 강제 중지",
   "viewer.injected": "⚡ 주입됨",
   "viewer.stopped": "⏻ 중지됨",
+  "viewer.stoppedEarly": "⏻! 조기 중지(제자리)",
   "viewer.event.turnStart": "– 턴 {n} 시작",
   "viewer.event.turnEnd": "– 턴 {n} 종료 · {detail}",
   "viewer.event.error": "오류",

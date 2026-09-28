@@ -23,6 +23,6 @@ declare module '@deepseek-ai/dsh-llm' {
 /** The producer source of one dsh-tui-pi-injected user message. */
 export interface TuiPiMessageSource {
   kind: 'dsh-tui-pi'
-  /** Which tui-pi surface produced the injection. */
-  surface: 'btw' | 'steer' | 'wrapup'
+  /** Which tui-pi surface produced the injection (`wrapup-early`: the spin-detected early wrap-up). */
+  surface: 'btw' | 'steer' | 'wrapup' | 'wrapup-early'
 }

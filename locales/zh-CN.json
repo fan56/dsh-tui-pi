@@ -101,6 +101,7 @@
   "viewer.hardStoppedAt": "⏻ 强制停止 @{round}",
   "viewer.injected": "⚡ 已注入",
   "viewer.stopped": "⏻ 已停止",
+  "viewer.stoppedEarly": "⏻! 提前停止（打转）",
   "viewer.event.turnStart": "– 轮次 {n} 开始",
   "viewer.event.turnEnd": "– 轮次 {n} 结束 · {detail}",
   "viewer.event.error": "错误",

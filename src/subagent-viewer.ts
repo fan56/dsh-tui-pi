@@ -388,7 +388,9 @@ export function pickerItems(
     // `⚠` — the attention ranking ranks this child critical (heuristic base,
     // jev upgrade); `↻` — a settled continuable child, resumable in place.
     const injected = view.injectedAt !== undefined ? ` ${t('viewer.injected')}` : ''
-    const stopped = view.hardStop !== undefined ? ` ${t('viewer.stopped')}` : ''
+    const stopped = view.hardStop !== undefined
+      ? ` ${view.hardStop.early === true ? t('viewer.stoppedEarly') : t('viewer.stopped')}`
+      : ''
     const attentionMark = attention?.(view.childId)?.tier === 'critical' ? ' ⚠' : ''
     const resumableMark = view.outcome !== undefined && view.mode === 'continuable' ? ' ↻' : ''
     return {

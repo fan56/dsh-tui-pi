@@ -230,12 +230,14 @@ export interface AgentView {
   readonly injectedAt?: number
   /**
    * Set when the maxRounds policy HARD-STOPPED this child (the wrap-up's
-   * grace window exhausted): the round count at the stop and the cap it
-   * exceeded. Surfaced as the `⏻` marker on the compact line, the picker row
-   * and the viewer transcript (a marker row) — a force-stop is policy, not a
-   * failure, and must be visible as such.
+   * grace window exhausted, or the spin-detected early stop): the round
+   * count at the stop and the cap it exceeded. `early` marks a stop fired
+   * BEFORE the grace window — the attention ranking judged the child
+   * circling twice. Surfaced as the `⏻` marker on the compact line, the
+   * picker row and the viewer transcript (a marker row) — a force-stop is
+   * policy, not a failure, and must be visible as such.
    */
-  readonly hardStop?: { readonly round: number; readonly cap: number }
+  readonly hardStop?: { readonly round: number; readonly cap: number; readonly early?: true }
   /**
    * Latest visible last line of the child's own CONTENT output (the tail the
    * compact activity row shows so the user knows it is alive). Maintained

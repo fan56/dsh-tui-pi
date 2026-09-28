@@ -101,6 +101,7 @@
   "viewer.hardStoppedAt": "⏻ hard-stopped @{round}",
   "viewer.injected": "⚡ injected",
   "viewer.stopped": "⏻ stopped",
+  "viewer.stoppedEarly": "⏻! stopped early (spin)",
   "viewer.event.turnStart": "– turn {n} start",
   "viewer.event.turnEnd": "– turn {n} end · {detail}",
   "viewer.event.error": "error",

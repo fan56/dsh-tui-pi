@@ -101,6 +101,7 @@
   "viewer.hardStoppedAt": "⏻ 強制停止 @{round}",
   "viewer.injected": "⚡ 注入済み",
   "viewer.stopped": "⏻ 停止済み",
+  "viewer.stoppedEarly": "⏻! 早期停止（空転）",
   "viewer.event.turnStart": "– ターン {n} 開始",
   "viewer.event.turnEnd": "– ターン {n} 終了 · {detail}",
   "viewer.event.error": "エラー",
