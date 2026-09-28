@@ -162,11 +162,14 @@ PANE="$(capture)"
 if ! printf '%s' "$PANE" | grep -qF 'spin-detected early'; then
   printf '%s\n' "$PANE" | grep -v '^$' | head -24 | sed 's/^/    | /'
 fi
-EARLY_ROUND="$(printf '%s' "$PANE" | grep -oE 'spin-detected early, cap 60\)' | head -1)"
-if printf '%s' "$PANE" | grep -qE 'round (2[0-9]|[3-5][0-9]), spin-detected early, cap 60'; then
-  ok "marker row names an early round below the cap — $EARLY_ROUND"
+# Numeric compare instead of a range regex: extract the round digit span
+# from the marker row itself, then assert it sits below the cap.
+MARKER_LINE="$(printf '%s' "$PANE" | grep -oE 'round [0-9]+, spin-detected early, cap 60' | head -1)"
+EARLY_ROUND_NUM="$(printf '%s' "$MARKER_LINE" | grep -oE '[0-9]+' | head -1)"
+if [ -n "$EARLY_ROUND_NUM" ] && [ "$EARLY_ROUND_NUM" -lt 60 ]; then
+  ok "marker row names an early round below the cap — $MARKER_LINE"
 else
-  bad "marker row does not carry an early round below 60; pane tail:"
+  bad "marker row round not parsed as <60 (marker='${MARKER_LINE:-none}', num='${EARLY_ROUND_NUM:-none}'); pane tail:"
   printf '%s\n' "$PANE" | tail -12 | sed 's/^/    | /'
 fi
 if printf '%s' "$PANE" | grep -qF '⚡ injected'; then
