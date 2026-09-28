@@ -54,6 +54,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 // Loads the MessageSourceMap augmentation declaring this plugin's own
 // 'dsh-tui-pi' producer kind (dsh 0.1.7 removed the shared 'plugin' kind).
 import type {} from './source-kind.ts'
+import { SPIN_STRIKE_STALE_MS } from './attention.ts'
 import { readSubagentLimits } from './theme-settings.ts'
 import type { SteerableAgent } from './subagent-viewer.ts'
 
@@ -335,11 +336,13 @@ export interface SubagentPolicyState {
    */
   cancelChild(childId: string): boolean
   /**
-   * The attention ranking's consecutive high-segment spin verdicts for one
-   * child (wayfinder ticket 05's 2-strike input). Absent/0 = no spin
-   * evidence; the early-stop legs stay inert.
+   * The attention ranking's spin-strike state (wayfinder ticket 05's input):
+   * consecutive high-segment spin verdicts plus the clock of the latest —
+   * the ladder treats a strike as evidence only while fresh
+   * (`lastStrikeAt` within the stale window) and, for the early stop, only
+   * when it postdates the delivered wrap-up. Absent ⇒ no spin evidence.
    */
-  getSpinStreak?(childId: string): number
+  getSpinState?(childId: string): { streak: number; lastStrikeAt: number }
 }
 
 /**
@@ -625,20 +628,24 @@ export function applySubagentPolicy(
     if (caps === undefined) return
     const { cap, grace } = caps
     // Spin-detected early ladder (wayfinder ticket 05): TIGHTEN-ONLY legs
-    // consuming the attention ranking's 2-strike spin streak. Never widens a
-    // cap, never adds grace, and stays completely inert without spin
-    // evidence (streak 0) — the ladder below is byte-for-byte the old one.
-    const spinStreak = state.getSpinStreak?.(childId) ?? 0
-    const spinArmed = spinStreak >= EARLY_STOP_SPIN_STREAK
+    // consuming the attention ranking's spin strikes. A strike counts as
+    // evidence only while FRESH (within the stale window) and, after a
+    // wrap-up, only when it POSTDATES the wrap-up — "still judged circling
+    // through the wrap-up" is a new judgment, not the one that triggered
+    // it. Never widens a cap, never adds grace, and stays completely inert
+    // without fresh spin evidence — the ladder below is byte-for-byte the
+    // old one.
+    const spin = state.getSpinState?.(childId) ?? { streak: 0, lastStrikeAt: 0 }
+    const spinFresh = spin.streak >= EARLY_STOP_SPIN_STREAK && Date.now() - spin.lastStrikeAt < SPIN_STRIKE_STALE_MS
     if (injected.has(childId)) {
-      const injectedRound = injectedRounds.get(childId)
-      const roundsSinceWrapup = injectedRound === undefined ? Number.POSITIVE_INFINITY : count - injectedRound
+      const injectedAtMs = injectedAt.get(childId) ?? 0
+      const roundsSinceWrapup = count - (injectedRounds.get(childId) ?? 0)
       // Early stage 2: the wrap-up was delivered, at least one more round
-      // burned, and the child is STILL judged circling — stop now instead of
-      // eating the grace window. Applies to the normal cap wrap-up too (the
-      // streak only exists while jev keeps judging the child spinning, so
-      // the guard is the same 2-strike evidence).
-      if (grace > 0 && spinArmed && roundsSinceWrapup >= 1) {
+      // burned, and a FRESH spinning verdict arrived AFTER the wrap-up —
+      // stop now instead of eating the grace window. Applies to the normal
+      // cap wrap-up too (the same freshness rule).
+      if (grace > 0 && spin.streak >= EARLY_STOP_SPIN_STREAK && spin.lastStrikeAt > injectedAtMs
+        && Date.now() - spin.lastStrikeAt < SPIN_STRIKE_STALE_MS && roundsSinceWrapup >= 1) {
         if (hardStopped.has(childId)) return
         if (state.isSettled(childId)) return // complied mid-flight: leave it
         hardStopped.add(childId)
@@ -676,7 +683,7 @@ export function applySubagentPolicy(
     // Early stage 1: far from the cap but the ranking judged the child
     // circling twice — pull the wrap-up forward. The rounds floor keeps a
     // young child (everything looks repetitive at round 2) out.
-    const earlyEligible = spinArmed && count >= earlyFloor(cap) && count < cap
+    const earlyEligible = spinFresh && count >= earlyFloor(cap) && count < cap
     if (count < cap && !earlyEligible) return
     // Stage 1 gate order: settle check BEFORE agent lookup (a finished child
     // must not be woken for a pointless wrap-up), agent lookup before the
@@ -715,6 +722,7 @@ export function applySubagentPolicy(
       }
       injected.add(childId)
       injectedRounds.set(childId, count)
+      injectedAt.set(childId, Date.now())
       // Remember the label the cap was resolved from: stage 2 counts arrive
       // after the child may have dropped off the live board.
       if (label !== undefined) injectedLabel.set(childId, label)
@@ -727,6 +735,8 @@ export function applySubagentPolicy(
   const injectedLabel = new Map<string, string>()
   /** Round count at which stage 1 fired — the early-stop "rounds since wrap-up" baseline. */
   const injectedRounds = new Map<string, number>()
+  /** Wall clock of the stage-1 delivery — the early stop demands a spin strike AFTER it. */
+  const injectedAt = new Map<string, number>()
   /** Children whose stage-2 hard stop already fired (or found nothing to stop). */
   const hardStopped = new Set<string>()
   /** Optional host sink for hard-stop records (the `⏻` marker fold). */

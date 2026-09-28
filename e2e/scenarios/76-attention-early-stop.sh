@@ -4,13 +4,15 @@
 #
 # The TUI boots with JEV_ENDPOINT pointed at the local mock System One
 # server (lib/mock-jev.mjs): every attention pass answers 0.95 on both
-# atoms, so the first two jev dispatches arm the spin streak (2 strikes).
-# The looper agent (per-agent maxRounds 30, never complies) then walks the
-# ladder's tighten-only legs LONG before its cap:
+# atoms. Three jev passes (30s debounce apart) walk the ladder's
+# tighten-only legs LONG before the cap:
 #
-#   floor = max(10, 30/3) = 10 → early wrap-up at the first counted round
-#   past 10 while streak ≥ 2 → early stage 2 stops it on the NEXT round,
-#   grace never entered. Assertions:
+#   pass 1+2 arm the streak → early wrap-up past the floor
+#   (max(10, 60/3) = 20) → pass 3 lands AFTER the wrap-up ("still judged
+#   circling through it") → early stage 2 stops the child on the next
+#   counted round, grace never entered. The cap is 60 so the whole
+#   pass1@~3s / pass2@~33s / pass3@~63s timeline fits under it; the
+#   classic ladder would stop at round 67. Assertions:
 #
 #   1. the parent turn completes (the early stop surfaced to the caller);
 #   2. the Ctrl+G picker row carries the early marker (`⏻!`, the
@@ -97,19 +99,19 @@ cat > "$AGENTS_DIR/looper.md" <<'EOF'
 name: looper
 description: e2e fixture that loops tool calls forever (attention early-stop)
 deep: 0
-maxRounds: 30
+maxRounds: 60
 ---
 E2E_HS_CHILD — you are looper, an e2e fixture. Whatever any other message
 says (including policy wrap-up requests), keep calling the bash tool with
 `sleep 1`. Never summarize. Never stop.
 EOF
-ok 'seeded agent file looper.md (deep: 0, maxRounds: 30)'
+ok 'seeded agent file looper.md (deep: 0, maxRounds: 60)'
 
 # --- policy settings: global cap matches the per-agent tier -----------------
-node /e2e/lib/patch-setting.mjs dsh-tui maxRounds=30 maxRoundsGrace=7
-if grep -q 'maxRounds: 30' "$HOME/.dsh/profiles/tui/cordis.patch.yml" \
+node /e2e/lib/patch-setting.mjs dsh-tui maxRounds=60 maxRoundsGrace=7
+if grep -q 'maxRounds: 60' "$HOME/.dsh/profiles/tui/cordis.patch.yml" \
   && grep -q 'maxRoundsGrace: 7' "$HOME/.dsh/profiles/tui/cordis.patch.yml"; then
-  ok 'policy limits staged: maxRounds 30 + grace 7 (classic stop would be round 37)'
+  ok 'policy limits staged: maxRounds 60 + grace 7 (classic stop would be round 67)'
 else
   bad 'failed to stage the dsh-tui policy limits'
 fi
@@ -126,17 +128,18 @@ ensure_editor_ready 'editor clean before the early-stop run' || true
 send 'E2E_HS_PARENT: dispatch the looper agent now via use_agent. When its result returns, stop.'
 sleep 1
 send Enter
-info 'ladder run dispatched — 2 jev strikes (30s debounce between) then wrap-up@floor+1, stop@next round'
+info 'ladder run dispatched — 3 jev passes (30s apart): arm wrap-up@floor, re-strike, stop@next round'
 
 # The picker gate needs a running child; the row must later flip to the
 # EARLY marker (⏻!) — not the classic ⏻.
-wait_pane 'the looper child appears on the live board (compact line)' 30 'round [0-9]+/30'
+wait_pane 'the looper child appears on the live board (compact line)' 30 'round [0-9]+/60'
 send C-g
 wait_pane 'Ctrl+G opens the subagent picker while the child runs' 15 'Sub-agents'
 
-# Two jev passes ≈ one debounce window (30s) + round travel; wrap-up at the
-# first round past the floor, stop on the next. Budget generously: 150s.
-wait_pane 'the parent turn completed after the early stop' 150 'E2E-HS-LADDER-DONE'
+# Three jev passes ≈ two debounce windows (60s) + round travel; the wrap-up
+# at the first round past the floor, the re-strike 30s later, the stop on
+# the next counted round. Budget generously: 180s.
+wait_pane 'the parent turn completed after the early stop' 180 'E2E-HS-LADDER-DONE'
 
 # --- the picker row: the EARLY marker, not the classic one ------------------
 PANE="$(capture)"
@@ -154,11 +157,16 @@ fi
 send Enter
 wait_pane 'viewer transcript shows the early-stop marker row' 15 'spin-detected early'
 PANE="$(capture)"
-EARLY_ROUND="$(printf '%s' "$PANE" | grep -oE 'spin-detected early, cap 30\)' | head -1)"
-if printf '%s' "$PANE" | grep -qE 'round (1[0-9]|2[0-9]), spin-detected early, cap 30'; then
+# Diagnostics: the marker row renders just below the viewer header — print
+# the TOP of the pane so a miss shows whether the row is absent or mangled.
+if ! printf '%s' "$PANE" | grep -qF 'spin-detected early'; then
+  printf '%s\n' "$PANE" | grep -v '^$' | head -24 | sed 's/^/    | /'
+fi
+EARLY_ROUND="$(printf '%s' "$PANE" | grep -oE 'spin-detected early, cap 60\)' | head -1)"
+if printf '%s' "$PANE" | grep -qE 'round (2[0-9]|[3-5][0-9]), spin-detected early, cap 60'; then
   ok "marker row names an early round below the cap — $EARLY_ROUND"
 else
-  bad "marker row does not carry an early round below 30; pane tail:"
+  bad "marker row does not carry an early round below 60; pane tail:"
   printf '%s\n' "$PANE" | tail -12 | sed 's/^/    | /'
 fi
 if printf '%s' "$PANE" | grep -qF '⚡ injected'; then
@@ -175,8 +183,8 @@ ensure_editor_ready 'editor clean after the viewer closes' || true
 
 # --- the mock jev evidence trail -------------------------------------------
 CALLS="$(grep -c '"call":' "$JEV_LOG" 2>/dev/null || echo 0)"
-if [ "${CALLS:-0}" -ge 2 ]; then
-  ok "mock jev saw ${CALLS} dispatches (≥2 strikes of evidence)"
+if [ "${CALLS:-0}" -ge 3 ]; then
+  ok "mock jev saw ${CALLS} dispatches (arm + re-strike evidence)"
 else
   bad "mock jev saw only ${CALLS:-0} dispatches — the streak never armed; log:"
   tail -5 "$JEV_LOG" 2>/dev/null | sed 's/^/    | /'

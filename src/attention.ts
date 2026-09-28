@@ -36,6 +36,21 @@ export interface AttentionInfo {
   readonly tag?: AttentionTag
 }
 
+/**
+ * The spin-streak state the early-stop ladder consumes. `lastStrikeAt` is
+ * the clock of the MOST RECENT spinning verdict — the ladder's freshness
+ * anchor (a strike older than the stale window, or older than a delivered
+ * wrap-up, must not stop anything).
+ */
+export interface SpinState {
+  /** Consecutive spinning verdicts (a non-spinning verdict zeroes it). */
+  readonly streak: number
+  readonly lastStrikeAt: number
+}
+
+/** A spinning verdict older than this is stale evidence — three debounce windows. */
+export const SPIN_STRIKE_STALE_MS = 90_000
+
 /** One consumer-facing row: the view facts plus the current attention info. */
 export interface AttentionRow {
   readonly childId: string
@@ -119,11 +134,15 @@ interface ChildObservation {
   dirtyForJev: boolean
   /**
    * Consecutive jev passes whose spin verdict cleared the high segment
-   * (≥0.75). Progress resets it to 0 — those verdicts judged state the child
-   * has since left behind. The early-hard-stop ladder (ticket 05) acts on a
-   * streak of 2.
+   * (≥0.75). Zeroed by a non-spinning verdict — but NOT by progress: a
+   * circling child's rounds/tokens keep growing (that IS the circling), so
+   * progress-based clearing would zero the streak every second on exactly
+   * the children it exists to catch. Staleness is handled by the ladder via
+   * `lastStrikeAt`, not by clearing here.
    */
   spinStreak: number
+  /** Clock of the most recent spinning verdict. */
+  lastStrikeAt: number
 }
 
 /** Heuristic inputs derived from one live view + the board's own observation of it. */
@@ -185,6 +204,7 @@ export class AttentionBoard {
         info: { score: 0, tier: 'ok', source: 'heuristic' },
         dirtyForJev: true,
         spinStreak: 0,
+        lastStrikeAt: 0,
       }
       observation.label = view.label
       if (progressed) {
@@ -192,9 +212,10 @@ export class AttentionBoard {
         observation.lastRounds = view.rounds
         observation.lastTokens = view.tokens
         observation.dirtyForJev = true
-        // A jev spin verdict judged the state BEFORE this progress; keeping
-        // the streak would let stale verdicts fire an early stop.
-        observation.spinStreak = 0
+        // A jev judgment judged the state BEFORE this progress — the info
+        // falls back to heuristic (below). The spin streak is deliberately
+        // NOT cleared: a circling child makes "progress" (rounds grow) by
+        // definition, and freshness is the ladder's job (lastStrikeAt).
       }
       const input = { ...inputsFor(view, observation, now), cap }
       const score = heuristicAttentionScore(input)
@@ -214,22 +235,33 @@ export class AttentionBoard {
    * board no longer tracks are ignored; covered children lose their dirty flag.
    */
   applyJevScores(scores: readonly (readonly [childId: string, score: number, tag: AttentionTag | undefined])[]): void {
+    const now = this.now()
     for (const [childId, score, tag] of scores) {
       const observation = this.observations.get(childId)
       if (observation === undefined) continue
       const clamped = clamp01(score)
       observation.info = { score: clamped, tier: tierFor(clamped), source: 'jev', ...(tag !== undefined ? { tag } : {}) }
       observation.dirtyForJev = false
-      observation.spinStreak = tag === 'spinning' ? observation.spinStreak + 1 : 0
+      if (tag === 'spinning') {
+        observation.spinStreak += 1
+        observation.lastStrikeAt = now
+      } else {
+        observation.spinStreak = 0
+        observation.lastStrikeAt = 0
+      }
     }
   }
 
   /**
-   * Consecutive high-segment spin verdicts for one child (0 when untracked
-   * or after progress). The early-hard-stop ladder's 2-strike input.
+   * The early-stop ladder's input: consecutive spinning verdicts plus the
+   * clock of the most recent one (the freshness anchor). Absent children
+   * report zeroed state.
    */
-  spinStreak(childId: string): number {
-    return this.observations.get(childId)?.spinStreak ?? 0
+  spinState(childId: string): SpinState {
+    const observation = this.observations.get(childId)
+    return observation === undefined
+      ? { streak: 0, lastStrikeAt: 0 }
+      : { streak: observation.spinStreak, lastStrikeAt: observation.lastStrikeAt }
   }
 
   /** Children whose state changed since their last jev judgment (the refresh's work list). */

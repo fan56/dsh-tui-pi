@@ -1035,12 +1035,15 @@ test('the registeredOnly fence reason wins over the cap reason', () => {
 // ---- spin-detected early ladder (wayfinder ticket 05) --------------------
 //
 // The tighten-only legs consume the attention ranking's spin streak through
-// the state's optional getSpinStreak. Every test pins the inert-by-default
+// the state's optional getSpinState. Every test pins the inert-by-default
 // property first: without spin evidence the ladder behaves exactly as before.
 
 function spinState({ live = [], roundCounts = {}, settled = [], streaks = {} } = {}) {
   const base = makeState({ live, roundCounts, settled })
-  return { ...base, getSpinStreak: (childId) => streaks[childId] ?? 0 }
+  return { ...base, getSpinState: (childId) => {
+    const streak = streaks[childId] ?? 0
+    return { streak, lastStrikeAt: streak > 0 ? Date.now() : 0 }
+  } }
 }
 
 test('spin streak 2 pulls the wrap-up forward past the rounds floor, streak 1 does not', async () => {
@@ -1091,27 +1094,33 @@ test('spin streak after a delivered wrap-up stops early — before the grace win
     settings: makeSettings({ maxAgents: 4, maxRounds: 20, maxRoundsGrace: 7 }),
     agent: { followup: (msg) => followups.push(msg) },
   })
-  let streak = 0
+  const spin = { streak: 0, lastStrikeAt: 0 }
   const state = {
     ...makeState({ live: [{ childId: 'child-1', label: 'circler' }] }),
     cancelChild: (childId) => { stopped.push(childId); return true },
-    getSpinStreak: () => streak,
+    getSpinState: () => spin,
   }
   const policy = applySubagentPolicy(ctx, state)
   policy.onHardStop = (record) => records.push(record)
 
   // Arm the early wrap-up at the floor (cap 20 → floor 10).
-  streak = 2
+  spin.streak = 2
+  spin.lastStrikeAt = Date.now() // the strike that ARMS the wrap-up — predates the injection
   policy.onRoundCount('child-1', 10)
   await microtaskFlush()
   assert.equal(followups.length, 1, 'early wrap-up delivered')
 
-  // Still judged spinning on the next round: stop NOW — cap+grace is 27.
+  // The pre-wrap-up strike alone must NOT stop the child...
   policy.onRoundCount('child-1', 11)
-  assert.deepEqual(stopped, ['child-1'], 'the early stop fires at round 11, not 27')
+  assert.deepEqual(stopped, [], 'a strike from BEFORE the wrap-up is not "still circling"')
+
+  // ...a FRESH spinning verdict after the wrap-up does: stop NOW (cap+grace is 27).
+  spin.lastStrikeAt = Date.now() + 1 // strictly after the wrap-up's clock (real passes sit 30s apart)
+  policy.onRoundCount('child-1', 12)
+  assert.deepEqual(stopped, ['child-1'], 'the early stop fires at round 12, not 27')
   assert.equal(records.length, 1)
   assert.equal(records[0].early, true, 'the record marks the early variant')
-  assert.equal(records[0].round, 11)
+  assert.equal(records[0].round, 12)
   policy.dispose()
 })
 
@@ -1122,24 +1131,24 @@ test('a normal cap wrap-up also stops early when the child keeps spinning throug
     settings: makeSettings({ maxAgents: 4, maxRounds: 20, maxRoundsGrace: 7 }),
     agent: { followup: (msg) => followups.push(msg) },
   })
-  let streak = 0
+  const spin = { streak: 0, lastStrikeAt: 0 }
   const state = {
     ...makeState({ live: [{ childId: 'child-1', label: 'burner' }] }),
     cancelChild: (childId) => { stopped.push(childId); return true },
-    getSpinStreak: () => streak,
+    getSpinState: () => spin,
   }
   const policy = applySubagentPolicy(ctx, state)
 
-  streak = 0 // no spin evidence: the classic ladder
-  policy.onRoundCount('child-1', 20)
+  policy.onRoundCount('child-1', 20) // no spin evidence: the classic ladder
   await microtaskFlush()
   assert.equal(followups.length, 1, 'normal wrap-up at the cap')
   policy.onRoundCount('child-1', 21)
   assert.deepEqual(stopped, [], 'round 21 without spin evidence: grace holds (stop would be 27)')
 
-  streak = 2 // the ranking now judges it circling through the wrap-up
+  spin.streak = 2 // a spinning verdict AFTER the wrap-up
+  spin.lastStrikeAt = Date.now() + 1 // strictly after the wrap-up's clock (real passes sit 30s apart)
   policy.onRoundCount('child-1', 22)
-  assert.deepEqual(stopped, ['child-1'], 'spin evidence short-circuits the remaining grace')
+  assert.deepEqual(stopped, ['child-1'], 'post-wrap-up spin evidence short-circuits the remaining grace')
   policy.dispose()
 })
 
@@ -1177,7 +1186,7 @@ test('a settled child complying mid-flight is never early-stopped', async () => 
   const state = {
     ...makeState({ live: [{ childId: 'child-1', label: 'circler' }], settled: [] }),
     cancelChild: (childId) => { stopped.push(childId); return true },
-    getSpinStreak: () => 2,
+    getSpinState: () => ({ streak: 2, lastStrikeAt: Date.now() }),
   }
   const policy = applySubagentPolicy(ctx, state)
   policy.onRoundCount('child-1', 10)

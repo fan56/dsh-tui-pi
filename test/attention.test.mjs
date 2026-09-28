@@ -297,30 +297,36 @@ test('jev source: state table is compact, factual, and hard-capped', () => {
 
 // ---- spin streak (the early-stop 2-strike input, ticket 05) -------------
 
-test('board: spin streak counts consecutive spinning verdicts and resets on any other outcome', () => {
+test('board: spin state counts consecutive spinning verdicts, anchors the last strike, resets on any other outcome', () => {
   const { board } = boardWithClock()
   board.update([makeView()], 75)
-  assert.equal(board.spinStreak('aaaaaaaa-1111'), 0)
+  assert.deepEqual(board.spinState('aaaaaaaa-1111'), { streak: 0, lastStrikeAt: 0 })
   board.applyJevScores([['aaaaaaaa-1111', 0.9, 'spinning']])
-  assert.equal(board.spinStreak('aaaaaaaa-1111'), 1)
+  assert.equal(board.spinState('aaaaaaaa-1111').streak, 1)
+  assert.ok(board.spinState('aaaaaaaa-1111').lastStrikeAt > 0)
   board.applyJevScores([['aaaaaaaa-1111', 0.92, 'spinning']])
-  assert.equal(board.spinStreak('aaaaaaaa-1111'), 2, 'armed')
-  // A non-spinning verdict (or a no-tag one) breaks the streak.
+  assert.equal(board.spinState('aaaaaaaa-1111').streak, 2, 'armed')
+  // A non-spinning verdict (or a no-tag one) breaks the streak AND clears the anchor.
   board.applyJevScores([['aaaaaaaa-1111', 0.3, 'deep-work']])
-  assert.equal(board.spinStreak('aaaaaaaa-1111'), 0)
+  assert.deepEqual(board.spinState('aaaaaaaa-1111'), { streak: 0, lastStrikeAt: 0 })
   board.applyJevScores([['aaaaaaaa-1111', 0.9, 'spinning']])
   board.applyJevScores([['aaaaaaaa-1111', 0.4, undefined]])
-  assert.equal(board.spinStreak('aaaaaaaa-1111'), 0, 'a tagless verdict resets too')
+  assert.deepEqual(board.spinState('aaaaaaaa-1111'), { streak: 0, lastStrikeAt: 0 }, 'a tagless verdict resets too')
 })
 
-test('board: progress resets the spin streak — stale verdicts never fire an early stop', () => {
-  const { board } = boardWithClock()
+test('board: progress does NOT clear the spin streak — a circling child makes progress by definition', () => {
+  // The e2e lesson (scenario 76, first run): rounds/tokens keep growing on a
+  // circling child, so progress-based clearing zeroed the streak every second
+  // on exactly the children the streak exists to catch. Freshness is the
+  // ladder's job (lastStrikeAt), not the board's.
+  const { board, advance } = boardWithClock()
   const view = makeView()
   board.update([view], 75)
   board.applyJevScores([['aaaaaaaa-1111', 0.9, 'spinning']])
   board.applyJevScores([['aaaaaaaa-1111', 0.9, 'spinning']])
-  assert.equal(board.spinStreak('aaaaaaaa-1111'), 2)
-  board.update([{ ...view, rounds: 3 }], 75) // the child moved on
-  assert.equal(board.spinStreak('aaaaaaaa-1111'), 0)
-  assert.equal(board.get('aaaaaaaa-1111')?.source, 'heuristic', 'the judgment falls back with the streak')
+  assert.equal(board.spinState('aaaaaaaa-1111').streak, 2)
+  advance(2_000)
+  board.update([{ ...view, rounds: 5 }], 75) // the child "progressed"
+  assert.equal(board.spinState('aaaaaaaa-1111').streak, 2, 'the strike survives progress')
+  assert.equal(board.get('aaaaaaaa-1111')?.source, 'heuristic', 'the per-judgment info still falls back')
 })

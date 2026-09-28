@@ -881,7 +881,7 @@ export function apply(ctx: Context, config: TuiSettings): void {
       isSettled: childId => bridge.isChildSettled(childId),
       cancelChild: childId => bridge.cancelChild(childId),
       getAttentionHint: () => bridge.getAttentionHint(),
-      getSpinStreak: childId => bridge.getSpinStreak(childId),
+      getSpinState: childId => bridge.getSpinState(childId),
     }, readAgentMaxRounds)
     // Wire the policy into the callback object the bridge ACTUALLY holds:
     // `bridgeCallbacksWithTakeover` is a spread copy taken before this point,

@@ -842,9 +842,9 @@ export class DshSessionBridge {
     return this.attentionBoard.get(childId)
   }
 
-  /** Consecutive high-segment spin verdicts for one child (the early-stop 2-strike input). */
-  getSpinStreak(childId: string): number {
-    return this.attentionBoard.spinStreak(childId)
+  /** The spin-strike state for one child (the early-stop ladder's input). */
+  getSpinState(childId: string): { streak: number; lastStrikeAt: number } {
+    return this.attentionBoard.spinState(childId)
   }
 
   /** All attention rows, highest score first (picker sort, status board). */
