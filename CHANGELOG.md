@@ -6,6 +6,36 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Raise the dsh host floor to `0.2.0-rc.2`** (the 09-29 productization wave).
+  The `@deepseek-ai/dsh-settings` / `dsh-skill` / `dsh-user-questions` peer
+  floors move `>=0.1.7-rc.1` → `>=0.2.0-rc.2` and the devDependency pins
+  follow (`0.2.0-rc.2`); the dev closure re-links against the global 0.2.0
+  install. A zero-code-change re-pin by the impact audit's findings —
+  SettingsForms / the firehose `SessionEventMap` / the message model are
+  unchanged at the compile level, and the full unit suite (1433) plus the
+  podman e2e scenario suite pass against the 0.2.0-rc.2 host unmodified.
+  Verified, not changed, this wave (renderer paths, read-only):
+  `ToolCallRecovery`'s conservative recovery rows (dsh-session `repair`) are
+  plain `tool/result` events — `source: { kind: 'tool' }`, message-level
+  `toolCallId`/`isError: true` plus an `error` payload — so every existing
+  consumer already renders them: the ToolPanel settles them through the
+  normal error path (`ToolOutcomeUnknownError` / `ToolNotStartedError`), the
+  subagent viewer shows `✘ name: preview` (unknown callIds degrade to
+  `tool:<id8>` or are ignored), and the occupancy estimator reads the flat
+  text blocks defensively. The new `user-question-reply` MessageSourceMap key
+  falls through `renderUserMessage`'s binary `kind === 'user'` branch to the
+  `ⓘ` injected-context line — visible, never silent — and
+  `renderDeveloperMessage`'s `[block.type]` catch-all still surfaces any
+  future producer block.
+- Deferred (deliberately not followed this wave): timed-ask integration —
+  rendering `user-question-reply` as a real user bubble and an `attachWait`
+  countdown — stays on the optional-follow-up list; the ten `@aiwayds/*`
+  sibling dependency floors wait for the wave's sibling releases (0.x carets
+  cannot cross a minor); the e2e hard-stop ladder's
+  `dsh-subagent-registry` pin stays `0.12.1` until the 0.2.0-adapted
+  registry ships.
+
 ## [2.25.0] - 2026-09-28
 
 ### Fixed
