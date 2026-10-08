@@ -152,6 +152,66 @@ export function deriveKeyRef(provider: string): string {
 }
 
 /**
+ * The editable form state of a hand-declared route — the shape the
+ * custom-provider form works on, in both create and edit mode. Lives here
+ * (not in custom-provider.ts) so settings.ts can read a live profile into
+ * one without touching the custom-provider ↔ settings import cycle.
+ */
+export interface CustomProviderDraft {
+  id: string
+  /** Empty string = no display name (the route id shows instead). */
+  displayName: string
+  api: string
+  baseURL: string
+  /** Comma-joined model ids (parsed form of the models field). */
+  models: string
+}
+
+/**
+ * Read a live `providers.<id>` profile into an editable draft: unknown or
+ * malformed fields fall back to their form defaults rather than failing —
+ * an edit must always be openable, even for a route the web page wrote
+ * with fields this form does not know.
+ */
+export function customDraftFromProfile(id: string, profile: unknown): CustomProviderDraft {
+  const p = (typeof profile === 'object' && profile !== null ? profile : {}) as {
+    displayName?: unknown
+    api?: unknown
+    baseURL?: unknown
+    models?: unknown
+  }
+  const models = Array.isArray(p.models)
+    ? p.models
+        .map(model => (typeof model === 'object' && model !== null
+          ? (model as { id?: unknown }).id
+          : undefined))
+        .filter((modelId): modelId is string => typeof modelId === 'string' && modelId !== '')
+    : []
+  return {
+    id,
+    displayName: typeof p.displayName === 'string' ? p.displayName : '',
+    api: typeof p.api === 'string' ? p.api : '',
+    baseURL: typeof p.baseURL === 'string' ? p.baseURL : '',
+    models: models.join(','),
+  }
+}
+
+/**
+ * Whether a live profile row is a hand-declared route (editable in full)
+ * rather than a catalog-served one (only its key is editable — endpoint,
+ * protocol and models come from the installed pi-ai catalog). A profile
+ * that carries its own `api`/`baseURL`/`models` overrides the catalog, so
+ * it reads as hand-declared even when the directory disagrees.
+ */
+export function isHandDeclaredProfile(profile: unknown): boolean {
+  if (typeof profile !== 'object' || profile === null) return false
+  const p = profile as { api?: unknown; baseURL?: unknown; models?: unknown }
+  return typeof p.api === 'string'
+    || typeof p.baseURL === 'string'
+    || Array.isArray(p.models)
+}
+
+/**
  * The llm-pi-ai providers.<id> value an entry writes as: a catalog route
  * stores only the derived credential reference (endpoint, protocol, and
  * models come from the installed pi-ai catalog); a hand-declared route

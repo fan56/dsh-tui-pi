@@ -23,8 +23,10 @@
 import type { Component, TUI } from '@earendil-works/pi-tui'
 import { t } from './i18n/index.ts'
 import { EditField, type CommitResult } from './settings.ts'
-import type { ProviderCatalogEntry } from './provider-catalog.ts'
+import type { CustomProviderDraft, ProviderCatalogEntry } from './provider-catalog.ts'
 import type { TuiTheme } from './theme/index.ts'
+
+export type { CustomProviderDraft }
 
 /** Route id of the synthetic "Custom provider…" picker entry. */
 export const CUSTOM_PROVIDER_ID = 'custom'
@@ -118,17 +120,6 @@ export function parseCustomModels(text: string): FieldOutcome {
   return { kind: 'value', value: ids.join(',') }
 }
 
-/** The collected form state the final entry is built from. */
-export interface CustomProviderDraft {
-  id: string
-  /** Empty string = no display name (the route id shows instead). */
-  displayName: string
-  api: string
-  baseURL: string
-  /** Comma-joined model ids (parsed form of the models field). */
-  models: string
-}
-
 /** Build the hand-declared catalog entry the commit chain consumes. */
 export function buildCustomEntry(draft: CustomProviderDraft): ProviderCatalogEntry {
   return {
@@ -152,9 +143,17 @@ export interface CustomProviderFlowOptions {
   /** Route ids the custom id must not collide with (catalog + configured). */
   takenIds: ReadonlySet<string>
   /**
+   * Edit an existing hand-declared route: the draft prefills from the live
+   * profile, the id step is dropped (the route key is immutable — a rename
+   * would strand the stored credential), and the final key step accepts an
+   * EMPTY value (= keep the currently stored key, profile-only edit).
+   */
+  edit?: CustomProviderDraft
+  /**
    * Commit the built entry + API key — the SAME chain the /login key editor
    * uses (profile write through the caller's serialized settings mutate,
-   * then `commitProvider`'s credentials.set).
+   * then `commitProvider`'s credentials.set). In edit mode the key may be
+   * '' (keep the stored one — the commit handler decides).
    */
   onCommit: (entry: ProviderCatalogEntry, key: string) => Promise<CommitResult | undefined>
   /** Pop the whole flow (Esc anywhere, or right after a successful commit). */
@@ -171,6 +170,8 @@ interface StepSpec {
   /** Prefill (already-committed value when re-entering a step). */
   initial: string
   secret?: boolean
+  /** Draft field the commit stashes the value into; undefined on the key step. */
+  draftField?: keyof Pick<CustomProviderDraft, 'id' | 'displayName' | 'api' | 'baseURL' | 'models'>
   /** Validate the typed text; intermediate steps just normalize + accept. */
   parse: (text: string) => FieldOutcome
 }
@@ -195,23 +196,25 @@ export class CustomProviderFlow implements Component {
     this.tui = options.tui
     this.theme = options.theme
     this.options = options
-    this.draft = { id: '', displayName: '', api: '', baseURL: '', models: '' }
+    this.draft = options.edit !== undefined ? { ...options.edit } : { id: '', displayName: '', api: '', baseURL: '', models: '' }
     this.editor = this.buildEditor()
   }
 
-  /** The step specs, in form order; index 5 (the key) commits for real. */
+  /** The step specs, in form order; edit mode drops the id step (immutable). */
   private specs(): StepSpec[] {
-    return [
+    const steps: StepSpec[] = [
       {
         label: t('custprov.step.id'),
         subtitle: t('custprov.step.idHint'),
         initial: this.draft.id,
+        draftField: 'id',
         parse: text => parseCustomProviderId(text, this.options.takenIds),
       },
       {
         label: t('custprov.step.displayName'),
         subtitle: t('custprov.step.displayNameHint'),
         initial: this.draft.displayName,
+        draftField: 'displayName',
         parse: parseCustomDisplayName,
       },
       {
@@ -221,30 +224,42 @@ export class CustomProviderFlow implements Component {
           default: SUPPORTED_PROTOCOLS[0],
         }),
         initial: this.draft.api,
+        draftField: 'api',
         parse: parseCustomProtocol,
       },
       {
         label: t('custprov.step.baseUrl'),
         subtitle: t('custprov.step.baseUrlHint'),
         initial: this.draft.baseURL,
+        draftField: 'baseURL',
         parse: parseCustomBaseUrl,
       },
       {
         label: t('custprov.step.models'),
         subtitle: t('custprov.step.modelsHint'),
         initial: this.draft.models,
+        draftField: 'models',
         parse: parseCustomModels,
       },
       {
         label: t('custprov.step.apiKey'),
-        subtitle: t('custprov.step.apiKeyHint'),
+        // Edit mode spells out that empty keeps the stored key; a fresh
+        // create demands one (a keyless route cannot serve a request).
+        subtitle: this.options.edit !== undefined
+          ? t('custprov.step.apiKeyHintEdit')
+          : t('custprov.step.apiKeyHint'),
         initial: '',
         secret: true,
-        parse: text => text.trim() === ''
-          ? { kind: 'error', error: t('custprov.error.keyEmpty') }
-          : { kind: 'value', value: text.trim() },
+        parse: text => {
+          const key = text.trim()
+          if (key === '' && this.options.edit === undefined) {
+            return { kind: 'error', error: t('custprov.error.keyEmpty') }
+          }
+          return { kind: 'value', value: key }
+        },
       },
     ]
+    return this.options.edit !== undefined ? steps.slice(1) : steps
   }
 
   /** Build the EditField for the current step; commits advance or finalize. */
@@ -269,8 +284,7 @@ export class CustomProviderFlow implements Component {
         // Stash the normalized value (comma-joined models, default protocol…)
         // so re-entering the step prefills it. The final step (the API key)
         // carries no draft field — it goes straight into the commit.
-        const field = (['id', 'displayName', 'api', 'baseURL', 'models'] as const)[this.step]
-        if (field !== undefined) this.draft[field] = value
+        if (spec.draftField !== undefined) this.draft[spec.draftField] = value
         committedThisStep = true
         if (this.step < total - 1) return undefined // plain advance
         return this.options.onCommit(buildCustomEntry(this.draft), value)

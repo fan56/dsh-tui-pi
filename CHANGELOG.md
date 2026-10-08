@@ -6,6 +6,43 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`/plugins` — the plugin manager** (the terminal counterpart of the web
+  profile's plugin page) over the base `pluginManager` service: a
+  filterable bundle table (`↑↓` navigate, `/` filters), Enter toggles a
+  bundle on/off, `d` uninstalls behind a one-line confirm, `i` installs a
+  spec (npm name / git URL / path / tarball) through an `inspect` preview
+  straight into `installBundle`. Every ChangeResult surfaces on the
+  in-panel status line — `applied`, `takes effect at the next start`,
+  `overridden`, `failed` with the management error; read-only and
+  error-flagged rows refuse the toggle, installation-shipped bundles
+  refuse the uninstall. A profile without plugin management reports it
+  and stays usable.
+- **`/search` + Ctrl+Shift+F — cross-session full-text search** over the
+  base `sessionQuery` FTS5 index: type a query, get one row per session
+  (best-match snippet + when + directory, titled through the title-snapshot
+  batch), Enter resumes the hit through the exact /resume path (corrupt-log
+  repair and write-lease fallback included), `n` pages deeper on the
+  continuation cursor, `q` starts a new query. Subagent children never
+  surface (the /resume rule); the wrapper searches user/assistant messages
+  on the current surface, the same filters the web sidebar applies. The
+  bundle's cordis.patch.yml now overrides the stock session-query-sqlite
+  row — durable index file under `<dsh-home>/storages/session-query/`,
+  `openAt: first-search` (zero boot cost; the engine reconciles
+  incrementally per query) — so search works out of the box instead of
+  the stock `openAt: never` refusal. On kitty-protocol terminals
+  Ctrl+Shift+F opens the overlay directly (legacy terminals send a bare
+  capital F for that chord — `/search` is the entry point there); the key
+  is remappable through keybindings.json and listed in /hotkeys.
+- **The /settings Models provider rows gain an action menu**: Enter opens
+  View profile (the old read-only viewer) / Replace API key
+  (credentials.set only, no profile rewrite) / Edit route (hand-declared
+  routes: the custom-provider form prefilled from the live profile, id
+  locked, empty key keeps the stored one) / Remove provider (confirm →
+  credential unset first, then the `providers.<id>` subtree unset — the
+  web page's order). Catalog routes keep key-only editing (their
+  endpoint/protocol/models come from the installed pi-ai catalog).
+
 ### Changed
 - **The `/btw` overlay no longer pins the question above the answer** — the
   question and the answer are now ONE tail-pinned scrolled body: the view

@@ -75,12 +75,15 @@ import { languagePickerPanel } from './selectors.ts'
 import { THEME_SETTINGS_NAMESPACE } from './theme-settings.ts'
 import {
   catalogEntry,
+  customDraftFromProfile,
   deriveKeyRef,
   directoryProviderEntries,
+  isHandDeclaredProfile,
   providerProfileFor,
   providerRowView,
   resolveCatalogHint,
   unconfiguredCatalogEntries,
+  type CustomProviderDraft,
   type ProviderCatalogEntry,
 } from './provider-catalog.ts'
 
@@ -95,6 +98,8 @@ import {
  */
 interface CredentialSeam {
   set(ref: string, value: string): Promise<void>
+  /** Remove a stored reference; idempotent (an unset ref stays unset). */
+  unset?(ref: string): Promise<void>
   /** Probe one reference: `configured: true` means a value would resolve. */
   describe?(ref: string): Promise<{ configured: boolean }>
 }
@@ -907,7 +912,23 @@ export interface OpenSettingsBrowserOptions {
   restoreFocus: () => void
   /** Error sink for writes that fail outside an inline editor (transcript). */
   onError: (message: string) => void
-  }
+  /**
+   * Factory for the hand-declared-route EDIT form (custom-provider.ts's
+   * CustomProviderFlow in edit mode). Flows in from the caller so
+   * settings.ts stays free of the custom-provider ↔ settings import cycle
+   * (the same seam AddProviderOptions.customFlow uses for the create form).
+   * Without it the Models category's edit action degrades to key-only.
+   */
+  buildProviderEditFlow?: (options: ProviderEditFlowOptions) => Component
+}
+
+/** What the injected edit-form factory receives (mirrors CustomProviderFlowOptions, edit mode). */
+export interface ProviderEditFlowOptions {
+  draft: CustomProviderDraft
+  onCommit: (entry: ProviderCatalogEntry, key: string) => Promise<CommitResult | undefined>
+  onExit: () => void
+  onError: (message: string) => void
+}
 
 /**
  * Open the modal settings browser. Resolves when it closes with the number of
@@ -927,6 +948,8 @@ class SettingsBrowser {
   private readonly settings: SettingsForms
   private readonly restoreFocus: () => void
   private readonly onError: (message: string) => void
+  private readonly buildProviderEditFlow:
+    ((options: ProviderEditFlowOptions) => Component) | undefined
 
   private descriptors: SettingsDescriptor[] = []
   /** Rehydrated schema roots, cached per namespace (schemas never change). */
@@ -960,6 +983,7 @@ class SettingsBrowser {
     this.settings = options.settings
     this.restoreFocus = options.restoreFocus
     this.onError = options.onError
+    this.buildProviderEditFlow = options.buildProviderEditFlow
     // Assigned here, not as a field initializer: a later field declaration
     // would `defineProperty(…, undefined)` over the promise's resolve.
     this.closed = new Promise<void>(resolve => { this.closeResolve = resolve })
@@ -1299,22 +1323,11 @@ class SettingsBrowser {
           label: view.label,
           value: view.summary,
           description: view.status,
-          // Read-only: the raw llm-pi-ai fields are deliberately not editable
-          // here — Enter shows the stored profile, nothing more. A "re-store
-          // the key" action (reusing keyEditor's EditField, credentials.set
-          // only) was considered for rows whose key never landed (B3) but
-          // needs a multi-action submenu component (~60 lines); skipped —
-          // the commit failure text names the manual fallback instead.
-          submenu: (_current, done) => new ViewerPanel(this.theme, {
-            title: `providers.${id}`,
-            lines: [
-              t('settingsui.models.readonly'),
-              '',
-              ...JSON.stringify(profile, null, 2).split('\n'),
-            ],
-            maxLines: 40,
-            onClose: done,
-          }),
+          // The provider's action menu: view the stored profile, re-store
+          // the key, edit a hand-declared route in full, remove the route.
+          // (Replaces the old read-only viewer — that view lives on as the
+          // menu's first action.)
+          submenu: (_current, done) => this.providerActionMenu(id, entry, profile, done),
         })
       }
     }
@@ -1755,6 +1768,177 @@ class SettingsBrowser {
     // path the onExit refresh repeats it harmlessly.
     if (this.modelsView !== undefined) this.refreshModelsView()
     return undefined
+  }
+
+  /**
+   * The per-provider action menu (Enter on a Models provider row): view the
+   * stored profile, re-store the API key, edit a hand-declared route in
+   * full, remove the route. Menu rows are submenus of the Models list's own
+   * submenu slot — Esc from an action lands back on the menu, Esc from the
+   * menu back on the Models list.
+   */
+  private providerActionMenu(
+    id: string,
+    entry: ProviderCatalogEntry,
+    profile: unknown,
+    done: () => void,
+  ): SettingsListPanel {
+    const handDeclared = entry.catalogRoute !== true || isHandDeclaredProfile(profile)
+    const rows: SettingsRow[] = [
+      {
+        id: 'view',
+        label: t('settingsui.provmenu.view'),
+        value: '',
+        description: t('settingsui.provmenu.viewDesc'),
+        submenu: (_current, subDone) => new ViewerPanel(this.theme, {
+          title: `providers.${id}`,
+          lines: [
+            t('settingsui.models.readonly'),
+            '',
+            ...JSON.stringify(profile, null, 2).split('\n'),
+          ],
+          maxLines: 40,
+          onClose: subDone,
+        }),
+      },
+      {
+        id: 'key',
+        label: t('settingsui.provmenu.key'),
+        value: '',
+        description: t('settingsui.provmenu.keyDesc', { ref: deriveKeyRef(id) }),
+        submenu: (_current, subDone) => this.providerKeyEditor(id, entry, subDone),
+      },
+    ]
+    if (handDeclared && this.buildProviderEditFlow !== undefined) {
+      rows.push({
+        id: 'edit',
+        label: t('settingsui.provmenu.edit'),
+        value: '',
+        description: t('settingsui.provmenu.editDesc'),
+        submenu: (_current, subDone) => this.buildProviderEditFlow!({
+          draft: customDraftFromProfile(id, profile),
+          onCommit: (edited, key) => this.commitProviderEdit(edited, key),
+          // Pop the action menu (not just the form) on the way out, then
+          // rebuild the Models list — the row's label/summary may have
+          // changed; a removed-draft edge cannot happen (the id is locked).
+          onExit: () => {
+            subDone()
+            done()
+            if (this.modelsView !== undefined) this.refreshModelsView()
+          },
+          onError: message => this.onError(message),
+        }),
+      })
+    }
+    rows.push({
+      id: 'remove',
+      label: t('settingsui.provmenu.remove'),
+      value: '',
+      description: t('settingsui.provmenu.removeDesc'),
+      submenu: (_current, subDone) => new ConfirmReset(this.theme, t('settingsui.provmenu.removeConfirm', { name: entry.name }), () => {
+        void this.removeProviderRoute(id, profile).then(() => {
+          // Removal settled: leave the menu entirely (back to the Models
+          // list) — the row this menu describes is gone.
+          subDone()
+          done()
+          if (this.modelsView !== undefined) this.refreshModelsView()
+        })
+      }, () => subDone()),
+    })
+    return new SettingsListPanel(this.theme, {
+      title: t('settingsui.provmenu.title', { name: entry.name }),
+      rows,
+      maxVisible: 8,
+      onCancel: () => done(),
+    })
+  }
+
+  /** Re-store the API key of an existing route (credentials.set only). */
+  private providerKeyEditor(id: string, entry: ProviderCatalogEntry, done: () => void): Component {
+    const ref = deriveKeyRef(id)
+    return new EditField(this.tui, {
+      title: t('settingsui.provmenu.keyTitle', { name: entry.name }),
+      subtitle: t('settingsui.addProvider.keySubtitle', { ref }),
+      initial: '',
+      // Never echo the key — masked dot row (the key editor contract, B2).
+      secret: true,
+      parse: text => {
+        if (text.trim() === '') return { kind: 'error', error: t('settingsui.addProvider.keyRequired') }
+        return { kind: 'value', value: text.trim() }
+      },
+      onCommit: async outcome => {
+        if (outcome.kind !== 'value') return undefined
+        const credentials = this.ctx.get('credentials') as CredentialSeam | undefined
+        if (credentials === undefined) {
+          return { notice: t('settingsui.commit.noCredentials', { ref }) }
+        }
+        try {
+          await credentials.set(ref, String(outcome.value))
+        } catch (cause) {
+          return {
+            error: t('settingsui.commit.keyFailed', {
+              cause: cause instanceof Error ? cause.message : String(cause),
+              ref,
+            }),
+          }
+        }
+        this.justStoredRefs.add(ref)
+        return undefined
+      },
+      onDone: () => {
+        done()
+        // The row's key-state reads from the merged env snapshot — rebuild
+        // it so a just-stored key flips the status immediately.
+        if (this.modelsView !== undefined) this.refreshModelsView()
+      },
+      onError: message => this.onError(message),
+    }, this.theme)
+  }
+
+  /**
+   * Commit a hand-declared route edit: rewrite the whole `providers.<id>`
+   * profile from the edited draft; an empty key keeps the stored one (the
+   * form's edit mode treats the key step as optional). The rebuild of the
+   * Models list happens on the flow's exit path.
+   */
+  private async commitProviderEdit(entry: ProviderCatalogEntry, key: string): Promise<CommitResult | undefined> {
+    const error = await this.write(NS_LLM_PI_AI, [{
+      op: 'set',
+      path: ['providers', entry.id],
+      value: providerProfileFor(entry),
+    }])
+    if (error !== undefined) return { error }
+    if (key === '') return undefined
+    const result = await commitProvider(this.ctx, async () => undefined, entry, key)
+    if (result !== undefined) return result
+    this.justStoredRefs.add(deriveKeyRef(entry.id))
+    return undefined
+  }
+
+  /**
+   * Remove a configured route — the web Models page's order: credential
+   * first (idempotent, retry-safe; a failure degrades to a warning because
+   * the profile unset is the visible removal), then unset the whole
+   * `providers.<id>` subtree.
+   */
+  private async removeProviderRoute(id: string, profile: unknown): Promise<void> {
+    const p = (typeof profile === 'object' && profile !== null ? profile : {}) as { apiKeyEnv?: unknown }
+    const ref = typeof p.apiKeyEnv === 'string' && p.apiKeyEnv !== '' ? p.apiKeyEnv : deriveKeyRef(id)
+    const credentials = this.ctx.get('credentials') as CredentialSeam | undefined
+    if (credentials?.unset !== undefined) {
+      try {
+        await credentials.unset(ref)
+      } catch (cause) {
+        this.onError(t('settingsui.provmenu.removeKeyFailed', {
+          ref,
+          cause: cause instanceof Error ? cause.message : String(cause),
+        }))
+      }
+    }
+    this.justStoredRefs.delete(ref)
+    this.credentialConfigured.delete(ref)
+    const error = await this.write(NS_LLM_PI_AI, [{ op: 'unset', path: ['providers', id] }])
+    if (error !== undefined) this.onError(error)
   }
 
   private onCycle(rows: RowSpec[], list: SettingsListPanel, id: string, newValue: string): void {

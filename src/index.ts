@@ -83,6 +83,9 @@ import { readAgentMaxRounds } from './agent-runtime.ts'
 import { detectNerdFontAvailable } from './font-detect.ts'
 import { openAgentManager } from './agents.ts'
 import { openSettingsBrowser } from './settings.ts'
+import { CustomProviderFlow } from './custom-provider.ts'
+import { openPluginsPanel, type PluginManagerSeam } from './plugins.ts'
+import { openSearchOverlay } from './search.ts'
 import { openSkillsManagerPanel } from './skills-manager.ts'
 import { openLoginFlow, openLogoutFlow } from './login.ts'
 import { reloadPlugin } from './reload.ts'
@@ -581,6 +584,14 @@ export function apply(ctx: Context, config: TuiSettings): void {
             // while it runs / closes when settled).
             void openSubagentViewer(ctx, ui.tui, ui.theme, bridge, refocusEditor)
             break
+          case 'session-search': {
+            // Ctrl+Shift+F (kitty-protocol terminals; legacy terminals send
+            // a bare capital F, where /search is the entry point): dispatch
+            // through the /search command's handler so both entry points
+            // share one path (result replies included).
+            void searchHandler('', new AbortController().signal)
+            break
+          }
           case 'queue-panel': {
             // Ctrl+O: manage pending routed prompts — d removes one from the
             // inbox, s promotes it to an immediate steer (with the same
@@ -1428,46 +1439,10 @@ export function apply(ctx: Context, config: TuiSettings): void {
 
     // /resume: pick a persisted session, validate its log, swap the live
     // agent for it, and rebuild transcript + stats from the stored events.
-    const resumeHandler: LocalCommandHandler = async () => {
-      let picked: Awaited<ReturnType<typeof pickPersistedSession>>
-      try {
-        const currentId = bridge.getSessionId()
-        // Explicit dsh-tui.resume overrides from the profile patch (the
-        // descriptor's user layer): the picker resolves them against
-        // env/defaults per open, so a committed settings change applies to
-        // the next /resume.
-        const resumeSettings = (await readSessionManagementExplicit(ctx))?.resume
-        picked = await pickPersistedSession(
-          ctx, ui.tui, ui.theme,
-          currentId === undefined ? undefined : String(currentId),
-          refocusEditor,
-          resumeSettings,
-        )
-      } catch (error: unknown) {
-        const message = messageOf(error)
-        return { kind: 'error' as const, text: message }
-      }
-      if (picked.kind === 'empty') {
-        return { kind: 'error' as const, text: t('tui.resume.noneOther') }
-      }
-      if (picked.kind === 'empty-filtered') {
-        // Sessions exist but the display window hid them all — name the
-        // window and the knobs so the user knows what to adjust instead of
-        // reading "nothing to resume" over a store full of old sessions.
-        const floor = picked.minBytes >= 1024
-          ? `${Math.round(picked.minBytes / 1024)}KB`
-          : `${picked.minBytes}B`
-        return {
-          kind: 'error' as const,
-          text: t('tui.resume.windowEmpty', { days: picked.maxAgeDays, floor }),
-        }
-      }
-      if (picked.kind === 'cancelled') return { kind: 'success' as const, text: t('tui.resume.cancelled') }
-
-      // Narrowed shared handle for the closures below (const narrowing
-      // propagates into async closures; `picked`'s does not).
-      const target = picked
-
+    // The post-pick body (validate → resume → replay, corrupt-log repair,
+    // write-lease fallback) lives in resumeTarget so /search reuses the
+    // exact same path for its hits.
+    const resumeTarget = async (target: { id: SessionId }) => {
       // The selected row's resume path: swap the live agent for the target
       // and rebuild transcript + stats from the stored events. Shared by the
       // direct hit and the post-repair re-entry so both behave identically
@@ -1582,17 +1557,75 @@ export function apply(ctx: Context, config: TuiSettings): void {
       // Validate the target log before tearing down the current agent: a
       // corrupt log must leave the live session untouched.
       try {
-        await inspectPersistedSession(ctx, picked.id)
+        await inspectPersistedSession(ctx, target.id)
       } catch (error: unknown) {
         const message = messageOf(error)
         if (isCorruptLogError(message)) {
           return offerCorruptedLogRepair(message)
         }
-        return { kind: 'error' as const, text: t('tui.resume.cannot', { id: clipToWidth(String(picked.id), 8), error: message }) }
+        return { kind: 'error' as const, text: t('tui.resume.cannot', { id: clipToWidth(String(target.id), 8), error: message }) }
       }
       return resumeAndReplay()
     }
+
+    const resumeHandler: LocalCommandHandler = async () => {
+      let picked: Awaited<ReturnType<typeof pickPersistedSession>>
+      try {
+        const currentId = bridge.getSessionId()
+        // Explicit dsh-tui.resume overrides from the profile patch (the
+        // descriptor's user layer): the picker resolves them against
+        // env/defaults per open, so a committed settings change applies to
+        // the next /resume.
+        const resumeSettings = (await readSessionManagementExplicit(ctx))?.resume
+        picked = await pickPersistedSession(
+          ctx, ui.tui, ui.theme,
+          currentId === undefined ? undefined : String(currentId),
+          refocusEditor,
+          resumeSettings,
+        )
+      } catch (error: unknown) {
+        const message = messageOf(error)
+        return { kind: 'error' as const, text: message }
+      }
+      if (picked.kind === 'empty') {
+        return { kind: 'error' as const, text: t('tui.resume.noneOther') }
+      }
+      if (picked.kind === 'empty-filtered') {
+        // Sessions exist but the display window hid them all — name the
+        // window and the knobs so the user knows what to adjust instead of
+        // reading "nothing to resume" over a store full of old sessions.
+        const floor = picked.minBytes >= 1024
+          ? `${Math.round(picked.minBytes / 1024)}KB`
+          : `${picked.minBytes}B`
+        return {
+          kind: 'error' as const,
+          text: t('tui.resume.windowEmpty', { days: picked.maxAgeDays, floor }),
+        }
+      }
+      if (picked.kind === 'cancelled') return { kind: 'success' as const, text: t('tui.resume.cancelled') }
+      return resumeTarget({ id: picked.id })
+    }
     registerLocalCommand('resume', t('tui.cmd.resume.description'), resumeHandler)
+
+    // /search: cross-session full-text search over the sessionQuery FTS
+    // index (enabled by this bundle's patch override of the stock
+    // session-query-sqlite row). A hit resumes through resumeTarget — the
+    // same path a /resume pick takes.
+    const searchHandler: LocalCommandHandler = async () => {
+      const seam = ctx.get('sessionQuery') as { searchSessions?: unknown } | undefined
+      if (seam?.searchSessions === undefined) {
+        return { kind: 'error' as const, text: t('tui.search.unavailable') }
+      }
+      const picked = await openSearchOverlay({
+        ctx,
+        tui: ui.tui,
+        theme: ui.theme,
+        restoreFocus: refocusEditor,
+      })
+      if (picked === undefined) return { kind: 'success' as const, text: t('tui.search.cancelled') }
+      return resumeTarget({ id: SessionId(picked) })
+    }
+    registerLocalCommand('search', t('tui.cmd.search.description'), searchHandler)
 
     // /history: the read-only two-pane look-back (ADR 0003) — left pane lists
     // the browsed session's completed turns, right pane shows the selected
@@ -1835,6 +1868,17 @@ export function apply(ctx: Context, config: TuiSettings): void {
         tui: ui.tui,
         theme: ui.theme,
         restoreFocus: refocusEditor,
+        // The hand-declared-route edit form flows in from here so
+        // settings.ts stays free of the custom-provider import cycle.
+        buildProviderEditFlow: ({ draft, onCommit, onExit, onError }) => new CustomProviderFlow({
+          tui: ui.tui,
+          theme: ui.theme,
+          takenIds: new Set(),
+          edit: draft,
+          onCommit,
+          onExit,
+          onError,
+        }),
         onError: message => {
           // Buffered notice: the settings browser outlives the write, so the
           // line must survive a theme hot-swap (the doc.clear() rebuild).
@@ -1852,6 +1896,24 @@ export function apply(ctx: Context, config: TuiSettings): void {
       }
     }
     registerLocalCommand('settings', t('tui.cmd.settings.description'), settingsHandler)
+
+    // /plugins: bundle manager over the base pluginManager service — the
+    // terminal counterpart of the web profile's plugin page (Enter toggles,
+    // d uninstalls behind a confirm, i installs a spec after an inspect
+    // preview, / filters).
+    const pluginsHandler: LocalCommandHandler = async () => {
+      const error = await openPluginsPanel({
+        tui: ui.tui,
+        theme: ui.theme,
+        manager: ctx.get('pluginManager') as PluginManagerSeam | undefined,
+        restoreFocus: refocusEditor,
+        onError: message => renderer.renderNotice(message, 'error'),
+      })
+      return error === undefined
+        ? { kind: 'success' as const, text: '' }
+        : { kind: 'error' as const, text: error }
+    }
+    registerLocalCommand('plugins', t('tui.cmd.plugins.description'), pluginsHandler)
 
     // /skills: standalone skill browser with Installed/Available dual mode.
     // Enter/Space toggles or symlinks; Tab switches views; Esc exits.

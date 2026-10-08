@@ -52,6 +52,12 @@ btw.ts            /btw by-the-way side questions (TUI-owned, ADR 0001): arg
 btw-overlay.ts    the btw overlay: framed panel bound to one run state (setText
                   streaming, Markdown once on settle), Esc close via the focus
                   contract, PanelHost two-step wiring (BtwOverlayWire)
+plugins.ts        /plugins manager over the base pluginManager service: bundle
+                  table (toggle/uninstall/install-by-spec), ChangeResult
+                  status line, pure row builders unit-tested
+search.ts         /search + Ctrl+Shift+F cross-session full-text search over
+                  the sessionQuery FTS index (patch-enabled durable file);
+                  hits resume through the /resume path
 notice-bridge.ts  shared notice bridge — the ONLY channel for operator
                   traces (invalid dsh-tui.retention/resume settings values,
                   the settings-namespace registration failure, a missing

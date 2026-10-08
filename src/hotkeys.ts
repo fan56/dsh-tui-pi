@@ -36,7 +36,7 @@ export function keybindingsPath(home: string): string {
 }
 
 /** The six app-level bindings the file may remap (order = display order). */
-export const APP_KEY_FIELDS: readonly (keyof KeyBindings)[] = ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel']
+export const APP_KEY_FIELDS: readonly (keyof KeyBindings)[] = ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel', 'sessionSearch']
 
 /** Action description for one app key in the `/hotkeys` table. A function, not a module table: the text resolves through `t()` on every call so a language switch re-renders instead of freezing the boot-time language. */
 function keyAction(field: keyof KeyBindings): string {
@@ -47,6 +47,7 @@ function keyAction(field: keyof KeyBindings): string {
     case 'modelPicker': return t('hotkeys.action.modelPicker')
     case 'subagentViewer': return t('hotkeys.action.subagentViewer')
     case 'queuePanel': return t('hotkeys.action.queuePanel')
+    case 'sessionSearch': return t('hotkeys.action.sessionSearch')
   }
 }
 

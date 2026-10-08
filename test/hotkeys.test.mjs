@@ -165,13 +165,14 @@ test('parseKeyInput: empty resets, valid ids pass, typos are rejected', () => {
 
 // --------------------------------------------------------------- table --
 
-test('appHotkeyRows: default table lists the six app keys (presetCycle removed in 2.7.0)', () => {
+test('appHotkeyRows: default table lists the seven app keys (sessionSearch added with /search)', () => {
   const rows = appHotkeyRows({})
-  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Ctrl+G', 'Ctrl+O'])
-  assert.deepEqual(rows.map(row => row.field), ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel'])
+  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Ctrl+G', 'Ctrl+O', 'Ctrl+Shift+F'])
+  assert.deepEqual(rows.map(row => row.field), ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel', 'sessionSearch'])
   assert.ok(rows.every(row => !row.custom))
   assert.equal(rows[0].action, 'stop the current task — requires two presses (1st arms, 2nd within 500ms fires)')
   assert.match(rows.find(row => row.field === 'queuePanel').action, /pending-message queue/)
+  assert.match(rows.find(row => row.field === 'sessionSearch').action, /search/i)
 })
 
 test('appHotkeyRows: a custom binding replaces the key display and flags the row', () => {

@@ -48,6 +48,20 @@
   name: '@deepseek-ai/dsh-session-projection-cache'
   disabled: true
 
+# The stock session-query-sqlite row ships search-OFF (path ':memory:',
+# openAt never) — the FTS5 index only exists when a deployment pins one.
+# This id-targeted override re-points the SAME base row at a durable
+# per-machine index under the dsh home and opens it lazily on the first
+# search: zero boot cost, and the index survives restarts (the engine
+# reconciles incrementally per query, generation-bumped). Config values
+# interpolate through the loader's `!!js` scope where `process` is
+# reachable (the base patch itself computes process.platform in config).
+# `/search` and Ctrl+Shift+F in this TUI are the consumer.
+- id: session-query-sqlite
+  config:
+    path: !!js "(process.env.DSH_HOME || ((process.env.HOME || process.env.USERPROFILE) + '/.dsh')) + '/storages/session-query/index.sqlite'"
+    openAt: first-search
+
 - insert:
     # Entry id `dsh-tui` (NOT the package-derived `tui-pi`): the settings
     # descriptor's `ns` IS the profile entry id under dsh 0.1.7, and the

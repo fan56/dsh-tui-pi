@@ -6,6 +6,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  customDraftFromProfile,
+  isHandDeclaredProfile,
   PROVIDER_CATALOG,
   catalogEntry,
   deriveKeyRef,
@@ -205,4 +207,36 @@ test('providerRowView reports the API-key state from the supplied environment', 
     providerRowView('opencode-go', undefined, profile, { ...env, OPENCODE_GO_API_KEY: 'stored' }).status,
     'API key set',
   )
+})
+
+test('customDraftFromProfile reads a live profile into an editable draft with safe fallbacks', () => {
+  const draft = customDraftFromProfile('acme', {
+    displayName: 'Acme Gateway',
+    api: 'openai-completions',
+    baseURL: 'https://acme.example/v1',
+    models: [{ id: 'acme-one', name: 'One' }, { id: 'acme-two' }, { junk: true }, 'raw'],
+  })
+  assert.deepEqual(draft, {
+    id: 'acme',
+    displayName: 'Acme Gateway',
+    api: 'openai-completions',
+    baseURL: 'https://acme.example/v1',
+    models: 'acme-one,acme-two',
+  })
+  // Unknown/malformed fields fall back to empty defaults — an edit must
+  // always be openable, even for a web-written route this form never saw.
+  assert.deepEqual(customDraftFromProfile('x', undefined), {
+    id: 'x', displayName: '', api: '', baseURL: '', models: '',
+  })
+  assert.deepEqual(customDraftFromProfile('x', { models: 'not-an-array' }).models, '')
+})
+
+test('isHandDeclaredProfile: own api/baseURL/models mark a route fully editable', () => {
+  assert.equal(isHandDeclaredProfile({ api: 'openai-completions', apiKeyEnv: 'X' }), true)
+  assert.equal(isHandDeclaredProfile({ baseURL: 'https://x', apiKeyEnv: 'X' }), true)
+  assert.equal(isHandDeclaredProfile({ models: [{ id: 'm' }], apiKeyEnv: 'X' }), true)
+  // A catalog route stores nothing but the credential reference.
+  assert.equal(isHandDeclaredProfile({ apiKeyEnv: 'X_API_KEY' }), false)
+  assert.equal(isHandDeclaredProfile(undefined), false)
+  assert.equal(isHandDeclaredProfile('junk'), false)
 })
