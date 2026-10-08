@@ -6,7 +6,57 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.27.1] - 2026-10-08
+
+### Fixed
+- **The cross-session search chord is `Ctrl+Alt+F`, not `Ctrl+Shift+F`.**
+  2.27.0 bound it to `Ctrl+Shift+F`, which pi-tui's built-in transcript
+  search already owns — and this plugin's app-level input listener
+  consumes keys BEFORE pi-tui's own bindings, so on kitty-protocol
+  terminals (where the two chords arrive as distinct sequences) the
+  transcript search's only opener became unreachable. e2e could not see
+  it: tmux collapses both chords to the `Ctrl+F` byte, which pi-tui
+  answers leniently — found while building the full-latest-wave podman
+  run, now pinned by scenario 77's `Ctrl+Alt+F` assertion (tmux delivers
+  that chord as the deterministic legacy `ESC+Ctrl+F` encoding).
+  `Ctrl+Shift+F` is pi-tui's transcript search again everywhere;
+  cross-session search answers to `/search` plus `Ctrl+Alt+F` (the
+  encoding most terminals send natively; collides with nothing in
+  pi-tui's default table). The README rows and the search feature page
+  were also corrected — they had been rewritten to deny the transcript
+  search exists, which is false: pi-tui ships it and it keeps working.
+
+### Infrastructure
+- **A latest-wave e2e lane** (`e2e/run-e2e-latest.sh` +
+  `e2e/Containerfile.latest` + `e2e/lib/latest-entry.sh`): installs the
+  PUBLISHED @aiwayds/dsh-tui-pi plus every sibling plugin at their
+  npm-latest versions from the official registry (versions resolved per
+  run; pnpm build scripts stay blocked except the native `koffi` /
+  `node-pty` — published postinstalls are dev-tree linkers the tarball
+  does not ship), then runs the whole scenario suite minus 10-install.
+  The run surfaces two full-wave geometry facts, now handled: the
+  ~22-row startup tree pushes the pixel whale banner out of a 36-row
+  pane (TUI_ROWS is env-overridable; the latest lane runs 48 and
+  50-resize-exit warns instead of failing its 80x24 banner check under
+  E2E_FULL_WAVE), and /plugins' ~30-row table scrolls the own-package
+  row below the fold (scenario 77 narrows with the panel's `/` filter
+  before asserting). First full-latest-wave result: 303 pass / 0 fail /
+  2 warn.
+
 ## [2.27.0] - 2026-10-08
+
+### Fixed
+- **The cross-session search chord moved to `Ctrl+Alt+F`** — the first
+  cut bound it to `Ctrl+Shift+F`, which pi-tui's built-in transcript
+  search already owns: this plugin's app-level input listener consumes
+  keys BEFORE pi-tui's own bindings, so on kitty-protocol terminals
+  (where the two chords arrive as distinct sequences) the transcript
+  search's only opener became unreachable. e2e could not see it — tmux
+  collapses both chords to the `Ctrl+F` byte, which pi-tui answers
+  leniently. `Ctrl+Shift+F` is pi-tui's again everywhere; the
+  cross-session search answers to `/search` plus `Ctrl+Alt+F` (the
+  legacy `ESC+Ctrl+F` encoding most terminals send, colliding with
+  nothing in pi-tui's default table).
 
 ### Added
 - **`/plugins` — the plugin manager** (the terminal counterpart of the web
@@ -38,10 +88,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   row — durable index file under `<dsh-home>/storages/session-query/`,
   `openAt: first-search` (zero boot cost; the engine reconciles
   incrementally per query) — so search works out of the box instead of
-  the stock `openAt: never` refusal. On kitty-protocol terminals
-  Ctrl+Shift+F opens the overlay directly (legacy terminals send a bare
-  capital F for that chord — `/search` is the entry point there); the key
-  is remappable through keybindings.json and listed in /hotkeys.
+  the stock `openAt: never` refusal. The overlay also binds
+  `Ctrl+Alt+F` (see the fix below — the first cut shipped it on
+  `Ctrl+Shift+F`, which shadowed pi-tui's built-in transcript search on
+  kitty-protocol terminals); both keys are remappable through
+  keybindings.json and listed in /hotkeys.
 - **The /settings Models provider rows gain an action menu**: Enter opens
   View profile (the old read-only viewer) / Replace API key
   (credentials.set only, no profile rewrite) / Edit route (hand-declared

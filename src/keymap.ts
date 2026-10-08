@@ -115,7 +115,15 @@ export interface KeyBindings {
   subagentViewer: KeyId
   /** Open the pending-message queue panel (steer / follow-up management). */
   queuePanel: KeyId
-  /** Open the cross-session full-text search overlay (/search). */
+  /**
+   * Open the cross-session full-text search overlay (/search).
+   * Deliberately NOT ctrl+shift+f: pi-tui's built-in transcript search
+   * owns that chord, and this app-level listener consumes keys BEFORE
+   * pi-tui's own bindings — binding it here would shadow the transcript
+   * search on kitty-protocol terminals (where the chords differ).
+   * ctrl+alt+f arrives as the legacy ESC+^F encoding on most terminals
+   * and collides with nothing in pi-tui's default table (ctrl+alt+] only).
+   */
   sessionSearch: KeyId
 }
 
@@ -126,7 +134,7 @@ export const DEFAULT_KEYBINDINGS: KeyBindings = {
   modelPicker: 'ctrl+l',
   subagentViewer: 'ctrl+g',
   queuePanel: 'ctrl+o',
-  sessionSearch: 'ctrl+shift+f',
+  sessionSearch: 'ctrl+alt+f',
 }
 
 /** Live snapshot of everything the decision needs — composed by tui.ts. */

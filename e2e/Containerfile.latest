@@ -1,0 +1,52 @@
+# Latest-wave e2e image: the PUBLISHED @aiwayds/dsh-tui-pi plus every
+# sibling plugin at their npm-latest versions — no source tree involved.
+#
+# The profile seed (/seed/package.json) is generated per run by
+# e2e/run-e2e-latest.sh from live `npm view` answers and installed from the
+# OFFICIAL registry inside the container (npmmirror may lag a fresh publish;
+# the whole point of this image is testing what users just installed).
+#
+# Base scaffolding mirrors e2e/Containerfile (DaoCloud base + npmmirror node
+# dist for the DNS-poisoned podman VM; drop the mirror prefixes on a clean
+# network).
+FROM docker.m.daocloud.io/library/ubuntu:24.04
+
+ARG NODE_VERSION=22.23.2
+ARG NODE_DIST_BASE=https://npmmirror.com/mirrors/node
+ARG PNPM_VERSION=10.33.0
+ARG DSH_VERSION=
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TERM=xterm-256color
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl xz-utils tmux git \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN case "$(uname -m)" in \
+      x86_64)  NODE_ARCH=x64 ;; \
+      aarch64) NODE_ARCH=arm64 ;; \
+      *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL \
+      "${NODE_DIST_BASE}/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+      | tar -xJ -C /usr/local --strip-components=1 \
+ && node --version
+
+RUN test -n "${DSH_VERSION}" \
+      || (echo "DSH_VERSION build arg is required" >&2; exit 1) \
+ && npm install -g --no-fund --no-audit \
+      pnpm@${PNPM_VERSION} \
+      "@deepseek-ai/dsh@${DSH_VERSION}" \
+ && (dsh --version || true)
+
+# The generated full-wave profile manifest (see run-e2e-latest.sh).
+COPY latest-profile/package.json /seed/package.json
+
+WORKDIR /app
+
+# The scenario suite is bind-mounted at /e2e by run-e2e-latest.sh; its
+# lib/latest-entry.sh seeds ~/.dsh/profiles/tui from /seed, installs from
+# the official registry, then execs the scenario list.
+CMD ["bash", "/e2e/lib/latest-entry.sh"]

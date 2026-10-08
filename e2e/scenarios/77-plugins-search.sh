@@ -31,6 +31,13 @@ ensure_editor_ready 'editor clean before the plugin smoke' || true
 # --- /plugins: table lists this package's own bundle --------------------------
 send '/plugins' Enter
 wait_pane 'plugins manager opens with the bundle table' 20 '🔌 Plugins'
+# The latest-wave profile carries ~30 bundles — the alphabetical table
+# scrolls dsh-tui-pi below the fold, so narrow with the panel's own `/`
+# filter before asserting the row (exactly what a real user does).
+send '/'
+sleep 0.5
+send 'dsh-tui-pi'
+sleep 1.5
 PANE="$(capture)"
 if printf '%s' "$PANE" | grep -qF 'dsh-tui-pi@'; then
   ok 'bundle table lists the dsh-tui-pi row with its version'
@@ -38,6 +45,9 @@ else
   bad 'dsh-tui-pi row not visible in the bundle table; pane tail:'
   printf '%s\n' "$PANE" | tail -12 | sed 's/^/    | /'
 fi
+# Leave the filter (Esc clears it, the next Esc pops the panel).
+send Escape
+sleep 0.5
 if printf '%s' "$PANE" | grep -qE 'on|off'; then
   ok 'state column carries on/off labels'
 else
@@ -51,6 +61,16 @@ if printf '%s' "$PANE" | grep -qF '🔌 Plugins'; then
 else
   ok 'Esc closes the plugins manager'
 fi
+
+# --- the chord: Ctrl+Alt+F opens the same overlay (tmux delivers the
+# legacy ESC+Ctrl+F encoding — the deterministic path the shadowing bug
+# hid from; Ctrl+Shift+F stays pi-tui's transcript search, exercised by
+# scenario 22).
+ensure_editor_ready 'editor clean before the chord check' || true
+send C-M-f
+wait_pane 'ctrl+alt+f opens the search overlay' 15 'Search sessions'
+send Escape
+sleep 1
 
 # --- /search: full-text over the stored corpus --------------------------------
 ensure_editor_ready 'editor clean before the search' || true

@@ -15,7 +15,10 @@ printf 'e2e runner: image toolchain — %s | node %s | tmux %s\n' \
 
 # 70 self-skips inside the container (host credentials required) and only
 # produces real assertions when run directly on the host tmux.
-for s in 10-install 20-start 22-search 30-commands 40-theme 50-resize-exit 60-preset 65-ux-batch 66-retention-resume 68-ask-user 69-btw 71-cache-hit 70-steer-injection 74-profiles 75-hard-stop 76-attention-early-stop 77-plugins-search; do
+# E2E_SCENARIOS overrides the list (space-separated) — the latest-wave run
+# drops 10-install (no source tarball there; the profile is pre-seeded).
+E2E_SCENARIOS="${E2E_SCENARIOS:-10-install 20-start 22-search 30-commands 40-theme 50-resize-exit 60-preset 65-ux-batch 66-retention-resume 68-ask-user 69-btw 71-cache-hit 70-steer-injection 74-profiles 75-hard-stop 76-attention-early-stop 77-plugins-search}"
+for s in $E2E_SCENARIOS; do
   bash "./$s.sh"
 done
 

@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**Agent preset 切换**](docs/features/preset-switch.md) —— `/preset` 在宿主 0.1.7 registry 声明的 agent 预设（`standard`、`minimal`……）间切换；切换需确认并会开启新会话（当前会话仍可 /resume 恢复）；preset 到底管什么，以及 0.1.5 目录预设如何迁移（同 id bundle patch 重建）。
 - [**Sessions 会话与恢复**](docs/features/sessions-resume.md) —— 会话自动保持整洁、几次按键恢复；跨进程写者守卫保证日志单写者。
 - [**Themes 主题**](docs/features/themes.md) —— 20 个内置配色（10 亮 + 10 暗）+ 用户主题目录发现（`~/.dsh/themes/`）；热切换，`auto` 跟随终端。
-- [**跨会话搜索、选择与图片**](docs/features/search-selection-images.md) —— `/search`（或 `Ctrl+Shift+F`）跨会话全文搜索：每命中一行带最佳匹配摘要，`Enter` 打开（`↳` 子代理命中只读浏览）；划选复制到系统剪贴板、web/飞书附件内联渲染、LaTeX 转 Unicode 数学。
+- [**搜索、选择与图片**](docs/features/search-selection-images.md) —— 两层搜索：`Ctrl+Shift+F` 搜本会话 transcript（pi-tui 内置），`/search`（或 `Ctrl+Alt+F`）跨会话全文搜索：每命中一行带最佳匹配摘要，`Enter` 打开（`↳` 子代理命中只读浏览）；划选复制到系统剪贴板、web/飞书附件内联渲染、LaTeX 转 Unicode 数学。
 - [**斜杠命令**](docs/features/slash-commands.md) —— `/model`、`/resume`、`/btw`、`/plugins`、`/search`、`/profile-switch`……外加全部 dsh 原生命令。
 - [**插件管理**](docs/features/plugins-manager.md) —— `/plugins` 开关 bundle、确认后卸载、检查预览后按 spec 安装（npm 名 / git 地址 / 路径 / tarball）；每步变更内联报告 `已生效` / `下次启动生效` / `失败`。
 - [**设置浏览器与界面语言**](docs/features/settings-i18n.md) —— `/settings` 就地浏览修改一切（字母序分类、每个 provider 的模型清单、Subagent 分组）；`/language` 在任意 surface 切换界面语言。
@@ -97,7 +97,8 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 | `Ctrl+L` | 打开 model/think 选择器 |
 | `Ctrl+G` | 打开 subagent 选择器（查看器内 `Enter` 打开 steer；子代理运行中 `x ×2` 停止它，已结束后 `x ×2` 关闭面板） |
 | `Ctrl+O` | 待发消息队列（`s` 立即 steer · `d` 移除） |
-| `Ctrl+Shift+F` | 跨会话全文搜索，同 `/search`：`Enter` 打开命中（父会话恢复；`↳` 子代理命中只读浏览）、`n` 加载更多、`q` 新查询、`Esc` 关闭。**终端说明**：该组合键仅在支持 kitty 键盘协议的终端（kitty / Ghostty / WezTerm / iTerm2）可达；未开 `extended-keys` 的 tmux 及其他传统终端只会收到大写 `F`——请用 `/search` 进入。 |
+| `Ctrl+Shift+F` | 本会话内 transcript 搜索（pi-tui 内置）：`Enter`/`Ctrl+G` 下一个、`Shift+Enter`/`Ctrl+Shift+G` 上一个、`Esc` 关闭 |
+| `Ctrl+Alt+F` | 跨会话全文搜索，同 `/search`：`Enter` 打开命中（父会话恢复；`↳` 子代理命中只读浏览）、`n` 加载更多、`q` 新查询、`Esc` 关闭。`/search` 任何终端可用；组合键以传统 `ESC+Ctrl+F` 编码到达大多数终端 |
 | `↑` / `↓` | 浏览已提交消息历史 |
 
 通过 `~/.dsh/keybindings.json`（部分 JSON 映射，实时应用）或 `/hotkeys` 交互式重映射任意 app 按键。

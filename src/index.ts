@@ -585,10 +585,10 @@ export function apply(ctx: Context, config: TuiSettings): void {
             void openSubagentViewer(ctx, ui.tui, ui.theme, bridge, refocusEditor)
             break
           case 'session-search': {
-            // Ctrl+Shift+F (kitty-protocol terminals; legacy terminals send
-            // a bare capital F, where /search is the entry point): dispatch
-            // through the /search command's handler so both entry points
-            // share one path (result replies included).
+            // Ctrl+Alt+F (the legacy ESC+^F encoding most terminals send —
+            // ctrl+shift+f stays pi-tui's built-in transcript search):
+            // dispatch through the /search command's handler so both entry
+            // points share one path (result replies included).
             void searchHandler('', new AbortController().signal)
             break
           }

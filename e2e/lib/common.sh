@@ -89,8 +89,11 @@ has_wordmark() {
 
 # --- tmux session -------------------------------------------------------------
 TS=dsh-tui-e2e
-TUI_COLS=140
-TUI_ROWS=36
+# Geometry is env-overridable: the latest-wave run (every plugin bundled)
+# boots a ~22-row startup tree that pushes the pixel whale banner out of a
+# 36-row pane — wait_tui_up's whale marker then never lands.
+TUI_COLS="${TUI_COLS:-140}"
+TUI_ROWS="${TUI_ROWS:-36}"
 
 capture() { tmux capture-pane -t "$TS" -p 2>/dev/null; }
 capture_sgr() { tmux capture-pane -t "$TS" -p -e 2>/dev/null; }

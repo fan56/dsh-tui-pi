@@ -1,0 +1,58 @@
+{
+  "name": "dsh-profile-tui",
+  "private": true,
+  "dependencies": {
+    "@aiwayds/dsh-agent-dispatch": "0.2.0",
+    "@aiwayds/dsh-approval-policy": "0.2.0",
+    "@aiwayds/dsh-ask-router": "0.6.0",
+    "@aiwayds/dsh-cron": "0.5.0",
+    "@aiwayds/dsh-dcp": "0.13.0",
+    "@aiwayds/dsh-feishu": "0.15.0",
+    "@aiwayds/dsh-jev-core": "0.1.4",
+    "@aiwayds/dsh-llm-net-retry": "0.7.0",
+    "@aiwayds/dsh-llm-proxy": "0.7.0",
+    "@aiwayds/dsh-llm-stats": "0.8.0",
+    "@aiwayds/dsh-mcp-adapter": "0.7.0",
+    "@aiwayds/dsh-model-sync": "0.7.0",
+    "@aiwayds/dsh-profile-switch": "0.3.0",
+    "@aiwayds/dsh-subagent-registry": "0.13.0",
+    "@aiwayds/dsh-topics-memory": "0.21.0",
+    "@aiwayds/dsh-tui-pi": "2.27.0",
+    "@aiwayds/dsh-vault": "0.7.0",
+    "@aiwayds/dsh-web-search-anysearch": "0.6.0",
+    "@aiwayds/dsh-web-search-tavily": "0.6.0",
+    "@deepseek-ai/dsh-cordis-host-runner": "0.2.0-rc.2"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@aiwayds/dsh-agent-dispatch",
+        "@aiwayds/dsh-approval-policy",
+        "@aiwayds/dsh-ask-router",
+        "@aiwayds/dsh-cron",
+        "@aiwayds/dsh-dcp",
+        "@aiwayds/dsh-feishu",
+        "@aiwayds/dsh-jev-core",
+        "@aiwayds/dsh-llm-net-retry",
+        "@aiwayds/dsh-llm-proxy",
+        "@aiwayds/dsh-llm-stats",
+        "@aiwayds/dsh-mcp-adapter",
+        "@aiwayds/dsh-model-sync",
+        "@aiwayds/dsh-profile-switch",
+        "@aiwayds/dsh-subagent-registry",
+        "@aiwayds/dsh-topics-memory",
+        "@aiwayds/dsh-tui-pi",
+        "@aiwayds/dsh-vault",
+        "@aiwayds/dsh-web-search-anysearch",
+        "@aiwayds/dsh-web-search-tavily"
+      ]
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "koffi",
+      "node-pty"
+    ]
+  }
+}
