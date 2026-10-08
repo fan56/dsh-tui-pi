@@ -30,15 +30,17 @@ export type ModelRow =
   | { kind: 'divider' }
   | { kind: 'hiddenHeader'; count: number }
 
-/** Case-insensitive substring match of `query` against name/id/provider. */
+/**
+ * Keyword match of `query` against name/id/provider: whitespace-separated
+ * tokens, case-insensitive, AND across tokens (each token substring-matches
+ * at least one field). A single token degrades to the plain substring match;
+ * an empty/whitespace-only query matches everything.
+ */
 export function matchesModelFilter(model: ListedModel, query: string): boolean {
-  const needle = query.trim().toLowerCase()
-  if (needle === '') return true
-  return (
-    model.name.toLowerCase().includes(needle)
-    || model.id.toLowerCase().includes(needle)
-    || model.provider.toLowerCase().includes(needle)
-  )
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(token => token !== '')
+  if (tokens.length === 0) return true
+  const fields = [model.name, model.id, model.provider].map(field => field.toLowerCase())
+  return tokens.every(token => fields.some(field => field.includes(token)))
 }
 
 /**

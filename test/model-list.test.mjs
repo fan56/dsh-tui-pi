@@ -86,6 +86,16 @@ test('matchesModelFilter is a case-insensitive substring match on name/id/provid
   assert.equal(matchesModelFilter(glm, 'kimi'), false)
 })
 
+test('matchesModelFilter: whitespace-separated keywords AND-match, each token may hit a different field', () => {
+  const glm = { provider: 'zhipu', id: 'glm-4.7-flash', name: 'GLM-4.7 Flash' }
+  assert.equal(matchesModelFilter(glm, 'glm flash'), true, 'both tokens hit (id/name)')
+  assert.equal(matchesModelFilter(glm, 'flash zhipu'), true, 'one token on the name, one on the provider')
+  assert.equal(matchesModelFilter(glm, 'GLM FLASH'), true, 'tokens are lower-cased')
+  assert.equal(matchesModelFilter(glm, '  glm    flash '), true, 'extra whitespace tolerated')
+  assert.equal(matchesModelFilter(glm, 'glm kimi'), false, 'every token must hit somewhere')
+  assert.equal(matchesModelFilter(glm, '   '), true, 'whitespace-only query matches everything')
+})
+
 test('compareListedModels: provider aggregates first, then the MODEL-column label, id tiebreak', () => {
   const chat = { provider: 'deepseek', id: 'deepseek-chat', name: 'DeepSeek Chat' }
   const glm = { provider: 'zhipu', id: 'glm-4.7', name: 'GLM-4.7' }
@@ -365,6 +375,41 @@ test('TablePanel filter mode: / engages, keystrokes bypass shortcuts, Enter appl
   const closing = makePanel({ onCancel: () => { cancelled++ } }).panel
   closing.handleInput('\x1b')
   assert.equal(cancelled, 1, 'Esc without any filter closes the panel')
+})
+
+test('filter query change lands the cursor on the first match, not the stale index', () => {
+  // pickModel's rebuild(undefined, true) path: the caller rebuilds rows from
+  // the live query and resets the cursor to the top — a bare resync would
+  // clamp the stale index (2 → 1, GLM Flash) instead of the first match.
+  const models = [
+    { provider: 'zhipu', id: 'glm-air', name: 'GLM Air' },
+    { provider: 'zhipu', id: 'glm-flash', name: 'GLM Flash' },
+    { provider: 'moonshot', id: 'kimi', name: 'Kimi' },
+  ]
+  let query = ''
+  const { options, panel } = makePanel({
+    rows: buildModelRows(models, [], []),
+    filter: {
+      getQuery: () => query,
+      onQueryChange: next => {
+        query = next
+        options.rows = buildModelRows(models, [], [], query)
+        if (!panel.focusRow(() => true)) panel.resyncCursor()
+      },
+    },
+  })
+  // buildModelRows order: moonshot sorts before zhipu → Kimi, GLM Air, GLM Flash.
+  panel.handleInput('\x1b[B')
+  panel.handleInput('\x1b[B')
+  assert.equal(panel.selectedRow().model.id, 'glm-flash', 'cursor parked on the last row')
+  panel.handleInput('/')
+  for (const key of 'glm') panel.handleInput(key)
+  assert.equal(query, 'glm')
+  assert.equal(
+    panel.selectedRow()?.model.id,
+    'glm-air',
+    'cursor reset onto the FIRST match (a bare resyncCursor would clamp to glm-flash)',
+  )
 })
 
 test('TablePanel focusRow/resyncCursor keep the cursor on a selectable row across rebuilds', () => {

@@ -249,8 +249,10 @@ export function pickPermission(
  *
  * The list carries the favorites/hidden structure: `f` toggles the favorite
  * flag on the cursor model (list reorders live, panel stays open), `h`
- * toggles hidden, `/` engages a session-local substring filter. Every toggle
- * persists immediately through the dsh-tui settings namespace (best-effort).
+ * toggles hidden, `/` engages a session-local keyword filter (space-
+ * separated tokens, AND — see matchesModelFilter; the cursor lands on the
+ * first match as the query narrows). Every toggle persists immediately
+ * through the dsh-tui settings namespace (best-effort).
  *
  * With `host` given (the profile editor embeds this picker inside its own
  * overlay flow) the stage-1 table mounts and unmounts through the host's
@@ -337,7 +339,7 @@ export async function pickModel(
         getQuery: () => query,
         onQueryChange: next => {
           query = next
-          rebuild()
+          rebuild(undefined, true)
         },
       },
     }
@@ -345,16 +347,20 @@ export async function pickModel(
 
     /**
      * Rebuild rows from the live favorites/hidden/filter state. The cursor
-     * follows `keepKey` when given (a toggle must not jump); a miss — the
-     * toggled row vanished from the rebuilt list — falls back to
-     * `resyncCursor`, otherwise the cursor would strand out of range
-     * (`selectedRow()` undefined, no ▸ marker, dead arrow keys).
+     * follows `keepKey` when given (a toggle must not jump); a filter-query
+     * change (`resetToTop`) starts the cursor on the first match instead of
+     * the stale clamped index — the search lands on a result, not wherever
+     * navigation happened to sit. A miss — the toggled row vanished from the
+     * rebuilt list — falls back to `resyncCursor`, otherwise the cursor
+     * would strand out of range (`selectedRow()` undefined, no ▸ marker,
+     * dead arrow keys).
      */
-    const rebuild = (keepKey?: string): void => {
+    const rebuild = (keepKey?: string, resetToTop = false): void => {
       options.rows = buildModelRows(models, favorites, hidden, query)
-      const followed = keepKey !== undefined
-        && list.focusRow(row => row.kind === 'model' && modelKey(row.model) === keepKey)
-      if (!followed) list.resyncCursor()
+      if (keepKey !== undefined
+        && list.focusRow(row => row.kind === 'model' && modelKey(row.model) === keepKey)) return
+      if (resetToTop && list.focusRow(() => true)) return
+      list.resyncCursor()
     }
 
     /** Best-effort persistence of one pref list; failures surface in-panel. */

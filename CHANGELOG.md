@@ -7,6 +7,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- **The `/model` `/` filter matches keywords, not one substring** — the
+  query now splits on whitespace and AND-matches the tokens against the
+  model name, id and provider (each token may hit a different field), so
+  `glm flash` narrows straight onto the GLM Flash models instead of
+  matching nothing. As the query narrows the list, the cursor now lands on
+  the FIRST match instead of staying wherever navigation last sat (merely
+  clamped into range) — the next Enter picks a visible result, not a row
+  below the fold. Single-token queries keep the exact previous substring
+  behavior.
 - **Raise the dsh host floor to `0.2.0-rc.2`** (the 09-29 productization wave).
   The `@deepseek-ai/dsh-settings` / `dsh-skill` / `dsh-user-questions` peer
   floors move `>=0.1.7-rc.1` → `>=0.2.0-rc.2` and the devDependency pins
