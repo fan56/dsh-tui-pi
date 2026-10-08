@@ -54,16 +54,23 @@ test('buildSearchHitRows: one row per resumable hit, titled from the snapshot ba
   // Untitled + no cwd: id tail label, empty dir, creation-time fallback.
   assert.equal(rows[1].title, '55555555')
   assert.equal(rows[1].dir, '')
+  assert.equal(rows[0].child, false)
 })
 
-test('buildSearchHitRows drops subagent children (the /resume rule)', () => {
+test('buildSearchHitRows keeps subagent children, flagged and prefixed for a cold browse', () => {
   const hits = [
-    { header: header({ origin: 'subagent', delegationDepth: 1 }), bestMatch: { snippet: 'child' } },
+    { header: header({ origin: 'subagent', delegationDepth: 1 }), bestMatch: { snippet: 'child work' } },
     { header: header(), bestMatch: { snippet: 'parent' } },
   ]
   const rows = buildSearchHitRows(hits, new Map())
-  assert.equal(rows.length, 1)
-  assert.equal(rows[0].snippet, 'parent')
+  // In a subagent-heavy deployment most deep content lives in child
+  // sessions — dropping them made queries read "no hits" over a matching
+  // index. They stay listed, marked, and route to a read-only browse.
+  assert.equal(rows.length, 2)
+  assert.equal(rows[0].child, true)
+  assert.equal(rows[0].snippet, '↳ child work')
+  assert.equal(rows[1].child, false)
+  assert.equal(rows[1].snippet, 'parent')
 })
 
 test('searchFailureText maps the disabled-index refusal to an upgrade hint', () => {

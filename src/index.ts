@@ -1623,7 +1623,14 @@ export function apply(ctx: Context, config: TuiSettings): void {
         restoreFocus: refocusEditor,
       })
       if (picked === undefined) return { kind: 'success' as const, text: t('tui.search.cancelled') }
-      return resumeTarget({ id: SessionId(picked) })
+      if (picked.child) {
+        // The hit lives in a subagent child session: resuming it as the
+        // main conversation would misplace the recursion budget, so Enter
+        // opens the read-only cold browse (/history <id>) over its stored
+        // log instead — the content is fully readable, nothing is resumed.
+        return historyHandler(picked.id, new AbortController().signal)
+      }
+      return resumeTarget({ id: SessionId(picked.id) })
     }
     registerLocalCommand('search', t('tui.cmd.search.description'), searchHandler)
 

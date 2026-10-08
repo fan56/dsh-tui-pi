@@ -75,12 +75,18 @@ export interface SearchHitRow {
   sessionId: string
   /** Title snapshot when known; the id tail otherwise. */
   title: string
-  /** Best-match excerpt, single line. */
+  /** Best-match excerpt, single line; child rows carry an `↳ ` prefix. */
   snippet: string
   /** Locale-formatted date of the matched event (fallback: created). */
   when: string
   /** Directory name of the session cwd. */
   dir: string
+  /**
+   * A subagent child session (delegationDepth >= 1): resuming it as the
+   * main conversation would misplace the recursion budget, so Enter opens
+   * a read-only cold browse instead of a resume.
+   */
+  child: boolean
   header: SessionHeader
 }
 
@@ -99,10 +105,13 @@ function whenLabel(time: number | undefined, createdAt: number | undefined): str
 }
 
 /**
- * Build result rows from raw hits: subagent children drop out (resuming
- * one would misplace the recursion budget — the /resume picker's rule),
- * titles resolve through the snapshot batch (one service call for the
- * whole page), snippets flatten to one line.
+ * Build result rows from raw hits: titles resolve through the snapshot
+ * batch (one service call for the whole page), snippets flatten to one
+ * line. Subagent children STAY listed — in a subagent-heavy deployment
+ * most deep content lives in child sessions, and dropping them made
+ * queries read "no hits" over a matching index — but carry an `↳ `
+ * prefix and the `child` flag so Enter routes them to a read-only cold
+ * browse (never a resume; the /resume picker's recursion rule).
  */
 export function buildSearchHitRows(
   hits: ReadonlyArray<{
@@ -113,17 +122,18 @@ export function buildSearchHitRows(
 ): SearchHitRow[] {
   const rows: SearchHitRow[] = []
   for (const hit of hits) {
-    if (!isResumableSessionHeader(hit.header)) continue
     const id = String(hit.header.id)
     const title = titles.get(id)
+    const child = !isResumableSessionHeader(hit.header)
     rows.push({
       sessionId: id,
       title: title !== undefined && title !== ''
         ? title
         : clipId(id),
-      snippet: normalizeSnippet(hit.bestMatch.snippet),
+      snippet: child ? `↳ ${normalizeSnippet(hit.bestMatch.snippet)}` : normalizeSnippet(hit.bestMatch.snippet),
       when: whenLabel(hit.bestMatch.time, hit.header.createdAt),
       dir: dirLabel(hit.header.cwd),
+      child,
       header: hit.header,
     })
   }
@@ -155,7 +165,7 @@ class SearchPanel implements Component {
   private readonly tui: TUI
   private readonly theme: TuiTheme
   private readonly seam: SessionQuerySearchSeam
-  private readonly onPick: (sessionId: string) => void
+  private readonly onPick: (pick: SearchPick) => void
   private readonly onExit: () => void
   /** Active child: the query editor or the results table. */
   private child: Component
@@ -171,7 +181,7 @@ class SearchPanel implements Component {
 
   constructor(options: OpenSearchOverlayOptions & {
     seam: SessionQuerySearchSeam
-    onPick: (sessionId: string) => void
+    onPick: (pick: SearchPick) => void
     onExit: () => void
   }) {
     this.tui = options.tui
@@ -185,7 +195,7 @@ class SearchPanel implements Component {
       rows: [],
       renderCell: (row, column) => (column.key === 'meta' ? `${row.when} · ${row.dir}` : row.snippet),
       isSelectable: () => true,
-      onSelect: row => this.onPick(row.sessionId),
+      onSelect: row => this.onPick({ id: row.sessionId, child: row.child }),
       onCancel: () => this.onExit(),
       footer: t('search.footer.results'),
       status: () => this.status,
@@ -340,15 +350,23 @@ export function searchFailureText(cause: unknown): string {
   return t('search.status.failed', { message })
 }
 
+/** What Enter on a result row picked: the session id, and how to open it. */
+export interface SearchPick {
+  id: string
+  /** Subagent child → the caller opens a read-only cold browse, not a resume. */
+  child: boolean
+}
+
 /**
- * Open the cross-session search overlay. Resolves the picked session id,
- * or undefined when dismissed. Focus returns to `restoreFocus` on close;
- * the picked-session resume is the CALLER's job (the /resume path — a
- * search hit must resume exactly like a /resume pick, repair flow and
- * write-lease fallback included). Returns undefined WITHOUT mounting when
- * the sessionQuery service is absent — the caller reports that itself.
+ * Open the cross-session search overlay. Resolves the picked row, or
+ * undefined when dismissed. Focus returns to `restoreFocus` on close; the
+ * picked row's open action is the CALLER's job (a parent session resumes
+ * exactly like a /resume pick, repair flow and write-lease fallback
+ * included; a child session gets a read-only cold browse). Returns
+ * undefined WITHOUT mounting when the sessionQuery service is absent —
+ * the caller reports that itself.
  */
-export async function openSearchOverlay(options: OpenSearchOverlayOptions): Promise<string | undefined> {
+export async function openSearchOverlay(options: OpenSearchOverlayOptions): Promise<SearchPick | undefined> {
   const seam = options.ctx.get('sessionQuery') as SessionQuerySearchSeam | undefined
   if (seam === undefined || seam.searchSessions === undefined) {
     options.restoreFocus()
@@ -356,7 +374,7 @@ export async function openSearchOverlay(options: OpenSearchOverlayOptions): Prom
   }
   return new Promise(resolve => {
     let settled = false
-    const settle = (picked: string | undefined): void => {
+    const settle = (picked: SearchPick | undefined): void => {
       if (settled) return
       settled = true
       host.close()
@@ -370,7 +388,7 @@ export async function openSearchOverlay(options: OpenSearchOverlayOptions): Prom
     const panel = new SearchPanel({
       ...options,
       seam,
-      onPick: sessionId => settle(sessionId),
+      onPick: pick => settle(pick),
       onExit: () => settle(undefined),
     })
     host.open(panel, '80%', '80%')

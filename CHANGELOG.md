@@ -23,9 +23,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (best-match snippet + when + directory, titled through the title-snapshot
   batch), Enter resumes the hit through the exact /resume path (corrupt-log
   repair and write-lease fallback included), `n` pages deeper on the
-  continuation cursor, `q` starts a new query. Subagent children never
-  surface (the /resume rule); the wrapper searches user/assistant messages
-  on the current surface, the same filters the web sidebar applies. The
+  continuation cursor, `q` starts a new query. The wrapper searches
+  user/assistant messages on the current surface, the same filters the
+  web sidebar applies. Hits in subagent CHILD sessions stay listed with
+  an `↳ ` prefix — in a subagent-heavy deployment most deep content
+  lives in children, and dropping them made queries read "no hits" over a
+  matching index (found on the real machine: the only wayfinder-matching
+  message sat in a child) — and Enter opens a read-only cold browse of
+  that child (`/history <id>`) instead of a resume, keeping the /resume
+  recursion rule intact. The
   bundle's cordis.patch.yml now overrides the stock session-query-sqlite
   row — durable index file under `<dsh-home>/storages/session-query/`,
   `openAt: first-search` (zero boot cost; the engine reconciles
