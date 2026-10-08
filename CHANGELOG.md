@@ -7,6 +7,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- **The `/btw` overlay no longer pins the question above the answer** — the
+  question and the answer are now ONE tail-pinned scrolled body: the view
+  auto-scrolls with the streaming answer, and a long question scrolls up
+  out of sight behind the `… N lines above` marker instead of eating the
+  window (a wall-of-text question used to starve the answer to a 3-row
+  sliver with the rest behind `… N lines below`). The full budget is the
+  answer's now — the question is re-read by scrolling up (↑/↓ line,
+  PgUp/PgDn page; scroll-up detaches from the tail, reaching the bottom
+  re-attaches). Title, status footer and Esc semantics unchanged.
 - **The `/model` `/` filter matches keywords, not one substring** — the
   query now splits on whitespace and AND-matches the tokens against the
   model name, id and provider (each token may hit a different field), so

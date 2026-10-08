@@ -24,18 +24,19 @@ import {
 import { clipToWidth } from './text.ts'
 
 /**
- * Answer row budget, sized so the panel NEVER overflows the 24-row e2e
+ * Body row budget, sized so the panel NEVER overflows the 24-row e2e
  * terminal (AGENTS.md matrix floor): maxHeight '80%' ≈ 19 rows there, the
- * FramedOverlay chrome eats 4, fixed rows are 4 (title + 2 blanks + status),
- * and the question rows come out of the remainder per frame — an overlay
- * taller than that just shows a roomier answer. Overflow of the answer
- * itself is a scroll window pinned to the tail: ↑/↓ line-scroll and
- * PgUp/PgDn page it, a scroll-up detaches from the tail and reaching the
- * bottom re-attaches (the SubagentViewerPanel contract; the math lives in
- * btw.ts). The default state renders exactly the historical tail window.
+ * FramedOverlay chrome eats 4, fixed rows are 4 (title + 2 blanks + status).
+ * The question and the answer are ONE scrolled body inside that budget —
+ * the question does NOT pin to the top (a long one used to eat the window
+ * and starve the answer to a 3-row sliver); the window is tail-pinned, so
+ * it auto-scrolls with the stream, and overflow hides rows ABOVE the tail
+ * (question rows included) behind the `… N lines above` marker: ↑/↓
+ * line-scroll and PgUp/PgDn page it, a scroll-up detaches from the tail
+ * and reaching the bottom re-attaches (the SubagentViewerPanel contract;
+ * the math lives in btw.ts).
  */
-const BTW_ANSWER_BASE_BUDGET = 11
-const BTW_ANSWER_MIN_BUDGET = 3
+const BTW_BODY_BUDGET = 11
 
 export class BtwOverlayPanel implements Component {
   private readonly run: BtwRunState
@@ -76,13 +77,13 @@ export class BtwOverlayPanel implements Component {
   render(width: number): string[] {
     const fns = panelThemeFns(this.theme())
     const wrap = Math.max(2, width - 2)
-    const questionLines = this.question.render(wrap)
-    const budget = Math.max(BTW_ANSWER_MIN_BUDGET, BTW_ANSWER_BASE_BUDGET - questionLines.length)
     const lines: string[] = [
       fns.accent(BOLD + clipToWidth(`⌘ btw — ${this.run.modelLabel}`, wrap) + RESET),
-      ...questionLines,
-      '',
     ]
+    // One scrolled body: question, separator, answer — the window is
+    // tail-pinned over it, so the view follows the stream and a long
+    // question scrolls up out of sight instead of crowding the answer.
+    const body = [...this.question.render(wrap), '']
 
     const queued = this.controller.queuedCount
     if (this.run.status === 'streaming') {
@@ -91,9 +92,9 @@ export class BtwOverlayPanel implements Component {
         this.streamedText = this.run.answerText
       }
       if (this.run.answerText !== '') {
-        this.pushAnswerWindow(lines, this.answerText.render(wrap), budget, wrap, fns)
+        this.pushBodyWindow(lines, [...body, ...this.answerText.render(wrap)], wrap, fns)
       } else {
-        lines.push(fns.muted(clipToWidth('Thinking…', wrap)))
+        this.pushBodyWindow(lines, [...body, fns.muted(clipToWidth('Thinking…', wrap))], wrap, fns)
       }
       lines.push('')
       lines.push(fns.subtle(clipToWidth(
@@ -104,9 +105,14 @@ export class BtwOverlayPanel implements Component {
     }
 
     if (this.run.status === 'error') {
-      lines.push(fns.muted(clipToWidth(`✘ ${this.run.error ?? 'btw failed.'}`, wrap)))
+      this.pushBodyWindow(
+        lines,
+        [...body, fns.muted(clipToWidth(`✘ ${this.run.error ?? 'btw failed.'}`, wrap))],
+        wrap,
+        fns,
+      )
     } else if (this.run.answerText === '') {
-      lines.push(fns.muted(clipToWidth('(no answer text)', wrap)))
+      this.pushBodyWindow(lines, [...body, fns.muted(clipToWidth('(no answer text)', wrap))], wrap, fns)
     } else {
       if (this.finalMarkdown === undefined) {
         // Parses ONCE on the settled answer — never per frame, per token.
@@ -114,7 +120,7 @@ export class BtwOverlayPanel implements Component {
           color: text => ansiFg(this.theme().palette.fgDefault) + text + RESET,
         })
       }
-      this.pushAnswerWindow(lines, this.finalMarkdown.render(wrap), budget, wrap, fns)
+      this.pushBodyWindow(lines, [...body, ...this.finalMarkdown.render(wrap)], wrap, fns)
     }
     lines.push('')
     lines.push(fns.subtle(clipToWidth(
@@ -137,21 +143,22 @@ export class BtwOverlayPanel implements Component {
   }
 
   /**
-   * Push the answer window (visible slice + hidden-row markers) and persist
-   * the clamped scroll state. The markers are extra rows beyond the budget,
-   * like the historical tail-window marker was.
+   * Push the exchange window (visible slice + hidden-row markers) and
+   * persist the clamped scroll state. The whole exchange — question,
+   * separator, answer — is one scrolled line list, so the markers count
+   * hidden question rows too. The markers are extra rows beyond the
+   * budget, like the historical tail-window marker was.
    */
-  private pushAnswerWindow(
+  private pushBodyWindow(
     out: string[],
-    rendered: string[],
-    budget: number,
+    body: string[],
     wrap: number,
     fns: ReturnType<typeof panelThemeFns>,
   ): void {
-    const win = btwAnswerWindow(rendered, budget, this.scroll)
+    const win = btwAnswerWindow(body, BTW_BODY_BUDGET, this.scroll)
     this.scroll = win.state
-    this.lineCount = rendered.length
-    this.bodyRows = budget
+    this.lineCount = body.length
+    this.bodyRows = BTW_BODY_BUDGET
     if (win.above > 0) out.push(fns.subtle(clipToWidth(`… ${win.above} lines above`, wrap)))
     out.push(...win.lines)
     if (win.below > 0) out.push(fns.subtle(clipToWidth(`… ${win.below} lines below`, wrap)))
