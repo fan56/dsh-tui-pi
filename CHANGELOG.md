@@ -6,6 +6,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.27.0] - 2026-10-08
+
 ### Added
 - **`/plugins` — the plugin manager** (the terminal counterpart of the web
   profile's plugin page) over the base `pluginManager` service: a
