@@ -22,6 +22,8 @@
 | `/reload` | Hot-reload the plugin from source after `pnpm build`. |
 | `/login` | Log in to a provider (or `/login openai`); **Custom provider…** adds any OpenAI/Anthropic-compatible gateway. |
 | `/logout` | Remove a provider's stored key and profile. |
+| `/plugins` | Plugin manager: bundle table (`Enter` toggle · `i` install by spec · `d` uninstall behind a confirm · `/` filter); changes report applied / restart-required / failed inline (see [plugins-manager](plugins-manager.md)). |
+| `/search` | Cross-session full-text search over every stored session (FTS index): `Enter` opens a hit (resume; `↳` subagent-child hits browse read-only), `n` more, `q` new query (see [search](search-selection-images.md)). Also on `Ctrl+Shift+F` where the terminal speaks the kitty keyboard protocol. |
 | `/hotkeys` | Keybinding browser and live editor. |
 
 Model-list auto-sync for hand-declared (baseURL) providers is no longer a built-in command: the separate `@aiwayds/dsh-model-sync` plugin (a default dependency of this package) keeps those routes' model lists up to date on its own schedule.

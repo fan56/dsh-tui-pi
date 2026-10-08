@@ -26,8 +26,9 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**Sessions & resume**](docs/features/sessions-resume.md) — sessions stay tidy automatically and resume in a few keystrokes; the host's kernel write lease keeps the log single-writer across processes.
 - [**History browser**](docs/features/history.md) — `/history` opens a fixed two-pane look-back over the session: completed turns on the left, the selected turn's replies on the right; copy a prompt back to the editor, or cold-read any stored session without resuming it (read-only).
 - [**Themes**](docs/features/themes.md) — 20 built-in palettes (10 light + 10 dark) plus user theme discovery (`~/.dsh/themes/`); hot-switchable, `auto` follows your terminal.
-- [**Search, selection & images**](docs/features/search-selection-images.md) — `Ctrl+Shift+F` over the whole transcript, drag-select copies to the OS clipboard, attachments from web/Feishu render inline, LaTeX replies draw as Unicode math.
-- [**Slash commands**](docs/features/slash-commands.md) — `/model`, `/resume`, `/btw`, … plus everything dsh-native.
+- [**Cross-session search, selection & images**](docs/features/search-selection-images.md) — `/search` (or `Ctrl+Shift+F`) full-text search over every stored session: best-match snippet per hit, `Enter` opens it (`↳` subagent-child hits browse read-only); drag-select copies to the OS clipboard, attachments from web/Feishu render inline, LaTeX replies draw as Unicode math.
+- [**Slash commands**](docs/features/slash-commands.md) — `/model`, `/resume`, `/btw`, `/plugins`, `/search`, … plus everything dsh-native.
+- [**Plugin manager**](docs/features/plugins-manager.md) — `/plugins` toggles bundles on/off, uninstalls behind a confirm, installs a spec (npm name / git URL / path / tarball) after an inspect preview; every change reports `applied` / `takes effect at the next start` / `failed` inline.
 - [**Settings browser & UI languages**](docs/features/settings-i18n.md) — `/settings` edits everything in place (alphabetical categories, per-provider model lists, a Subagent group); `/language` switches the UI language from any surface.
 - [**Startup plugin tree**](docs/features/startup-tree.md) — every profile plugin with its installed npm version, printed at launch.
 
@@ -100,7 +101,7 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 | `Ctrl+L` | Open the model/think picker |
 | `Ctrl+G` | Open the subagent picker (viewer `Enter` opens steer, `x ×2` stops that subagent while it runs / closes when settled) |
 | `Ctrl+O` | Pending-message queue (s steer now · d remove) |
-| `Ctrl+Shift+F` | Transcript search (`Enter`/`Ctrl+G` next · `Shift+Enter`/`Ctrl+Shift+G` previous · `Esc` close) |
+| `Ctrl+Shift+F` | Cross-session full-text search — same as `/search`: `Enter` opens the hit (resume; `↳` child rows open a read-only browse), `n` loads more, `q` starts a new query, `Esc` closes. **Terminal note:** the chord only arrives on terminals that speak the kitty keyboard protocol (kitty / Ghostty / WezTerm / iTerm2); tmux without `extended-keys` and other legacy terminals deliver a bare capital `F` instead — run `/search` there. |
 | `↑` / `↓` | Browse submitted-message history |
 
 Remap any app key through `~/.dsh/keybindings.json` (a partial JSON map, live-applied) or interactively with `/hotkeys`.
