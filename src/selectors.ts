@@ -280,6 +280,22 @@ export async function pickModel(
       }
     } catch { /* one provider's listing failure must not kill the picker */ }
   }))
+  if (models.length === 0 && current !== undefined) {
+    // dsh 0.2.1-rc.2 adapter change: catalog reads for UNCREDENTIALED routes
+    // now return an empty list (llm-deepseek-api-key's discoverModels returns
+    // [] on MISSING_CREDENTIAL, the account route's on signed-out; the 0.2.0
+    // adapters advertised their static catalog regardless). On such
+    // deployments every provider lists empty and the picker would dead-fall
+    // before mounting. The active route itself stays resolvable without a
+    // credential — resolveModelInfo is a pure config read — so seed the list
+    // with it: /model opens on the current model instead of not opening. The
+    // catalog path above is untouched on hosts that still advertise models
+    // (this arm only fires on a fully empty aggregation).
+    try {
+      const info = await llm.resolveModelInfo(current.provider, current.model)
+      models.push({ provider: info.provider, id: info.id, name: info.name })
+    } catch { /* an unresolvable active route seeds no row */ }
+  }
   if (models.length === 0) return undefined
 
   // Favorites/hiddens persist under dsh-tui settings; the picker works on

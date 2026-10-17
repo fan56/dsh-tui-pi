@@ -6,6 +6,21 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **`/model` opens on hosts that no longer advertise uncredentialed
+  catalogs** (0.2.1-rc.2 runtime adaptation). The 0.2.1 line's llm
+  adapters stop listing models for routes without a usable credential
+  (`llm-deepseek-api-key` returns `[]` on `MISSING_CREDENTIAL`, the
+  account route on signed-out; the 0.2.0 adapters advertised their
+  static catalog regardless), so on a credential-less deployment every
+  provider listed empty and `pickModel` dead-fell before mounting any
+  overlay — the command silently did nothing. When the catalog
+  aggregation comes back fully empty, the picker now best-effort
+  resolves the active route through `resolveModelInfo` (a pure config
+  read, credential-free) and opens on it; hosts that still advertise
+  models are untouched (the arm only fires on a fully empty
+  aggregation). Pinned by e2e 30-commands on the 0.2.1-rc.2 image.
+
 ### Infrastructure
 - **Ride the 0.2.1 line** (0.2.1-rc.2 migration wave, zero code changes):
   the three `@deepseek-ai/*` devDependency pins (`dsh-settings`,
