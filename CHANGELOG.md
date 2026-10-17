@@ -6,6 +6,25 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Infrastructure
+- **Ride the 0.2.1 line** (0.2.1-rc.2 migration wave, zero code changes):
+  the three `@deepseek-ai/*` devDependency pins (`dsh-settings`,
+  `dsh-skill`, `dsh-user-questions`) move `0.2.0-rc.2` → `0.2.1-rc.2`,
+  and the lockfile is regenerated along the rc.2 closure line. The
+  `>=0.2.0-rc.2` peer floors are deliberately untouched — the release
+  stays truthful for both the 0.2.0-rc.2 and 0.2.1-rc.2 host lines
+  (host types reach this repo through the closure, not the pins). The
+  bundle patch (`cordis.patch.yml`) is unchanged: all three patch
+  targets (`session-projection-cache`, `session-query-sqlite`,
+  `dsh-tool-ask-user`) still exist in 0.2.1-rc.2, verified by a real
+  boot smoke against a scratch 0.2.1-rc.2 closure host (plugin tree
+  composed, stock projection-cache row disabled in favor of the
+  `tui-pi-projcache` wrapper, no loader warnings, clean removal).
+- **CI: restore the rolling rc/stable closure selection.** Reverts the
+  2026-10-17 pin to `latest` — the newest-of-latest/next dist-tag block
+  is back, so CI typechecks and boots against 0.2.1-rc.2 (`next`) again
+  and follows the line from here on.
+
 ## [2.27.1] - 2026-10-08
 
 ### Fixed

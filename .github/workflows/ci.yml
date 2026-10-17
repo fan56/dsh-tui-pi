@@ -63,11 +63,10 @@ jobs:
           # `latest` it wins over the rc by plain semver compare.
           STABLE="$(npm view @deepseek-ai/dsh@latest version)"
           RC="$(npm view @deepseek-ai/dsh@next version 2>/dev/null || true)"
-          # 2026-10-17 (0.2.1-rc.1 wave): pinned to `latest` until the 0.2.1
-          # migration lands — next=0.2.1-rc.1 changed the host type surface,
-          # and the plugin is still on the 0.2.0-rc.2 support line. Restore
-          # the newest-of-latest/next selection as part of that migration.
           DSH_VERSION="$STABLE"
+          if [ -n "$RC" ] && [ "$(printf '%s\n' "$STABLE" "$RC" | sort -V | tail -1)" = "$RC" ]; then
+            DSH_VERSION="$RC"
+          fi
           # The install goes into a scratch prefix as the publish wave's OWN
           # closure: every @deepseek-ai/* range the resolved version declares
           # is pinned to its base version via npm overrides. A plain
