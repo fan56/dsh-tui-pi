@@ -24,6 +24,18 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   2026-10-17 pin to `latest` — the newest-of-latest/next dist-tag block
   is back, so CI typechecks and boots against 0.2.1-rc.2 (`next`) again
   and follows the line from here on.
+- **e2e 66-retention-resume seeder follows the 0.2.1-rc.2 persistence
+  backend export change.** `@deepseek-ai/dsh-session-persistence-jsonl`
+  turned from a class default export into a cordis plugin
+  (`{ name, Config, apply }`), leaving the seeder's
+  `Object.create(JsonlSessionPersistence.prototype)` instantiation
+  dead on the rc.2 closure. The seeder now resolves the exported
+  `sessionFormatCatalog` through the backend entry (nested-or-flat
+  agnostic) and ports the backend's own encoder glue verbatim
+  (`encodeCurrentHeader`/`encodeCurrentEvent` + the two checksummed
+  zstd frames) — the byte-identical chain the backend class itself
+  calls, unchanged across the 0.2.0 and 0.2.1 lines. Fixture-only:
+  product code never consumed the old export.
 
 ## [2.27.1] - 2026-10-08
 

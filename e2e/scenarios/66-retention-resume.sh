@@ -91,17 +91,25 @@ info "persistence backend entry (nested-or-flat): $PERSISTENCE_ENTRY"
 # character gets `~XXXX`-escaped and the on-disk name would no longer match
 # the live id).
 #
-# The artifact is a real zstd-frame container produced by the actual
-# `@deepseek-ai/dsh-session-persistence-jsonl` backend's `encodeMaterialization`
-# (two checksummed frames: the header record and the event batch). Calling
-# the real encoder — not hand-writing JSONL — is what `persistence.list()`
-# expects: a one-line `parseHeaderMeta` over the first zstd frame feeds the
-# picker, and the janitor / size floor read the on-disk file size from the
-# `meta` revision. We construct a stripped instance via
-# `Object.create(JsonlSessionPersistence.prototype)` with `packChunks:true,
-# compression:"zstd"` so the real `encodeMaterialization` (which uses
-# `this.packChunks` and `this.compression`) runs without spinning up a
-# full cordis service. Filler rows use **unique** per-event random bytes
+# The artifact is a real zstd-frame container produced by the actual encoder
+# chain of `@deepseek-ai/dsh-session-persistence-jsonl` (two checksummed
+# frames: the header record and the event batch). Calling the real encoder —
+# not hand-writing JSONL — is what `persistence.list()` expects: a one-line
+# `parseHeaderMeta` over the first zstd frame feeds the picker, and the
+# janitor / size floor read the on-disk file size from the `meta` revision.
+# Through 0.2.0-rc.2 the backend exported its class as `default` and the
+# seeder built a stripped instance via `Object.create(...prototype)`. Since
+# 0.2.1-rc.2 the module is a cordis PLUGIN (`{ name, Config, apply }`) and the
+# class is internal, so the seeder instead ports the backend's ~15-line
+# `encodeMaterialization` glue verbatim and keeps the real encoding
+# primitives: `sessionFormatCatalog.encodeCurrentHeader` /
+# `.encodeCurrentEvent` (from `@deepseek-ai/dsh-session-format-catalog`, a
+# direct dependency resolved THROUGH the backend entry so the nested-or-flat
+# global layouts both work) plus node:zlib zstd with the backend's exact
+# checksum params. That chain is byte-identical across 0.2.0-rc.2 and
+# 0.2.1-rc.2 (the backend's own `toHeaderLine`/`eventLine`/
+# `encodeMaterialization` call exactly these two catalog functions).
+# Filler rows use **unique** per-event random bytes
 # (NOT a repeating pattern) — zstd crushes repetition, so a uniform pad
 # would never reach the size floor no matter how many events we add; random
 # bytes keep the on-disk zstd size near the JSONL body size. The pad loop
@@ -110,16 +118,14 @@ info "persistence backend entry (nested-or-flat): $PERSISTENCE_ENTRY"
 # reads that stat, never the decompressed body). The final on-disk size
 # is logged to stdout for the record.
 #
-# Host API contract (dsh 0.1.2-alpha.4): `encodeMaterialization(storage,
-# events)` takes a STORAGE DESCRIPTOR `{ meta, inheritedEventCount? }` —
-# NOT the raw header line object (alpha.3 and earlier took the meta
-# directly). `meta` stays the logical unseeded SessionHeader (isSeeded
-# absent); omitting inheritedEventCount mirrors the unseeded-creation
-# path (`toHeaderLine` requires cut === 0 for an unseeded header).
-# The backend module itself is imported from a DYNAMICALLY RESOLVED entry
-# path (`resolve_persistence_entry` probes `npm root -g` for both the
-# nested and npm-flat global layouts) and passed to node as its first
-# argument — no hard-coded global closure location.
+# Host API contract (dsh 0.1.2-alpha.4): the artifact is the unseeded
+# materialization — `meta` stays the logical unseeded SessionHeader
+# (isSeeded absent) and the inherited event count is 0 (the backend's
+# `toHeaderLine` requires cut === 0 for an unseeded header). The encoder
+# primitives are resolved at runtime relative to the DYNAMICALLY RESOLVED
+# backend entry path (`resolve_persistence_entry` probes `npm root -g` for
+# both the nested and npm-flat global layouts) and passed to node as its
+# first argument — no hard-coded global closure location.
 seed_session() {
   local project="$1" id="$2" preview="$3" size_bytes="${4:-}"
   local dir="$HOME/.dsh/sessions/$project/$id"
@@ -133,17 +139,53 @@ seed_session() {
 import { writeFile, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+import { constants, zstdCompress } from "node:zlib";
+import { promisify } from "node:util";
 
 const [entryPath, outPath, id, preview, nowMs, targetBytesStr] = process.argv.slice(2);
 const targetBytes = Number(targetBytesStr) || 0;
 
 // Entry path resolved by resolve_persistence_entry() (nested-or-flat global
-// layout) and handed over as the first node argument.
-const { default: JsonlSessionPersistence } = await import(pathToFileURL(entryPath));
+// layout) and handed over as the first node argument. Since 0.2.1-rc.2 the
+// backend module is a plugin (name + Config + apply) with the class
+// internal, so the entry serves as the resolution ANCHOR for the format
+// catalog — a direct dependency of the backend package in either layout.
+// NOTE: this script runs inside a quoted heredoc nested in a command
+// substitution, so bash scans every line of it while hunting the closing
+// paren: keep parens balanced per statement, no apostrophes and no
+// backticks anywhere below (the seed_session prose uses the same rule).
+const requireFromBackend = createRequire(entryPath);
+const { sessionFormatCatalog } = await import(pathToFileURL(requireFromBackend.resolve("@deepseek-ai/dsh-session-format-catalog")).href);
 
-const instance = Object.create(JsonlSessionPersistence.prototype);
-instance.packChunks = true;
-instance.compression = "zstd";
+// Encoder glue ported verbatim from the backend: the catalog encodes the
+// header line and every event, and the physical artifact is two zstd frames
+// (checksum flag on) concatenated — header, then the event batch. This
+// chain is byte-identical through 0.2.0-rc.2 and 0.2.1-rc.2 (the backend
+// calls exactly these two catalog functions from its own encoder glue).
+const zstdFrame = promisify(zstdCompress);
+const CHECKSUM_OPTIONS = { params: { [constants.ZSTD_c_checksumFlag]: 1 } };
+
+function toHeaderLine(meta, inheritedEventCount) {
+  const cut = inheritedEventCount ?? 0;
+  if (!meta.isSeeded && cut !== 0) {
+    throw new Error("unseeded session header inherited event count must be 0");
+  }
+  return sessionFormatCatalog.encodeCurrentHeader({ ...meta, delegationDepth: meta.delegationDepth ?? 0 }, cut);
+}
+
+function eventLines(events) {
+  return events.map((event) => JSON.stringify(sessionFormatCatalog.encodeCurrentEvent(event))).join("\n");
+}
+
+async function encodeMaterialization(meta, inheritedEventCount, events) {
+  const header = JSON.stringify(toHeaderLine(meta, inheritedEventCount)) + "\n";
+  if (events.length === 0) return zstdFrame(header, CHECKSUM_OPTIONS);
+  const body = eventLines(events) + "\n";
+  const headerFrame = await zstdFrame(header, CHECKSUM_OPTIONS);
+  const eventFrame = await zstdFrame(body, CHECKSUM_OPTIONS);
+  return Buffer.concat([headerFrame, eventFrame]);
+}
 
 // dsh 0.1.5-rc.1: the encoder now takes the logical header directly plus
 // an inherited-event-count argument, and the header must already stamp
@@ -207,7 +249,7 @@ const MAX_ITER = 10;
 let onDisk = 0;
 if (targetBytes > 0) {
   for (let iter = 0; iter < MAX_ITER; iter++) {
-    const content = await instance.encodeMaterialization(meta, 0, events);
+    const content = await encodeMaterialization(meta, 0, events);
     await writeFile(outPath, content);
     const info = await stat(outPath);
     onDisk = info.size;
@@ -229,7 +271,7 @@ if (targetBytes > 0) {
     }
   }
 } else {
-  const content = await instance.encodeMaterialization(meta, 0, events);
+  const content = await encodeMaterialization(meta, 0, events);
   await writeFile(outPath, content);
   const info = await stat(outPath);
   onDisk = info.size;
