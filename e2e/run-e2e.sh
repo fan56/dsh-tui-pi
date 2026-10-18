@@ -28,7 +28,18 @@ STABLE="$(npm view @deepseek-ai/dsh@latest version $NPM_VIEW_REG)"
 # shellcheck disable=SC2086
 RC="$(npm view @deepseek-ai/dsh@next version $NPM_VIEW_REG 2>/dev/null || true)"
 DSH_VERSION="$STABLE"
-if [ -n "$RC" ] && [ "$(printf '%s\n' "$STABLE" "$RC" | sort -V | tail -1)" = "$RC" ]; then
+# Prerelease-aware newest-of(latest,next) — NOT sort -V (trap on record:
+# sort -V ranks 0.2.1-rc.2 above 0.2.1 once a stable lands on latest).
+DSH_VERSION="$STABLE"
+if [ -n "$RC" ] && node -e '
+  const parse = (v) => { const [core, pre] = v.split("-"); return { c: core.split(".").map(Number), pre } }
+  const A = parse(process.argv[1]), B = parse(process.argv[2])
+  for (let i = 0; i < 3; i++) {
+    if (A.c[i] !== B.c[i]) process.exit(A.c[i] > B.c[i] ? 0 : 1)
+  }
+  if ((A.pre === undefined) !== (B.pre === undefined)) process.exit(A.pre === undefined ? 0 : 1)
+  process.exit(String(A.pre ?? "") >= String(B.pre ?? "") ? 0 : 1)
+' "$RC" "$STABLE"; then
   DSH_VERSION="$RC"
 fi
 printf '==> dsh closure: %s\n' "$DSH_VERSION"
