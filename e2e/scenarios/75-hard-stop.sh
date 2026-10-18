@@ -52,7 +52,7 @@ fi
 # Install it as a real bundle member, exactly what a real user does.
 if ! grep -qF '@aiwayds/dsh-subagent-registry' "$HOME/.dsh/profiles/tui/package.json" 2>/dev/null \
   || ! grep -qF '@aiwayds/dsh-subagent-registry' <(dsh plugin --profile tui list 2>/dev/null); then
-  if npm pack @aiwayds/dsh-subagent-registry@0.12.1 --registry=https://registry.npmjs.org --pack-destination /tmp >/dev/null 2>&1 \
+  if npm pack @aiwayds/dsh-subagent-registry@0.14.0 --registry=https://registry.npmjs.org --pack-destination /tmp >/dev/null 2>&1 \
     && REG_TGZ="$(ls /tmp/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)" && [ -n "$REG_TGZ" ] \
     && timeout 300 dsh plugin --profile tui add "$REG_TGZ" >/tmp/reg-add.log 2>&1; then
     ok "registry plugin installed into the tui profile ($(basename "$REG_TGZ"))"
