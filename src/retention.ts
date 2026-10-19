@@ -372,6 +372,13 @@ export interface SessionRetentionDeps {
   minIdleMs?: number
   /** Clock override; defaults to Date.now(). */
   now?: number
+  /**
+   * Teardown signal: an aborted pass stops at the next loop boundary and
+   * returns whatever it removed so far, so `/quit` never waits behind an
+   * in-flight `rm`. The one-shot guard still counts the pass as spent — a
+   * signal is a shutdown edge, not a retry request.
+   */
+  signal?: AbortSignal
 }
 
 /**
@@ -406,8 +413,10 @@ export async function runSessionRetention(deps: SessionRetentionDeps = {}): Prom
     }
     const config = resolveRetentionConfig(process.env, settings)
     if (!config.enabled) return result
+    if (deps.signal?.aborted) return result
     const root = deps.root ?? sessionStoreRoot()
     const candidates = await collectRetentionCandidates(root)
+    if (deps.signal?.aborted) return result
     const policy: RetentionPolicy = {
       maxCount: deps.maxCount ?? config.maxCount,
       maxAgeDays: deps.maxAgeDays ?? config.maxAgeDays,
@@ -424,6 +433,7 @@ export async function runSessionRetention(deps: SessionRetentionDeps = {}): Prom
     }
     const doomed = selectRetentionDeletions(candidates, policy, protectedNow())
     for (const candidate of doomed) {
+      if (deps.signal?.aborted) break
       // Re-poll right before the removal: the live session id or a resume
       // target may have landed while the walk ran (lazy create, /resume,
       // reload stash).

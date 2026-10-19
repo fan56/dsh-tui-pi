@@ -357,34 +357,41 @@ export function apply(ctx: Context, config: TuiSettings): void {
       applyFooterHintsRef?.(footerHints)
       applyIconSetRef?.(iconSet)
     })
-    // Session log retention (async, fire-and-forget): prune jsonl session
-    // directories outside the retention window so the store the core only
-    // appends to never grows unbounded. Fired AFTER subscribeThemeSettings —
-    // the janitor resolves its knobs through the precedence chain
-    // (settings explicit > env > default), where the explicit layer rides the
-    // settings service's describe() (readSettings below). Silent and
-    // non-fatal; the pass reports its result through the shared notice bridge
-    // (deferred to the TUI's sink, see setNoticeSink below); process-global
-    // one-shot so a /reload re-running apply does not start a second pass
-    // (src/retention.ts).
-    void runSessionRetentionOnce({
-      getSessionId: () => {
-        const id = bridgeRef?.getSessionId()
-        return id === undefined ? undefined : String(id)
-      },
-      // An in-flight /resume target is as load-bearing as the current
-      // session: the load reads the target's log directory for its whole
-      // duration, and deleting it mid-flight would destroy the log being
-      // replayed (review Major 2 — the exclusion set is current ∪ pending).
-      getResumingSessionId: () => {
-        const id = bridgeRef?.getResumingSessionId()
-        return id === undefined ? undefined : String(id)
-      },
-      // Explicit dsh-tui.retention overrides from the profile patch (the
-      // descriptor's user layer — a settings-less deployment degrades to
-      // env/defaults).
-      readSettings: async () => (await readSessionManagementExplicit(ctx))?.retention,
-    })
+    // Session log retention (deferred, abortable, fire-and-forget): prune
+    // jsonl session directories outside the retention window so the store
+    // the core only appends to never grows unbounded. The pass starts 3s
+    // after apply returns, so its fs walk — and the result notice that once
+    // read as "boot hangs until the cleanup line prints" — stays entirely
+    // off the first-frame window. unref'd so the timer never holds a dying
+    // process; the teardown disposer aborts the signal so /quit never waits
+    // behind an in-flight `rm`. Knobs still resolve through the precedence
+    // chain (settings explicit > env > default). Silent and non-fatal; the
+    // pass reports through the shared notice bridge only when it actually
+    // removed something; process-global one-shot so a /reload re-running
+    // apply does not start a second pass (src/retention.ts).
+    const retentionAbort = new AbortController()
+    const retentionTimer = setTimeout(() => {
+      void runSessionRetentionOnce({
+        signal: retentionAbort.signal,
+        getSessionId: () => {
+          const id = bridgeRef?.getSessionId()
+          return id === undefined ? undefined : String(id)
+        },
+        // An in-flight /resume target is as load-bearing as the current
+        // session: the load reads the target's log directory for its whole
+        // duration, and deleting it mid-flight would destroy the log being
+        // replayed (review Major 2 — the exclusion set is current ∪ pending).
+        getResumingSessionId: () => {
+          const id = bridgeRef?.getResumingSessionId()
+          return id === undefined ? undefined : String(id)
+        },
+        // Explicit dsh-tui.retention overrides from the profile patch (the
+        // descriptor's user layer — a settings-less deployment degrades to
+        // env/defaults).
+        readSettings: async () => (await readSessionManagementExplicit(ctx))?.retention,
+      }).catch(() => undefined)
+    }, 3000)
+    retentionTimer.unref?.()
     const themePreference = await readThemePreference(ctx)
     const panelHeight = await readPanelHeightPreference(ctx)
     const footerHints = await readFooterHintsPreference(ctx)
@@ -436,7 +443,14 @@ export function apply(ctx: Context, config: TuiSettings): void {
       handle = undefined
       throw error
     }
-    return disposer
+    // Cordis teardown also stops the deferred retention pass: a /quit must
+    // never wait behind an in-flight prune (the janitor's own abort checks
+    // land it at the next loop boundary; an un-fired timer is just cleared).
+    return () => {
+      clearTimeout(retentionTimer)
+      retentionAbort.abort()
+      disposer?.()
+    }
   }, 'dsh-tui-pi.render')
 
   /**

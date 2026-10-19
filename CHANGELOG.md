@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.28.1] - 2026-10-19
+
+### Fixed
+
+- **Boot window no longer overlaps background hygiene.** The session-retention janitor now starts on a 3s unref'd timer after `apply` returns instead of during plugin apply, so its fs walk never shares the first-frame window (and the `Session retention: removed N` notice can no longer read as "boot hangs until the cleanup line prints"). The pass takes an `AbortSignal`: the teardown disposer aborts it and clears the timer, so `/quit` stops an in-flight prune at the next loop boundary instead of waiting behind one. One-shot-per-process semantics unchanged; nothing fires when nothing was removed.
+
 ### Fixed
 - **`/model` opens on hosts that no longer advertise uncredentialed
   catalogs** (0.2.1-rc.2 runtime adaptation). The 0.2.1 line's llm
