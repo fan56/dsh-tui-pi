@@ -84,6 +84,9 @@
     "@deepseek-ai/dsh-user-questions": ">=0.2.0-rc.2"
   },
   "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    },
     "@deepseek-ai/dsh-skill": {
       "optional": true
     },

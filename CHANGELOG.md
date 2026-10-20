@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.28.1] - 2026-10-20
+
+### Fixed
+
+- **`@deepseek-ai/dsh-settings` peer marked optional** — same exposure as dsh-llm-proxy 0.7.3: npm-class profile installs (desktop plugin managers) auto-installed the peer at `0.2.0-rc.2` (current stable dist-tag), whose exact old-tower dependencies shadowed the 0.2.1 host closure and tripped the compat preflight. pnpm-based profiles (the documented install path) were unaffected.
+
 ## [2.28.1] - 2026-10-19
 
 ### Fixed
