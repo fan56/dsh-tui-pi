@@ -659,6 +659,27 @@ export function apply(ctx: Context, config: TuiSettings): void {
             })
             break
           }
+          case 'workflow-overlay': {
+            // Ctrl+K: the workflow overlay — rendering comes from the
+            // dsh-workflow package through the generic widget manifest; the
+            // freshest run under the workspace anchors the view.
+            const manifest = readWorkflowOverlayManifest()
+            const runDir = manifest !== undefined ? latestWorkflowRunDir(process.cwd()) : undefined
+            if (manifest === undefined || runDir === undefined) {
+              renderer.renderNotice(t('tui.workflowOverlay.none'), 'info')
+              break
+            }
+            const locale = currentLocale().id.startsWith('zh') ? 'zh' : 'en'
+            void openWorkflowOverlayPanel(ui.tui, ui.theme, {
+              manifest,
+              runDir,
+              locale,
+              restoreFocus: () => ui.requestRender(),
+            }).then(opened => {
+              if (!opened) renderer.renderNotice(t('tui.workflowOverlay.none'), 'info')
+            })
+            break
+          }
           default:
             break
         }

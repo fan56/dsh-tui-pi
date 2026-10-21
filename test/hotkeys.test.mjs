@@ -165,14 +165,15 @@ test('parseKeyInput: empty resets, valid ids pass, typos are rejected', () => {
 
 // --------------------------------------------------------------- table --
 
-test('appHotkeyRows: default table lists the seven app keys (sessionSearch added with /search)', () => {
+test('appHotkeyRows: default table lists the eight app keys (Ctrl+K workflow overlay added)', () => {
   const rows = appHotkeyRows({})
-  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Ctrl+G', 'Ctrl+O', 'Ctrl+Alt+F'])
-  assert.deepEqual(rows.map(row => row.field), ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel', 'sessionSearch'])
+  assert.deepEqual(rows.map(row => row.key), ['Esc', 'Ctrl+C', 'Ctrl+D', 'Ctrl+L', 'Ctrl+G', 'Ctrl+O', 'Ctrl+Alt+F', 'Ctrl+K'])
+  assert.deepEqual(rows.map(row => row.field), ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel', 'sessionSearch', 'workflowOverlay'])
   assert.ok(rows.every(row => !row.custom))
   assert.equal(rows[0].action, 'stop the current task — requires two presses (1st arms, 2nd within 500ms fires)')
   assert.match(rows.find(row => row.field === 'queuePanel').action, /pending-message queue/)
   assert.match(rows.find(row => row.field === 'sessionSearch').action, /search/i)
+  assert.match(rows.find(row => row.field === 'workflowOverlay').action, /workflow/i)
 })
 
 test('appHotkeyRows: a custom binding replaces the key display and flags the row', () => {
