@@ -569,3 +569,70 @@ export class LiveWidgets {
     return base
   }
 }
+
+// ---------------------------------------------------------------------------
+// External widget seam (generic) — how SIBLING plugins (e.g. @aiwayds/
+// dsh-workflow) pin a live widget row into the todosDoc dock WITHOUT this
+// plugin knowing anything about them. The provider speaks the same pure
+// contract as every self-drawing panel here: `render(width): string[]`,
+// empty array = hidden this frame. pi-tui calls it every frame, so the row
+// is naturally live; the provider owns its own data and refresh cadence.
+// ---------------------------------------------------------------------------
+
+/** One external plugin's widget: a pure frame renderer. */
+export interface ExternalWidget {
+  /** Stable identity (dedupe + diagnostics). */
+  readonly id: string
+  /** Frame render: visible-width-clipped lines, [] = nothing this frame. */
+  render(width: number): string[]
+}
+
+export interface RegisteredExternalWidget {
+  readonly id: string
+  dispose(): void
+}
+
+// Module-level registry: the seam must be reachable BEFORE the TUI mounts
+// (sibling plugins apply during host load, the LiveWidgets dock mounts later
+// at first boot) — early registrations buffer here and flush on mount.
+const externalWidgets: ExternalWidget[] = []
+let mountedRegister: ((widget: ExternalWidget) => RegisteredExternalWidget) | undefined
+
+/** Register an external widget (buffered until the dock mounts). */
+export function registerExternalWidget(widget: ExternalWidget): RegisteredExternalWidget {
+  if (mountedRegister !== undefined) return mountedRegister(widget)
+  externalWidgets.push(widget)
+  return {
+    id: widget.id,
+    dispose: () => {
+      const index = externalWidgets.findIndex((w) => w.id === widget.id)
+      if (index >= 0) externalWidgets.splice(index, 1)
+    },
+  }
+}
+
+/** Flush buffered registrations into the mounted dock (called once at mount). */
+export function mountExternalWidgets(dock: {
+  addChild(component: Component): unknown
+  removeChild(component: Component): unknown
+}): void {
+  mountedRegister = (widget: ExternalWidget): RegisteredExternalWidget => {
+    const component: Component = {
+      invalidate() { /* providers are stateless per frame */ },
+      render(width: number): string[] {
+        try {
+          return widget.render(width)
+        } catch {
+          // A broken sibling widget must never shatter the dock frame.
+          return []
+        }
+      },
+    }
+    dock.addChild(component)
+    return {
+      id: widget.id,
+      dispose: () => dock.removeChild(component),
+    }
+  }
+  for (const widget of externalWidgets.splice(0)) mountedRegister(widget)
+}
