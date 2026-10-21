@@ -713,5 +713,7 @@
   "search.status.moreAvailable": "{count} 件ヒット · n で追加読込",
   "search.status.disabled": "検索索引が無効です —— dsh-tui-pi を更新すると有効化されます",
   "search.status.failed": "検索失敗：{message}",
-  "hotkeys.action.sessionSearch": "セッション横断検索（/search）"
+  "hotkeys.action.sessionSearch": "セッション横断検索（/search）",
+  "hotkeys.action.workflowOverlay": "ワークフローオーバーレイを開く（フェーズタブ＋ツリー · dsh-workflow）",
+  "tui.workflowOverlay.none": "ワークフロー実行が見つかりません（/workflow run で実行 · dsh-workflow）"
 }

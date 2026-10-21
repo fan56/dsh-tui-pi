@@ -713,5 +713,7 @@
   "search.status.moreAvailable": "{count} hits · n loads more",
   "search.status.disabled": "search index disabled — update dsh-tui-pi so its bundle patch enables it",
   "search.status.failed": "search failed: {message}",
-  "hotkeys.action.sessionSearch": "cross-session search (/search)"
+  "hotkeys.action.sessionSearch": "cross-session search (/search)",
+  "hotkeys.action.workflowOverlay": "open the workflow overlay (phase tabs + tree; dsh-workflow)",
+  "tui.workflowOverlay.none": "no workflow runs found (run one with /workflow run, dsh-workflow)"
 }

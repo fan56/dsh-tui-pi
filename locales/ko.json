@@ -713,5 +713,7 @@
   "search.status.moreAvailable": "{count}건 히트 · n 으로 더 불러오기",
   "search.status.disabled": "검색 색인이 비활성화됨 —— dsh-tui-pi 업데이트로 활성화됩니다",
   "search.status.failed": "검색 실패: {message}",
-  "hotkeys.action.sessionSearch": "세션 검색(/search)"
+  "hotkeys.action.sessionSearch": "세션 검색(/search)",
+  "hotkeys.action.workflowOverlay": "워크플로 오버레이 열기 (단계 탭 + 트리 · dsh-workflow)",
+  "tui.workflowOverlay.none": "워크플로 실행을 찾을 수 없습니다 (/workflow run으로 실행 · dsh-workflow)"
 }

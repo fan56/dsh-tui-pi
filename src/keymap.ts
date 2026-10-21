@@ -115,6 +115,8 @@ export interface KeyBindings {
   subagentViewer: KeyId
   /** Open the pending-message queue panel (steer / follow-up management). */
   queuePanel: KeyId
+  /** Open the workflow overlay (phase tabs + per-phase tree; dsh-workflow). */
+  workflowOverlay: KeyId
   /**
    * Open the cross-session full-text search overlay (/search).
    * Deliberately NOT ctrl+shift+f: pi-tui's built-in transcript search
@@ -135,6 +137,7 @@ export const DEFAULT_KEYBINDINGS: KeyBindings = {
   subagentViewer: 'ctrl+g',
   queuePanel: 'ctrl+o',
   sessionSearch: 'ctrl+alt+f',
+  workflowOverlay: 'ctrl+k',
 }
 
 /** Live snapshot of everything the decision needs — composed by tui.ts. */
@@ -185,7 +188,8 @@ export type KeyAction =
   | { kind: 'ctrl-d-quit'; consumes: true }          // Ctrl+D on empty editor
   | { kind: 'model-picker'; consumes: true }         // Ctrl+L opens the picker
   | { kind: 'subagent-viewer'; consumes: true }      // Ctrl+G while subagents run
-  | { kind: 'queue-panel'; consumes: true }          // Ctrl+O opens the pending queue
+  | { kind: 'queue-panel'; consumes: true }
+  | { kind: 'workflow-overlay'; consumes: true }          // Ctrl+O opens the pending queue
   | { kind: 'session-search'; consumes: true }      // Ctrl+Shift+F opens cross-session search
   /**
    * Esc handed to an open popup - the popup closes itself with it (the popup
@@ -321,6 +325,18 @@ function resolveQueuePanel(state: KeyPressState): KeyAction {
 }
 
 /**
+ * Ctrl+K — the workflow overlay (phase tabs + per-phase tree, rendered by
+ * the dsh-workflow package through the generic widget seam). Available
+ * whenever there is a session to anchor the run store to; an open overlay
+ * yields first, like every other app key.
+ */
+function resolveWorkflowOverlay(state: KeyPressState): KeyAction {
+  if (state.overlayOpen) return { kind: 'overlay', consumes: false }
+  if (state.hasSession === true) return { kind: 'workflow-overlay', consumes: true }
+  return { kind: 'noop', consumes: false }
+}
+
+/**
  * Resolve one raw terminal input sequence into an app-level action.
  * `data` is the single decoded key sequence `addInputListener` receives
  * (e.g. "\x1b" for Escape, "\x03" for Ctrl+C); see keys.js for the
@@ -374,6 +390,7 @@ export function resolveKeyAction(
   if (matchesKey(data, bindings.modelPicker)) return resolveModelPicker(state)
   if (matchesKey(data, bindings.subagentViewer)) return resolveSubagentViewer(state)
   if (matchesKey(data, bindings.queuePanel)) return resolveQueuePanel(state)
+  if (matchesKey(data, bindings.workflowOverlay)) return resolveWorkflowOverlay(state)
   if (matchesKey(data, bindings.sessionSearch)) {
     // Every other app key yields to an open overlay first — the search
     // chord must not stack a panel on top of whatever owns the keyboard.

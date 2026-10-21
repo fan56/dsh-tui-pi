@@ -42,6 +42,7 @@ import { ensureAppendSystemFile, dshHome, migrateAgentsMdTodoSection } from './a
 import { TranscriptRenderer } from './messages.ts'
 import type { PanelHeight } from './activity.ts'
 import { AGENT_TICK_MS, ExternalWidgetFile, LiveWidgets } from './live-widgets.ts'
+import { latestWorkflowRunDir, openWorkflowOverlayPanel, readWorkflowOverlayManifest } from './workflow-overlay-panel.ts'
 import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickPreset, pickTheme } from './selectors.ts'
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'

@@ -713,5 +713,7 @@
   "search.status.moreAvailable": "已命中 {count} 条 · n 加载更多",
   "search.status.disabled": "搜索索引未启用 —— 请升级 dsh-tui-pi 以启用",
   "search.status.failed": "搜索失败：{message}",
-  "hotkeys.action.sessionSearch": "跨会话搜索（/search）"
+  "hotkeys.action.sessionSearch": "跨会话搜索（/search）",
+  "hotkeys.action.workflowOverlay": "打开工作流面板（阶段 tab + 树 · dsh-workflow）",
+  "tui.workflowOverlay.none": "未找到工作流 run（用 /workflow run 跑一个 · dsh-workflow）"
 }
