@@ -13,7 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, type ReasoningEffortId, type StreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
+import { assistantStreamFirstTokenTime, createUserMessage, type ReasoningEffortId, type StreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAppendSystem } from './append-system.ts'
@@ -142,6 +142,12 @@ function estimateToolResultTokens(data: unknown): number {
  * child cannot grow the fold unboundedly. Trimmed at line boundaries.
  */
 const CHILD_STREAM_CAP = 16_384
+/**
+ * Live in-flight `tok/s` warmup: a rate computed over the first few hundred
+ * ms of a stream is mostly TTFT jitter (2 tokens in 80ms reads as 25 tok/s).
+ * The window must be at least this old before `getChildLiveTps` reports.
+ */
+const LIVE_TPS_WARMUP_MS = 500
 
 /** Strip ANSI SGR escape sequences (the only escapes collected into assistant text). */
 function stripAnsi(text: string): string {
@@ -209,6 +215,16 @@ function lastBufferLine(buffer: string): string | undefined {
   return undefined
 }
 
+/**
+ * First-token time of an `assistant/message`'s embedded stream — the decode
+ * window's start. Defensive: the stream is required by the event type but
+ * the fold consumes foreign fixtures and replayed logs, and a missing or
+ * odd-shaped stream must read as "no timed window", never throw.
+ */
+function firstTokenOf(stream: unknown): number | undefined {
+  return Array.isArray(stream) ? assistantStreamFirstTokenTime(stream) : undefined
+}
+
 /** Incrementally maintained footer statistics (all O(1) reads). */
 export interface BridgeStats {
   inputTokens: number
@@ -239,6 +255,39 @@ export interface BridgeStats {
    * the display follows the latest request and drops after a compaction.
    */
   contextTokens: number
+}
+
+/**
+ * Cumulative decode-speed accounting — the true generation rate. The window
+ * per billed message is first token → assembled `assistant/message` (the
+ * same definition as the host's sessionStats projection: TTFT and tool time
+ * stay out), tokens are that message's `usage.outputTokens`. All zeros
+ * until the first usage-bearing message with a readable embedded stream.
+ */
+export interface DecodeStats {
+  /** Summed decode wall time (ms) over the decode-timed messages. */
+  decodeMs: number
+  /** Summed provider output tokens over the same decode-timed messages. */
+  decodeTokens: number
+}
+
+/**
+ * Per-model-route attribution of one session's LLM traffic — the "models
+ * this session actually billed" view. The route comes from the latest
+ * `request/header` before each message; usage-less messages are not
+ * attributed (nothing to bill).
+ */
+export interface RouteUsageStats {
+  /** The `provider/model` route. */
+  route: string
+  /** Billed assistant messages attributed to this route. */
+  requests: number
+  /** Output tokens billed on this route. */
+  outputTokens: number
+  /** Decode wall time (ms) attributed to this route. */
+  decodeMs: number
+  /** Output tokens over the same decode-timed messages. */
+  decodeTokens: number
 }
 
 export class DshSessionBridge {
@@ -307,6 +356,35 @@ export class DshSessionBridge {
    * whose usage snapshot then covers them exactly.
    */
   private pendingTokens = 0
+  /**
+   * Decode-speed accounting of the MAIN session (see {@link DecodeStats}) —
+   * summed first-token → message windows and their output tokens, attributed
+   * per route below. Reset by replay/detach like the rest of the stats.
+   */
+  private decodeMs = 0
+  private decodeTokens = 0
+  /**
+   * The route of the LATEST `request/header` — every billed message between
+   * two headers belongs to it. Route attribution is replay-safe because the
+   * headers are log events like the messages they prefix.
+   */
+  private currentRoute: string | undefined
+  /** Per-route usage attribution of the main session (insertion-ordered). */
+  private readonly routeUsage = new Map<string, RouteUsageStats>()
+  /**
+   * Per-child decode-speed accounting (see {@link DecodeStats}) — the
+   * subagent viewer's cumulative `tok/s`. Event-path only, like the child
+   * token totals; a redelivered `assistant/message` double-counts (same
+   * accepted exposure as the streamed round ledger).
+   */
+  private readonly childDecode = new Map<string, DecodeStats>()
+  /**
+   * Per-child LIVE decode window: opened by the first streamed delta after
+   * the previous message settled, closed by the next `assistant/message`.
+   * Feeds the in-flight `~N tok/s` (an estimate — the exact output count is
+   * only known at settlement).
+   */
+  private readonly childLive = new Map<string, { firstTokenAt: number; tokens: number }>()
   /** Live subagent rows keyed by child session id. */
   private readonly agentViews = new Map<string, AgentView>()
   /** Child session ids whose own events we fold into the agent views. */
@@ -790,6 +868,38 @@ export class DshSessionBridge {
     return { ...this.stats }
   }
 
+  /**
+   * The MAIN session's decode-speed accounting: the cumulative window sums
+   * plus the per-route attribution (the "models this session billed" list,
+   * first-request order). Defensive copies — callers may hold the snapshot.
+   */
+  getDecodeStats(): DecodeStats & { routes: readonly RouteUsageStats[] } {
+    return {
+      decodeMs: this.decodeMs,
+      decodeTokens: this.decodeTokens,
+      routes: [...this.routeUsage.values()].map(entry => ({ ...entry })),
+    }
+  }
+
+  /** One child's cumulative decode-speed accounting (viewer header). */
+  getChildDecodeStats(childId: string): DecodeStats {
+    return this.childDecode.get(childId) ?? { decodeMs: 0, decodeTokens: 0 }
+  }
+
+  /**
+   * One child's LIVE in-flight decode rate (tok/s), while a message is
+   * streaming: estimated streamed tokens over the live window's elapsed
+   * time. Undefined before a short warmup (an absurd rate over the first
+   * few hundred ms) and whenever no window is open. The settled
+   * `getChildDecodeStats` average replaces it once the message lands.
+   */
+  getChildLiveTps(childId: string, now: number = Date.now()): number | undefined {
+    const live = this.childLive.get(childId)
+    if (live === undefined) return undefined
+    if (now - live.firstTokenAt < LIVE_TPS_WARMUP_MS) return undefined
+    return live.tokens / ((now - live.firstTokenAt) / 1000)
+  }
+
   /** Current session id, when one exists. */
   getSessionId(): SessionId | undefined {
     return this.sessionId
@@ -1223,6 +1333,8 @@ export class DshSessionBridge {
     this.reconciledCount.clear()
     this.trackedSessions.clear()
     this.runSeqToChild.clear()
+    this.childDecode.clear()
+    this.childLive.clear()
     if (handle !== undefined) await handle.dispose()
   }
 
@@ -1251,6 +1363,10 @@ export class DshSessionBridge {
     this.stats.contextTokens = 0
     this.lastUsage = undefined
     this.pendingTokens = 0
+    this.decodeMs = 0
+    this.decodeTokens = 0
+    this.currentRoute = undefined
+    this.routeUsage.clear()
     this.agentViews.clear()
     this.childSessions.clear()
     this.childLogs.clear()
@@ -1264,6 +1380,8 @@ export class DshSessionBridge {
     this.reconciledCount.clear()
     this.trackedSessions.clear()
     this.runSeqToChild.clear()
+    this.childDecode.clear()
+    this.childLive.clear()
     this.emitLive()
     if (handle !== undefined) await handle.dispose()
   }
@@ -1445,6 +1563,10 @@ export class DshSessionBridge {
     this.stats.contextTokens = 0
     this.lastUsage = undefined
     this.pendingTokens = 0
+    this.decodeMs = 0
+    this.decodeTokens = 0
+    this.currentRoute = undefined
+    this.routeUsage.clear()
     const sessionId = this.sessionId
     for (const event of events) {
       // Replay feeds the parent log only — fold its persisted workflow events
@@ -1504,6 +1626,27 @@ export class DshSessionBridge {
             ? ((usage.cacheReadTokens ?? 0) / latestPromptTokens) * 100
             : undefined
         }
+        // Decode-speed accounting (first token → this event's log time, the
+        // sessionStats projection's decode window). Needs BOTH a billed usage
+        // and a readable embedded stream; the window is clamped positive so
+        // a clock-skewed settlement adds nothing.
+        const firstToken = firstTokenOf(event.data.stream)
+        if (usage !== undefined && firstToken !== undefined && event.time > firstToken) {
+          const windowMs = event.time - firstToken
+          this.decodeMs += windowMs
+          this.decodeTokens += usage.outputTokens
+          if (this.currentRoute !== undefined) {
+            let entry = this.routeUsage.get(this.currentRoute)
+            if (entry === undefined) {
+              entry = { route: this.currentRoute, requests: 0, outputTokens: 0, decodeMs: 0, decodeTokens: 0 }
+              this.routeUsage.set(this.currentRoute, entry)
+            }
+            entry.requests += 1
+            entry.outputTokens += usage.outputTokens
+            entry.decodeMs += windowMs
+            entry.decodeTokens += usage.outputTokens
+          }
+        }
         this.stats.contextTokens = this.contextTokens()
         break
       }
@@ -1517,11 +1660,17 @@ export class DshSessionBridge {
         this.pendingTokens += estimateToolResultTokens(event.data)
         this.stats.contextTokens = this.contextTokens()
         break
-      case 'request/header':
-        // Route info only — CH accounting is session-cumulative (see the
-        // assistant/message case), so a provider/model change no longer
-        // restarts the cache counters here.
+      case 'request/header': {
+        // The route snapshot prefixes every billed message until the next
+        // one — the per-route TPS attribution's only route source. Read
+        // through the typed EpochHeader (config.provider/model are plain
+        // strings); a headerless session attributes nothing.
+        const config = event.data.header.config
+        if (typeof config.provider === 'string' && typeof config.model === 'string') {
+          this.currentRoute = `${config.provider}/${config.model}`
+        }
         break
+      }
       default:
         break
     }
@@ -1576,6 +1725,14 @@ export class DshSessionBridge {
     if (view === undefined) return
     const buffer = bumpChildStream(this.childStreams.get(sessionId) ?? '', delta)
     this.childStreams.set(sessionId, buffer)
+    // Live decode window: the first delta after a settlement opens it at
+    // NOW (the true first-token instant is a few ms earlier — within the
+    // display noise), later deltas accumulate the streamed-token estimate.
+    // The settled `assistant/message` closes it (foldTracked).
+    const estimated = estimateTextTokens(delta)
+    const live = this.childLive.get(sessionId)
+    if (live === undefined) this.childLive.set(sessionId, { firstTokenAt: Date.now(), tokens: estimated })
+    else live.tokens += estimated
     const lastLine = lastBufferLine(buffer)
     this.childPending.set(sessionId, (this.childPending.get(sessionId) ?? 0) + estimateTextTokens(delta))
     const contextTokens = this.childContextTokens(sessionId)
@@ -1750,6 +1907,18 @@ export class DshSessionBridge {
             this.childUsage.set(sessionId, usage)
             this.childPending.set(sessionId, 0)
           }
+          // Child decode-speed accounting — the same window as the main
+          // session (first token → settlement), feeding the viewer header's
+          // cumulative `tok/s`. Settling also closes the live in-flight
+          // window; the next streamed delta re-opens it for the next message.
+          const childFirstToken = firstTokenOf(event.data.stream)
+          if (usage !== undefined && childFirstToken !== undefined && event.time > childFirstToken) {
+            const acc = this.childDecode.get(sessionId) ?? { decodeMs: 0, decodeTokens: 0 }
+            acc.decodeMs += event.time - childFirstToken
+            acc.decodeTokens += usage.outputTokens
+            this.childDecode.set(sessionId, acc)
+          }
+          this.childLive.delete(sessionId)
           const lastLine = lastTextLine(event.data)
           // A landed assistant message proves the last request round-tripped
           // successfully — clear the llm/retry markers so `↻N≤M` does not

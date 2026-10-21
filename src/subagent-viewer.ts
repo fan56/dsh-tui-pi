@@ -66,6 +66,7 @@ import { readSubagentLimits } from './theme-settings.ts'
 import { autoColumns, PanelHost, panelThemeFns, TablePanel, type PanelThemeFns } from './panels.ts'
 import { normalizePreview } from './sessions.ts'
 import { toolSubject } from './activity.ts'
+import { decodeTps } from './tokens.ts'
 import { ansiFg, BOLD, RESET, type TuiTheme } from './theme/index.ts'
 import { clipToWidth } from './text.ts'
 import { t } from './i18n/index.ts'
@@ -221,6 +222,11 @@ function resultPreview(content: unknown): string {
 /** Human token display: thousands read as `1.2k tok`. */
 function formatTokens(tokens: number): string {
   return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k tok` : `${tokens} tok`
+}
+
+/** Human speed display: rounded `tok/s` (the viewer header's rate unit). */
+function formatTps(tps: number): string {
+  return `${Math.round(tps)} tok/s`
 }
 
 /** Human elapsed display: under a minute as `42.1s`, then `3m12s`. */
@@ -568,7 +574,7 @@ class LiveSubagentTable implements Component {
 
 /**
  * The live transcript panel: header (label · provider · mode · status ·
- * rounds · tokens) over a scrollable window of the child's event lines. A
+ * rounds · tokens · tok/s) over a scrollable window of the child's event lines. A
  * ~300ms timer re-reads the bridge log and re-renders; the view follows the
  * tail until the user scrolls up (re-detached on reaching the bottom again).
  * Esc closes; a double-`x` within `DOUBLE_PRESS_MS` STOPS a running child
@@ -786,6 +792,15 @@ export class SubagentViewerPanel implements Component {
     if (view.hardStop !== undefined) tail.push(t('viewer.hardStoppedAt', { round: view.hardStop.round }))
     if (view.injectedAt !== undefined) tail.push(t('viewer.injected'))
     if (view.tokens > 0) tail.push(formatTokens(view.tokens))
+    // The speed slot: while a message is streaming the LIVE in-flight rate
+    // (tilde-marked — it rides the streamed-token estimate and self-corrects
+    // at settlement); otherwise the cumulative decode average over the
+    // child's settled messages. Neither exists → no slot at all.
+    const liveTps = view.outcome === undefined ? this.bridge.getChildLiveTps(this.childId) : undefined
+    const childDecode = this.bridge.getChildDecodeStats(this.childId)
+    const settledTps = decodeTps(childDecode.decodeMs, childDecode.decodeTokens)
+    const tps = liveTps ?? settledTps
+    if (tps !== undefined) tail.push(`${liveTps !== undefined ? '~' : ''}${formatTps(tps)}`)
     const elapsed = (view.outcome === undefined ? Date.now() : view.endedAt ?? Date.now()) - view.startedAt
     tail.push(formatElapsed(elapsed))
     if (view.lastTool !== undefined) tail.push(view.lastTool)

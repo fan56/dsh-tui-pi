@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Decode speed (tok/s) in the subagent viewer header.** Entering a child now shows its model's real generation rate next to the token spend: while a message is streaming, the live in-flight rate (`~87 tok/s` — estimated from the streamed deltas over the live window, tilde-marked because it self-corrects at settlement); otherwise the cumulative decode average over the child's settled messages. The window per message is first token → settlement — TTFT and tool time stay out, the same definition as the host's `sessionStats` projection — so the number is the model's actual decode speed, and it never renders as a meaningless `0 tok/s` (no timed traffic, no slot). The bridge accounts it per child off the durable `assistant/message` events (embedded stream + usage), so nothing new is subscribed and the accounting rides the existing 300ms viewer tick.
+- **`/session` panel: decode speed + the models the session billed.** Two new rows on the same 20-row budget (the two token-count pairs share rows — `tok in/out` and `cache r/w` — so nothing was dropped): `speed` is the session-wide decode rate (Σ output tokens / Σ decode wall time), `models` lists every `request/header` route that actually billed a message with its request count, output tokens and per-model tok/s (`deepseek-v4-flash 2×12.3k 86t/s · hy3 1×500`). The models row reflects the routes really used (header snapshots from the log), which can differ from the current selection the `model` row shows — e.g. after a `/model` switch mid-session — and it survives resume (both fold back from replayed events like the rest of the stats).
+
 ## [2.28.2] - 2026-10-20
 
 ### Fixed

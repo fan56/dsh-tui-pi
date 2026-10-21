@@ -36,6 +36,17 @@ export function estimateTextTokens(text: string, mode: 'cjk' | 'ascii' = 'cjk'):
 }
 
 /**
+ * Decode speed over summed decode windows: output tokens per second of pure
+ * generation (TTFT and tool time excluded — the windows already are
+ * first-token → settlement). Undefined while either side is zero: no timed
+ * traffic yet must read as "unknown", never as 0 tok/s.
+ */
+export function decodeTps(decodeMs: number, decodeTokens: number): number | undefined {
+  if (!(decodeMs > 0) || !(decodeTokens > 0)) return undefined
+  return decodeTokens / (decodeMs / 1000)
+}
+
+/**
  * CJK-aware token estimate of a text block list (the content shape shared by
  * every dsh 0.1.7 message — `user/message`, `developer/message`,
  * `assistant/message`, and `tool/result` messages all carry a flat block

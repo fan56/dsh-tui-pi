@@ -41,7 +41,7 @@ import { GitBranchWatcher } from './git.ts'
 import { ensureAppendSystemFile, dshHome, migrateAgentsMdTodoSection } from './append-system.ts'
 import { TranscriptRenderer } from './messages.ts'
 import type { PanelHeight } from './activity.ts'
-import { AGENT_TICK_MS, LiveWidgets, mountExternalWidgets, registerExternalWidget } from './live-widgets.ts'
+import { AGENT_TICK_MS, ExternalWidgetFile, LiveWidgets } from './live-widgets.ts'
 import { displayPermissionPreset } from './permission.ts'
 import { pickEffort, pickModel, pickPermission, pickPreset, pickTheme } from './selectors.ts'
 import { DshSessionBridge, persistDefaultModel, stashSessionIdForReload, takeStashedSessionId, type BridgeCallbacks } from './session.ts'
@@ -99,6 +99,7 @@ import {
   type StartupSummary,
 } from './startup-info.ts'
 import { inspectPersistedSession, pickPersistedSession, sessionLogRoot, showSessionInfo } from './sessions.ts'
+import { decodeTps } from './tokens.ts'
 import {
   isCorruptLogError,
   locateSessionLog,
@@ -247,13 +248,6 @@ export function stripFrontmatter(raw: string): string {
 }
 
 export function apply(ctx: Context, config: TuiSettings): void {
-  // Generic widget seam: sibling plugins register chat-input widgets through
-  // `ctx.tuiWidgets` WITHOUT this plugin knowing their domain. Buffered in
-  // live-widgets until the dock mounts (sibling plugins apply during host
-  // load; the dock mounts later at first boot).
-  ;(ctx as { tuiWidgets?: unknown }).tuiWidgets = {
-    register: registerExternalWidget,
-  }
   // Bind the loader-resolved entry config: every field is a live Volatile
   // reference the loader swaps in place on a volatile-only commit, so every
   // theme-settings reader (readThemePreference, readSubagentLimits, …) sees
@@ -770,9 +764,10 @@ export function apply(ctx: Context, config: TuiSettings): void {
       // at every rebuild (the /agents limits panel hot-applies).
       () => readSubagentLimits(ctx).maxRounds,
     )
-    // Flush sibling plugins' buffered widget registrations into the dock —
-    // they applied during host load, before this dock existed.
-    mountExternalWidgets(ui.widgets)
+    // Sibling-plugin widget files ($DSH_HOME/tui-widgets/*.lines — the
+    // generic file seam; the writer owns content, this is a dumb renderer).
+    const externalWidgetFile = new ExternalWidgetFile(() => ui.theme)
+    ui.widgets.addChild(externalWidgetFile)
     // Arm the panel-height hot-reload sink now that the widgets exist: a committed
     // panelHeight change re-budgets the think/tool panels — they are
     // self-drawing, so the next frame already renders at the new height.
@@ -1418,6 +1413,7 @@ export function apply(ctx: Context, config: TuiSettings): void {
     const sessionHandler: LocalCommandHandler = async () => {
       const agent = bridge.getAgent()
       const stats = bridge.getStats()
+      const decode = bridge.getDecodeStats()
       const selection = bridge.getSelection()
       const header = agent?.session.header
       const liveSession = agent?.session
@@ -1436,6 +1432,13 @@ export function apply(ctx: Context, config: TuiSettings): void {
         outputTokens: stats.outputTokens,
         cacheReadTokens: stats.cacheReadTokens,
         cacheWriteTokens: stats.cacheWriteTokens,
+        overallTps: decodeTps(decode.decodeMs, decode.decodeTokens),
+        routes: decode.routes.map(route => ({
+          route: route.route,
+          requests: route.requests,
+          outputTokens: route.outputTokens,
+          tps: decodeTps(route.decodeMs, route.decodeTokens),
+        })),
         status: agent === undefined ? 'none' : agentStatus,
         eventCount: agent === undefined ? undefined : agent.session.seq,
         parentSession: header?.parentSession === undefined ? undefined : String(header.parentSession),

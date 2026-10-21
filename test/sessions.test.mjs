@@ -185,6 +185,11 @@ const fullPanelData = {
   outputTokens: 200,
   cacheReadTokens: 300,
   cacheWriteTokens: 400,
+  overallTps: 86.4,
+  routes: [
+    { route: 'deepseek/deepseek-v4-flash', requests: 2, outputTokens: 12_345, tps: 86.4 },
+    { route: 'opencode-go/hy3', requests: 1, outputTokens: 500, tps: undefined },
+  ],
   status: 'running',
   eventCount: 42,
   parentSession: 'parent-session-id',
@@ -194,8 +199,7 @@ test('sessionInfoRows renders every stat in display order with plain values', ()
   const rows = sessionInfoRows(fullPanelData)
   assert.deepEqual(rows.map(row => row.field), [
     'session', 'cwd', 'created', 'model', 'think', 'status', 'messages',
-    'tool calls', 'tokens in', 'tokens out', 'cache read', 'cache write',
-    'events', 'parent',
+    'tool calls', 'tok in/out', 'cache r/w', 'speed', 'models', 'events', 'parent',
   ])
   const byField = Object.fromEntries(rows.map(row => [row.field, row.value]))
   assert.equal(byField.session, fullPanelData.id) // full id — the flex VALUE column clips, never hides it
@@ -206,10 +210,10 @@ test('sessionInfoRows renders every stat in display order with plain values', ()
   assert.equal(byField.status, 'running')
   assert.equal(byField.messages, '3')
   assert.equal(byField['tool calls'], '7')
-  assert.equal(byField['tokens in'], '100')
-  assert.equal(byField['tokens out'], '200')
-  assert.equal(byField['cache read'], '300')
-  assert.equal(byField['cache write'], '400')
+  assert.equal(byField['tok in/out'], '100 / 200')
+  assert.equal(byField['cache r/w'], '300 / 400')
+  assert.equal(byField.speed, '86 tok/s')
+  assert.equal(byField.models, 'deepseek-v4-flash 2×12.3k 86t/s · hy3 1×500', 'short routes, billed counts, per-model tps')
   assert.equal(byField.events, '42')
 })
 
@@ -221,11 +225,13 @@ test('sessionInfoRows falls back to em-dash and clips the parent id to 8 columns
     createdAt: undefined,
     model: undefined,
     effort: undefined,
+    overallTps: undefined,
+    routes: undefined,
     eventCount: undefined,
     parentSession: 'parent-session-id',
   })
   const byField = Object.fromEntries(rows.map(row => [row.field, row.value]))
-  for (const field of ['session', 'cwd', 'created', 'model', 'think', 'events']) {
+  for (const field of ['session', 'cwd', 'created', 'model', 'think', 'speed', 'models', 'events']) {
     assert.equal(byField[field], '—', field)
   }
   assert.equal(byField.parent, 'parent-s') // same short form the /resume rows use

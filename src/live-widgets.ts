@@ -571,68 +571,71 @@ export class LiveWidgets {
 }
 
 // ---------------------------------------------------------------------------
-// External widget seam (generic) — how SIBLING plugins (e.g. @aiwayds/
+// External widget files (generic) — how SIBLING plugins (e.g. @aiwayds/
 // dsh-workflow) pin a live widget row into the todosDoc dock WITHOUT this
-// plugin knowing anything about them. The provider speaks the same pure
-// contract as every self-drawing panel here: `render(width): string[]`,
-// empty array = hidden this frame. pi-tui calls it every frame, so the row
-// is naturally live; the provider owns its own data and refresh cadence.
+// plugin knowing their domain. The contract is a FILE, not a service: each
+// plugin owns `$DSH_HOME/tui-widgets/<pluginId>.lines` and writes its
+// current frame lines into it whenever its data changes (lines starting
+// with `#` are metadata and skipped). The dock re-reads on mtime change —
+// ownership stays with the writer; this plugin is a dumb line renderer.
 // ---------------------------------------------------------------------------
 
-/** One external plugin's widget: a pure frame renderer. */
-export interface ExternalWidget {
-  /** Stable identity (dedupe + diagnostics). */
-  readonly id: string
-  /** Frame render: visible-width-clipped lines, [] = nothing this frame. */
-  render(width: number): string[]
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+/** The widgets directory: `$DSH_HOME/tui-widgets` (dsh home, like agents/). */
+export function tuiWidgetsDir(): string {
+  return join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'tui-widgets')
 }
 
-export interface RegisteredExternalWidget {
-  readonly id: string
-  dispose(): void
-}
+/** One external widget file renderer, mounted once in the dock. */
+export class ExternalWidgetFile implements Component {
+  private lastMtime = 0
+  private lines: string[] = []
+  private readonly getTheme: () => TuiTheme
 
-// Module-level registry: the seam must be reachable BEFORE the TUI mounts
-// (sibling plugins apply during host load, the LiveWidgets dock mounts later
-// at first boot) — early registrations buffer here and flush on mount.
-const externalWidgets: ExternalWidget[] = []
-let mountedRegister: ((widget: ExternalWidget) => RegisteredExternalWidget) | undefined
-
-/** Register an external widget (buffered until the dock mounts). */
-export function registerExternalWidget(widget: ExternalWidget): RegisteredExternalWidget {
-  if (mountedRegister !== undefined) return mountedRegister(widget)
-  externalWidgets.push(widget)
-  return {
-    id: widget.id,
-    dispose: () => {
-      const index = externalWidgets.findIndex((w) => w.id === widget.id)
-      if (index >= 0) externalWidgets.splice(index, 1)
-    },
+  constructor(getTheme: () => TuiTheme) {
+    this.getTheme = getTheme
   }
-}
 
-/** Flush buffered registrations into the mounted dock (called once at mount). */
-export function mountExternalWidgets(dock: {
-  addChild(component: Component): unknown
-  removeChild(component: Component): unknown
-}): void {
-  mountedRegister = (widget: ExternalWidget): RegisteredExternalWidget => {
-    const component: Component = {
-      invalidate() { /* providers are stateless per frame */ },
-      render(width: number): string[] {
-        try {
-          return widget.render(width)
-        } catch {
-          // A broken sibling widget must never shatter the dock frame.
-          return []
+  invalidate(): void { /* stateless between renders */ }
+
+  /** Re-read the widgets dir when any file's mtime moved (cheap stat per frame). */
+  private refresh(): void {
+    let dir: string
+    try {
+      dir = tuiWidgetsDir()
+      const names = readdirSync(dir).filter((n) => n.endsWith('.lines')).sort()
+      const lines: string[] = []
+      let newest = 0
+      for (const name of names) {
+        const path = join(dir, name)
+        const mtime = statSync(path).mtimeMs
+        if (mtime > newest) newest = mtime
+        if (mtime === this.lastMtime) continue
+      }
+      if (newest !== this.lastMtime || this.lines.length === 0) {
+        for (const name of names) {
+          try {
+            for (const raw of readFileSync(join(dir, name), 'utf8').split('\n')) {
+              const line = raw.replaceAll('\r', '')
+              if (line !== '' && !line.startsWith('#')) lines.push(line)
+            }
+          } catch { /* a vanished file renders as nothing */ }
         }
-      },
-    }
-    dock.addChild(component)
-    return {
-      id: widget.id,
-      dispose: () => dock.removeChild(component),
+        this.lines = lines
+        this.lastMtime = newest
+      }
+    } catch {
+      this.lines = []
     }
   }
-  for (const widget of externalWidgets.splice(0)) mountedRegister(widget)
+
+  render(width: number): string[] {
+    this.refresh()
+    if (this.lines.length === 0) return []
+    const theme = this.getTheme()
+    return this.lines.map((line) => (line.length > width ? `${line.slice(0, Math.max(0, width - 1))}…` : line) + theme.palette.fgMuted.slice(0, 0))
+  }
 }

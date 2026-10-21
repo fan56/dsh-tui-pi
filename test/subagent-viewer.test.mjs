@@ -224,6 +224,9 @@ function makeBridge(views) {
     getChildLog: () => [],
     isChildLogTruncated: () => false,
     getRoundCount: () => 1,
+    // No decode traffic by default — the header's speed slot stays empty.
+    getChildDecodeStats: () => ({ decodeMs: 0, decodeTokens: 0 }),
+    getChildLiveTps: () => undefined,
   }
 }
 
@@ -490,6 +493,39 @@ test('SubagentViewerPanel Enter requests the steer flow and the footer advertise
   assert.match(viewerFooter(true), /Enter steer/)
   panel.handleInput('\r')
   assert.equal(requested, 1)
+})
+
+test('SubagentViewerPanel header shows the live ~ rate while streaming and the settled average otherwise', () => {
+  const tui = makeTui()
+  // Running child: the live in-flight rate wins and is tilde-marked.
+  const liveBridge = {
+    ...makeBridge([liveView('a')]),
+    getChildDecodeStats: () => ({ decodeMs: 4000, decodeTokens: 100 }),
+    getChildLiveTps: () => 87.4,
+  }
+  const livePanel = new SubagentViewerPanel(
+    makeTheme(), liveBridge, 'a', () => 0, () => {}, () => tui.requestRender(), () => {},
+  )
+  assert.ok(livePanel.render(80).some(line => line.includes('~87 tok/s')), 'live rate, tilde-marked')
+
+  // Settled child: no live window — the cumulative decode average stands.
+  const settledBridge = {
+    ...makeBridge([settled('a')]),
+    getChildDecodeStats: () => ({ decodeMs: 4000, decodeTokens: 100 }),
+    getChildLiveTps: () => 999,
+  }
+  const settledPanel = new SubagentViewerPanel(
+    makeTheme(), settledBridge, 'a', () => 0, () => {}, () => tui.requestRender(), () => {},
+  )
+  const settledLines = settledPanel.render(80)
+  assert.ok(settledLines.some(line => line.includes('25 tok/s')), 'cumulative average: 100 tokens / 4s')
+  assert.ok(settledLines.every(line => !line.includes('~')), 'no tilde on the settled average')
+
+  // No decode traffic at all — no speed slot (never "0 tok/s").
+  const emptyPanel = new SubagentViewerPanel(
+    makeTheme(), makeBridge([liveView('a')]), 'a', () => 0, () => {}, () => tui.requestRender(), () => {},
+  )
+  assert.ok(emptyPanel.render(80).every(line => !line.includes('tok/s')))
 })
 
 const PRESS_GAP_MS = 90

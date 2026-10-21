@@ -11,7 +11,16 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { estimateContentTokens, estimateTextTokens } from '../lib/tokens.js'
+import { decodeTps, estimateContentTokens, estimateTextTokens } from '../lib/tokens.js'
+
+test('decodeTps converts summed decode windows to tok/s and refuses zeroed traffic', () => {
+  assert.equal(decodeTps(2000, 600), 300, '600 tokens over 2s = 300 tok/s')
+  assert.equal(decodeTps(1500, 45), 30, 'fractional seconds normalize')
+  assert.equal(decodeTps(0, 500), undefined, 'no timed window -> unknown, not 0')
+  assert.equal(decodeTps(2000, 0), undefined, 'no output tokens -> unknown, not 0')
+  assert.equal(decodeTps(-5, 100), undefined, 'negative window is not a rate')
+  assert.equal(decodeTps(2000, -1), undefined, 'negative tokens are not a rate')
+})
 
 test('estimateTextTokens prices pure ASCII at 4 chars/token (ceil)', () => {
   assert.equal(estimateTextTokens(''), 0, 'empty text is 0')

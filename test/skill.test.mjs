@@ -18,13 +18,15 @@ import { apply, inject, name, stripFrontmatter } from '../lib/index.js'
 // ctx.skills; the render effect (startTui and friends) must NOT run, so
 // ctx.effect is a no-op, and apply()'s best-effort APPEND_SYSTEM seeding is
 // pointed at a scratch DSH_HOME so a unit test never touches the real
-// ~/.dsh.
+// ~/.dsh. `provide` absorbs the tuiWidgets seam registration (a real cordis
+// context guards property writes — apply must go through provide).
 function mockCtx() {
   const registered = []
   return {
     registered,
     effect() {},
     inject() {},
+    provide() {},
     get() {
       return undefined
     },

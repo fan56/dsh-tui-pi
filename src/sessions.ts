@@ -54,6 +54,23 @@ export interface SessionPanelData {
   eventCount: number | undefined
   parentSession: string | undefined
   /**
+   * Session-wide decode speed (tok/s): Σ output tokens / Σ first-token →
+   * settlement wall time. Undefined while nothing has been billed — reads
+   * as em-dash, never as 0.
+   */
+  overallTps?: number
+  /**
+   * Per-route attribution — the models this session actually billed (the
+   * `/session` "models" row). Each entry carries the route, its billed
+   * message count / output tokens, and its own decode speed when known.
+   */
+  routes?: ReadonlyArray<{
+    route: string
+    requests: number
+    outputTokens: number
+    tps?: number
+  }>
+  /**
    * Latest session title text (the host's folded `session/title` snapshot).
    * Rendered on the panel's heading line — the height budget (20 rows for a
    * 24-row terminal) has no spare row for a table entry.
@@ -79,15 +96,30 @@ export interface RenameOutcome {
  */
 export type SessionRenameFn = (title: string) => RenameOutcome
 
-/** Fit cap for the FIELD column (the longest label is "cache read/write"). */
+/** Fit cap for the FIELD column (the longest label is "tokens in/out"). */
 const FIELD_CAP = 12
+
+/** Route short name for the models row: the tail after the provider slash. */
+function shortRoute(route: string): string {
+  const slash = route.indexOf('/')
+  return slash < 0 ? route : route.slice(slash + 1)
+}
 
 /**
  * The `/session` key-value rows, in display order — pure so the panel's data
  * contract stays unit-testable. Values are PLAIN text: the panel clips/pads
  * them through the shared FW table helpers and paints afterwards.
+ *
+ * The 20-row budget on a 24-row terminal is exact, so the two token-count
+ * pairs share rows (in/out, cache r/w) and the freed slots carry the decode
+ * speed and the per-model breakdown.
  */
 export function sessionInfoRows(data: SessionPanelData): ReadonlyArray<{ field: string; value: string }> {
+  const models = data.routes === undefined || data.routes.length === 0
+    ? undefined
+    : data.routes
+      .map(route => `${shortRoute(route.route)} ${route.requests}×${formatTokCount(route.outputTokens)}${route.tps === undefined ? '' : ` ${Math.round(route.tps)}t/s`}`)
+      .join(' · ')
   return [
     { field: t('resume.field.session'), value: data.id ?? '—' },
     { field: t('resume.field.cwd'), value: data.cwd ?? '—' },
@@ -97,15 +129,20 @@ export function sessionInfoRows(data: SessionPanelData): ReadonlyArray<{ field: 
     { field: t('resume.field.status'), value: data.status },
     { field: t('resume.field.messages'), value: String(data.msgCount) },
     { field: t('resume.field.toolcalls'), value: String(data.toolCallCount) },
-    { field: t('resume.field.tokensin'), value: String(data.inputTokens) },
-    { field: t('resume.field.tokensout'), value: String(data.outputTokens) },
-    { field: t('resume.field.cacheread'), value: String(data.cacheReadTokens) },
-    { field: t('resume.field.cachewrite'), value: String(data.cacheWriteTokens) },
+    { field: t('resume.field.tokInOut'), value: `${data.inputTokens} / ${data.outputTokens}` },
+    { field: t('resume.field.cacheRW'), value: `${data.cacheReadTokens} / ${data.cacheWriteTokens}` },
+    { field: t('resume.field.speed'), value: data.overallTps === undefined ? '—' : `${Math.round(data.overallTps)} tok/s` },
+    { field: t('resume.field.models'), value: models ?? '—' },
     { field: t('resume.field.events'), value: data.eventCount === undefined ? '—' : String(data.eventCount) },
     // Same short form the /resume rows use — a parent id is a pointer, not
     // something to read in full.
     { field: t('resume.field.parent'), value: data.parentSession === undefined ? '—' : clipToWidth(data.parentSession, 8) },
   ]
+}
+
+/** Compact token count for the models row: `12.3k` above 10k, plain below. */
+function formatTokCount(tokens: number): string {
+  return tokens >= 10_000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens)
 }
 
 /**
