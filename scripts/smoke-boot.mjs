@@ -127,6 +127,7 @@ const loaderErrors = [
   /does not match its schema/,
   /cannot get property ".*" without inject/,
   /cannot get required service/,
+  /cannot set property ".*" without provide/,
   /Cannot find (package|module)/,
 ]
 const hit = loaderErrors.filter((re) => re.test(output))

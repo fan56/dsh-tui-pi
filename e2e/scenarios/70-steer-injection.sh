@@ -66,6 +66,13 @@ if ! grep -qF 'STEER_FOOTER' "$PLUGIN_LIB" 2>/dev/null \
   summary
   exit 0
 fi
+# The decode-rate assertion (below) needs the v2.29.0 build — the tok/s slot
+# in the viewer header. An older deployment skips just that assertion.
+PLUGIN_HAS_TPS=1
+if ! grep -qF 'tok/s' "$PLUGIN_LIB" 2>/dev/null; then
+  PLUGIN_HAS_TPS=0
+  warn 'deployed plugin predates the decode-rate header (no tok/s slot) — that assertion will be skipped'
+fi
 
 # --- snapshot ~/.dsh/{settings,.credentials}.yaml byte-for-byte -----------
 # We never read these files — only cp them in and back out (cmp-verify).
@@ -181,7 +188,9 @@ wait_host_tui_up() {
   local timeout="${1:-120}" waited=0 pane
   while (( waited < timeout )); do
     pane="$(capture)"
-    if printf '%s' "$pane" | grep -qF -- "$WHALE_ROW" \
+    # WHALE_ANY_ERE: the lower whale rows — at 36 rows the top of the banner
+    # scrolls out of the viewport, so the top row (WHALE_ROW) never matches.
+    if printf '%s' "$pane" | grep -qE -- "$WHALE_ANY_ERE" \
        && printf '%s' "$pane" | grep -qF -- "$MARKER_FOOTER_HINT"; then
       sleep 2
       return 0
@@ -256,7 +265,7 @@ send C-g
 wait_pane 'Ctrl+G opens the subagent picker' 10 'SUB-AGENT.*STATS' || summary
 evidence 02-picker
 PANE="$(capture)"
-assert_contains 'picker footer hint rendered' '↑↓ navigate · Enter open · Esc close' "$PANE"
+assert_contains 'picker footer hint rendered' '↑↓ navigate · Enter open ·' "$PANE"
 
 # Enter on the highlighted row (the new running one — top of list).
 send Enter
@@ -267,6 +276,32 @@ evidence 03-viewer-footer
 PANE="$(capture)"
 assert_contains 'viewer footer shows "Esc close"' 'Esc close' "$PANE"
 assert_contains 'viewer header shows the running child label' 'running' "$PANE"
+
+# --- 2b. decode-rate slot in the header (v2.29.0) --------------------------
+# The viewer may open while the child is still on round 0 (dispatched but no
+# settled billed message and no warm live window yet — the slot is then
+# legitimately absent), so POLL: the child's first settled message lands
+# within its first rounds, flipping the header to the cumulative `N tok/s`
+# (or the live `~N tok/s` mid-stream). Value is timing-dependent — assert
+# the shape, not the number.
+if (( PLUGIN_HAS_TPS == 1 )); then
+  TPS_WAITED=0
+  TPS_FOUND=0
+  while (( TPS_WAITED < 90 )); do
+    if printf '%s' "$(capture)" | grep -qE '~?[0-9]+ tok/s'; then
+      TPS_FOUND=1
+      ok 'viewer header shows the decode rate (tok/s)'
+      evidence 03b-viewer-tps
+      break
+    fi
+    sleep 3
+    TPS_WAITED=$((TPS_WAITED + 3))
+  done
+  if (( TPS_FOUND == 0 )); then
+    bad 'viewer header never showed a decode rate within 90s of child rounds'
+    capture | sed -n '1,8p' | sed 's/^/    | /'
+  fi
+fi
 
 # --- 3. Enter → steer input box ------------------------------------------
 send Enter

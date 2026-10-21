@@ -328,7 +328,7 @@
   "turns.toolCallMany": "회 도구 호출",
   "resume.title": "● 세션 재개",
   "resume.headingTitle": "ⓘ {title} · 토큰: 현재 라우트",
-  "resume.headingPlain": "ⓘ 세션 · 토큰: 현재 라우트",
+  "resume.headingPlain": "ⓘ 세션",
   "resume.empty": "활성 세션이 없습니다 — 프롬프트를 보내거나 /resume으로 재개하세요",
   "resume.field.session": "세션",
   "resume.field.cwd": "작업 디렉터리",

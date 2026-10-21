@@ -16,14 +16,14 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 
 - [**Footer — live session overview**](docs/features/footer.md) — provider/model, context pressure and the session cache-hit rate at a glance, always in view.
 - [**Think & tool panels**](docs/features/think-tool-panels.md) — reasoning and tool activity stay out of the transcript, so the conversation reads clean.
-- [**Subagents**](docs/features/subagents.md) — every running subagent gets a status line; watch and steer it live.
+- [**Subagents**](docs/features/subagents.md) — every running subagent gets a status line; watch its live transcript and decode speed (tok/s), steer it in place.
 - [**Ask User Question**](docs/features/ask-user-question.md) — the model can pause and ask you structured questions, answered without leaving the TUI.
 - [**Feishu integration**](docs/features/feishu-demo.md) — dsh-tui-pi on the desktop and Feishu/Lark on the phone driving (and answering for) the same dsh session.
 - [**Dynamic context pruning (DCP)**](docs/features/dcp.md) — context stays within limits automatically, with zero LLM calls.
 - [**Persistent context**](docs/features/persistent-context.md) — your ground rules ride along on every request, hot-applied with no restart.
 - [**Model profiles & favorites**](docs/features/model-profiles.md) — profile switching lives in [dsh-profile-switch](https://github.com/fan56/dsh-profile-switch) now; this suite keeps the TUI read side (session seeding from the pin, live-selection bridge, scope-aware `/agents` edits) and the `/model` favorites that keep the picker small.
 - [**Agent preset switching**](docs/features/preset-switch.md) — `/preset` between the agent presets the host's 0.1.7 registry declares (`standard`, `minimal`, …); a switch is confirmed and starts a NEW session on the preset (the current one stays resumable); what a preset really gates, and how to migrate a 0.1.5 directory preset (same-id bundle patch).
-- [**Sessions & resume**](docs/features/sessions-resume.md) — sessions stay tidy automatically and resume in a few keystrokes; the host's kernel write lease keeps the log single-writer across processes.
+- [**Sessions & resume**](docs/features/sessions-resume.md) — sessions stay tidy automatically and resume in a few keystrokes; `/session` breaks out the session's decode speed and per-model usage; the host's kernel write lease keeps the log single-writer across processes.
 - [**History browser**](docs/features/history.md) — `/history` opens a fixed two-pane look-back over the session: completed turns on the left, the selected turn's replies on the right; copy a prompt back to the editor, or cold-read any stored session without resuming it (read-only).
 - [**Themes**](docs/features/themes.md) — 20 built-in palettes (10 light + 10 dark) plus user theme discovery (`~/.dsh/themes/`); hot-switchable, `auto` follows your terminal.
 - [**Search, selection & images**](docs/features/search-selection-images.md) — two searches: `Ctrl+Shift+F` searches THIS session's transcript (pi-tui built-in) while `/search` (or `Ctrl+Alt+F`) full-text searches EVERY stored session — best-match snippet per hit, `Enter` opens it (`↳` subagent-child hits browse read-only); drag-select copies to the OS clipboard, attachments from web/Feishu render inline, LaTeX replies draw as Unicode math.

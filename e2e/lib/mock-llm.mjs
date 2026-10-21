@@ -97,6 +97,17 @@ const CH_USAGE_COLD = {
   prompt_tokens_details: { cached_tokens: 200 },
 }
 
+// 78-session-stats phases: the reply streams over a scripted ~1.5s window
+// (timed ticks) so the decode window — first streamed token → settlement —
+// is comfortably > 0 and the /session panel's speed row renders a real
+// rate; every other phase answers within milliseconds, which would price
+// the same 24 output tokens at an absurd tok/s or (worst case) an empty
+// zero-width window.
+const TPS_TRIGGER = 'E2E_TPS_TRIGGER'
+const TPS_DONE = 'E2E-TPS-TURN-DONE — the timed decode window completed.'
+const TPS_TICKS = 10
+const TPS_TICK_DELAY_MS = 140
+
 // The three questions handed to ask_user_question: two single-select (auto-
 // advance applies) and one multiSelect (stays put), matching the assertions
 // in 68-ask-user.sh.
@@ -185,6 +196,7 @@ function decidePhase(bodyText) {
   if (bodyText.includes(CH_TRIGGER)) {
     return bodyText.includes(CH_TURN_ONE_MARKER) ? 'ch-cold' : 'ch-warm'
   }
+  if (bodyText.includes(TPS_TRIGGER)) return 'tps'
   const hasTrigger = bodyText.includes(TRIGGER)
   // The openai SDK serializes without spaces; be lenient about formatting.
   if (hasTrigger && hasToolResult) return 'final'
@@ -196,6 +208,17 @@ function decidePhase(bodyText) {
 function btwAnswer(bodyText) {
   const hit = BTW_Q_ANSWERS.find(entry => bodyText.includes(entry.key))
   return hit !== undefined ? hit.answer : 'E2E-BTW-ANSWER-UNKNOWN'
+}
+
+/** The tps phase script: ticks over ~1.5s so the decode window is real. */
+function tpsStreamEntries() {
+  const entries = []
+  for (let i = 1; i <= TPS_TICKS; i += 1) {
+    entries.push({ delayMs: TPS_TICK_DELAY_MS, delta: { role: 'assistant', content: `decode tick ${i}; ` } })
+  }
+  entries.push({ delayMs: TPS_TICK_DELAY_MS, delta: { role: 'assistant', content: TPS_DONE } })
+  entries.push({ delayMs: 100, delta: {}, finish: 'stop' })
+  return entries
 }
 
 /**
@@ -308,6 +331,10 @@ function handleChat(req, res, body) {
 
   if (phase === 'btw') {
     streamTimed(res, btwStreamEntries(bodyText), wantsUsage)
+    return
+  }
+  if (phase === 'tps') {
+    streamTimed(res, tpsStreamEntries(), wantsUsage)
     return
   }
   if (phase === 'main-slow') {

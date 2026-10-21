@@ -16,14 +16,14 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 
 - [**Footer 状态栏**](docs/features/footer.md) —— provider/model、上下文压力、会话缓存命中率，始终在视野里。
 - [**Think 与 Tool 面板**](docs/features/think-tool-panels.md) —— 推理与工具活动不进 transcript，对话保持干净。
-- [**Subagents 子代理**](docs/features/subagents.md) —— 每个运行中的子代理一行状态；实时观看并 steer。
+- [**Subagents 子代理**](docs/features/subagents.md) —— 每个运行中的子代理一行状态；实时观看 transcript 与模型解码速度（tok/s），就地 steer。
 - [**Ask User Question 向用户提问**](docs/features/ask-user-question.md) —— 模型可暂停并提问结构化问题，不用离开 TUI。
 - [**飞书集成**](docs/features/feishu-demo.md) —— 桌面端 dsh-tui-pi + 手机端飞书/Lark 驱动同一个 dsh session。
 - [**动态上下文修剪（DCP）**](docs/features/dcp.md) —— 上下文自动保持在窗口内，零 LLM 调用。
 - [**持久上下文**](docs/features/persistent-context.md) —— 你的基本规则随每个请求生效，热应用无需重启。
 - [**模型 profile 与收藏**](docs/features/model-profiles.md) —— 按项目切换整套模型配置，选择器保持精简。
 - [**Agent preset 切换**](docs/features/preset-switch.md) —— `/preset` 在宿主 0.1.7 registry 声明的 agent 预设（`standard`、`minimal`……）间切换；切换需确认并会开启新会话（当前会话仍可 /resume 恢复）；preset 到底管什么，以及 0.1.5 目录预设如何迁移（同 id bundle patch 重建）。
-- [**Sessions 会话与恢复**](docs/features/sessions-resume.md) —— 会话自动保持整洁、几次按键恢复；跨进程写者守卫保证日志单写者。
+- [**Sessions 会话与恢复**](docs/features/sessions-resume.md) —— 会话自动保持整洁、几次按键恢复；`/session` 面板展示会话解码速度与分模型用量；跨进程写者守卫保证日志单写者。
 - [**Themes 主题**](docs/features/themes.md) —— 20 个内置配色（10 亮 + 10 暗）+ 用户主题目录发现（`~/.dsh/themes/`）；热切换，`auto` 跟随终端。
 - [**搜索、选择与图片**](docs/features/search-selection-images.md) —— 两层搜索：`Ctrl+Shift+F` 搜本会话 transcript（pi-tui 内置），`/search`（或 `Ctrl+Alt+F`）跨会话全文搜索：每命中一行带最佳匹配摘要，`Enter` 打开（`↳` 子代理命中只读浏览）；划选复制到系统剪贴板、web/飞书附件内联渲染、LaTeX 转 Unicode 数学。
 - [**斜杠命令**](docs/features/slash-commands.md) —— `/model`、`/resume`、`/btw`、`/plugins`、`/search`、`/profile-switch`……外加全部 dsh 原生命令。

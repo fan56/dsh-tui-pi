@@ -328,7 +328,7 @@
   "turns.toolCallMany": "次工具调用",
   "resume.title": "● 恢复会话",
   "resume.headingTitle": "ⓘ {title} · token：当前路由",
-  "resume.headingPlain": "ⓘ 会话 · token：当前路由",
+  "resume.headingPlain": "ⓘ 会话",
   "resume.empty": "没有活跃会话——发送一条提示词，或用 /resume 恢复一个",
   "resume.field.session": "会话",
   "resume.field.cwd": "工作目录",

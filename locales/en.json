@@ -328,7 +328,7 @@
   "turns.toolCallMany": "tool calls",
   "resume.title": "● Resume session",
   "resume.headingTitle": "ⓘ {title} · tokens: current route",
-  "resume.headingPlain": "ⓘ session · tokens: current route",
+  "resume.headingPlain": "ⓘ session",
   "resume.empty": "no active session — send a prompt or /resume one",
   "resume.field.session": "session",
   "resume.field.cwd": "cwd",

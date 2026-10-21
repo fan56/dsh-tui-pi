@@ -328,7 +328,7 @@
   "turns.toolCallMany": "件のツール呼び出し",
   "resume.title": "● セッションを再開",
   "resume.headingTitle": "ⓘ {title} · トークン: 現在のルート",
-  "resume.headingPlain": "ⓘ セッション · トークン: 現在のルート",
+  "resume.headingPlain": "ⓘ セッション",
   "resume.empty": "アクティブなセッションがありません — プロンプトを送信するか /resume で再開してください",
   "resume.field.session": "セッション",
   "resume.field.cwd": "cwd",

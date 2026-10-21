@@ -4,12 +4,24 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.29.0] - 2026-10-21
 
 ### Added
 
+- **Ctrl+K workflow overlay** — a generic driver over the dsh-workflow state machine: the keybinding opens the overlay, dispatch runs through the host's workflow engine and the i18n none-notice covers the no-workflow case (see the dsh-workflow plugin for the flows themselves).
+- **External widget files seam** — sibling plugins (e.g. @aiwayds/dsh-workflow) can pin a live row into the todosDoc dock without this plugin knowing their domain: each plugin owns `$DSH_HOME/tui-widgets/<pluginId>.lines` and writes its current frame lines whenever its data changes (lines starting with `#` are metadata); the dock re-reads on mtime change and renders the merged lines, a vanished file renders as nothing. A dumb line renderer by design — no cordis service, since sibling scopes cannot see each other's provides (real-host verified).
 - **Decode speed (tok/s) in the subagent viewer header.** Entering a child now shows its model's real generation rate next to the token spend: while a message is streaming, the live in-flight rate (`~87 tok/s` — estimated from the streamed deltas over the live window, tilde-marked because it self-corrects at settlement); otherwise the cumulative decode average over the child's settled messages. The window per message is first token → settlement — TTFT and tool time stay out, the same definition as the host's `sessionStats` projection — so the number is the model's actual decode speed, and it never renders as a meaningless `0 tok/s` (no timed traffic, no slot). The bridge accounts it per child off the durable `assistant/message` events (embedded stream + usage), so nothing new is subscribed and the accounting rides the existing 300ms viewer tick.
 - **`/session` panel: decode speed + the models the session billed.** Two new rows on the same 20-row budget (the two token-count pairs share rows — `tok in/out` and `cache r/w` — so nothing was dropped): `speed` is the session-wide decode rate (Σ output tokens / Σ decode wall time), `models` lists every `request/header` route that actually billed a message with its request count, output tokens and per-model tok/s (`deepseek-v4-flash 2×12.3k 86t/s · hy3 1×500`). The models row reflects the routes really used (header snapshots from the log), which can differ from the current selection the `model` row shows — e.g. after a `/model` switch mid-session — and it survives resume (both fold back from replayed events like the rest of the stats).
+
+### Changed
+
+- **`/session` heading drops the stale "tokens: current route" claim** — the totals have been session-cumulative since the 0.1.7 cache-hit rework; the heading now reads plain `ⓘ session` (all four locales).
+
+### E2E
+
+- **New container scenario `78-session-stats`** — drives the new mock-llm `tps` phase (a scripted ~1.5s tick stream, so the decode window is real; every other mock phase answers in milliseconds, which would price a zero-width window) through a full turn and asserts the `/session` panel's merged rows (`tok in/out`, `cache r/w`), the rounded speed rate and the deterministic models row (`mock-chat 1×24 <n>t/s`).
+- **Scenario `70-steer-injection` (host) asserts the viewer header rate** — after the picker→viewer open on a live child, the header must carry `~N`/`N tok/s` (polled up to 90s — the slot is legitimately absent while the child is still on round 0; skipped gracefully against a deployment that predates it). Its picker-footer needle and the boot-check whale marker were refreshed to the current UI.
+- **Boot-smoke hardening** — the loader-error pattern list gains the `cannot set property "…" without provide` variant (it only knew the GET variant, so a boot whose plugin died on a property write stayed falsely green).
 
 ## [2.28.2] - 2026-10-20
 
