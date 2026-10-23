@@ -15,6 +15,7 @@
  * and would mint a throwaway session just to run them.
  */
 
+import { homedir } from 'node:os'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -54,26 +55,38 @@ export interface WorkspaceWorkflow {
  * first lines — a lightweight header read, no YAML parser.
  */
 export function scanWorkspaceWorkflows(cwd: string): WorkspaceWorkflow[] {
-  let entries: string[]
-  try {
-    entries = readdirSync(cwd)
-  } catch {
-    return []
-  }
+  // Two libraries: the workspace (project flows) and the personal library
+  // ($DSH_HOME/workflows — seeded with examples at install). Workspace wins
+  // on name conflicts, mirroring dsh-workflow's own discovery order.
+  const dirs: Array<{ dir: string; prefix: string }> = [
+    { dir: cwd, prefix: '' },
+    { dir: join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'workflows'), prefix: '' },
+  ]
   const out: WorkspaceWorkflow[] = []
-  for (const file of entries.filter((f) => f.endsWith('.workflow.yaml') || f.endsWith('.workflow.yml')).sort()) {
+  const seen = new Set<string>()
+  for (const { dir, prefix } of dirs) {
+    let entries: string[]
     try {
-      const head = readFileSync(join(cwd, file), 'utf8').split('\n').slice(0, 40)
-      const nameLine = head.find((l: string) => l.startsWith('name:'))
-      const descLine = head.find((l: string) => l.startsWith('description:'))
-      if (nameLine === undefined) continue
-      out.push({
-        file,
-        name: nameLine.slice(5).trim(),
-        description: descLine !== undefined ? descLine.slice(12).trim() : '',
-      })
+      entries = readdirSync(dir)
     } catch {
-      /* unreadable files just don't appear */
+      continue
+    }
+    for (const file of entries.filter((f) => f.endsWith('.workflow.yaml') || f.endsWith('.workflow.yml')).sort()) {
+      if (seen.has(file)) continue
+      try {
+        const head = readFileSync(join(dir, file), 'utf8').split('\n').slice(0, 40)
+        const nameLine = head.find((l: string) => l.startsWith('name:'))
+        const descLine = head.find((l: string) => l.startsWith('description:'))
+        if (nameLine === undefined) continue
+        seen.add(file)
+        out.push({
+          file: prefix + file,
+          name: nameLine.slice(5).trim(),
+          description: descLine !== undefined ? descLine.slice(12).trim() : '',
+        })
+      } catch {
+        /* unreadable files just don't appear */
+      }
     }
   }
   return out
