@@ -42,9 +42,13 @@ export class CwdBorderEditor extends Editor {
     tui: TUI,
     theme: EditorTheme,
     sessionCwd: string,
-    options?: { paddingX?: number; infoColor?: (str: string) => string },
+    options?: {
+      paddingX?: number
+      infoColor?: (str: string) => string
+      onChange?: (text: string) => void
+    },
   ) {
-    super(tui, theme, { paddingX: options?.paddingX ?? 0 })
+    super(tui, theme, { paddingX: options?.paddingX ?? 0, ...(options?.onChange !== undefined ? { onChange: options.onChange } : {}) })
     this.sessionCwd = sessionCwd
     // The border dashes stay border-colored, but the cwd/branch info needs a
     // readable foreground (border color is near-invisible on light themes).

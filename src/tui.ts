@@ -230,6 +230,16 @@ export function startTui(options: StartTuiOptions = {}): TuiHandle {
   // must be rebuilt in place below.
   let editor = new CwdBorderEditor(tui, themeRef.editor, process.cwd(), {
     infoColor: text => ansiFg(themeRef.palette.fgMuted) + text + RESET,
+    // `$` direct-pop fallback (ticket 07): pi-tui's auto-trigger branch for
+    // symbol triggers does not fire for `$` on this version (real-tui
+    // verified) — a leading `$` forces the file completion (the workflow
+    // picker) instead.
+    onChange: text => {
+      const lastLine = text.slice(text.lastIndexOf('\n') + 1)
+      // handleInput('\t') rides the editor's own Tab path (public surface —
+      // forceFileAutocomplete is private) into the forced file completion.
+      if (lastLine === '$') editor.handleInput('\t')
+    },
   })
   // User keybindings overrides — mutable so `/hotkeys` can live-apply a
   // write without restarting the TUI (see `setKeyBindings`).
