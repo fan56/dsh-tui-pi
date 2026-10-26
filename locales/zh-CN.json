@@ -715,5 +715,6 @@
   "search.status.failed": "搜索失败：{message}",
   "hotkeys.action.sessionSearch": "跨会话搜索（/search）",
   "hotkeys.action.workflowOverlay": "打开工作流面板（阶段 tab + 树 · dsh-workflow）",
+  "hotkeys.action.workflowWidgetCycle": "在多个活动工作流之间切换 widget 显示（dsh-workflow）",
   "tui.workflowOverlay.none": "未找到工作流 run（用 /workflow run 跑一个 · dsh-workflow）"
 }

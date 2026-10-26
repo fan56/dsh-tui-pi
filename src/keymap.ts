@@ -117,6 +117,8 @@ export interface KeyBindings {
   queuePanel: KeyId
   /** Open the workflow overlay (phase tabs + per-phase tree; dsh-workflow). */
   workflowOverlay: KeyId
+  /** Cycle the workflow widget between active runs (dsh-workflow). */
+  workflowWidgetCycle: KeyId
   /**
    * Open the cross-session full-text search overlay (/search).
    * Deliberately NOT ctrl+shift+f: pi-tui's built-in transcript search
@@ -138,6 +140,7 @@ export const DEFAULT_KEYBINDINGS: KeyBindings = {
   queuePanel: 'ctrl+o',
   sessionSearch: 'ctrl+alt+f',
   workflowOverlay: 'ctrl+k',
+  workflowWidgetCycle: 'alt+w',
 }
 
 /** Live snapshot of everything the decision needs — composed by tui.ts. */
@@ -189,7 +192,8 @@ export type KeyAction =
   | { kind: 'model-picker'; consumes: true }         // Ctrl+L opens the picker
   | { kind: 'subagent-viewer'; consumes: true }      // Ctrl+G while subagents run
   | { kind: 'queue-panel'; consumes: true }
-  | { kind: 'workflow-overlay'; consumes: true }          // Ctrl+O opens the pending queue
+  | { kind: 'workflow-overlay'; consumes: true }
+  | { kind: 'workflow-widget-cycle'; consumes: true }          // Ctrl+O opens the pending queue
   | { kind: 'session-search'; consumes: true }      // Ctrl+Shift+F opens cross-session search
   /**
    * Esc handed to an open popup - the popup closes itself with it (the popup
@@ -337,6 +341,15 @@ function resolveWorkflowOverlay(state: KeyPressState): KeyAction {
 }
 
 /**
+ * Alt+W — cycle the workflow widget between active runs (dsh-workflow
+ * writes the display lines; the signal file carries the cycle request).
+ */
+function resolveWorkflowWidgetCycle(state: KeyPressState): KeyAction {
+  if (state.overlayOpen) return { kind: 'overlay', consumes: false }
+  return { kind: 'workflow-widget-cycle', consumes: true }
+}
+
+/**
  * Resolve one raw terminal input sequence into an app-level action.
  * `data` is the single decoded key sequence `addInputListener` receives
  * (e.g. "\x1b" for Escape, "\x03" for Ctrl+C); see keys.js for the
@@ -391,6 +404,7 @@ export function resolveKeyAction(
   if (matchesKey(data, bindings.subagentViewer)) return resolveSubagentViewer(state)
   if (matchesKey(data, bindings.queuePanel)) return resolveQueuePanel(state)
   if (matchesKey(data, bindings.workflowOverlay)) return resolveWorkflowOverlay(state)
+  if (matchesKey(data, bindings.workflowWidgetCycle)) return resolveWorkflowWidgetCycle(state)
   if (matchesKey(data, bindings.sessionSearch)) {
     // Every other app key yields to an open overlay first — the search
     // chord must not stack a panel on top of whatever owns the keyboard.

@@ -715,5 +715,6 @@
   "search.status.failed": "検索失敗：{message}",
   "hotkeys.action.sessionSearch": "セッション横断検索（/search）",
   "hotkeys.action.workflowOverlay": "ワークフローオーバーレイを開く（フェーズタブ＋ツリー · dsh-workflow）",
+  "hotkeys.action.workflowWidgetCycle": "アクティブなワークフロー間でウィジェットの表示を切り替え（dsh-workflow）",
   "tui.workflowOverlay.none": "ワークフロー実行が見つかりません（/workflow run で実行 · dsh-workflow）"
 }
