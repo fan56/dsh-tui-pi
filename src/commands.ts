@@ -37,61 +37,6 @@ import {
 import type { UsageRecorder } from './usage.ts'
 import type { DshSessionBridge } from './session.ts'
 
-/**
- * Token ending at the cursor on one editor line, for command detection.
- * Returns the leading slash token when the caret sits inside one. The token
- * charset mirrors dsh-commands' COMMAND_NAME (`[a-z][a-z0-9_-]*`), so exactly
- * the lines parseCommand accepts read as a single command token.
- */
-export interface WorkspaceWorkflow {
-  file: string
-  name: string
-  description: string
-}
-
-/**
- * Scan the workspace root for `*.workflow.yaml` files (dsh-workflow's
- * file-as-library convention) and pull their name/description from the
- * first lines — a lightweight header read, no YAML parser.
- */
-export function scanWorkspaceWorkflows(cwd: string): WorkspaceWorkflow[] {
-  // Two libraries: the workspace (project flows) and the personal library
-  // ($DSH_HOME/workflows — seeded with examples at install). Workspace wins
-  // on name conflicts, mirroring dsh-workflow's own discovery order.
-  const dirs: Array<{ dir: string; prefix: string }> = [
-    { dir: cwd, prefix: '' },
-    { dir: join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'workflows'), prefix: '' },
-  ]
-  const out: WorkspaceWorkflow[] = []
-  const seen = new Set<string>()
-  for (const { dir, prefix } of dirs) {
-    let entries: string[]
-    try {
-      entries = readdirSync(dir)
-    } catch {
-      continue
-    }
-    for (const file of entries.filter((f) => f.endsWith('.workflow.yaml') || f.endsWith('.workflow.yml')).sort()) {
-      if (seen.has(file)) continue
-      try {
-        const head = readFileSync(join(dir, file), 'utf8').split('\n').slice(0, 40)
-        const nameLine = head.find((l: string) => l.startsWith('name:'))
-        const descLine = head.find((l: string) => l.startsWith('description:'))
-        if (nameLine === undefined) continue
-        seen.add(file)
-        out.push({
-          file: prefix + file,
-          name: nameLine.slice(5).trim(),
-          description: descLine !== undefined ? descLine.slice(12).trim() : '',
-        })
-      } catch {
-        /* unreadable files just don't appear */
-      }
-    }
-  }
-  return out
-}
-
 function tokenAtCursor(line: string, cursorCol: number): { token: string; start: number } | undefined {
   const upto = line.slice(0, cursorCol)
   const match = /(^|\s)\/([a-z][a-z0-9_-]*)?$/u.exec(upto)
@@ -286,7 +231,7 @@ export class CommandService {
   /** pi-tui autocomplete provider over the live command registry. */
   autocompleteProvider(): AutocompleteProvider {
     return {
-      triggerCharacters: ['/', '$'],
+      triggerCharacters: ['/'],
       getSuggestions: async (
         lines: string[],
         cursorLine: number,
@@ -299,23 +244,6 @@ export class CommandService {
         // Only complete the command name itself (leading token, no arguments yet).
         if (at.start !== 0 && line.slice(0, at.start).trim() !== '') return null
 
-        // `$` — workflow files in the workspace (dsh-workflow): selecting a
-        // candidate fills the ready-to-run `/workflow run <file>` command.
-        // Generic file-format completion: the writer owns the YAML content.
-        if (at.token.startsWith('$')) {
-          const query = at.token.slice(1).toLowerCase()
-          const workflows = scanWorkspaceWorkflows(process.cwd())
-          const items: AutocompleteItem[] = workflows
-            .filter((w) => query === '' || w.name.toLowerCase().includes(query) || w.file.toLowerCase().includes(query))
-            .map((w) => ({
-              value: `/workflow run ${w.file}`,
-              label: completionLabel('command', `$${w.name}`),
-              description: w.description,
-              kind: 'command' as const,
-            }))
-          if (items.length === 0) return null
-          return { items, prefix: at.token } satisfies AutocompleteSuggestions
-        }
 
         // Generic `/` completion: commands and the user skills' native `/name`
         // rows in one mixed list, ordered most-used first (usage table) with
