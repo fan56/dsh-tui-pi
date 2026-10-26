@@ -6,9 +6,20 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.30.0] - 2026-10-26
+
+### Added
+
+- **Workflow widget panel (v2)** — the dsh-workflow widget now renders as a boxed todos-style panel pinned above the input: a summary title row (name, progress, live subagent count, token ledger), a 5-row tree window (top-level steps as branches, foreach children nested) with the RUNNING step kept centered, and a hotkey footer. The 250ms ticker drives the spinner animation and re-renders the file while a run is active.
+- **Alt+W** — cycle the widget between concurrent runs (defaults to the oldest running; the signal rides the same file seam).
+- **Alt+← / Alt+→** — pan the widget's horizontal viewport (rows are never wrapped; truncated content stays reachable).
+- **Session-bound widget semantics** — the dock mount wipes stale `*.lines` at startup: a tui killed mid-run leaves its cleanup timer dead behind, and the residue no longer masquerades as a live run in the next session.
+- **/hotkeys** — rows for the workflow overlay (Ctrl+K), the widget cycle (Alt+W) and the pan pair (Alt+←/→), in all four locales.
+
 ### Changed
 
 - **Session retention defaults widened** — `retention.maxCount` 100→300, `retention.maxAgeDays` 30→90, `retention.minIdleHours` 24→72, and the `/resume` picker's display window moved in lockstep (`resume`/`RESUME_MAX_AGE_DAYS` 30→90 — the two windows are one product decision, "a quarter is the working set"). The startup janitor now keeps a quarter of session history by default; explicit `dsh-tui.retention.*` / `dsh-tui.resume.*` settings and the `DSH_TUI_*` env vars keep outranking the defaults.
+- **Boot-smoke hardening** — the loader-error pattern list gains the `cannot set property "…" without provide` variant (it only knew the GET variant, so a boot whose plugin died on a property write stayed falsely green).
 
 ## [2.29.0] - 2026-10-21
 
