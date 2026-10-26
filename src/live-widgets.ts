@@ -580,7 +580,7 @@ export class LiveWidgets {
 // ownership stays with the writer; this plugin is a dumb line renderer.
 // ---------------------------------------------------------------------------
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { rmSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -597,6 +597,19 @@ export class ExternalWidgetFile implements Component {
 
   constructor(getTheme: () => TuiTheme) {
     this.getTheme = getTheme
+    // Session-bound semantics: widget files are the WRITER's live presence
+    // in THIS tui process. A previous tui killed mid-run leaves stale lines
+    // behind (its cleanup timers died with it) — wipe them at mount so a
+    // fresh session starts with a clean dock. Writers with genuinely live
+    // runs re-write immediately.
+    try {
+      const dir = tuiWidgetsDir()
+      for (const name of readdirSync(dir)) {
+        if (name.endsWith('.lines')) rmSync(join(dir, name), { force: true })
+      }
+    } catch {
+      /* no widgets dir yet — nothing stale to wipe */
+    }
   }
 
   invalidate(): void { /* stateless between renders */ }
