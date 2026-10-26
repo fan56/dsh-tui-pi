@@ -55,13 +55,13 @@ export interface RetentionPolicy {
   now: number
 }
 
-/** Default cap: at most 100 sessions survive. */
-export const RETENTION_MAX_COUNT = 100
+/** Default cap: at most 300 sessions survive. */
+export const RETENTION_MAX_COUNT = 300
 
 /**
- * Default window: sessions untouched for 30 days are deleted. Deliberately
- * coupled in VALUE with `RESUME_MAX_AGE_DAYS` (src/sessions.ts): the two 30s
- * are one product decision ("a month is the working set"), but their SEMANTICS
+ * Default window: sessions untouched for 90 days are deleted. Deliberately
+ * coupled in VALUE with `RESUME_MAX_AGE_DAYS` (src/sessions.ts): the two 90s
+ * are one product decision ("a quarter is the working set"), but their SEMANTICS
  * differ — this constant DELETES logs, that one only hides picker rows — so
  * they are separate constants, not one shared number. Note the asymmetry:
  * this one resolves through the settings/env chain
@@ -75,13 +75,13 @@ const HOUR_MS = 60 * 60 * 1000
 const DAY_MS = 24 * HOUR_MS
 
 /**
- * Count-rule-only idle guard (24h), in HOURS: a session ranked beyond the
+ * Count-rule-only idle guard (72h), in HOURS: a session ranked beyond the
  * count cap is deleted only when its log has been idle for at least this
  * long. This avoids deleting a session that another concurrent dsh process
  * (feishu remote, headless, a subagent) still holds open but has not
- * written to recently — its mtime predates the 100 fresher sessions, yet
+ * written to recently — its mtime predates the 300 fresher sessions, yet
  * removing the directory would destroy the log that process appends to
- * next. The age rule needs no extra guard: 30 idle days are proof enough.
+ * next. The age rule needs no extra guard: 90 idle days are proof enough.
  * Exported as hours because that is the unit the settings field and env
  * knob expose; the selector consumes the ms twin below.
  */
@@ -165,7 +165,7 @@ function explicitSetting(
  * the env layer stays the escape hatch for deployments the defaults do
  * not fit: a concurrent process (feishu remote, headless cron, a
  * long-lived subagent) may read-ATTACH old sessions for weeks, and the
- * default "100 kept / 7 days" would delete the log under it.
+ * default "300 kept / 90 days" would delete the log under it.
  *
  *   dsh-tui.retention.maxCount      / DSH_TUI_RETENTION_MAX_COUNT
  *     session cap; must be an integer; <= 0 DISABLES retention

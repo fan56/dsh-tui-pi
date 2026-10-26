@@ -4,6 +4,12 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Session retention defaults widened** — `retention.maxCount` 100→300, `retention.maxAgeDays` 30→90, `retention.minIdleHours` 24→72, and the `/resume` picker's display window moved in lockstep (`resume`/`RESUME_MAX_AGE_DAYS` 30→90 — the two windows are one product decision, "a quarter is the working set"). The startup janitor now keeps a quarter of session history by default; explicit `dsh-tui.retention.*` / `dsh-tui.resume.*` settings and the `DSH_TUI_*` env vars keep outranking the defaults.
+
 ## [2.29.0] - 2026-10-21
 
 ### Added

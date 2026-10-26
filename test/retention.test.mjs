@@ -1,6 +1,6 @@
 /**
  * Session retention lock — the startup janitor that prunes jsonl session
- * directories outside "100 kept / 30 days" (src/retention.ts). Pure
+ * directories outside "300 kept / 90 days / 72h idle" (src/retention.ts). Pure
  * selector coverage (age/count boundaries, idle guard, the protected set
  * = current session ∪ pending /resume target), knob resolution through
  * the precedence chain (settings.yaml explicit > env > default, invalid
@@ -82,30 +82,32 @@ test('age rule fires regardless of how many sessions exist', () => {
   assert.deepEqual(doomed.map(c => c.id), ['lone-ancient'])
 })
 
-test('the shipped 30-day window keeps a fortnight-old session and prunes only past it', () => {
-  // The regression this suite pins: under the old 7-day default, a real
+test('the shipped window keeps younger sessions and prunes only past it', () => {
+  // The regression this suite pins: under an overly short window, a real
   // session idle for two weeks was deleted at startup before it could ever
-  // be /resume'd. With the 30-day shipped window (RETENTION_MAX_AGE_DAYS),
-  // 15d/25d sessions survive and only strictly-past-30d ones are pruned.
+  // be /resume'd. With the shipped window (RETENTION_MAX_AGE_DAYS), 15d/25d
+  // sessions survive and only strictly-past-window ones are pruned.
   const cutoff = NOW - RETENTION_MAX_AGE_DAYS * DAY
   const pool = [
     cand('day15', NOW - 15 * DAY),
     cand('day25', NOW - 25 * DAY),
-    cand('day31', cutoff - 1),
+    cand('past-window', cutoff - 1),
   ]
   const doomed = selectRetentionDeletions(pool, policy({ maxAgeDays: RETENTION_MAX_AGE_DAYS }))
-  assert.deepEqual(doomed.map(c => c.id), ['day31'])
+  assert.deepEqual(doomed.map(c => c.id), ['past-window'])
 })
 
 // ------------------------------------------------------------ pure: count --
 
-test('count rule deletes beyond the cap only after the 24h idle guard', () => {
+test('count rule deletes beyond the cap only after the idle guard', () => {
   // Four sessions, all touched within the last hour: ranked, the 4th is
-  // beyond cap 3 but IDLE-PROTECTED (mtime >= now - 24h) — nothing dies.
+  // beyond cap 3 but IDLE-PROTECTED (mtime within the shipped guard) —
+  // nothing dies.
   const recent = [cand('s1', NOW - 1000), cand('s2', NOW - 2000), cand('s3', NOW - 3000), cand('s4', NOW - 4000)]
   assert.deepEqual(selectRetentionDeletions(recent, policy()).map(c => c.id), [])
-  // Same four, but older than 24h: the count rule now collects s4 only.
-  const idle = recent.map(c => ({ ...c, mtimeMs: NOW - 2 * DAY + c.mtimeMs - NOW }))
+  // Same four, but idle strictly past the shipped guard: the count rule
+  // now collects s4 only.
+  const idle = recent.map(c => ({ ...c, mtimeMs: NOW - RETENTION_MIN_IDLE_MS - 1000 + c.mtimeMs - NOW }))
   assert.deepEqual(selectRetentionDeletions(idle, policy()).map(c => c.id), ['s4'])
 })
 
@@ -186,22 +188,28 @@ test('an empty store selects nothing', () => {
 
 // ------------------------------------------------------------ pure: defaults --
 
-test('defaults match the shipped policy: 100 kept, 30 days, 24h idle guard', () => {
-  // 105 sessions spanning 5 days (all idle-protected): only the 5 ranked
-  // beyond 100 are collected. Verifies RETENTION_MAX_COUNT is the real cap.
-  const pool = Array.from({ length: 105 }, (_, i) => cand(`s${i}`, NOW - i * 60 * 60 * 1000))
-  const doomed = selectRetentionDeletions(pool, policy({ maxCount: RETENTION_MAX_COUNT }), ['nope'])
+test('defaults match the shipped policy: 300 kept, 90 days, 72h idle guard', () => {
+  // RETENTION_MAX_COUNT + 5 hourly-staggered sessions (all idle-protected):
+  // only the 5 ranked beyond the cap are collected. Verifies
+  // RETENTION_MAX_COUNT is the real cap. The age rule is switched off
+  // (infinite window) so the pool's 12-day span cannot leak age deletions
+  // into what must stay a pure count-rule assertion.
+  const pool = Array.from({ length: RETENTION_MAX_COUNT + 5 }, (_, i) => cand(`s${i}`, NOW - i * 60 * 60 * 1000))
+  const doomed = selectRetentionDeletions(pool, policy({ maxCount: RETENTION_MAX_COUNT, maxAgeDays: Number.POSITIVE_INFINITY }), ['nope'])
   assert.equal(doomed.length, 5)
-  assert.deepEqual(doomed.map(c => c.id).sort(), ['s100', 's101', 's102', 's103', 's104'])
+  assert.deepEqual(
+    doomed.map(c => c.id).sort(),
+    Array.from({ length: 5 }, (_, i) => `s${RETENTION_MAX_COUNT + i}`),
+  )
 })
 
 // ------------------------------------------------------------ env knobs --
 
 test('resolveRetentionConfig: defaults when the environment is silent', () => {
   assert.deepEqual(resolveRetentionConfig({}), {
-    maxCount: 100,
-    maxAgeDays: 30,
-    minIdleMs: 24 * 60 * 60 * 1000,
+    maxCount: RETENTION_MAX_COUNT,
+    maxAgeDays: RETENTION_MAX_AGE_DAYS,
+    minIdleMs: RETENTION_MIN_IDLE_MS,
     enabled: true,
   })
 })
@@ -270,18 +278,22 @@ test('resolveRetentionConfig: a fractional env MAX_COUNT is invalid env — the 
     config = resolveRetentionConfig({ DSH_TUI_RETENTION_MAX_COUNT: '100.5' })
   })
   try {
-    assert.equal(config.maxCount, RETENTION_MAX_COUNT, 'fractional count falls to the default 100')
+    assert.equal(config.maxCount, RETENTION_MAX_COUNT, 'fractional count falls to the shipped default')
     assert.equal(config.enabled, true)
     assert.deepEqual(chunks, [], 'env-level fallbacks are silent on every channel')
     assert.deepEqual(takePendingNotices(), [], 'and they emit no notice either')
-    // And the count rule genuinely fires at the resolved cap: 105 idle
-    // sessions, the 5 ranked beyond 100 are collected (had 100.5 won,
-    // this selection would return [] — the silent-death symptom).
-    const pool = Array.from({ length: 105 }, (_, i) => cand(`s${i}`, NOW - i * 60 * 60 * 1000))
-    const doomed = selectRetentionDeletions(pool, policy({ maxCount: config.maxCount }))
+    // And the count rule genuinely fires at the resolved cap: 5 idle
+    // sessions ranked beyond the cap are collected (had 100.5 won,
+    // this selection would return [] — the silent-death symptom). The
+    // age rule stays off (infinite window) — pure count-rule assertion.
+    const pool = Array.from({ length: RETENTION_MAX_COUNT + 5 }, (_, i) => cand(`s${i}`, NOW - i * 60 * 60 * 1000))
+    const doomed = selectRetentionDeletions(
+      pool,
+      policy({ maxCount: config.maxCount, maxAgeDays: Number.POSITIVE_INFINITY }),
+    )
     assert.deepEqual(
       doomed.map(c => c.id).sort(),
-      ['s100', 's101', 's102', 's103', 's104'],
+      Array.from({ length: 5 }, (_, i) => `s${RETENTION_MAX_COUNT + i}`),
       'the count rule collects beyond the default cap',
     )
   } finally {
@@ -850,7 +862,7 @@ test('runSessionRetentionOnce runs once per process across /reload-style re-invo
   try {
     const now = Date.now()
     // Pin an explicit 7-day window so the 9-day-old fixture is "ancient"
-    // regardless of the shipped default (30 days).
+    // regardless of the shipped default.
     const ancient = await makeSession(dir, 'proj', 'ancient', now - 9 * DAY)
     const first = await runSessionRetentionOnce({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
     assert.deepEqual(first, { removed: 1, failed: 0 })

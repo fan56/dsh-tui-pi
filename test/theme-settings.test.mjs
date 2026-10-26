@@ -49,7 +49,7 @@ import {
   writeThemePreference,
 } from '../lib/theme-settings.js'
 import { DEFAULT_FOOTER_HINTS } from '../lib/footer.js'
-import { RETENTION_MAX_AGE_DAYS, resolveRetentionConfig } from '../lib/retention.js'
+import { RETENTION_MAX_AGE_DAYS, RETENTION_MAX_COUNT, resolveRetentionConfig } from '../lib/retention.js'
 import { resetNoticeBridge, setNoticeSink } from '../lib/notice-bridge.js'
 
 /**
@@ -158,7 +158,7 @@ test('Config resolves the documented defaults as volatile references', () => {
   assert.equal(config.rememberPreset.get(), true)
   assert.deepEqual(config.favoriteModels.get(), [])
   assert.deepEqual(config.hiddenModels.get(), [])
-  assert.equal(config.retention.get().maxCount, 100)
+  assert.equal(config.retention.get().maxCount, RETENTION_MAX_COUNT)
   assert.equal(config.resume.get().minBytes, 1024)
   assert.equal(config.askUser.get().idleMinutes, 5)
 
@@ -507,7 +507,7 @@ test('cacheHitMode defaults to lastMessage, round-trips, and narrows garbage', a
 // `readSessionManagementExplicit` is the precedence seam for the retention
 // and resume knobs: ONLY a field present in the settings document's USER
 // layer is an explicit override. The resolved references bake the schema
-// defaults in (a missing retention.maxCount resolves to 100), so reading them
+// defaults in (a missing retention.maxCount resolves to 300), so reading them
 // would make the defaults outrank the DSH_TUI_RETENTION_* / DSH_TUI_RESUME_*
 // env vars. Under 0.1.7 the user layer is the volatile-projected override of
 // the profile patch (the imported settings.yaml section lands there too) and
@@ -542,7 +542,7 @@ test('readSessionManagementExplicit ignores the resolved references — schema d
   const { ctx, settings } = boot()
 
   // Sanity: the RESOLVED references carry the baked-in defaults
-  // (retention 100/30d/24h, resume 30d/1KB).
+  // (retention 300/90d/72h, resume 90d/1KB).
   assert.equal(readThemePreference(ctx) !== undefined, true, 'references are live')
   // But no user layer exists: nothing is explicit — the stable empty
   // shape, and env/defaults stay in charge.

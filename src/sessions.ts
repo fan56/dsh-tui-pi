@@ -447,14 +447,14 @@ export const RESUME_DIR_CAP = 32
  * the resume-filter precedence chain (settings.yaml `dsh-tui.resume.maxAgeDays`
  * > `DSH_TUI_RESUME_MAX_AGE_DAYS` > this constant), deliberately coupled in
  * VALUE with its retention twin `RETENTION_MAX_AGE_DAYS` (src/retention.ts):
- * the two 30s are one product decision ("a month is the working set") but
+ * the two 90s are one product decision ("a quarter is the working set") but
  * serve different masters (this one HIDES picker rows, retention DELETES
  * logs), so they are separate constants — change them together.
  * Boundary semantics match retention: the boundary case survives in both
  * (retention deletes strictly-older-than, the picker keeps
  * not-older-than).
  */
-export const RESUME_MAX_AGE_DAYS = 30
+export const RESUME_MAX_AGE_DAYS = 90
 
 /**
  * Minimum on-disk log size for a session to appear in `/resume` — the

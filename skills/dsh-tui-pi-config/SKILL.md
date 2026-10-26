@@ -33,10 +33,10 @@ dsh 0.1.5 的 `~/.dsh/settings.yaml` 已移除：其顶层 `dsh-tui:` 段会在�
 | `rememberPreset` | 布尔 | `true` | 记住每个工作区（目录）最后一次 `/preset` 的选择，下次在同目录启动直接用它（替代服务端默认）；`false` 恢复始终用服务端默认。记忆存 `$DSH_HOME/workspace-presets.json` |
 | `favoriteModels` | string[] | `[]` | 收藏模型（`provider/id` 键），钉在 `/model` 选择器顶部 |
 | `hiddenModels` | string[] | `[]` | 隐藏模型（`provider/id` 键），移入 `/model` 的 Hidden 区 |
-| `retention.maxCount` | 数字 | `100` | 启动清理器：最多保留这么多会话日志，`<= 0` 关闭清理器；下次启动生效 |
-| `retention.maxAgeDays` | 数字 | `30` | 清理超过这么久未活动的日志（真删除）；下次启动生效 |
-| `retention.minIdleHours` | 数字 | `24` | 按条数规则清理时的空闲保护小时数；下次启动生效 |
-| `resume.maxAgeDays` | 数字 | `30` | `/resume` 选择器只显示这么新内的会话（显示口径，不删数据）；每次打开选择器生效 |
+| `retention.maxCount` | 数字 | `300` | 启动清理器：最多保留这么多会话日志，`<= 0` 关闭清理器；下次启动生效 |
+| `retention.maxAgeDays` | 数字 | `90` | 清理超过这么久未活动的日志（真删除）；下次启动生效 |
+| `retention.minIdleHours` | 数字 | `72` | 按条数规则清理时的空闲保护小时数；下次启动生效 |
+| `resume.maxAgeDays` | 数字 | `90` | `/resume` 选择器只显示这么新内的会话（显示口径，不删数据）；每次打开选择器生效 |
 | `resume.minBytes` | 数字 | `1024` | `/resume` 选择器的最小压缩日志体积（显示口径）；每次打开选择器生效 |
 | `askUser.idleMinutes` | 数字 | `5` | ask_user_question 面板：聚焦题目无按键超过这么多分钟即自动应答（推荐项，计划不自动批准）；`<= 0` 关闭该规则；每次打开面板生效 |
 | `askUser.absoluteMinutes` | 数字 | `10` | ask_user_question 面板：单题硬上限，有操作也强制自动应答；`<= 0` 关闭该规则；每次打开面板生效 |

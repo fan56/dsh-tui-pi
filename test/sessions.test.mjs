@@ -402,7 +402,7 @@ test('filter + walk: an active zstd sibling rescues a session whose raw log went
 // same warn contract as retention (test/retention.test.mjs).
 
 test('resolveResumeConfig: defaults when the environment is silent', () => {
-  assert.deepEqual(resolveResumeConfig({}), { maxAgeDays: 30, minBytes: 1024 })
+  assert.deepEqual(resolveResumeConfig({}), { maxAgeDays: RESUME_MAX_AGE_DAYS, minBytes: 1024 })
   // An empty settings section is not an override either.
   assert.deepEqual(resolveResumeConfig({}, {}), {
     maxAgeDays: RESUME_MAX_AGE_DAYS,
