@@ -716,5 +716,7 @@
   "hotkeys.action.sessionSearch": "cross-session search (/search)",
   "hotkeys.action.workflowOverlay": "open the workflow overlay (phase tabs + tree; dsh-workflow)",
   "hotkeys.action.workflowWidgetCycle": "cycle the workflow widget between active runs (dsh-workflow)",
+  "hotkeys.action.workflowWidgetPanLeft": "pan the workflow widget left",
+  "hotkeys.action.workflowWidgetPanRight": "pan the workflow widget right",
   "tui.workflowOverlay.none": "no workflow runs found (run one with /workflow run, dsh-workflow)"
 }

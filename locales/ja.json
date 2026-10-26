@@ -716,5 +716,7 @@
   "hotkeys.action.sessionSearch": "セッション横断検索（/search）",
   "hotkeys.action.workflowOverlay": "ワークフローオーバーレイを開く（フェーズタブ＋ツリー · dsh-workflow）",
   "hotkeys.action.workflowWidgetCycle": "アクティブなワークフロー間でウィジェットの表示を切り替え（dsh-workflow）",
+  "hotkeys.action.workflowWidgetPanLeft": "ワークフローウィジェットを左へパン",
+  "hotkeys.action.workflowWidgetPanRight": "ワークフローウィジェットを右へパン",
   "tui.workflowOverlay.none": "ワークフロー実行が見つかりません（/workflow run で実行 · dsh-workflow）"
 }
