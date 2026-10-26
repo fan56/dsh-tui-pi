@@ -11,6 +11,11 @@
  * are held pending until a TUI registers its notice sink, delivered once,
  * dropped when none does (the bridge's own unit tests live in
  * test/notice-bridge.test.mjs).
+ * Also the projection-cache sweep that rides the same pass (src/retention.ts
+ * `sweepProjectionCache`): stale `session_projcache/<id>.json` records die
+ * only past both C1 guards (readable store root + non-empty live set) and
+ * the 24h freshness guard, batched 50 at a time with 200ms yields; live,
+ * fresh, `.bak` and directory entries survive; failures are swallowed.
  * Runs against the built lib/ (pretest).
  */
 
@@ -397,6 +402,7 @@ test('runSessionRetention honors explicit settings over env (loosened window kee
     // over the ambient env (which alone would delete the 9-day log).
     const result = await runSessionRetention({
       root: dir,
+      projcacheDir: join(dir, 'projcache'),
       maxCount: 3,
       getSessionId: () => undefined,
       readSettings: async () => ({ maxAgeDays: 30 }),
@@ -420,6 +426,7 @@ test('runSessionRetention: settings maxCount 0 disables the pass even with env s
     const ancient = await makeSession(dir, 'proj', 'ancient', now - 31 * DAY)
     const disabled = await runSessionRetention({
       root: dir,
+      projcacheDir: join(dir, 'projcache'),
       maxCount: 3,
       getSessionId: () => undefined,
       readSettings: async () => ({ maxCount: 0 }),
@@ -432,6 +439,7 @@ test('runSessionRetention: settings maxCount 0 disables the pass even with env s
     // env (500 — nothing beyond the count cap; the age rule still fires).
     const degraded = await runSessionRetention({
       root: dir,
+      projcacheDir: join(dir, 'projcache'),
       maxCount: 3,
       getSessionId: () => undefined,
       readSettings: async () => { throw new Error('settings unavailable') },
@@ -453,7 +461,7 @@ test('runSessionRetention honors DSH_TUI_RETENTION_MAX_AGE_DAYS (loosened window
   try {
     const now = Date.now()
     const ancient = await makeSession(dir, 'proj', 'nine-days', now - 9 * DAY)
-    const result = await runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    const result = await runSessionRetention({ root: dir, projcacheDir: join(dir, 'projcache'), maxCount: 3, getSessionId: () => undefined, now })
     assert.deepEqual(result, { removed: 0, failed: 0 })
     assert.equal(await stat(ancient).then(() => true, () => false), true)
   } finally {
@@ -472,7 +480,7 @@ test('DSH_TUI_RETENTION_MAX_COUNT=0 disables the whole pass — and a dep overri
   try {
     const now = Date.now()
     const ancient = await makeSession(dir, 'proj', 'ancient', now - 30 * DAY)
-    const result = await runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    const result = await runSessionRetention({ root: dir, projcacheDir: join(dir, 'projcache'), maxCount: 3, getSessionId: () => undefined, now })
     assert.deepEqual(result, { removed: 0, failed: 0 })
     assert.equal(await stat(ancient).then(() => true, () => false), true)
   } finally {
@@ -520,6 +528,7 @@ test('runSessionRetention protects a pending resume target that lands after the 
     let polled = 0
     const result = await runSessionRetention({
       root: dir,
+      projcacheDir: join(dir, 'projcache'),
       maxCount: 3,
       maxAgeDays: 7,
       getSessionId: () => undefined,
@@ -527,7 +536,9 @@ test('runSessionRetention protects a pending resume target that lands after the 
       now,
     })
     assert.deepEqual(result, { removed: 1, failed: 0 })
-    assert.equal(polled, 3) // once for selection, once per doomed candidate
+    // Once for selection, once per doomed candidate, once more for the
+    // projection-cache sweep's protected-set union (same re-poll getter).
+    assert.equal(polled, 4)
     assert.equal(await stat(doomedDir).then(() => true, () => false), false)
     assert.equal(await stat(targetDir).then(() => true, () => false), true)
   } finally {
@@ -542,6 +553,7 @@ test('runSessionRetention deletes nothing while a resume target is protected fro
     const target = await makeSession(dir, 'proj', 'resume-target', now - 10 * DAY)
     const result = await runSessionRetention({
       root: dir,
+      projcacheDir: join(dir, 'projcache'),
       maxCount: 3,
       getSessionId: () => undefined,
       getResumingSessionId: () => 'resume-target',
@@ -659,6 +671,7 @@ test('runSessionRetention deletes the right directories and keeps buckets + stra
 
     const result = await runSessionRetention({
       root: dir,
+      projcacheDir: join(dir, 'projcache'),
       maxCount: 3,
       maxAgeDays: 7,
       // No live session in this pass.
@@ -692,9 +705,18 @@ test('runSessionRetention re-checks the current session before every removal', a
     const currentDir = await makeSession(dir, 'proj', 'ancient-live', now - 10 * DAY)
     let polled = 0
     const getSessionId = () => (polled++ === 0 ? undefined : 'ancient-live')
-    const result = await runSessionRetention({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId, now })
+    const result = await runSessionRetention({
+      root: dir,
+      projcacheDir: join(dir, 'projcache'),
+      maxCount: 3,
+      maxAgeDays: 7,
+      getSessionId,
+      now,
+    })
     assert.deepEqual(result, { removed: 1, failed: 0 })
-    assert.equal(polled, 3) // once for selection, once per doomed removal
+    // Once for selection, once per doomed removal, once more for the
+    // projection-cache sweep's protected-set union (same re-poll getter).
+    assert.equal(polled, 4)
     assert.equal(await stat(doomedDir).then(() => true, () => false), false)
     assert.equal(await stat(currentDir).then(() => true, () => false), true)
   } finally {
@@ -722,6 +744,7 @@ test('a failed rm counts as failed and never stops the remaining removals', asyn
     await chmod(join(dir, 'locked-proj'), 0o555)
     const result = await runSessionRetention({
       root: dir,
+      projcacheDir: join(dir, 'projcache'),
       maxCount: 3,
       maxAgeDays: 7,
       getSessionId: () => undefined,
@@ -764,7 +787,7 @@ test('runSessionRetention holds the result as a pending notice when no sink is r
     await makeSession(dir, 'proj', 'ancient', now - 9 * DAY)
     let result
     const chunks = await captureTerminalOutput(() =>
-      runSessionRetention({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now }).then(r => { result = r }))
+      runSessionRetention({ root: dir, projcacheDir: join(dir, 'projcache'), maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now }).then(r => { result = r }))
     assert.deepEqual(result, { removed: 1, failed: 0 })
     // The old raw stderr line is gone entirely — a TUI-less run must not
     // write anything to the terminal, on EITHER channel (console.warn or
@@ -787,7 +810,7 @@ test('a sink registered before the pass receives the result directly; a later si
     await makeSession(dir, 'proj', 'ancient-b', now - 10 * DAY)
     const seen = []
     setNoticeSink(message => { seen.push(message) })
-    const result = await runSessionRetention({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
+    const result = await runSessionRetention({ root: dir, projcacheDir: join(dir, 'projcache'), maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
     assert.deepEqual(result, { removed: 2, failed: 0 })
     assert.deepEqual(seen, ['Session retention: removed 2'])
     assert.deepEqual(takePendingNotices(), [], 'nothing held pending')
@@ -810,7 +833,7 @@ test('a pass that removes nothing emits no notice (neither sink nor pending)', a
     await makeSession(dir, 'proj', 'fresh', now - 1000)
     const seen = []
     setNoticeSink(message => { seen.push(message) })
-    const result = await runSessionRetention({ root: dir, maxCount: 3, getSessionId: () => undefined, now })
+    const result = await runSessionRetention({ root: dir, projcacheDir: join(dir, 'projcache'), maxCount: 3, getSessionId: () => undefined, now })
     assert.deepEqual(result, { removed: 0, failed: 0 })
     assert.deepEqual(seen, [])
     setNoticeSink(undefined)
@@ -833,7 +856,7 @@ test('the notice names failed removals alongside removed ones', async () => {
     await chmod(join(dir, 'locked-proj'), 0o555)
     let message
     setNoticeSink(m => { message = m })
-    const result = await runSessionRetention({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
+    const result = await runSessionRetention({ root: dir, projcacheDir: join(dir, 'projcache'), maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
     assert.deepEqual(result, { removed: 1, failed: 1 })
     assert.equal(message, 'Session retention: removed 1, failed 1')
   } finally {
@@ -852,16 +875,183 @@ test('runSessionRetentionOnce runs once per process across /reload-style re-invo
     // Pin an explicit 7-day window so the 9-day-old fixture is "ancient"
     // regardless of the shipped default (30 days).
     const ancient = await makeSession(dir, 'proj', 'ancient', now - 9 * DAY)
-    const first = await runSessionRetentionOnce({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
+    const first = await runSessionRetentionOnce({ root: dir, projcacheDir: join(dir, 'projcache'), maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
     assert.deepEqual(first, { removed: 1, failed: 0 })
     assert.equal(await stat(ancient).then(() => true, () => false), false)
     // The /reload re-run: a fresh module load would re-run apply(); the
     // process-global flag must make this pass a no-op even though new
     // ancient sessions appeared.
     const fresh = await makeSession(dir, 'proj', 'ancient-2', now - 9 * DAY)
-    const second = await runSessionRetentionOnce({ root: dir, maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
+    const second = await runSessionRetentionOnce({ root: dir, projcacheDir: join(dir, 'projcache'), maxCount: 3, maxAgeDays: 7, getSessionId: () => undefined, now })
     assert.deepEqual(second, { removed: 0, failed: 0 })
     assert.equal(await stat(fresh).then(() => true, () => false), true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ------------------------------------------------- projection-cache sweep --
+
+// The sweep always clocks against real time (`deps.now` is NOT forwarded),
+// so fixture records are aged relative to the real clock: 48h is safely
+// past the 24h freshness guard, "fresh" records are never touched.
+const SWEEP_OLD = new Date(Date.now() - 48 * 60 * 60 * 1000)
+const STALE = (path) => utimes(path, SWEEP_OLD, SWEEP_OLD)
+const exists = (path) => stat(path).then(() => true, () => false)
+
+test('the projection-cache sweep removes only stale dead records (live, fresh, .bak, dirs survive)', async () => {
+  resetNoticeBridge()
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-sweep-'))
+  try {
+    const projcacheDir = join(dir, 'storages', 'session_projcache', 'sessions')
+    await mkdir(projcacheDir, { recursive: true })
+    // Three live sessions across the log generations, so liveness goes
+    // through the shared SESSION_LOG_FILE_NAMES walker.
+    await makeSession(dir, 'proj-a', '11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa', Date.now(), 'session.jsonl')
+    await makeSession(dir, 'proj-a', '22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb', Date.now(), 'session.jsonl.zstd')
+    await makeSession(dir, 'proj-b', '33333333-cccc-4ccc-8ccc-cccccccccccc', Date.now(), 'session.v4.jsonl')
+    // A live id with NO log dir — protected only via getSessionId.
+    const CURRENT = '44444444-dddd-4ddd-8ddd-dddddddddddd'
+    const keep = [
+      '11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      '33333333-cccc-4ccc-8ccc-cccccccccccc',
+      CURRENT,
+    ]
+    for (const id of keep) await writeFile(join(projcacheDir, `${id}.json`), '{}')
+    const deadOld = [
+      'd1eadaa1-0000-4000-8000-000000000001',
+      'd2eadaa2-0000-4000-8000-000000000002',
+      'd3eadaa3-0000-4000-8000-000000000003',
+      'd4eadaa4-0000-4000-8000-000000000004',
+    ]
+    for (const id of deadOld) await writeFile(join(projcacheDir, `${id}.json`), '{}')
+    const freshDead = 'd5eadaa5-0000-4000-8000-000000000005'
+    await writeFile(join(projcacheDir, `${freshDead}.json`), '{}')
+    const bakDead = 'd6eadaa6-0000-4000-8000-000000000006'
+    await writeFile(join(projcacheDir, `${bakDead}.json.bak`), '{}')
+    const dirEntry = join(projcacheDir, 'd7eadaa7-0000-4000-8000-000000000007.json')
+    await mkdir(dirEntry)
+    for (const id of deadOld) await STALE(join(projcacheDir, `${id}.json`))
+    await STALE(join(projcacheDir, `${bakDead}.json.bak`))
+
+    const seen = []
+    setNoticeSink(message => { seen.push(message) })
+    const result = await runSessionRetention({
+      root: dir,
+      projcacheDir,
+      getSessionId: () => CURRENT,
+    })
+    // Retention itself removed nothing (3 fresh sessions, under the cap);
+    // only the sweep fired its notice.
+    assert.deepEqual(result, { removed: 0, failed: 0 })
+    for (const id of deadOld) {
+      assert.equal(await exists(join(projcacheDir, `${id}.json`)), false, `${id} removed`)
+    }
+    for (const id of keep) {
+      assert.equal(await exists(join(projcacheDir, `${id}.json`)), true, `${id} kept`)
+    }
+    assert.equal(await exists(join(projcacheDir, `${freshDead}.json`)), true, 'fresh (<24h) dead record kept')
+    assert.equal(await exists(join(projcacheDir, `${bakDead}.json.bak`)), true, '.bak kept')
+    assert.equal(await exists(dirEntry), true, 'directory entry kept (only files deleted)')
+    assert.deepEqual(seen, ['projection cache swept: 4 removed'])
+  } finally {
+    resetNoticeBridge()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('sweep guards: an unreadable store root or an empty live set refuses to delete anything', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-sweepg-'))
+  try {
+    // Guard ①: the store root does not exist ⇒ liveness evidence would be
+    // empty — refuse before touching the projcache.
+    const projcacheA = join(dir, 'projcache-a')
+    await mkdir(projcacheA)
+    const recordA = join(projcacheA, 'a1eadaa1-0000-4000-8000-000000000001.json')
+    await writeFile(recordA, '{}')
+    await STALE(recordA)
+    await runSessionRetention({ root: join(dir, 'nonexistent'), projcacheDir: projcacheA })
+    assert.equal(await exists(recordA), true)
+
+    // Guard ②: readable root, but the walk finds no logs and nothing is
+    // protected ⇒ zero evidence, refuse to bulk-delete.
+    const emptyRoot = join(dir, 'empty-root')
+    await mkdir(join(emptyRoot, 'proj-empty'), { recursive: true })
+    const projcacheB = join(dir, 'projcache-b')
+    await mkdir(projcacheB)
+    const recordB = join(projcacheB, 'a2eadaa2-0000-4000-8000-000000000002.json')
+    await writeFile(recordB, '{}')
+    await STALE(recordB)
+    await runSessionRetention({ root: emptyRoot, projcacheDir: projcacheB })
+    assert.equal(await exists(recordB), true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('sweep deletion is batched: 120 records in 3 batches with 200ms yields between them', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-sweepb-'))
+  try {
+    // A real readable store with one live session — both guards must pass.
+    await makeSession(dir, 'proj', 'live-one', Date.now())
+    const batchDir = join(dir, 'projcache')
+    await mkdir(batchDir)
+    const dead = []
+    for (let i = 0; i < 120; i++) {
+      const file = join(batchDir, `b${String(i).padStart(7, '0')}-0000-4000-8000-0000000000xx.json`)
+      await writeFile(file, '{}')
+      await STALE(file)
+      dead.push(file)
+    }
+    const t0 = Date.now()
+    await runSessionRetention({ root: dir, projcacheDir: batchDir, getSessionId: () => undefined })
+    const elapsed = Date.now() - t0
+    for (const file of dead) assert.equal(await exists(file), false)
+    // 120 = 50 + 50 + 20: two inter-batch pauses of 200ms each (allow a
+    // little scheduler slack — the point is the yields actually happened).
+    assert.ok(elapsed >= 380, `elapsed ${elapsed}ms >= 2x200ms of batch pauses`)
+    assert.deepEqual(await readdir(batchDir), [])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('sweep failure isolation: a read-only dir counts failures and never throws; a later pass succeeds', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-sweeph-'))
+  try {
+    await makeSession(dir, 'proj', 'live-one', Date.now())
+    const hostileDir = join(dir, 'projcache')
+    await mkdir(hostileDir)
+    const record = join(hostileDir, 'h1eadaa1-0000-4000-8000-000000000001.json')
+    await writeFile(record, '{}')
+    await STALE(record)
+    // 0555 makes every unlink fail (EACCES) — the sweep must swallow each
+    // failure and never reject; the whole pass stays non-fatal.
+    await chmod(hostileDir, 0o555)
+    await runSessionRetention({ root: dir, projcacheDir: hostileDir, getSessionId: () => undefined })
+    assert.equal(await exists(record), true)
+    // Once writable again, the next pass removes the same record.
+    await chmod(hostileDir, 0o755)
+    await runSessionRetention({ root: dir, projcacheDir: hostileDir, getSessionId: () => undefined })
+    assert.equal(await exists(record), false)
+  } finally {
+    await chmod(join(dir, 'projcache'), 0o755).catch(() => {})
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('sweep removes old-generation session-<id>.json records like any other dead record', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-tui-sweepo-'))
+  try {
+    await makeSession(dir, 'proj', 'live-one', Date.now())
+    const projcacheDir = join(dir, 'projcache')
+    await mkdir(projcacheDir)
+    const record = join(projcacheDir, 'session-o1eadaa1-0000-4000-8000-000000000001.json')
+    await writeFile(record, '{}')
+    await STALE(record)
+    await runSessionRetention({ root: dir, projcacheDir, getSessionId: () => undefined })
+    assert.equal(await exists(record), false)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

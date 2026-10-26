@@ -27,10 +27,11 @@
  * notice (src/notice-bridge.ts) and fall to the next level.
  */
 
-import { readdir, rm, stat } from 'node:fs/promises'
+import { readdir, rm, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { dshHome } from './append-system.ts'
 import { emitNotice } from './notice-bridge.ts'
+import { projcacheSessionsDir } from './preflight-projcache.ts'
 
 /**
  * One session directory discovered by the walk. `id` is the directory
@@ -89,6 +90,14 @@ export const RETENTION_MIN_IDLE_HOURS = 24
 
 /** The idle guard in ms — the unit `RetentionPolicy.minIdleMs` consumes. */
 export const RETENTION_MIN_IDLE_MS = RETENTION_MIN_IDLE_HOURS * HOUR_MS
+
+/**
+ * Projection-cache sweep pacing: at most 50 unlinks per batch, with a
+ * 200 ms event-loop yield between batches, so a large backlog of dead
+ * records never spikes the IO the startup fiber shares.
+ */
+const PROJCACHE_SWEEP_BATCH = 50
+const PROJCACHE_SWEEP_BATCH_PAUSE_MS = 200
 
 /** Retention knobs after env resolution; `now` stays a per-pass input. */
 export interface RetentionConfig {
@@ -336,10 +345,132 @@ export interface RetentionResult {
   failed: number
 }
 
+/**
+ * Injectable seams for the projection-cache sweep (tests override them).
+ * Private to this module: `runSessionRetention` computes the liveness
+ * evidence itself and forwards only what the sweep needs.
+ */
+interface SweepProjectionCacheDeps {
+  /** Store root; defaults to `sessionStoreRoot()` (guard-① readdir target). */
+  root?: string
+  /** Projcache sessions dir; defaults to `projcacheSessionsDir()`. */
+  projcacheDir?: string
+  /** Teardown signal: an aborted sweep stops at the next loop boundary. */
+  signal?: AbortSignal
+  /** Extra live ids (the protected set), unioned into the live set. */
+  extraLiveIds?: Iterable<string>
+  /** Session ids found alive by the caller's retention walk. */
+  liveCandidateIds?: Iterable<string>
+  /** Clock override; defaults to Date.now(). */
+  now?: number
+}
+
+/**
+ * Sweep stale `session_projcache` records: one `.json` per session under
+ * `<dshHome>/storages/session_projcache/sessions/`, with no GC of its own.
+ * A record is dead when no session directory with a log carries its id —
+ * the caller (`runSessionRetention`) already walked the store for the
+ * retention pass itself and hands the swept candidate ids in via
+ * `deps.liveCandidateIds`, so the sweep performs no walk of its own —
+ * and the protected set (current session ∪
+ * in-flight /resume target) is unioned in for belt-and-suspenders. Two
+ * guards precede any deletion: the session store root must be readable
+ * (an unreadable root means empty liveness evidence — one more readdir
+ * up front prevents a whole-store blind wipe), and the union live set
+ * must be non-empty (zero evidence ⇒ refuse to sweep). A
+ * record younger than `RETENTION_MIN_IDLE_MS` (24h) is always spared: it
+ * may belong to a session created or being written right now. Deletion is
+ * paced (≤50 unlinks per batch, 200 ms yield between batches), each unlink
+ * is fault-isolated (ENOENT is success — someone got there first), only
+ * `.json` FILES go (a `.bak` or a directory is skipped), and the whole
+ * sweep is silent and non-fatal: losing a record costs one cold-read
+ * replay (the cache is a fold shortcut, never an authority), so any
+ * failure must never fail the retention pass itself.
+ */
+async function sweepProjectionCache(deps: SweepProjectionCacheDeps = {}): Promise<RetentionResult> {
+  const result: RetentionResult = { removed: 0, failed: 0 }
+  try {
+    // Guard ①: the session store root must be READABLE before anything is
+    // deleted. A missing/unreadable root means the liveness evidence below
+    // would be empty — sweeping against an empty live set would delete
+    // EVERY record. One readdir up front, before the projcache snapshot
+    // readdir below, so the guard adds no duplicate walk of the store.
+    const storeRoot = deps.root ?? sessionStoreRoot()
+    try {
+      await readdir(storeRoot)
+    } catch {
+      return result
+    }
+    const dir = deps.projcacheDir ?? projcacheSessionsDir()
+    let entries
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return result
+    }
+    // The live set is HANDED IN by the caller (runSessionRetention already
+    // walked the store for the retention pass itself and passes the walked
+    // candidate ids here): the sweep no longer re-walks the store, which
+    // also shrinks the un-interruptible walk window on /quit to zero.
+    // Conservative by construction — the caller's candidate list can only
+    // lag a hypothetical fresh walk (a session created since is simply not
+    // in the projcache as a dead record yet, and its record, if any, is
+    // fresh < 24h), so the sweep can only KEEP MORE, never mis-delete.
+    const live = new Set([...(deps.extraLiveIds ?? [])])
+    for (const id of deps.liveCandidateIds ?? []) live.add(id)
+    // Guard ②: no liveness evidence at all (no session logs found by the
+    // caller's walk, nothing protected) — refuse to sweep blindly; a
+    // store that yields zero evidence is one we do not understand well
+    // enough to bulk-delete against. RESIDUAL (accepted, not fixed by
+    // this patch): collectRetentionCandidates still swallows a single
+    // unreadable project bucket silently, shrinking the live set the
+    // caller computed — fixing that means changing the shared walker
+    // API, out of scope here.
+    if (live.size === 0) return result
+    const freshCutoff = (deps.now ?? Date.now()) - RETENTION_MIN_IDLE_MS
+    const doomed: string[] = []
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      if (live.has(entry.name.slice(0, -'.json'.length))) continue
+      try {
+        if ((await stat(join(dir, entry.name))).mtimeMs >= freshCutoff) continue
+      } catch {
+        continue
+      }
+      doomed.push(join(dir, entry.name))
+    }
+    for (let i = 0; i < doomed.length; i += 1) {
+      if (deps.signal?.aborted) break
+      try {
+        await unlink(doomed[i]!)
+        result.removed += 1
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') result.failed += 1
+      }
+      if ((i + 1) % PROJCACHE_SWEEP_BATCH === 0 && i + 1 < doomed.length) {
+        await new Promise(resolve => setTimeout(resolve, PROJCACHE_SWEEP_BATCH_PAUSE_MS))
+      }
+    }
+    if (result.removed + result.failed > 0) {
+      emitNotice(`projection cache swept: ${result.removed} removed`
+        + (result.failed > 0 ? `, failed ${result.failed}` : ''))
+    }
+  } catch {
+    // Silent by contract — the sweep must never fail retention.
+  }
+  return result
+}
+
 /** Injectable seams for `runSessionRetention` (tests override them). */
 export interface SessionRetentionDeps {
   /** Store root; defaults to `sessionStoreRoot()`. */
   root?: string
+  /**
+   * Projection-cache sessions dir override (tests); defaults to
+   * `projcacheSessionsDir()`. The sweep that follows the retention pass
+   * deletes stale `session_projcache/<id>.json` records there.
+   */
+  projcacheDir?: string
   /**
    * Live session id getter — re-polled immediately before every removal.
    * Combined with `getResumingSessionId` into the protected set.
@@ -453,6 +584,21 @@ export async function runSessionRetention(deps: SessionRetentionDeps = {}): Prom
     if (result.removed + result.failed > 0) {
       reportRetentionResult(result)
     }
+    // Retention is done with the store — now sweep the projection-cache
+    // records whose sessions it (or anything else) retired. Same pass,
+    // same fire-and-forget fiber, same abort signal; a sweep failure is
+    // contained inside sweepProjectionCache and can never fail retention.
+    if (deps.signal?.aborted) return result
+    await sweepProjectionCache({
+      root,
+      projcacheDir: deps.projcacheDir,
+      signal: deps.signal,
+      extraLiveIds: protectedNow(),
+      // Reuse the walk already done for the retention pass (line above):
+      // the sweep's liveness evidence is this candidate list, not a
+      // second collectRetentionCandidates walk of the store.
+      liveCandidateIds: candidates.map(candidate => candidate.id),
+    })
   } catch {
     // Silent by contract — never block startup.
   }
