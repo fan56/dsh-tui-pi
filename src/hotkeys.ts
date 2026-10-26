@@ -36,7 +36,7 @@ export function keybindingsPath(home: string): string {
 }
 
 /** The six app-level bindings the file may remap (order = display order). */
-export const APP_KEY_FIELDS: readonly (keyof KeyBindings)[] = ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel', 'sessionSearch', 'workflowOverlay', 'workflowWidgetCycle']
+export const APP_KEY_FIELDS: readonly (keyof KeyBindings)[] = ['escape', 'ctrlC', 'ctrlD', 'modelPicker', 'subagentViewer', 'queuePanel', 'sessionSearch', 'workflowOverlay', 'workflowWidgetCycle', 'workflowWidgetPanLeft', 'workflowWidgetPanRight']
 
 /** Action description for one app key in the `/hotkeys` table. A function, not a module table: the text resolves through `t()` on every call so a language switch re-renders instead of freezing the boot-time language. */
 function keyAction(field: keyof KeyBindings): string {
@@ -50,6 +50,8 @@ function keyAction(field: keyof KeyBindings): string {
     case 'sessionSearch': return t('hotkeys.action.sessionSearch')
     case 'workflowOverlay': return t('hotkeys.action.workflowOverlay')
     case 'workflowWidgetCycle': return t('hotkeys.action.workflowWidgetCycle')
+    case 'workflowWidgetPanLeft': return t('hotkeys.action.workflowWidgetPanLeft')
+    case 'workflowWidgetPanRight': return t('hotkeys.action.workflowWidgetPanRight')
   }
 }
 
