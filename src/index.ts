@@ -1009,7 +1009,14 @@ export function apply(ctx: Context, config: TuiSettings): void {
     }
     dialogDeps.openPanel = (questions, signal, timeouts) =>
       dialogQueue.run(activeSignal => openAskUserPanel(dialogDeps, questions, activeSignal, timeouts), signal)
-        .catch(() => buildDeclinedEnvelope(questions))
+        // Queue cancellation means the dialog never got its answer — decline.
+        // Anything else (e.g. a mount failure) must propagate so the ask
+        // waterfall surfaces a real error the model can retry, not a
+        // fabricated "user declined".
+        .catch(error => {
+          if (error instanceof Error && error.name === 'AbortError') return buildDeclinedEnvelope(questions)
+          throw error
+        })
     ctx.effect(() => registerAskUserProvider(ctx, dialogDeps), 'dsh-tui-pi: ask-user-question provider')
     ctx.effect(() => registerApprovalProvider(ctx, dialogDeps, dialogQueue), 'dsh-tui-pi: approval provider')
 

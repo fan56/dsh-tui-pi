@@ -6,6 +6,14 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive one-shot tool approvals (#4)** — the TUI now answers `approval/request` for its active session: a fail-closed panel shows the tool, reason, call ID and exact tool arguments (PgUp/PgDn scroll); deny is the default (Enter/Esc/Ctrl+C), allow-once requires selection and confirmation, pasted text cannot approve, questions and approvals share one dialog queue, and teardown cancels pending dialogs. By @jokkopucko.
+
+### Fixed
+
+- Ask-user dialogs opened through the shared dialog queue now propagate panel mount failures to the waterfall as errors (retryable by the model) instead of reporting them as a user decline; queue cancellation still declines, as before.
+
 ## [2.30.0] - 2026-10-26
 
 ### Added
