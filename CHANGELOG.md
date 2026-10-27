@@ -6,6 +6,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.31.0] - 2026-10-27
+
 ### Added
 
 - **Interactive one-shot tool approvals (#4)** — the TUI now answers `approval/request` for its active session: a fail-closed panel shows the tool, reason, call ID and exact tool arguments (PgUp/PgDn scroll); deny is the default (Enter/Esc/Ctrl+C), allow-once requires selection and confirmation, pasted text cannot approve, questions and approvals share one dialog queue, and teardown cancels pending dialogs. By @jokkopucko.
