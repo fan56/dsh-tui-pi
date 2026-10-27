@@ -151,7 +151,9 @@ import { startTui, type TuiHandle } from './tui.ts'
 import { currentPreset, fetchPresetRoster, findPresetByName, formatPresetLabel, initialPresetIndex, peekNextPreset, type PresetEntry, type PresetState } from './preset.ts'
 import { completedTurnSeed, openPresetConfirmDialog, performPresetSwitch } from './preset-dialog.ts'
 import { openStopConfirmDialog } from './stop-dialog.ts'
-import { registerAskUserProvider, resolveAskUserTimeouts } from './ask-user.ts'
+import { registerAskUserProvider, resolveAskUserTimeouts, openAskUserPanel, buildDeclinedEnvelope, type AskUserPanelDeps } from './ask-user.ts'
+import { DialogQueue } from './dialog-queue.ts'
+import { registerApprovalProvider } from './approval.ts'
 import { askLanguageChoice, type AskSeam, type LanguageOutcome } from './language-ask.ts'
 import { checkHostSupport } from './host-version.ts'
 
@@ -496,6 +498,7 @@ export function apply(ctx: Context, config: TuiSettings): void {
     // open overlay (see tui.ts), and refocusEditor must not steal focus from
     // it. Flipped by the panel through its setModalActive dep.
     let askUserActive = false
+    const dialogQueue = new DialogQueue()
     const ui = startTui({
       onSubmit: text => {
         void submit(text)
@@ -983,7 +986,7 @@ export function apply(ctx: Context, config: TuiSettings): void {
     // re-renders with the new palette. Provider registration failure
     // semantics live in registerAskUserProvider: DUPLICATE_PROVIDER yields to
     // the prior UI, anything else fails loudly.
-    ctx.effect(() => registerAskUserProvider(ctx, {
+    const dialogDeps: AskUserPanelDeps = {
       tui: ui.tui,
       theme: () => ui.theme,
       // Ask-surface claim routing: the panel answers questions asked by the
@@ -1003,7 +1006,12 @@ export function apply(ctx: Context, config: TuiSettings): void {
       setModalActive: active => {
         askUserActive = active
       },
-    }), 'dsh-tui-pi: ask-user-question provider')
+    }
+    dialogDeps.openPanel = (questions, signal, timeouts) =>
+      dialogQueue.run(activeSignal => openAskUserPanel(dialogDeps, questions, activeSignal, timeouts), signal)
+        .catch(() => buildDeclinedEnvelope(questions))
+    ctx.effect(() => registerAskUserProvider(ctx, dialogDeps), 'dsh-tui-pi: ask-user-question provider')
+    ctx.effect(() => registerApprovalProvider(ctx, dialogDeps, dialogQueue), 'dsh-tui-pi: approval provider')
 
     // System prompt guidance: nudge the model toward conservative use of
     // `ask_user_question`. The upstream `dsh-tool-ask-user` is a single
@@ -2498,6 +2506,7 @@ export function apply(ctx: Context, config: TuiSettings): void {
     }
 
     return async () => {
+      dialogQueue.dispose()
       if (relayoutTimer !== undefined) clearTimeout(relayoutTimer)
       process.stdout.removeListener('resize', onResize)
       stopTerminalFollow()

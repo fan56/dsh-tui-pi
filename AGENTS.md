@@ -285,11 +285,12 @@ docs/features/themes.md.
 ## Quality gates
 
 - `pnpm check` (tsc --noEmit) must stay 0 errors.
-- `pnpm test` runs **1367 tests** across 80 test files (per-file totals
+- `pnpm test` runs **1475 tests** across 87 test files (per-file totals
   below; verify after any new logic is added and update if numbers
   move. New pure logic → new test file under `test/` against built
   `lib/` (`node --test`, pretest builds). Update the totals and the
   per-file list here. The suite is fully green.
+  - approval 17 + dialog-queue 6 (approval decisions, details, cancellation, resize, and modal serialization).
   - ask-user 119 + subagent-policy 44 + btw 45 + subagent-viewer 42 + sessions 44 + retention 40 + skills 36 +
   - live 39 + history-viewer 33 + session-reconcile 33 + keymap 31 + model-profiles 31 + clipboard 26 + usage 26 + pending-echo 26 +
   - login 25 + ask-user-timeout 24 + log-repair 24 + panels 24 + skills-manager 24 + startup-info 24 +

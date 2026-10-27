@@ -17,6 +17,7 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 - [**Footer — live session overview**](docs/features/footer.md) — provider/model, context pressure and the session cache-hit rate at a glance, always in view.
 - [**Think & tool panels**](docs/features/think-tool-panels.md) — reasoning and tool activity stay out of the transcript, so the conversation reads clean.
 - [**Subagents**](docs/features/subagents.md) — every running subagent gets a status line; watch its live transcript and decode speed (tok/s), steer it in place.
+- [**Tool approvals**](docs/features/approval.md) — review the operation and allow it once or deny it; no automatic approval.
 - [**Ask User Question**](docs/features/ask-user-question.md) — the model can pause and ask you structured questions, answered without leaving the TUI.
 - [**Feishu integration**](docs/features/feishu-demo.md) — dsh-tui-pi on the desktop and Feishu/Lark on the phone driving (and answering for) the same dsh session.
 - [**Dynamic context pruning (DCP)**](docs/features/dcp.md) — context stays within limits automatically, with zero LLM calls.
