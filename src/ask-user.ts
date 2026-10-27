@@ -1425,6 +1425,8 @@ export interface AskUserPanelDeps {
    * human exactly as before (direct callers, tests, embedders).
    */
   resolveTimeouts?: () => Promise<AskUserTimeouts>
+  /** Serialize this panel with other capturing dialogs. */
+  openPanel?: (questions: AskUserQuestionItem[], signal: AbortSignal | undefined, timeouts: AskUserTimeouts) => Promise<AskUserQuestionAnswer>
 }
 
 /** Result promise from `openAskUserPanel`. Declined carries the canonical decline envelope. */
@@ -1939,6 +1941,7 @@ export function registerAskUserProvider(
   ctx: Context,
   deps: AskUserPanelDeps,
 ): () => void {
+  const openPanel = deps.openPanel ?? ((questions, signal, timeouts) => openAskUserPanel(deps, questions, signal, timeouts))
   // dsh-ask-router present: register as ONE surface among several (claim by
   // session, first answer wins across surfaces) instead of taking an ask
   // slot. Absent router keeps the standalone waterfall path below.
@@ -1960,7 +1963,7 @@ export function registerAskUserProvider(
         controllers.set(request, controller)
         request.signal?.addEventListener('abort', () => controller.abort(), { once: true })
         const open = (timeouts: AskUserTimeouts): Promise<AskUserQuestionAnswer> =>
-          openAskUserPanel(deps, request.questions, controller.signal, timeouts)
+          openPanel(request.questions, controller.signal, timeouts)
         if (deps.resolveTimeouts === undefined) return open(ASK_USER_TIMEOUTS_DISABLED)
         // Resolved fresh per ask so a committed settings change applies to
         // the NEXT question without a reload; a resolution failure degrades
@@ -2005,7 +2008,7 @@ export function registerAskUserProvider(
       if (asking !== undefined && String(asking) !== mine) return next()
     }
     const open = (timeouts: AskUserTimeouts): Promise<AskUserQuestionAnswer> =>
-      openAskUserPanel(deps, request.questions, request.signal, timeouts)
+      openPanel(request.questions, request.signal, timeouts)
     if (deps.resolveTimeouts === undefined) return open(ASK_USER_TIMEOUTS_DISABLED)
     return deps.resolveTimeouts().then(open, () => open(ASK_USER_TIMEOUTS_DISABLED))
   })
