@@ -83,12 +83,34 @@ const install = spawnSync('pnpm', ['install'], { cwd: profile, encoding: 'utf8' 
 if (install.status !== 0 || install.error) fail('pnpm install in the scratch profile failed', `${install.stdout}\n${install.stderr}`)
 
 const dshEnv = { ...process.env, DSH_HOME: home, TERM: process.env.TERM ?? 'xterm-256color' }
+// `npm run` poisons the child environment in two ways that both break the
+// real-host dump:
+//   1. npm_config_* (notably npm_config_prefix) leaks npm's view of the
+//      world into the dsh CLI;
+//   2. PATH now leads with this repo's node_modules/.bin — if a dev
+//      closure ever installed @deepseek-ai/dsh locally (a 0.1.7-rc.1 copy
+//      lives in .pnpm here), THAT stale host resolves first and fails the
+//      plugin peerDependencies check, skipping the bundle.
+// Strip both so the smoke always exercises the global dsh on PATH.
+const pathSep = process.platform === 'win32' ? ';' : ':'
+dshEnv.PATH = (dshEnv.PATH ?? '')
+  .split(pathSep)
+  .filter((seg) => seg && seg !== path.join(repoRoot, 'node_modules', '.bin'))
+  .join(pathSep)
+for (const key of Object.keys(dshEnv)) {
+  if (key.startsWith('npm_config_')) delete dshEnv[key]
+}
 
 // Phase 1 — mount proof: the composed tree must include the plugin, disable
 // the stock projection-cache row and mount the projcache wrapper instead.
 const dump = spawnSync('dsh', ['--profile', 'smoke', '--dump-config'], { cwd: profile, encoding: 'utf8', env: dshEnv })
 if (dump.status !== 0 || dump.error) fail('dsh --dump-config failed on the scratch profile', `${dump.stdout}\n${dump.stderr}`)
 if (!dump.stdout.includes(ownName)) {
+  writeFileSync('/tmp/smoke-dump-fail.txt', [
+    `status=${dump.status} stdoutBytes=${Buffer.byteLength(dump.stdout ?? '')} stderrBytes=${Buffer.byteLength(dump.stderr ?? '')}`,
+    '--- stdout head ---', (dump.stdout ?? '').slice(0, 2000),
+    '--- stderr head ---', (dump.stderr ?? '').slice(0, 2000),
+  ].join('\n'))
   fail(`the composed profile tree does not contain ${ownName} — the bundle patch insert is broken`, dump.stdout)
 }
 if (!/id: session-projection-cache[\s\S]*?disabled: true/.test(dump.stdout)) {
