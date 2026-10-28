@@ -44,7 +44,7 @@ try {
   const setup = runOnboard({ log: (line) => console.log(line) })
   if (!setup.ok) {
     console.log(`dsh-tui-pi: setup stopped at "${setup.step}" — ${setup.hint}`)
-    console.log('dsh-tui-pi: it will complete automatically on first launch.')
+    console.log('dsh-tui-pi: the launcher re-checks all of this on first launch.')
   } else {
     console.log('dsh-tui-pi: ready — launch with `dsh-tui-pi` (short: `dst`).')
   }

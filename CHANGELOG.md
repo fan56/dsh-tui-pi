@@ -8,7 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **One-command install & launch** — `npm i -g @aiwayds/dsh-tui-pi` now prepares the machine by itself: the postinstall installs the `@deepseek-ai/dsh` host (only when missing — an existing install is never touched), installs pnpm, and creates the `tui` profile with the plugin and its bundled companions, one short progress line per step; whatever cannot finish at install time (offline, no npm on PATH) is completed on the first launch. The `dsh-tui-pi` launcher runs the same idempotent onboarding as a catch-up and fast-paths to a silent boot once the machine is set up.
+- **One-command install & launch** — `npm i -g @aiwayds/dsh-tui-pi` now prepares the machine by itself: the postinstall checks for the `@deepseek-ai/dsh` host (when missing it prints the install command and stops — the host is never pulled in automatically; an existing install is never touched), installs pnpm, and creates the `tui` profile with the plugin and its bundled companions, one short progress line per step; whatever cannot finish at install time (offline, no npm on PATH) is completed on the first launch. The `dsh-tui-pi` launcher runs the same idempotent onboarding as a catch-up and fast-paths to a silent boot once the machine is set up.
 - **`dst` alias** — a second global bin next to `dsh-tui-pi`; both point at the same launcher.
 - **Profile version follow** — after a global upgrade of the package, the next launch re-runs the profile add to move the mounted copy to the new version; a profile newer than the global install (dev-upgraded ahead) is left untouched.
 

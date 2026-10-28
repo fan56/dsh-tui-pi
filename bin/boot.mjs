@@ -41,7 +41,6 @@ const setup = runOnboard({ log: (line) => console.log(line) })
 if (!setup.ok) {
   console.error(`\ndsh-tui-pi: setup stopped at "${setup.step}".`)
   console.error(`dsh-tui-pi: ${setup.hint}`)
-  console.error('dsh-tui-pi: re-run dsh-tui-pi to retry once the missing piece is in place.')
   process.exit(1)
 }
 console.log('')

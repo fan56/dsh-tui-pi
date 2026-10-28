@@ -42,7 +42,7 @@ npm i -g @aiwayds/dsh-tui-pi
 dsh-tui-pi          # or the short form: dst
 ```
 
-The global install sets the machine up by itself, printing one progress line per step: it installs the `@deepseek-ai/dsh` host when missing, installs pnpm, and creates the `tui` profile with this plugin and its bundled companions. Whatever the install cannot finish (e.g. an offline machine) completes automatically on the first launch. After a later `npm i -g` upgrade of this package, the profile's mounted copy is moved to the new version on the next launch — a profile that is newer than the global install (dev-upgraded ahead) is left untouched.
+The global install sets the machine up by itself, printing one progress line per step: it checks for the `@deepseek-ai/dsh` host — when missing it prints the install command and stops (the host is a product install of its own, never pulled in automatically) — then installs pnpm and creates the `tui` profile with this plugin and its bundled companions. Whatever the install cannot finish (e.g. an offline machine) completes automatically on the first launch. After a later `npm i -g` upgrade of this package, the profile's mounted copy is moved to the new version on the next launch — a profile that is newer than the global install (dev-upgraded ahead) is left untouched.
 
 The manual steps do exactly what the onboarding runs, if you prefer them:
 

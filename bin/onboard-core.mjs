@@ -10,10 +10,12 @@
  * Contract:
  *   - idempotent: every step checks before it acts, so a re-run only prints
  *     "found" lines and the launcher fast-paths to a silent boot;
- *   - the dsh host is NEVER touched when found — it is only installed when
- *     missing, so an existing global install keeps its version;
- *   - global installs use the package manager already in play
- *     (npm_config_user_agent), falling back to npm;
+ *   - the dsh host is REQUIRED, never installed here: when missing we print
+ *     its install command and stop — the host is the user's product-level
+ *     install (834MB), not something this plugin pulls in;
+ *   - pnpm, the one piece that IS auto-installed when missing, uses the
+ *     package manager already in play (npm_config_user_agent), falling
+ *     back to npm;
  *   - all functions are synchronous and never throw past the boundary:
  *     failures come back as { ok: false, step, hint }.
  */
@@ -178,26 +180,25 @@ export function compareVersions(a, b) {
 /**
  * Bring the machine to a bootable state, printing one progress line per step.
  * Steps:
- *   1/3 dsh host    — install `@deepseek-ai/dsh` globally when missing
- *   2/3 pnpm        — the host's plugin manager shells out to it
+ *   1/3 dsh host    — REQUIRED, never installed here: when missing we print
+ *                     the install command and stop (the host is a 834MB
+ *                     user-level product install, not ours to pull in)
+ *   2/3 pnpm        — the host's plugin manager shells out to it; installed
+ *                     globally when missing
  *   3/3 tui profile — `dsh plugin --profile tui add` this package (+ companions)
  * Returns { ok: true, dsh } or { ok: false, step, hint }.
  */
 export function runOnboard({ log = () => {} } = {}) {
-  let dsh = dshBinPath()
-  if (dsh) {
-    log(`  [1/3] dsh host              found ${queryVersion(dsh, ['-V']) ?? '(version unknown)'}`)
-  } else {
-    log(`  [1/3] dsh host              not found — installing ${HOST} globally (largest step, a few minutes)…`)
-    if (!installGlobal(HOST)) {
-      return { ok: false, step: 'dsh host install', hint: `install it manually with: npm install -g ${HOST}` }
+  const dsh = dshBinPath()
+  if (!dsh) {
+    log('  [1/3] dsh host              not found')
+    return {
+      ok: false,
+      step: 'dsh host',
+      hint: `install the host first: npm install -g ${HOST} — then re-run dsh-tui-pi`,
     }
-    dsh = dshBinPath()
-    if (!dsh) {
-      return { ok: false, step: 'dsh host lookup', hint: `installed, but not on PATH — run: npm install -g ${HOST}` }
-    }
-    log(`  [1/3] dsh host              installed ${queryVersion(dsh, ['-V']) ?? ''}`)
   }
+  log(`  [1/3] dsh host              found ${queryVersion(dsh, ['-V']) ?? '(version unknown)'}`)
 
   const pnpm = which('pnpm')
   if (pnpm) {
@@ -205,7 +206,7 @@ export function runOnboard({ log = () => {} } = {}) {
   } else {
     log('  [2/3] pnpm                  not found — installing globally…')
     if (!installGlobal('pnpm')) {
-      return { ok: false, step: 'pnpm install', hint: 'install it manually with: npm install -g pnpm' }
+      return { ok: false, step: 'pnpm install', hint: 'install it with: npm install -g pnpm — then re-run dsh-tui-pi' }
     }
     log(`  [2/3] pnpm                  installed ${queryVersion('pnpm', ['-v']) ?? ''}`)
   }
@@ -222,7 +223,7 @@ export function runOnboard({ log = () => {} } = {}) {
       timeout: INSTALL_TIMEOUT_MS,
     })
     if (result.status !== 0) {
-      return { ok: false, step: 'tui profile setup', hint: `run it manually with: dsh plugin --profile ${PROFILE} add ${PKG}` }
+      return { ok: false, step: 'tui profile setup', hint: `run it manually with: dsh plugin --profile ${PROFILE} add ${PKG} — then re-run dsh-tui-pi` }
     }
     log(`  [3/3] tui profile           ${verb === 'updating' ? 'updated' : 'done'}`)
   }
