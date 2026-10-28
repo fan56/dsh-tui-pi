@@ -132,6 +132,42 @@ function installGlobal(name) {
   return result.status === 0
 }
 
+// Newest of the `latest` (stable) and `next` (rc) dist-tags — the same
+// resolution rule as ci.yml / e2e/run-e2e.sh; the alpha tag is retired.
+// The host's `latest` dist-tag lags the rc line this plugin targets
+// (2026-10: latest=0.2.1-rc.2 while the plugin needs the rc.3 subagent
+// APIs), so the host must never be installed from the bare package name.
+// Returns a concrete version, or null when npm cannot be reached.
+export function resolveHostVersion() {
+  try {
+    const out = execFileSync('npm', ['view', HOST, 'dist-tags', '--json'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const tags = JSON.parse(out)
+    const stable = tags?.latest
+    const rc = tags?.next
+    if (stable && rc) return compareVersions(rc, stable) > 0 ? rc : stable
+    return stable ?? rc ?? null
+  } catch {
+    return null
+  }
+}
+
+// The oldest host this plugin can run on, read from the manifest's own
+// peerDependencies so the declaration and the check stay one decision.
+export function minHostVersion() {
+  try {
+    const peer = readSelfPackage().peerDependencies?.[HOST]
+    const match = typeof peer === 'string' ? peer.match(/>=\s*(\S+)/) : null
+    if (match) return match[1]
+  } catch {
+    /* fall through to the baked-in floor */
+  }
+  return '0.2.1-rc.3'
+}
+
 // True when the mounted profile copy is OLDER than this package. Prerelease
 // tags compare numerically per dot segment (rc.10 > rc.4); a profile that is
 // NEWER (dev-upgraded ahead of the global install) is left alone.
@@ -210,23 +246,30 @@ function approvePrintedBuilds() {
  */
 export function runOnboard({ log = () => {} } = {}) {
   let dsh = dshBinPath()
-  if (dsh) {
-    log(`  [1/3] dsh host              found ${queryVersion(dsh, ['-V']) ?? '(version unknown)'}`)
-  } else if (!which('npm')) {
-    log(`  [1/3] dsh host              not found, and npm is not on PATH either`)
+  const wanted = resolveHostVersion()
+  const hostSpec = wanted ? `${HOST}@${wanted}` : HOST
+  const foundVersion = dsh ? queryVersion(dsh, ['-V']) : null
+  const tooOld = foundVersion ? compareVersions(foundVersion, minHostVersion()) < 0 : false
+  if (dsh && !tooOld) {
+    log(`  [1/3] dsh host              found ${foundVersion ?? '(version unknown)'}`)
+  } else if (!dsh && !which('npm')) {
+    log('  [1/3] dsh host              not found, and npm is not on PATH either')
     return {
       ok: false,
       step: 'npm',
       hint: 'install Node.js (ships with npm) first: https://nodejs.org — then re-run dsh-tui-pi',
     }
   } else {
-    log(`  [1/3] dsh host              not found — installing ${HOST} globally with npm (largest step, a few minutes)…`)
-    if (!installGlobal(HOST)) {
-      return { ok: false, step: 'dsh host install', hint: `install it with: npm install -g ${HOST} — then re-run dsh-tui-pi` }
+    const reason = dsh
+      ? `${foundVersion} is older than this plugin requires (>= ${minHostVersion()})`
+      : 'not found'
+    log(`  [1/3] dsh host              ${reason} — installing ${hostSpec} globally with npm (largest step, a few minutes)…`)
+    if (!installGlobal(hostSpec)) {
+      return { ok: false, step: 'dsh host install', hint: `install it with: npm install -g ${hostSpec} — then re-run dsh-tui-pi` }
     }
     dsh = dshBinPath()
     if (!dsh) {
-      return { ok: false, step: 'dsh host lookup', hint: `installed, but still not found — run: npm install -g ${HOST}` }
+      return { ok: false, step: 'dsh host lookup', hint: `installed, but still not found — run: npm install -g ${hostSpec}` }
     }
     log(`  [1/3] dsh host              installed ${queryVersion(dsh, ['-V']) ?? ''}`)
   }

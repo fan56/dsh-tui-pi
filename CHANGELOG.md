@@ -4,6 +4,12 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Fresh installs got a host that is too old** — npm's `latest` dist-tag for `@deepseek-ai/dsh` lags the rc line (it pinned 0.2.1-rc.2 on 2026-10-28), and the onboarding installed from the bare package name; the dsh-subagent-registry companion (0.13.x) then crashed on the first `use_agent` with `ctx.subagents.start is not a function` — the `subagents.start*` APIs landed in rc.3. The onboarding now resolves the host as the newest of the `latest`/`next` dist-tags (the same rule CI and the e2e suite use), and when an existing host is older than the plugin's floor (0.2.1-rc.3) it upgrades it automatically with a progress line. The companion pin moved to `^0.14.0`, whose host-compat guard degrades gracefully on hosts missing the newer APIs instead of calling them.
+
 ## [2.32.0] - 2026-10-28
 
 ### Added
