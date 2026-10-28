@@ -38,13 +38,24 @@ https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 ## Install and launch
 
 ```sh
+npm i -g @aiwayds/dsh-tui-pi
+dsh-tui-pi          # or the short form: dst
+```
+
+The global install sets the machine up by itself, printing one progress line per step: it installs the `@deepseek-ai/dsh` host when missing, installs pnpm, and creates the `tui` profile with this plugin and its bundled companions. Whatever the install cannot finish (e.g. an offline machine) completes automatically on the first launch. After a later `npm i -g` upgrade of this package, the profile's mounted copy is moved to the new version on the next launch — a profile that is newer than the global install (dev-upgraded ahead) is left untouched.
+
+The manual steps do exactly what the onboarding runs, if you prefer them:
+
+```sh
+npm i -g @deepseek-ai/dsh
+npm i -g pnpm
 dsh plugin --profile tui add @aiwayds/dsh-tui-pi
-dsh --profile tui          # launch (or: dsh-tui-pi)
+dsh --profile tui          # launch
 ```
 
 Legacy `session_projcache` records (written before dsh 0.1.2-alpha.4) are migrated automatically at profile load — idempotent, with per-file backups, never blocking startup; the `dsh-tui-pi` launcher runs the same preflight.
 
-Everything that used to need manual patching — the canvas background, the `@deepseek-ai` module closure, the compaction backend — now happens automatically. Upgrade an existing profile after a release:
+Everything that used to need manual patching — the canvas background, the `@deepseek-ai` module closure, the compaction backend — now happens automatically. For a normal install, upgrading the global package upgrades the profile on the next launch (see above). `dev-upgrade` remains for dev machines that install the profile from a checked-out repo:
 
 ```sh
 node scripts/dev-upgrade.mjs                  # latest

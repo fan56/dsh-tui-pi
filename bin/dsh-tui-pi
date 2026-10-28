@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
-# Convenience launcher: boots the dsh `tui` profile that mounts @aiwayds/dsh-tui-pi.
-# Requires the dsh CLI on PATH and @aiwayds/dsh-tui-pi installed into that profile
-# (dsh plugin --profile tui add @aiwayds/dsh-tui-pi).
+# Launcher for the dsh `tui` profile that mounts @aiwayds/dsh-tui-pi.
+# First run performs a one-time setup (dsh host, pnpm, profile plugins) with
+# progress output; every later run boots straight into the TUI. Aliased as `dst`.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0" 2>/dev/null || echo "$0")")" && pwd)
 node "$SCRIPT_DIR/preflight-projcache.mjs" >/dev/null 2>&1 || true
-exec dsh --profile tui "$@"
+exec node "$SCRIPT_DIR/boot.mjs" "$@"

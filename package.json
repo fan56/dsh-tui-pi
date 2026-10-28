@@ -34,7 +34,8 @@
     "./locale/*.json": "./locale/*.json"
   },
   "bin": {
-    "dsh-tui-pi": "bin/dsh-tui-pi"
+    "dsh-tui-pi": "bin/dsh-tui-pi",
+    "dst": "bin/dsh-tui-pi"
   },
   "license": "MIT",
   "engines": {
@@ -63,7 +64,7 @@
     "pretest": "npm run build",
     "test": "node --test test/*.test.mjs",
     "smoke": "node scripts/smoke-boot.mjs",
-    "postinstall": "node scripts/link-dsh-closure.mjs"
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
     "@aiwayds/dsh-ask-router": "^0.6.0",
