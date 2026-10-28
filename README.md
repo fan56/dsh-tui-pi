@@ -42,7 +42,7 @@ npm i -g @aiwayds/dsh-tui-pi
 dsh-tui-pi          # or the short form: dst
 ```
 
-The global install sets the machine up by itself, printing one progress line per step: it installs the `@deepseek-ai/dsh` host when missing (via npm; if npm itself is not on PATH, it prints what to install and stops), installs pnpm, and creates the `tui` profile with this plugin and its bundled companions. Whatever the install cannot finish (e.g. an offline machine) completes automatically on the first launch. After a later `npm i -g` upgrade of this package, the profile's mounted copy is moved to the new version on the next launch — a profile that is newer than the global install (dev-upgraded ahead) is left untouched.
+The global install sets the machine up by itself, printing one progress line per step: it installs the `@deepseek-ai/dsh` host when missing (via npm, resolved as the newest of the `latest`/`next` dist-tags — the `latest` tag alone lags the rc line; if npm itself is not on PATH, it prints what to install and stops), installs pnpm, and creates the `tui` profile with this plugin and its bundled companions. Host compatibility window: **0.2.1-rc.2 through 0.2.1-rc.4** — an rc.2 host is kept as-is (the subagent companion degrades gracefully there); an older one is upgraded automatically. Whatever the install cannot finish (e.g. an offline machine) completes automatically on the first launch. After a later `npm i -g` upgrade of this package, the profile's mounted copy is moved to the new version on the next launch — a profile that is newer than the global install (dev-upgraded ahead) is left untouched.
 
 The manual steps do exactly what the onboarding runs, if you prefer them:
 

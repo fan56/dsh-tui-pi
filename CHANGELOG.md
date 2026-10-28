@@ -4,6 +4,12 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.33.0] - 2026-10-28
+
+### Changed
+
+- **Host compatibility window declared: 0.2.1-rc.2 through 0.2.1-rc.4** — the onboarding's upgrade floor drops from rc.3 to rc.2: an rc.2 host now stays (the subagent companion degrades gracefully there via its host-compat guard) instead of being force-upgraded, while fresh installs still get the newest of the `latest`/`next` dist-tags (rc.4 as of this release). The development baseline moved to rc.4 — the rc.2→rc.4 dependency tower diff is additive-only, zero code changes required.
+
 ## [2.32.1] - 2026-10-28
 
 ### Fixed
