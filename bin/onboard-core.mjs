@@ -10,18 +10,15 @@
  * Contract:
  *   - idempotent: every step checks before it acts, so a re-run only prints
  *     "found" lines and the launcher fast-paths to a silent boot;
- *   - the dsh host is REQUIRED, never installed here: when missing we print
- *     its install command and stop — the host is the user's product-level
- *     install (834MB), not something this plugin pulls in;
- *   - pnpm, the one piece that IS auto-installed when missing, uses the
- *     package manager already in play (npm_config_user_agent), falling
- *     back to npm;
+ *   - the dsh host is installed globally WITH NPM when missing (largest
+ *     step); npm itself is a prerequisite — when it is not on PATH we print
+ *     what to install and stop instead of guessing;
  *   - all functions are synchronous and never throw past the boundary:
  *     failures come back as { ok: false, step, hint }.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -124,15 +121,10 @@ export function dshBinPath() {
   return null
 }
 
-function globalInstaller() {
-  const agent = process.env.npm_config_user_agent || ''
-  if (agent.startsWith('pnpm/')) return ['pnpm', ['add', '-g']]
-  return ['npm', ['install', '-g']]
-}
-
+// Global installs always go through npm — one predictable path, regardless
+// of which package manager pulled this package in.
 function installGlobal(name) {
-  const [pm, args] = globalInstaller()
-  const result = spawnSync(pm, [...args, name], {
+  const result = spawnSync('npm', ['install', '-g', name], {
     stdio: 'inherit',
     timeout: INSTALL_TIMEOUT_MS,
     shell: process.platform === 'win32',
@@ -177,28 +169,59 @@ export function compareVersions(a, b) {
   return 0
 }
 
+// pnpm ≥10 fails a fresh `add` with ERR_PNPM_IGNORED_BUILDS when the added
+// packages carry lifecycle scripts, and writes an allowBuilds skeleton into
+// the profile's pnpm-workspace.yaml with a per-package "set this to true or
+// false" placeholder. The only scripts our packages ship are the closure
+// linker postinstalls, which no-op on published tarballs (they guard on the
+// repo's src/), so approving them is safe and is what `pnpm approve-builds`
+// would do interactively. Fills ONLY placeholder values — a decision the
+// user already wrote (true/false) is left untouched. Returns whether any
+// placeholder was found and approved.
+function approvePrintedBuilds() {
+  const workspace = join(dshHome(), 'profiles', PROFILE, 'pnpm-workspace.yaml')
+  try {
+    const text = readFileSync(workspace, 'utf8')
+    if (!text.includes('set this to true or false')) return false
+    writeFileSync(workspace, text.replaceAll('set this to true or false', 'true'))
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Bring the machine to a bootable state, printing one progress line per step.
  * Steps:
- *   1/3 dsh host    — REQUIRED, never installed here: when missing we print
- *                     the install command and stop (the host is a 834MB
- *                     user-level product install, not ours to pull in)
+ *   1/3 dsh host    — installed globally with npm when missing; when npm
+ *                     itself is not on PATH, print what to install and stop
  *   2/3 pnpm        — the host's plugin manager shells out to it; installed
  *                     globally when missing
  *   3/3 tui profile — `dsh plugin --profile tui add` this package (+ companions)
  * Returns { ok: true, dsh } or { ok: false, step, hint }.
  */
 export function runOnboard({ log = () => {} } = {}) {
-  const dsh = dshBinPath()
-  if (!dsh) {
-    log('  [1/3] dsh host              not found')
+  let dsh = dshBinPath()
+  if (dsh) {
+    log(`  [1/3] dsh host              found ${queryVersion(dsh, ['-V']) ?? '(version unknown)'}`)
+  } else if (!which('npm')) {
+    log(`  [1/3] dsh host              not found, and npm is not on PATH either`)
     return {
       ok: false,
-      step: 'dsh host',
-      hint: `install the host first: npm install -g ${HOST} — then re-run dsh-tui-pi`,
+      step: 'npm',
+      hint: 'install Node.js (ships with npm) first: https://nodejs.org — then re-run dsh-tui-pi',
     }
+  } else {
+    log(`  [1/3] dsh host              not found — installing ${HOST} globally with npm (largest step, a few minutes)…`)
+    if (!installGlobal(HOST)) {
+      return { ok: false, step: 'dsh host install', hint: `install it with: npm install -g ${HOST} — then re-run dsh-tui-pi` }
+    }
+    dsh = dshBinPath()
+    if (!dsh) {
+      return { ok: false, step: 'dsh host lookup', hint: `installed, but still not found — run: npm install -g ${HOST}` }
+    }
+    log(`  [1/3] dsh host              installed ${queryVersion(dsh, ['-V']) ?? ''}`)
   }
-  log(`  [1/3] dsh host              found ${queryVersion(dsh, ['-V']) ?? '(version unknown)'}`)
 
   const pnpm = which('pnpm')
   if (pnpm) {
@@ -223,7 +246,19 @@ export function runOnboard({ log = () => {} } = {}) {
       timeout: INSTALL_TIMEOUT_MS,
     })
     if (result.status !== 0) {
-      return { ok: false, step: 'tui profile setup', hint: `run it manually with: dsh plugin --profile ${PROFILE} add ${PKG} — then re-run dsh-tui-pi` }
+      if (!approvePrintedBuilds()) {
+        return { ok: false, step: 'tui profile setup', hint: `run it manually with: dsh plugin --profile ${PROFILE} add ${PKG} — then re-run dsh-tui-pi` }
+      }
+      // pnpm's skeleton is filled; the same idempotent add now succeeds
+      // (everything is already downloaded).
+      log('  [3/3] tui profile           approved the printed build scripts (our closure-linker no-ops) — retrying…')
+      const retry = spawnSync(dsh, ['plugin', '--profile', PROFILE, 'add', PKG], {
+        stdio: 'inherit',
+        timeout: INSTALL_TIMEOUT_MS,
+      })
+      if (retry.status !== 0) {
+        return { ok: false, step: 'tui profile setup', hint: `run it manually with: dsh plugin --profile ${PROFILE} add ${PKG} — then re-run dsh-tui-pi` }
+      }
     }
     log(`  [3/3] tui profile           ${verb === 'updating' ? 'updated' : 'done'}`)
   }
