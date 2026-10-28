@@ -170,20 +170,28 @@ export function compareVersions(a, b) {
 }
 
 // pnpm ≥10 fails a fresh `add` with ERR_PNPM_IGNORED_BUILDS when the added
-// packages carry lifecycle scripts, and writes an allowBuilds skeleton into
-// the profile's pnpm-workspace.yaml with a per-package "set this to true or
-// false" placeholder. The only scripts our packages ship are the closure
-// linker postinstalls, which no-op on published tarballs (they guard on the
-// repo's src/), so approving them is safe and is what `pnpm approve-builds`
-// would do interactively. Fills ONLY placeholder values — a decision the
-// user already wrote (true/false) is left untouched. Returns whether any
-// placeholder was found and approved.
+// packages carry lifecycle scripts. The only scripts our packages ship are
+// the closure-linker postinstalls, which no-op on published tarballs (they
+// guard on the repo's src/), so approving them is safe and is what `pnpm
+// approve-builds` would do interactively. pnpm sometimes records an
+// allowBuilds skeleton in the profile's pnpm-workspace.yaml with a
+// "set this to true or false" placeholder — fill those placeholders; when
+// it does not (behavior varies by pnpm build and environment), write the
+// allowBuilds block ourselves for exactly the packages this suite ships.
+// A user-written true/false decision is never overwritten. Returns whether
+// the workspace file was updated.
 function approvePrintedBuilds() {
   const workspace = join(dshHome(), 'profiles', PROFILE, 'pnpm-workspace.yaml')
   try {
     const text = readFileSync(workspace, 'utf8')
-    if (!text.includes('set this to true or false')) return false
-    writeFileSync(workspace, text.replaceAll('set this to true or false', 'true'))
+    if (text.includes('set this to true or false')) {
+      writeFileSync(workspace, text.replaceAll('set this to true or false', 'true'))
+      return true
+    }
+    if (text.includes('allowBuilds:')) return false
+    const names = [PKG, ...companions()]
+    const block = ['allowBuilds:', ...names.map((name) => `  '${name}': true`)].join('\n')
+    writeFileSync(workspace, `${text.replace(/\n*$/, '\n')}${block}\n`)
     return true
   } catch {
     return false

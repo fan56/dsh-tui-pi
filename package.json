@@ -1,6 +1,6 @@
 {
   "name": "@aiwayds/dsh-tui-pi",
-  "version": "2.7.0",
+  "version": "2.32.0",
   "description": "A fully-featured pi-style terminal UI for DeepSeek Harness (dsh) — history look-back & fork-at-turn, guided preset switching, live subagent steering, model profiles & themes",
   "repository": {
     "type": "git",

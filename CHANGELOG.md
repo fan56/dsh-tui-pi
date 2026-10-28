@@ -4,13 +4,17 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.32.0] - 2026-10-28
 
 ### Added
 
 - **One-command install & launch** — `npm i -g @aiwayds/dsh-tui-pi` now prepares the machine by itself: the postinstall installs the `@deepseek-ai/dsh` host when missing (always via npm — when npm is not on PATH it prints what to install and stops; an existing host install is never touched), installs pnpm, and creates the `tui` profile with the plugin and its bundled companions, one short progress line per step; whatever cannot finish at install time (offline, no npm on PATH) is completed on the first launch. When pnpm ≥10 refuses a fresh profile add with `ERR_PNPM_IGNORED_BUILDS`, the onboarding approves the build scripts pnpm printed (they are this suite's closure-linker postinstalls, no-ops on published tarballs) into the profile's `pnpm-workspace.yaml` and retries the add once — user-written true/false decisions are never overwritten. The `dsh-tui-pi` launcher runs the same idempotent onboarding as a catch-up and fast-paths to a silent boot once the machine is set up.
 - **`dst` alias** — a second global bin next to `dsh-tui-pi`; both point at the same launcher.
 - **Profile version follow** — after a global upgrade of the package, the next launch re-runs the profile add to move the mounted copy to the new version; a profile newer than the global install (dev-upgraded ahead) is left untouched.
+
+### Fixed
+
+- **Local smoke resolved a stale dsh** — under `npm run` the smoke's child PATH led with this repo's `node_modules/.bin`, where a stale dev copy of `@deepseek-ai/dsh` (0.1.7-rc.1) resolved before the real global CLI, failed the plugin peerDependencies check and skipped the bundle, so the mount assertion saw a tree without the plugin. The smoke now strips the repo `.bin` segment and the `npm_config_*` variables from the child environment, and dumps the full composed output to `/tmp/smoke-dump-fail.txt` when the assertion fails.
 
 ## [2.31.0] - 2026-10-27
 
