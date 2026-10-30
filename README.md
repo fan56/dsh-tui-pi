@@ -53,6 +53,8 @@ dsh plugin --profile tui add @aiwayds/dsh-tui-pi
 dsh --profile tui          # launch
 ```
 
+Never add `@deepseek-ai/*` packages to a profile by hand — the host provides them, and their npm `latest` tag is a 0.0.1 stub (a bare-name `pnpm add @deepseek-ai/dsh-llm` lands that stub next to the plugin and shadows the host's copy; the symptom is the loader's `does not provide an export named …` and the plugin not activating). The `dsh-tui-pi` launcher checks for exactly this before every boot and, when it finds a shadowing copy, stops with both paths, both versions and the removal commands instead of booting into the broken state.
+
 Legacy `session_projcache` records (written before dsh 0.1.2-alpha.4) are migrated automatically at profile load — idempotent, with per-file backups, never blocking startup; the `dsh-tui-pi` launcher runs the same preflight.
 
 Everything that used to need manual patching — the canvas background, the `@deepseek-ai` module closure, the compaction backend — now happens automatically. For a normal install, upgrading the global package upgrades the profile on the next launch (see above). `dev-upgrade` remains for dev machines that install the profile from a checked-out repo:

@@ -4,6 +4,12 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Launcher guard against shadowed host packages** — `dsh-tui-pi` / `dst` now checks, before booting, that the mounted plugin resolves every `@deepseek-ai/*` package it imports at runtime to the running host's own copy. A stray copy inside the profile — the classic is a bare-name `pnpm add @deepseek-ai/dsh-llm`, which lands the 0.0.1 stub that package's npm `latest` tag still points at — used to surface only as the loader's `SyntaxError: The requested module '@deepseek-ai/dsh-llm' does not provide an export named 'assistantStreamFirstTokenTime'` with the plugin silently not activating. The launcher now stops with both paths, both versions and the exact removal commands (`pnpm remove` when the copy is a declared profile dependency, `rm -rf` otherwise, then the re-mount). Copies newer than the host, dev `link:` checkouts and an unreadable host side only print a note and boot — the guard never blocks a working setup on a guess. Healthy profiles stay silent (11 packages, a few milliseconds); the package list is pinned to the compiled `lib/` imports by a test.
+
 ## [2.33.0] - 2026-10-28
 
 ### Changed

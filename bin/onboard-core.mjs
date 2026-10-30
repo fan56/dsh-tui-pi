@@ -46,16 +46,19 @@ export function dshHome() {
   return process.env.DSH_HOME || join(homedir(), '.dsh')
 }
 
+// Where `dsh plugin add` mounts this package inside the tui profile.
+export function profilePluginDir() {
+  return join(dshHome(), 'profiles', PROFILE, 'node_modules', PKG)
+}
+
 // The profile counts as set up once this package is resolvable inside it.
 export function profileMounted() {
-  return existsSync(join(dshHome(), 'profiles', PROFILE, 'node_modules', PKG, 'package.json'))
+  return existsSync(join(profilePluginDir(), 'package.json'))
 }
 
 export function profileVersion() {
   try {
-    return JSON.parse(
-      readFileSync(join(dshHome(), 'profiles', PROFILE, 'node_modules', PKG, 'package.json'), 'utf8'),
-    ).version ?? null
+    return JSON.parse(readFileSync(join(profilePluginDir(), 'package.json'), 'utf8')).version ?? null
   } catch {
     return null
   }
