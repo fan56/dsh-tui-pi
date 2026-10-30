@@ -1,6 +1,6 @@
 ---
 name: dsh-tui-pi-config
-description: "dsh TUI 增强套件使用与配置指南。凡涉及 TUI 主题/面板/footer、界面语言、子代理并发与轮数限制、模型收藏与隐藏、会话保留与 /resume 过滤、ask_user 超时、preset 记忆，或要配置 dsh-tui 段时先读本指南：插件配置 entry `dsh-tui` 的 17 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser）、DSH_TUI_* 环境变量、快速上手向导、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、语言、language、收藏模型、隐藏模型、保留策略、panelHeight、resume、preset。"
+description: "dsh TUI 增强套件配置指南。凡涉及 TUI 主题/面板/footer、界面语言、子代理并发与轮数限制、模型收藏与隐藏、会话保留与 /resume 过滤、ask_user 超时、空闲放锁、preset 记忆，或要配置 dsh-tui 段时先读本指南：entry `dsh-tui` 的 18 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser/idleReleaseSec）、DSH_TUI_* 环境变量、快速上手、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、language、收藏模型、隐藏模型、保留策略、resume、preset、idleReleaseSec。"
 ---
 
 # dsh-tui-pi 使用指南（TUI 主题 / 子代理治理 / 会话管理）
@@ -40,6 +40,7 @@ dsh 0.1.5 的 `~/.dsh/settings.yaml` 已移除：其顶层 `dsh-tui:` 段会在�
 | `resume.minBytes` | 数字 | `1024` | `/resume` 选择器的最小压缩日志体积（显示口径）；每次打开选择器生效 |
 | `askUser.idleMinutes` | 数字 | `5` | ask_user_question 面板：聚焦题目无按键超过这么多分钟即自动应答（推荐项，计划不自动批准）；`<= 0` 关闭该规则；每次打开面板生效 |
 | `askUser.absoluteMinutes` | 数字 | `10` | ask_user_question 面板：单题硬上限，有操作也强制自动应答；`<= 0` 关闭该规则；每次打开面板生效 |
+| `idleReleaseSec` | 数字 | `600` | 空闲放锁：无输入且无运行中回合持续这么多秒后释放本 TUI 的会话写锁（手机 /resume 等其他端即可接管）；下次发消息/命令自动重取同一会话并补齐期间其他端写入的轮次；`0` 永不放锁；负数/非法值回落默认 |
 
 ### DSH_TUI_* 环境变量
 
@@ -48,6 +49,7 @@ dsh 0.1.5 的 `~/.dsh/settings.yaml` 已移除：其顶层 `dsh-tui:` 段会在�
 | `DSH_TUI_RETENTION_MAX_COUNT` / `_MAX_AGE_DAYS` / `_MIN_IDLE_HOURS` | retention 三键的 env 兜底 |
 | `DSH_TUI_RESUME_MAX_AGE_DAYS` / `_MIN_BYTES` | resume 两键的 env 兜底 |
 | `DSH_TUI_ASK_USER_IDLE_MINUTES` / `_ABSOLUTE_MINUTES` | askUser 两键的 env 兜底 |
+| `DSH_TUI_IDLE_RELEASE_SEC` | idleReleaseSec 的 env 兜底 |
 | `DSH_TUI_THEME` | `light`/`dark` 或任意已注册主题名硬钉显示配色（优先于偏好设置） |
 | `DSH_TUI_TRANSPARENT` | `1` 恢复透明终端背景 |
 | `DSH_TUI_MOUSE` | `buttons`（默认）\|`all`\|`off`，鼠标跟踪模式 |

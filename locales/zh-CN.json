@@ -718,5 +718,7 @@
   "hotkeys.action.workflowWidgetCycle": "在多个活动工作流之间切换 widget 显示（dsh-workflow）",
   "hotkeys.action.workflowWidgetPanLeft": "工作流面板视口左移",
   "hotkeys.action.workflowWidgetPanRight": "工作流面板视口右移",
-  "tui.workflowOverlay.none": "未找到工作流 run（用 /workflow run 跑一个 · dsh-workflow）"
+  "tui.workflowOverlay.none": "未找到工作流 run（用 /workflow run 跑一个 · dsh-workflow）",
+  "tui.idleRelease.reattached": "空闲已放锁——会话已重新接管，显示已补齐。",
+  "settings.idleReleaseSec.description": "空闲多少秒后把写锁让给其他端，如手机（0 = 永不放）"
 }

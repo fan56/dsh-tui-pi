@@ -16,6 +16,7 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { assistantStreamFirstTokenTime, createUserMessage, type ReasoningEffortId, type StreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { SessionId, SessionLogOffset, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import { readAppendSystem } from './append-system.ts'
 import { AttentionBoard, type AttentionInfo, type AttentionRow } from './attention.ts'
 import type { AttentionJevSource } from './attention-jev.ts'
@@ -74,6 +75,16 @@ export interface BridgeCallbacks {
    * the poll retries. Absent ⇒ queuing still works, waits for manual resume.
    */
   onRemotePromotable?(sessionId: string): Promise<void>
+  /**
+   * The write handle was released idle and the next prompt re-takes the SAME
+   * session id: rebind locally and rebuild the display exactly like a manual
+   * /resume (clear transcript, full snapshot replay) — the caller paints the
+   * turns other surfaces wrote while the lock was free. Throw ⇒ the released
+   * state is kept and the prompt surfaces the error; a later send retries.
+   * Absent ⇒ the bridge still re-binds via `resume()`, but the display is
+   * NOT rebuilt (thin embedders only).
+   */
+  onReattached?(sessionId: string): Promise<void>
   /** Live snapshot of tracked subagent (child session) rows, on any change. */
   onLive(agents: readonly AgentView[]): void
   /**
@@ -311,6 +322,24 @@ export class DshSessionBridge {
   private readonly promoteIntervalMs: number
   /** Serializes watch-lifecycle ops against the promotion poll. */
   private opChain: Promise<void> = Promise.resolve()
+
+  // ---- idle lock release (the takeover contract's lock half) ----
+  // A held write handle blocks every other surface: the phone's /resume
+  // degrades to a read-only watch against US, and its queued follow-ups wait
+  // for a release that (since the vendored writer lock died with the 0.1.5
+  // host-lease migration) only ever came from quitting the process. After
+  // `idleReleaseSec` of silence the write handle is disposed — the kernel
+  // lease frees with it — and the next prompt re-takes the SAME session id
+  // through `onReattached` (resume + missed-events replay), exactly the
+  // takeover's rebuild path.
+  private idleTimer: ReturnType<typeof setTimeout> | undefined
+  /** Session id released idle — the wake re-attaches it. */
+  private releasedReattachId: string | undefined
+  /** Durable event count when the handle was released (the wake diff base). */
+  private releasedSeq = 0
+  /** Live seconds knob (settings volatile); undefined → default 600. */
+  private readonly idleReleaseSecSource: (() => number | undefined) | undefined
+
   private runExclusive<T>(op: () => Promise<T>): Promise<T> {
     const next = this.opChain.then(op, op)
     this.opChain = next.then(() => undefined, () => undefined)
@@ -466,11 +495,14 @@ export class DshSessionBridge {
     remoteTailOptions?: { intervalMs?: number; decode?(file: string): Promise<string> }
     promoteIntervalMs?: number
     lateSeedMs?: number
+    /** Live `idleReleaseSec` knob (settings volatile read). */
+    idleReleaseSec?: () => number | undefined
   } = {}) {
     this.ctx = ctx
     this.callbacks = callbacks
     this.remoteTailOptions = options.remoteTailOptions ?? {}
     this.promoteIntervalMs = options.promoteIntervalMs ?? 1000
+    this.idleReleaseSecSource = options.idleReleaseSec
     // Footer cold start: seed ONLY the cwd `.dsh-profile` pin here — the pin
     // reads local files, so it is stable from the very first frame. The
     // composed default (`agentDefaultModel`) is deliberately NOT read yet: on
@@ -544,8 +576,13 @@ export class DshSessionBridge {
     }))
     this.disposers.push(ctx.on('agent/status', ({ agent, status }: { agent: { id: string }; status: 'idle' | 'running' }) => {
       if (this.handle === undefined || agent.id !== this.handle.agent.id) return
+      const wasRunning = this.running
       this.running = status === 'running'
       this.callbacks.onStatus(status)
+      // Idle lock release: arm on the turn's running→idle settle (children
+      // keep it disarmed via hasRunningWork), disarm the moment work resumes.
+      if (this.running) this.disarmIdleRelease()
+      else if (wasRunning && !this.hasRunningWork()) this.armIdleRelease()
     }))
     // Round-count reconcile fallback: keep "rounds" and the maxRounds policy
     // live even when a child's own events never bubble to this plugin (see
@@ -1124,6 +1161,87 @@ export class DshSessionBridge {
     this.remoteTail = undefined
   }
 
+  // ---- idle lock release ----
+
+  /** Seconds of input+turn silence before the write handle is freed.
+   * Precedence mirrors retention: settings value (validated) > env
+   * `DSH_TUI_IDLE_RELEASE_SEC` > 600s default; garbage/negative falls to the
+   * default; an explicit 0 disables (the single documented off switch). */
+  private idleReleaseMs(): number {
+    const DEFAULT_SEC = 600
+    const setting = this.idleReleaseSecSource?.()
+    let raw = typeof setting === 'number' && Number.isFinite(setting) ? setting : undefined
+    if (raw === undefined) {
+      const env = Number(process.env.DSH_TUI_IDLE_RELEASE_SEC)
+      if (Number.isFinite(env) && env >= 0) raw = env
+    }
+    if (raw === undefined || raw < 0) return DEFAULT_SEC * 1000
+    if (raw === 0) return 0
+    return raw * 1000
+  }
+
+  private armIdleRelease(): void {
+    this.disarmIdleRelease()
+    const ms = this.idleReleaseMs()
+    if (ms <= 0 || this.sessionId === undefined) return
+    const timer = setTimeout(() => {
+      this.idleTimer = undefined
+      this.releaseIdle()
+    }, ms)
+    timer.unref?.()
+    this.idleTimer = timer
+  }
+
+  private disarmIdleRelease(): void {
+    if (this.idleTimer === undefined) return
+    clearTimeout(this.idleTimer)
+    this.idleTimer = undefined
+  }
+
+  /** Drop the write handle so the next inputting surface wins the kernel
+   * lease. The transcript and `onLive` views stay up — only the handle goes;
+   * the next prompt re-takes the same session id via `onReattached`. */
+  private releaseIdle(): void {
+    if (this.handle === undefined || this.running || this.remoteTail !== undefined) return
+    if (this.hasRunningWork()) return
+    const session = this.handle.agent?.session
+    const snap = session?.snapshotEvents?.()
+    this.releasedSeq = Array.isArray(snap) ? snap.length : 0
+    this.releasedReattachId = String(this.sessionId)
+    const handle = this.handle
+    this.handle = undefined
+    this.sessionId = undefined
+    try {
+      void handle.dispose()
+    } catch {
+      /* already gone */
+    }
+  }
+
+  /** The wake: re-take the released session before the queued prompt goes
+   * out. Rebind through the registered `onReattached` (resume + display
+   * rebuild, the takeover's own path) or, absent that, a bare `resume()`. A
+   * lease meanwhile won by another surface keeps the released state (a later
+   * send retries) and fails THIS prompt with an actionable error. */
+  private async reattachReleased(): Promise<void> {
+    const id = this.releasedReattachId
+    if (id === undefined) return
+    const skip = this.releasedSeq
+    this.releasedReattachId = undefined
+    this.releasedSeq = 0
+    try {
+      if (this.callbacks.onReattached !== undefined) await this.callbacks.onReattached(id)
+      else await this.resume(SessionId(id))
+    } catch (error) {
+      this.releasedReattachId = id
+      this.releasedSeq = skip
+      if (error instanceof SessionAlreadyOwnedError) {
+        throw new Error('session is being driven by another process — send again later to re-take it, or /new for a fresh session')
+      }
+      throw error
+    }
+  }
+
   /**
    * Promote poll tick: viewer + queued follow-ups + watched driver gone →
    * attempt the takeover (onRemotePromotable rebuilds the UI via resume +
@@ -1312,6 +1430,9 @@ export class DshSessionBridge {
 
   /** Dispose the live agent (if any) and stop event subscriptions. */
   async dispose(): Promise<void> {
+    this.disarmIdleRelease()
+    this.releasedReattachId = undefined
+    this.releasedSeq = 0
     await this.stopRemoteWatch()
     for (const dispose of this.disposers.splice(0)) {
       try { dispose() } catch { /* contained */ }
@@ -1416,6 +1537,11 @@ export class DshSessionBridge {
    * session's events rebuild it.
    */
   private async teardownLiveBinding(): Promise<void> {
+    this.disarmIdleRelease()
+    // A session switch abandons whatever the idle release freed — the
+    // released id must not survive into the next binding's wake check.
+    this.releasedReattachId = undefined
+    this.releasedSeq = 0
     await this.stopRemoteWatch()
     const handle = this.handle
     this.handle = undefined
@@ -2078,6 +2204,14 @@ export class DshSessionBridge {
       }
     }
     if (this.handle !== undefined) return this.handle
+    // Idle-release wake: EVERY lazy-create path funnels here (prompt AND the
+    // command palette's ensureAgent) — without this a slash command typed on
+    // a released session would silently mint a FRESH session and strand the
+    // released one.
+    if (this.releasedReattachId !== undefined) {
+      await this.reattachReleased()
+      if (this.handle !== undefined) return this.handle
+    }
     if (this.creating !== undefined) return this.creating
     const creation = this.createSession()
     this.creating = creation

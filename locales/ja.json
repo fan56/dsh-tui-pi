@@ -718,5 +718,7 @@
   "hotkeys.action.workflowWidgetCycle": "アクティブなワークフロー間でウィジェットの表示を切り替え（dsh-workflow）",
   "hotkeys.action.workflowWidgetPanLeft": "ワークフローウィジェットを左へパン",
   "hotkeys.action.workflowWidgetPanRight": "ワークフローウィジェットを右へパン",
-  "tui.workflowOverlay.none": "ワークフロー実行が見つかりません（/workflow run で実行 · dsh-workflow）"
+  "tui.workflowOverlay.none": "ワークフロー実行が見つかりません（/workflow run で実行 · dsh-workflow）",
+  "tui.idleRelease.reattached": "アイドルでロック解放済み — セッションを再取得し、表示を同期しました。",
+  "settings.idleReleaseSec.description": "他サーフェス（スマホ等）へ書き込みロックを解放するまでの無通信秒数（0 = 解放しない）"
 }

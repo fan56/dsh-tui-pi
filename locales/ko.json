@@ -718,5 +718,7 @@
   "hotkeys.action.workflowWidgetCycle": "활성 워크플로 간 위젯 표시 전환 (dsh-workflow)",
   "hotkeys.action.workflowWidgetPanLeft": "워크플로 위젯 왼쪽 패닝",
   "hotkeys.action.workflowWidgetPanRight": "워크플로 위젯 오른쪽 패닝",
-  "tui.workflowOverlay.none": "워크플로 실행을 찾을 수 없습니다 (/workflow run으로 실행 · dsh-workflow)"
+  "tui.workflowOverlay.none": "워크플로 실행을 찾을 수 없습니다 (/workflow run으로 실행 · dsh-workflow)",
+  "tui.idleRelease.reattached": "유휴 잠금 해제됨 — 세션을 다시 가져왔고 화면을 동기화했습니다.",
+  "settings.idleReleaseSec.description": "다른 서피스(휴대폰 등)에 쓰기 잠금을 해제하기까지의 유휴 초 (0 = 해제 안 함)"
 }

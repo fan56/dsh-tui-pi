@@ -718,5 +718,7 @@
   "hotkeys.action.workflowWidgetCycle": "cycle the workflow widget between active runs (dsh-workflow)",
   "hotkeys.action.workflowWidgetPanLeft": "pan the workflow widget left",
   "hotkeys.action.workflowWidgetPanRight": "pan the workflow widget right",
-  "tui.workflowOverlay.none": "no workflow runs found (run one with /workflow run, dsh-workflow)"
+  "tui.workflowOverlay.none": "no workflow runs found (run one with /workflow run, dsh-workflow)",
+  "tui.idleRelease.reattached": "Idle lock was released — session re-taken, display caught up.",
+  "settings.idleReleaseSec.description": "Seconds of silence before the write lock is freed for other surfaces, e.g. the phone (0 = never)"
 }

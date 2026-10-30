@@ -176,6 +176,8 @@ export interface TuiSettings {
   retention: Volatile<RetentionSettings>
   resume: Volatile<ResumeSettings>
   askUser: Volatile<AskUserSettings>
+  /** Seconds of silence before the write handle is freed for other surfaces (0 = never). */
+  idleReleaseSec: Volatile<number>
 }
 
 /**
@@ -335,6 +337,15 @@ export const Config = z.object({
     .default({ idleMinutes: ASK_USER_IDLE_MINUTES_DEFAULT, absoluteMinutes: ASK_USER_ABSOLUTE_MINUTES_DEFAULT })
     .volatile()
     .description(t('settings.askUser.description')),
+  // Idle lock release (the takeover contract's lock half): seconds of
+  // silence before the TUI frees its session write handle so the phone (or
+  // another surface) can take the session. 0 disables; garbage/negative
+  // falls to the 600s default in the bridge reader.
+  idleReleaseSec: z
+    .number()
+    .default(600)
+    .volatile()
+    .description(t('settings.idleReleaseSec.description')),
 })
 
 /**
