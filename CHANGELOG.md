@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.35.0] - 2026-11-01
+
+### Changed
+- **Dependency wave: every bundled `@aiwayds` plugin range moved to the current npm-latest.** The load-bearing one is `dsh-subagent-registry` `^0.14.0` → `^0.17.0` — the old range excluded 0.15+, so the copy tui-pi resolves at runtime (the `agent-runtime.ts` probe) stayed on 0.14.1 while the profile's bundle row carried the newest; with `^0.17.0` pnpm dedupes and the probe composes against the same version the bundle registers. `dsh-model-sync` `^0.7.0` → `^0.8.0` and `dsh-web-search-anysearch` `^0.6.0` → `^0.8.1` had the same exclusion; the remaining seven ranges raise their floors to today's latest. devDependencies on the host closure move `0.2.1-rc.2` → `0.2.1-rc.5` (current latest/next). `@earendil-works/pi-tui` stays pinned at `0.85.1` (npm latest is 1.4.0, a major-version jump to be evaluated separately).
+- `e2e/latest-profile/package.json` regenerated at the current npm-latest wave.
+
 ## [2.34.0] - 2026-10-30
 
 ### Added
