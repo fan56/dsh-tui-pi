@@ -604,8 +604,9 @@ export class ExternalWidgetFile implements Component {
     // runs re-write immediately.
     try {
       const dir = tuiWidgetsDir()
+      const mine = new RegExp(`\\.(${process.pid})\\.lines$`)
       for (const name of readdirSync(dir)) {
-        if (name.endsWith('.lines')) rmSync(join(dir, name), { force: true })
+        if (mine.test(name)) rmSync(join(dir, name), { force: true })
       }
     } catch {
       /* no widgets dir yet — nothing stale to wipe */
@@ -619,7 +620,9 @@ export class ExternalWidgetFile implements Component {
     let dir: string
     try {
       dir = tuiWidgetsDir()
-      const names = readdirSync(dir).filter((n) => n.endsWith('.lines')).sort()
+      // Per-session contract: writers suffix their pid (<plugin>.<pid>.lines);
+      // this dock renders only the files of its own process.
+      const names = readdirSync(dir).filter((n) => n.endsWith(`.${process.pid}.lines`)).sort()
       const lines: string[] = []
       let newest = 0
       for (const name of names) {

@@ -662,6 +662,17 @@ export function apply(ctx: Context, config: TuiSettings): void {
             })
             break
           }
+          case 'workflow-widget-cycle': {
+            // Alt+W: cycle the workflow widget between active runs — a signal
+            // file for the dsh-workflow writer (same process pid, per-session
+            // seam: writers suffix their pid into the widget file name).
+            try {
+              const dir = join(homedir(), '.dsh', 'tui-widgets')
+              void mkdir(dir, { recursive: true })
+              void writeFile(join(dir, `dsh-workflow.${process.pid}.cycle.signal`), 'next')
+            } catch { /* best-effort — the next Alt+W retries */ }
+            break
+          }
           case 'workflow-overlay': {
             // Ctrl+K: the workflow overlay — rendering comes from the
             // dsh-workflow package through the generic widget manifest; the
