@@ -17,7 +17,7 @@
     "@aiwayds/dsh-profile-switch": "0.3.1",
     "@aiwayds/dsh-subagent-registry": "0.17.0",
     "@aiwayds/dsh-topics-memory": "0.25.1",
-    "@aiwayds/dsh-tui-pi": "2.34.0",
+    "@aiwayds/dsh-tui-pi": "2.35.0",
     "@aiwayds/dsh-vault": "0.7.0",
     "@aiwayds/dsh-web-search-anysearch": "0.8.1",
     "@aiwayds/dsh-web-search-tavily": "0.6.1",
