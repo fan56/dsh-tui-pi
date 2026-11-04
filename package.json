@@ -37,7 +37,7 @@
     "dsh-tui-pi": "bin/dsh-tui-pi",
     "dst": "bin/dsh-tui-pi"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=22.19.0"
   },
