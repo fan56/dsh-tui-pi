@@ -75,7 +75,7 @@
     "@aiwayds/dsh-mcp-adapter": "^0.7.2",
     "@aiwayds/dsh-model-sync": "^0.8.0",
     "@aiwayds/dsh-profile-switch": "^0.3.1",
-    "@aiwayds/dsh-subagent-registry": "^0.17.0",
+    "@aiwayds/dsh-subagent-registry": "^0.18.0",
     "@aiwayds/dsh-web-search-anysearch": "^0.8.1",
     "@earendil-works/pi-tui": "0.85.1"
   },
