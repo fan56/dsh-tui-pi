@@ -20,6 +20,11 @@ ARG PNPM_VERSION=10.33.0
 # an exact version for a deterministic rebuild with
 # --build-arg DSH_VERSION=<version>.
 ARG DSH_VERSION=
+# npm registry for the in-build installs (step: global dsh closure, step:
+# pnpm install). Default stays the official registry; point it at a mirror
+# (e.g. https://registry.npmmirror.com) when the podman VM's route to
+# registry.npmjs.org is degraded (ECONNRESET on bulk tarball fetches).
+ARG NPM_REGISTRY=https://registry.npmjs.org
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TERM=xterm-256color
@@ -47,7 +52,7 @@ RUN case "$(uname -m)" in \
 # types (they are not on the public registry in a usable form).
 RUN test -n "${DSH_VERSION}" \
       || (echo "DSH_VERSION build arg is required (e.g. --build-arg DSH_VERSION=0.1.5-rc.2)" >&2; exit 1) \
- && npm install -g --no-fund --no-audit \
+ && npm install -g --no-fund --no-audit --registry "${NPM_REGISTRY}" \
       pnpm@${PNPM_VERSION} \
       "@deepseek-ai/dsh@${DSH_VERSION}" \
  && (dsh --version || true)
@@ -57,7 +62,7 @@ WORKDIR /app
 # Build the plugin from source and pack the user-facing tarball into /dist.
 # The frozen-lockfile retry covers lockfiles generated on another platform.
 COPY . .
-RUN (pnpm install --frozen-lockfile || pnpm install) \
+RUN (pnpm install --frozen-lockfile --registry=${NPM_REGISTRY} || pnpm install --registry=${NPM_REGISTRY}) \
  && node scripts/link-dsh-closure.mjs \
  && pnpm build \
  && pnpm pack \
