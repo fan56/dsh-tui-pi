@@ -1,16 +1,18 @@
 # CI: build, typecheck, unit suite, and a real-host boot smoke on every push
 # to main, every pull request, and a daily schedule.
 #
-# The dsh CLI version is resolved at runtime from the npm registry's rolling
-# rc/stable line — the newest of the `latest` (stable) and `next` (rc)
-# dist-tags, never hand-pinned and never the retired `alpha` tag (policy
-# 2026-09-03). When a stable 0.1.2+ lands on `latest` it wins over the rc by
-# plain semver compare. The daily schedule re-tests against whatever the
-# closure has become since the last push, so a new dsh release that breaks
-# the plugin surfaces as a red run within a day instead of at the next
-# release. The smoke boots a scratch profile with the plugin mounted via the
-# real dsh CLI (scripts/smoke-boot.mjs) so "loads under real cordis" is a
-# gate, not a hope.
+# 2026-11-04 incident pin: the dsh CLI closure supply is PINNED to the last
+# complete wave (0.2.1-rc.5) instead of resolving newest-of(latest,next) at
+# run time — upstream `next` moved to 0.2.2-rc.1 and that wave breaks this
+# 0.2.1-rc.5-era source (see the install step below for the breaking
+# changes). Ride the 0.2.2 wave (adapt the source, tracked as the wave-
+# migration task), then restore the rolling newest-of(latest,next)
+# resolution — the original resolution block is recoverable verbatim from
+# this file's git history (the parent of the pin commit), and the daily
+# schedule becomes the rolling early-warning again then. The smoke boots a
+# scratch profile with the plugin mounted via the real dsh CLI
+# (scripts/smoke-boot.mjs) so "loads under real cordis" is a gate, not a
+# hope.
 name: CI
 
 on:
@@ -55,47 +57,28 @@ jobs:
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Install dsh CLI (rolling rc/stable line — newest of latest/next, never alpha; wave-pinned closure, falls back to the other tag)
+      - name: Install dsh CLI (PINNED 0.2.1-rc.5 closure wave — 2026-11-04 incident pin)
         run: |
-          # Policy (2026-09-03): the alpha line is retired for CI. Resolve the
-          # newest of the `latest` (stable) and `next` (rc) dist-tags at
-          # runtime, never hand-pinned — when a stable 0.1.2+ lands on
-          # `latest` it wins over the rc by plain semver compare.
-          STABLE="$(npm view @deepseek-ai/dsh@latest version)"
-          RC="$(npm view @deepseek-ai/dsh@next version 2>/dev/null || true)"
-          DSH_VERSION="$STABLE"
-          # Newest-of(latest,next) with a prerelease-aware node compare,
-          # NOT sort -V (trap on record: sort -V ranks 0.2.1-rc.2 ABOVE
-          # 0.2.1 and would pick the older rc once a stable lands on latest).
-          DSH_VERSION="$STABLE"
-          if [ -n "$RC" ] && node -e '
-            const parse = (v) => { const [core, pre] = v.split("-"); return { c: core.split(".").map(Number), pre } }
-            const A = parse(process.argv[1]), B = parse(process.argv[2])
-            for (let i = 0; i < 3; i++) {
-              if (A.c[i] !== B.c[i]) process.exit(A.c[i] > B.c[i] ? 0 : 1)
-            }
-            if ((A.pre === undefined) !== (B.pre === undefined)) process.exit(A.pre === undefined ? 0 : 1)
-            process.exit(String(A.pre ?? "") >= String(B.pre ?? "") ? 0 : 1)
-          ' "$RC" "$STABLE"; then
-            DSH_VERSION="$RC"
-          fi
-          # The install goes into a scratch prefix as the publish wave's OWN
-          # closure: every @deepseek-ai/* range the resolved version declares
-          # is pinned to its base version via npm overrides. A plain
-          # `npm install -g dsh@$VER` is not resilient enough:
-          # 1. a caret range like ^0.1.5-rc.2 FLOATS to a newer prerelease in
-          #    the same tower, so one incomplete upstream wave (next=0.1.5-rc.3
-          #    shipped without dsh-client-ui-sidebar-documentpreview@rc.3)
-          #    poisons fresh installs of the OLDER, complete version too;
-          # 2. a wave with missing base versions fails HERE — instead of
-          #    redding CI on upstream's breakage — and falls back to the other
-          #    dist-tag; both ends uninstallable stays red (a real signal).
-          ALT=""
-          if [ "$DSH_VERSION" != "$STABLE" ]; then
-            ALT="$STABLE"
-          elif [ -n "$RC" ] && [ "$RC" != "$DSH_VERSION" ]; then
-            ALT="$RC"
-          fi
+          # 2026-11-04 incident pin (suspends the rolling newest-of(latest,next)
+          # resolution, policy 2026-09-03): upstream `next` moved to
+          # 0.2.2-rc.1 and the roller picked it (red since the scheduled run
+          # 41817078497; also 41825380375, 41850906421). That wave breaks this
+          # 0.2.1-rc.5-era source:
+          #   - `ModelSelectionRef` removed from @deepseek-ai/dsh-agent
+          #     (src/session.ts:14 import),
+          #   - `Fiber._config` renamed to `config` (src/reload.ts:179/192),
+          #   - two call sites lost an argument (src/session.ts:1654/2333).
+          # Policy: an upstream incident is turned green in the same round by
+          # pinning the closure supply to the last COMPLETE published wave.
+          # Restore the rolling resolution once the 0.2.2 wave completes and
+          # the source is adapted — the original block (dist-tag reads,
+          # prerelease-aware newest-of compare, ALT fallback) is recoverable
+          # verbatim via `git show 3e9f759:.github/workflows/ci.yml`.
+          DSH_VERSION="0.2.1-rc.5"
+          # Same wave-pinned closure install as before: the pinned version's
+          # own @deepseek-ai/* ranges are clamped to their base versions via
+          # npm overrides, so tilde/caret ranges cannot float into another
+          # tower (the ^0.1.5-rc.2 float trap on record).
           DSH_DIR="${RUNNER_TEMP:-/tmp}/dsh-cli-install"
           install_dsh() {
             local ver="$1" dir="$2"
@@ -118,15 +101,10 @@ jobs:
             ' "$ver" "$dir"
             (cd "$dir" && npm install --no-audit --no-fund >/dev/null)
           }
-          echo "dsh closure: ${DSH_VERSION}"
+          echo "dsh closure: ${DSH_VERSION} (pinned)"
           if ! install_dsh "$DSH_VERSION" "$DSH_DIR"; then
-            if [ -z "$ALT" ]; then
-              echo "::error:: dsh@${DSH_VERSION} won't install and there is no other dist-tag to fall back to"
-              exit 1
-            fi
-            echo "::warning:: dsh@${DSH_VERSION} won't install (incomplete upstream publish wave?) — falling back to ${ALT}"
-            DSH_DIR="${RUNNER_TEMP:-/tmp}/dsh-cli-install-fallback"
-            install_dsh "$ALT" "$DSH_DIR" || { echo "::error:: neither ${DSH_VERSION} nor ${ALT} installs"; exit 1; }
+            echo "::error:: pinned closure wave dsh@${DSH_VERSION} won't install — the wave left the registry; re-pin to the next complete wave"
+            exit 1
           fi
           # Later steps (link-dsh-closure, boot smoke) use the scratch CLI.
           echo "${DSH_DIR}/node_modules/.bin" >> "$GITHUB_PATH"
