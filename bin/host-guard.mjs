@@ -249,7 +249,7 @@ export function checkHostPackages({ pluginDir, dshBin, dshHome, log = () => {} }
       log(`    the host ships:      ${f.intended?.version ?? '(unreadable)'}`)
       log(`      ← ${f.intended ? realOr(f.intended.dir) : '(shared closure link missing)'}`)
       if (f.ancient) {
-        log('\n  Versions before 0.2.1-rc.2 are stubs, not releases: official dsh packages keep their npm `latest` dist-tag at a 0.0.1 placeholder, so installing by bare package name (`pnpm add @deepseek-ai/dsh-llm`) lands a stub in the profile and breaks every plugin import. Install with an explicit version instead (e.g. @deepseek-ai/dsh-llm@0.2.1-rc.5).')
+        log('\n  Versions before 0.2.1-rc.2 are stubs, not releases: official dsh packages keep their npm `latest` dist-tag at a 0.0.1 placeholder, so installing by bare package name (`pnpm add @deepseek-ai/dsh-llm`) lands a stub in the profile and breaks every plugin import. Install with an explicit version instead (e.g. @deepseek-ai/dsh-llm@0.2.2-rc.1).')
       } else {
         log('\n  A stale copy inside the profile shadows the host\'s own.')
       }

@@ -158,14 +158,13 @@ export function resolveHostVersion() {
   }
 }
 
-// The oldest host this plugin supports. Compatibility window: 0.2.1-rc.2
-// through 0.2.1-rc.4 (rc.2 lacks the subagents.start* APIs, where the
-// subagent-registry companion degrades gracefully via its host-compat
-// guard; rc.3/rc.4 have the full surface). Read from the manifest's own
-// peerDependencies when declared, so declaration and check stay one
-// decision — note the floor must NOT move into peerDependencies itself:
-// npm ≥7 auto-installs peers on global installs and would pull the 834MB
-// host at its stale `latest` tag.
+// The oldest host this plugin supports. Compatibility window: >=
+// 0.2.2-rc.1 (the rc/stable line; older hosts are rejected by the
+// startup guard and upgraded by the onboarding, not kept). Read from the
+// manifest's own peerDependencies when declared, so declaration and
+// check stay one decision — note the floor must NOT move into
+// peerDependencies itself: npm ≥7 auto-installs peers on global installs
+// and would pull the 834MB host at its stale `latest` tag.
 export function minHostVersion() {
   try {
     const peer = readSelfPackage().peerDependencies?.[HOST]
@@ -174,7 +173,7 @@ export function minHostVersion() {
   } catch {
     /* fall through to the baked-in floor */
   }
-  return '0.2.1-rc.2'
+  return '0.2.2-rc.1'
 }
 
 // True when the mounted profile copy is OLDER than this package. Prerelease
