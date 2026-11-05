@@ -74,7 +74,21 @@ jobs:
               if (A.c[i] !== B.c[i]) process.exit(A.c[i] > B.c[i] ? 0 : 1)
             }
             if ((A.pre === undefined) !== (B.pre === undefined)) process.exit(A.pre === undefined ? 0 : 1)
-            process.exit(String(A.pre ?? "") >= String(B.pre ?? "") ? 0 : 1)
+            const pa = String(A.pre ?? "").split("."), pb = String(B.pre ?? "").split(".")
+            // The rc segments compare NUMERICALLY per dot segment (rc.10 > rc.2
+            // — a plain string compare lets the OLDER rc win once an rc index
+            // reaches two digits), numeric identifiers sort below alphanumeric
+            // ones (semver), and the shorter identifier list loses.
+            for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+              const x = pa[i], y = pb[i]
+              if (x === undefined) process.exit(1)
+              if (y === undefined) process.exit(0)
+              const xn = /^\d+$/.test(x), yn = /^\d+$/.test(y)
+              if (xn !== yn) process.exit(xn ? 1 : 0)
+              if (xn) { if (Number(x) !== Number(y)) process.exit(Number(x) > Number(y) ? 0 : 1) }
+              else if (x !== y) process.exit(x > y ? 0 : 1)
+            }
+            process.exit(0)
           ' "$RC" "$STABLE"; then
             DSH_VERSION="$RC"
           fi
