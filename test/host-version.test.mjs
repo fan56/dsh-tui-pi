@@ -32,9 +32,9 @@ test('parseVersion accepts core, prerelease, and padded input; rejects garbage',
 test('compareVersions orders the host lines the plugin must distinguish', () => {
   const cmp = (a, b) => compareVersions(parseVersion(a), parseVersion(b))
   // the exact version the floor names equals it; neighbours straddle it
-  assert.ok(cmp('0.1.5-rc.2', HOST_FLOOR) === 0)
-  assert.ok(cmp('0.1.5-rc.3', HOST_FLOOR) > 0)
-  assert.ok(cmp('0.1.5-rc.1', HOST_FLOOR) < 0)
+  assert.ok(cmp('0.2.2-rc.1', HOST_FLOOR) === 0)
+  assert.ok(cmp('0.2.2-rc.2', HOST_FLOOR) > 0)
+  assert.ok(cmp('0.2.1', HOST_FLOOR) < 0)
   assert.ok(cmp('0.1.4', HOST_FLOOR) < 0)
   // the retired alpha line sorts below the rc identifiers
   assert.ok(cmp('0.1.5-alpha.5', HOST_FLOOR) < 0)
@@ -57,10 +57,14 @@ test('hostSupported judges exactly the peer floor', () => {
   assert.equal(hostSupported('0.1.5-alpha.5'), false)
   assert.equal(hostSupported('0.1.5-rc.1'), false)
   assert.equal(hostSupported('0.1.4'), false)
-  assert.equal(hostSupported('0.1.5-rc.2'), true)
-  assert.equal(hostSupported('0.1.5-rc.3'), true)
-  assert.equal(hostSupported('0.1.5'), true)
-  assert.equal(hostSupported('0.2.0'), true)
+  // pre-0.2.2 hosts preflight-clean but break at runtime (/model TypeError,
+  // reload on cordis < 4.1 config) — the guard must reject them
+  assert.equal(hostSupported('0.1.5-rc.2'), false)
+  assert.equal(hostSupported('0.2.0'), false)
+  assert.equal(hostSupported('0.2.1'), false)
+  assert.equal(hostSupported('0.2.1-rc.5'), false)
+  assert.equal(hostSupported('0.2.2-rc.1'), true)
+  assert.equal(hostSupported('0.2.2'), true)
   assert.equal(hostSupported('garbage'), false)
 })
 
@@ -74,8 +78,8 @@ test('checkHostSupport reports an unsupported host with the found version and th
 })
 
 test('checkHostSupport accepts hosts at or above the floor', () => {
-  assert.deepEqual(checkHostSupport(() => '0.1.5-rc.2'), { ok: true, version: '0.1.5-rc.2' })
-  assert.deepEqual(checkHostSupport(() => '0.1.5'), { ok: true, version: '0.1.5' })
+  assert.deepEqual(checkHostSupport(() => '0.2.2-rc.1'), { ok: true, version: '0.2.2-rc.1' })
+  assert.deepEqual(checkHostSupport(() => '0.2.2'), { ok: true, version: '0.2.2' })
 })
 
 test('checkHostSupport fails open when the closure version is unreadable', () => {

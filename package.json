@@ -80,9 +80,9 @@
     "@earendil-works/pi-tui": "0.85.1"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-settings": ">=0.2.0-rc.2",
-    "@deepseek-ai/dsh-skill": ">=0.2.0-rc.2",
-    "@deepseek-ai/dsh-user-questions": ">=0.2.0-rc.2"
+    "@deepseek-ai/dsh-settings": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-skill": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-user-questions": ">=0.2.2-rc.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-settings": {
