@@ -52,9 +52,46 @@ BUILD_ARGS=(--build-arg DSH_VERSION="$DSH_VERSION")
 printf '==> building image %s (context: %s)\n' "$IMAGE" "$REPO_ROOT"
 podman build -f "$REPO_ROOT/e2e/Containerfile" -t "$IMAGE" "${BUILD_ARGS[@]}" "$REPO_ROOT"
 
+# Vendor the sibling dsh-subagent-registry build when one sits next to this
+# checkout. npm's dsh-subagent-registry@0.18.0 (latest) statically imports
+# CodeRunFailedError from @deepseek-ai/dsh-tools — an export the 0.2.2-rc.1
+# host moved to the new @deepseek-ai/dsh-tool-executor-ptc package — so the
+# published build dies at plugin load with an ESM SyntaxError and every
+# scenario that dispatches through use_agent (75/76, plus 77's readiness
+# probe) goes red on that host. The fixed source lives in the sibling repo;
+# packing it here lets the scenarios run against the fix while npm still
+# carries the stale build. The tarball reaches the container through the
+# /e2e bind mount; scenarios fall back to the npm pin when nothing is
+# vendored (fresh clone, CI, or a stale sibling).
+VENDOR_DIR="$REPO_ROOT/e2e/vendor"
+REGISTRY_SRC="${E2E_REGISTRY_SRC:-$REPO_ROOT/../dsh-subagent-registry}"
+if [ -d "$REGISTRY_SRC/lib" ] && [ -f "$REGISTRY_SRC/package.json" ]; then
+  mkdir -p "$VENDOR_DIR"
+  rm -f "$VENDOR_DIR"/aiwayds-dsh-subagent-registry-*.tgz
+  if (cd "$REGISTRY_SRC" && npm pack --pack-destination "$VENDOR_DIR" >/dev/null 2>&1); then
+    REG_TGZ="$(ls "$VENDOR_DIR"/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)"
+    # Staleness probe: a build that still imports the moved symbol would die
+    # at load exactly like the npm build — refuse to vendor it.
+    if [ -n "$REG_TGZ" ] && tar xzOf "$REG_TGZ" package/lib/ptc/runner.js 2>/dev/null \
+      | grep -q "import { CodeRunFailedError"; then
+      rm -f "$REG_TGZ"
+      printf '==> vendored registry build is stale (still imports the moved CodeRunFailedError) — scenarios fall back to the npm pin\n'
+    else
+      printf '==> vendored registry build: %s (sibling %s)\n' "$(basename "$REG_TGZ")" "$REGISTRY_SRC"
+    fi
+  else
+    printf '==> sibling registry pack failed — scenarios fall back to the npm pin\n'
+  fi
+fi
+
 printf '==> running scenario suite (all state stays inside the container)\n'
-podman run --rm --name dsh-tui-e2e \
-  -v "$REPO_ROOT/e2e:/e2e:ro" \
+RUN_ARGS=(--rm --name dsh-tui-e2e -v "$REPO_ROOT/e2e:/e2e:ro")
+# Subset override consumed by run-all.sh; forwarded so callers can scope a
+# run without hand-rolling podman incantations.
+if [ -n "${E2E_SCENARIOS:-}" ]; then
+  RUN_ARGS+=(-e "E2E_SCENARIOS=$E2E_SCENARIOS")
+fi
+podman run "${RUN_ARGS[@]}" \
   "$IMAGE" \
   bash /e2e/scenarios/run-all.sh
 

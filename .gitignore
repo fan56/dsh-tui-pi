@@ -29,3 +29,6 @@ docs/market-submissions.md
 # --- Local tooling / scratch (never commit) ---
 .mimosa/
 .quit-test/
+
+# --- e2e vendored sibling builds (staged by e2e/run-e2e.sh, never committed) ---
+e2e/vendor/

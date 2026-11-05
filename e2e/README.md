@@ -19,6 +19,15 @@
   `pnpm build && pnpm pack` 出的 tarball（放在镜像 `/dist/`）。
 - 场景执行：`e2e/` 以只读方式挂到容器 `/e2e`，因此改测试脚本不需要
   重建镜像；改 `src/` 或 `package.json` 才需要。
+- subagent-registry vendored 构建（可选）：兄弟仓 `../dsh-subagent-registry`
+  存在且已构建时，`run-e2e.sh` 会把它 `npm pack` 进 `e2e/vendor/`
+  （gitignored），场景 75 优先安装该 tarball——npm latest（0.18.0）仍静态
+  导入 `@deepseek-ai/dsh-tools` 的 `CodeRunFailedError`，而 0.2.2-rc.1 宿主
+  已把该符号迁去 `@deepseek-ai/dsh-tool-executor-ptc`，发布构建在 rc.1 上
+  加载即炸（ESM SyntaxError），75/76 的 use_agent 链路与 77 就绪探针全断。
+  vendored 构建若仍含旧导入会被拒用（staleness 探针）。npm 携带修复版后
+  删除该目录即可，场景回落到 npm pin。子集运行：`E2E_SCENARIOS="75-hard-stop
+  76-attention-early-stop" ./e2e/run-e2e.sh`。
 - 网络说明：基础镜像走 `docker.m.daocloud.io` 镜像源（本网络环境下
   registry-1.docker.io 被 DNS 污染）；容器内 npmjs.org 可直连，
   nodejs.org 的 CDN 同被污染——Node tarball 默认走 npmmirror 二进制
