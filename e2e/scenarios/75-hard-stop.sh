@@ -58,9 +58,13 @@ if ! grep -qF '@aiwayds/dsh-subagent-registry' "$HOME/.dsh/profiles/tui/package.
   # the 0.2.2-rc.1 host wave: it statically imports CodeRunFailedError from
   # @deepseek-ai/dsh-tools, an export that host moved to
   # @deepseek-ai/dsh-tool-executor-ptc, so the published build dies at load
-  # with an ESM SyntaxError and every use_agent dispatch would fail. Once
-  # npm carries a fixed latest, the vendored dir is simply absent and the
-  # pin below applies unchanged.
+  # with an ESM SyntaxError and every use_agent dispatch would fail. The
+  # vendored tarball's version is bumped past the npm copy (0.18.0 → 0.18.1)
+  # because pnpm's hoisted install keeps the existing node_modules copy when
+  # a tarball declares the same name+version — only a distinct version makes
+  # the file: dependency materialize the fixed build. Once npm carries a
+  # fixed latest, the vendored dir is simply absent and the pin below
+  # applies unchanged.
   REG_TGZ="$(ls /e2e/vendor/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)"
   if [ -z "$REG_TGZ" ]; then
     npm pack @aiwayds/dsh-subagent-registry@0.18.0 --registry=https://registry.npmjs.org --pack-destination /tmp >/dev/null 2>&1 \

@@ -63,25 +63,49 @@ podman build -f "$REPO_ROOT/e2e/Containerfile" -t "$IMAGE" "${BUILD_ARGS[@]}" "$
 # carries the stale build. The tarball reaches the container through the
 # /e2e bind mount; scenarios fall back to the npm pin when nothing is
 # vendored (fresh clone, CI, or a stale sibling).
+#
+# The packed version is bumped one patch past the sibling's manifest before
+# repacking: scenario 10's tui-pi install already pulls the published copy
+# into the profile (tui-pi depends on ^0.18.0), and pnpm's hoisted install
+# keeps the existing copy when a tarball declares the SAME name+version —
+# the plugin-add'd file: dependency would be recorded in the profile
+# package.json while node_modules keeps the broken npm content (observed in
+# the container). A distinct version forces the hoisted root slot to
+# materialize the vendored build.
 VENDOR_DIR="$REPO_ROOT/e2e/vendor"
 REGISTRY_SRC="${E2E_REGISTRY_SRC:-$REPO_ROOT/../dsh-subagent-registry}"
 if [ -d "$REGISTRY_SRC/lib" ] && [ -f "$REGISTRY_SRC/package.json" ]; then
   mkdir -p "$VENDOR_DIR"
   rm -f "$VENDOR_DIR"/aiwayds-dsh-subagent-registry-*.tgz
-  if (cd "$REGISTRY_SRC" && npm pack --pack-destination "$VENDOR_DIR" >/dev/null 2>&1); then
-    REG_TGZ="$(ls "$VENDOR_DIR"/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)"
+  PACK_TMP="$(mktemp -d)"
+  if (cd "$REGISTRY_SRC" && npm pack --pack-destination "$PACK_TMP" >/dev/null 2>&1) \
+    && RAW_TGZ="$(ls "$PACK_TMP"/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)" \
+    && [ -n "$RAW_TGZ" ] \
+    && tar xzf "$RAW_TGZ" -C "$PACK_TMP" \
+    && BUMPED="$(node -e '
+        const fs = require("fs")
+        const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+        const m = manifest.version.match(/^(\d+)\.(\d+)\.(\d+)(.*)$/)
+        if (!m) { console.error("unbumpable version: " + manifest.version); process.exit(1) }
+        manifest.version = m[1] + "." + m[2] + "." + (Number(m[3]) + 1) + m[4]
+        fs.writeFileSync(process.argv[1], JSON.stringify(manifest, null, 2) + "\n")
+        console.log(manifest.version)
+      ' "$PACK_TMP/package/package.json")" \
+    && tar czf "$VENDOR_DIR/aiwayds-dsh-subagent-registry-$BUMPED.tgz" -C "$PACK_TMP" package; then
+    REG_TGZ="$VENDOR_DIR/aiwayds-dsh-subagent-registry-$BUMPED.tgz"
     # Staleness probe: a build that still imports the moved symbol would die
     # at load exactly like the npm build — refuse to vendor it.
-    if [ -n "$REG_TGZ" ] && tar xzOf "$REG_TGZ" package/lib/ptc/runner.js 2>/dev/null \
+    if tar xzOf "$REG_TGZ" package/lib/ptc/runner.js 2>/dev/null \
       | grep -q "import { CodeRunFailedError"; then
       rm -f "$REG_TGZ"
       printf '==> vendored registry build is stale (still imports the moved CodeRunFailedError) — scenarios fall back to the npm pin\n'
     else
-      printf '==> vendored registry build: %s (sibling %s)\n' "$(basename "$REG_TGZ")" "$REGISTRY_SRC"
+      printf '==> vendored registry build: %s (sibling %s, version bumped past the stale npm copy)\n' "$(basename "$REG_TGZ")" "$REGISTRY_SRC"
     fi
   else
     printf '==> sibling registry pack failed — scenarios fall back to the npm pin\n'
   fi
+  rm -rf "$PACK_TMP"
 fi
 
 printf '==> running scenario suite (all state stays inside the container)\n'
