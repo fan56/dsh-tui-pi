@@ -63,7 +63,6 @@ jobs:
           # `latest` it wins over the rc by plain semver compare.
           STABLE="$(npm view @deepseek-ai/dsh@latest version)"
           RC="$(npm view @deepseek-ai/dsh@next version 2>/dev/null || true)"
-          DSH_VERSION="$STABLE"
           # Newest-of(latest,next) with a prerelease-aware node compare,
           # NOT sort -V (trap on record: sort -V ranks 0.2.1-rc.2 ABOVE
           # 0.2.1 and would pick the older rc once a stable lands on latest).
