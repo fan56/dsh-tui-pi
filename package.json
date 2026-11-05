@@ -96,9 +96,9 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-settings": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-skill": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-user-questions": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-settings": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-skill": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-user-questions": "0.2.2-rc.1",
     "@types/node": "^24.0.0",
     "typescript": "~5.9.0"
   },

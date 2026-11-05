@@ -11,7 +11,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, AgentHandle, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, AssistantStreamFrame, ModelSelection } from '@deepseek-ai/dsh-agent'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { assistantStreamFirstTokenTime, createUserMessage, type ReasoningEffortId, type StreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { SettingsConflictError, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
@@ -351,14 +351,12 @@ export class DshSessionBridge {
   private agentPreset: string | undefined
   private selection: ModelSelection | undefined
   /**
-   * Whether `selectionRef.current` holds a LIVE USER choice (`/model`,
-   * `/think`) rather than a seed. The document-updated re-seed must never
-   * clobber a user pick, but MUST be allowed to replace its own earlier
-   * seed (see the cold-start comments in the constructor).
+   * Whether the live selection holds a LIVE USER choice (`/model`, `/think`)
+   * rather than a seed. The document-updated re-seed must never clobber a
+   * user pick, but MUST be allowed to replace its own earlier seed (see the
+   * cold-start comments in the constructor).
    */
   private selectionUserPinned = false
-  /** Mutable live selection installed into the agent; `/model` mutates `current`. */
-  private readonly selectionRef: ModelSelectionRef = { current: undefined, assembled: undefined }
   /** Mirror of the agent's `agent/status`; `isRunning()` reads this. */
   private running = false
   private readonly stats: BridgeStats = {
@@ -508,7 +506,7 @@ export class DshSessionBridge {
     // composed default (`agentDefaultModel`) is deliberately NOT read yet: on
     // a host first boot the legacy settings.yaml import lands asynchronously
     // AFTER this constructor, and an eager read would freeze the built-in
-    // default into `selectionRef.current` — which seedSelectionFromDefault
+    // default into `this.selection` — which seedSelectionFromDefault
     // then treats as a live user choice and refuses to overwrite. The footer
     // renders its empty-model branch until the re-seeds below fill it;
     // "the footer may arrive a little late" is the agreed trade (session
@@ -521,7 +519,7 @@ export class DshSessionBridge {
     // user choice (a /model pick outranks every default). FORCE matters:
     // the first document-updated can fire while the import has NOT landed
     // yet (the host's first describe pass), and that early seed leaves the
-    // built-in default in `selectionRef.current` — a plain re-seed would
+    // built-in default in `this.selection` — a plain re-seed would
     // treat it as a live choice and keep it frozen. Forcing re-derives the
     // composed default, which by the import's own event is the imported
     // value. Idempotent and inert once a session exists or the user chose.
@@ -1643,15 +1641,18 @@ export class DshSessionBridge {
       this.handle = await this.ctx.agents.resume({
         resumeSessionId: sessionId,
         agentOptions: this.selection ?? {},
-        // Install the mutable selection so `/model` can live-switch the route,
-        // the APPEND_SYSTEM.md section on this agent ONLY (never its
-        // subagents), and the spawn-tool hide so the agent sees a single
-        // `use_agent` delegation entry. The surface marker scopes the live
-        // disableSubagent guard to THIS agent (resume runs setup too, so a
-        // resumed session is re-marked without relying on persisted meta).
+        // Install the model-switch notice listener so a live `/model` route
+        // change is announced durably (the 0.2.2 host owns selection state —
+        // live switching routes through `agent.model.select()` in
+        // `setSelection`), plus the APPEND_SYSTEM.md section on this agent
+        // ONLY (never its subagents), and the spawn-tool hide so the agent
+        // sees a single `use_agent` delegation entry. The surface marker
+        // scopes the live disableSubagent guard to THIS agent (resume runs
+        // setup too, so a resumed session is re-marked without relying on
+        // persisted meta).
         setup: async agentCtx => {
           markTuiSurface(agentCtx)
-          installModelSelection(agentCtx, this.selectionRef)
+          installModelSelection(agentCtx)
           installAppendSystem(agentCtx)
           installSpawnToolFence(agentCtx)
         },
@@ -2226,34 +2227,36 @@ export class DshSessionBridge {
   }
 
   /**
-   * Seed `selection`/`selectionRef` for a new session. Precedence:
+   * Seed the live selection for a new session. Precedence:
    * 1. a `.dsh-profile` directory pin found up the cwd tree — the pin means
    *    "this tree always starts on X", so it deliberately outranks even a
    *    leftover in-process /model choice;
    * 2. the composed global default (`agent-default-model`), which must not
    *    clobber a live user choice: `/model`/`/think` before the first prompt
-   *    write the ref, and that choice survives session creation (pin absent).
+   *    write `this.selection`, and that choice survives session creation
+   *    (pin absent).
    *
-   * `force` (the cold-start re-seed path) skips the "keep the existing ref"
-   * branch in 2: an earlier seed may have captured the BUILT-IN default
-   * before the first-boot settings import landed, and that stale seed is not
-   * a user choice — the composed default is re-derived instead. A pin or a
-   * user choice is unaffected (pins re-apply at 1; callers guard user
-   * choices before forcing).
+   * `force` (the cold-start re-seed path) skips the "keep the existing
+   * selection" branch in 2: an earlier seed may have captured the BUILT-IN
+   * default before the first-boot settings import landed, and that stale
+   * seed is not a user choice — the composed default is re-derived instead.
+   * A pin or a user choice is unaffected (pins re-apply at 1; callers guard
+   * user choices before forcing).
+   *
+   * The seed reaches the agent as its `agentOptions` route fallback (the
+   * 0.2.2 host owns selection state durably — `agent.model` — and resolves
+   * recorded choices over the last request over these live options).
    */
   private seedSelectionFromDefault(force = false): void {
     const pinned = this.pinnedRouteSelection()
     if (pinned !== undefined) {
       this.selection = pinned
-      this.selectionRef.current = { ...pinned }
       return
     }
-    if (!force && this.selectionRef.current !== undefined) {
-      this.selection = { ...this.selectionRef.current }
+    if (!force && this.selection !== undefined) {
       return
     }
     this.selection = this.composedDefaultSelection()
-    this.selectionRef.current = this.selection === undefined ? undefined : { ...this.selection }
   }
 
   /** The nearest `.dsh-profile` pin as a selection — best-effort, never throws. */
@@ -2323,14 +2326,16 @@ export class DshSessionBridge {
         inheritedEventCount: SessionLogOffset(fork.seed.length),
       }),
       agentOptions: this.selection ?? {},
-      // Install the mutable selection so `/model` can live-switch the route,
-      // the APPEND_SYSTEM.md section on this agent ONLY (never its
-      // subagents), and the spawn-tool hide so the agent sees a single
-      // `use_agent` delegation entry. The surface marker scopes the live
-      // disableSubagent guard to THIS agent.
+      // Install the model-switch notice listener so a live `/model` route
+      // change is announced durably (the 0.2.2 host owns selection state —
+      // live switching routes through `agent.model.select()` in
+      // `setSelection`), plus the APPEND_SYSTEM.md section on this agent
+      // ONLY (never its subagents), and the spawn-tool hide so the agent
+      // sees a single `use_agent` delegation entry. The surface marker
+      // scopes the live disableSubagent guard to THIS agent.
       setup: async agentCtx => {
         markTuiSurface(agentCtx)
-        installModelSelection(agentCtx, this.selectionRef)
+        installModelSelection(agentCtx)
         installAppendSystem(agentCtx)
         installSpawnToolFence(agentCtx)
       },
@@ -2339,14 +2344,18 @@ export class DshSessionBridge {
 
   /** The model selection shown in the footer (live value after `/model`). */
   getSelection(): ModelSelection | undefined {
-    return this.selectionRef.current ?? this.selection
+    return this.selection
   }
 
   /** Apply a live model switch (`/model` selector outcome). */
   setSelection(next: ModelSelection): void {
     this.selectionUserPinned = true
-    this.selectionRef.current = { ...next }
     this.selection = { ...next }
+    // With a session bound, route through the host-owned durable selection —
+    // the 0.2.2 host resolves recorded choices first, so this drives the
+    // next step (and appends the switch notice via the installed listener).
+    // Without a session the pick rides `agentOptions` at create/resume.
+    this.handle?.agent.model.select(this.selection)
   }
 
   /** Set the agent preset for the next session creation. */

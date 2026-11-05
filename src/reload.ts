@@ -176,7 +176,7 @@ async function performReload(ctx: Context, fallbackUrl: string): Promise<string>
     await new Promise(resolve => setImmediate(resolve))
     await Promise.allSettled(oldFibers.map(fiber => fiber.await()))
     for (const oldFiber of oldFibers as FiberLike[]) {
-      const next = oldFiber.parent.registry.plugin(fresh as Plugin, oldFiber._config, () => []) as FiberLike
+      const next = oldFiber.parent.registry.plugin(fresh as Plugin, oldFiber.config, () => []) as FiberLike
       next.entry = oldFiber.entry
       if (next.entry) next.entry.fiber = next
       await next
@@ -189,7 +189,7 @@ async function performReload(ctx: Context, fallbackUrl: string): Promise<string>
     restoreCaches()
     try {
       for (const oldFiber of oldFibers) {
-        await oldFiber.parent.registry.plugin(oldCallback, oldFiber._config, () => [])
+        await oldFiber.parent.registry.plugin(oldCallback, oldFiber.config, () => [])
       }
     } catch { /* contained */ }
     return `Reload failed: ${message}`
