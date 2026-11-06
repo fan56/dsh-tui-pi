@@ -50,6 +50,16 @@ export type PluginInspection =
   | { status: 'accepted'; name?: string; version?: string; description?: string; bundle: boolean | null }
   | { status: 'refused'; problem: string; reason: string }
 
+/** Structural face of the compatibility gate's rejection payload (a bundle row's `error.incompatible` entry). */
+export interface IncompatiblePluginInfo {
+  name: string
+  version: string
+  /** The running dsh version the requirements were evaluated against. */
+  runtimeVersion: string
+  /** Unmet requirements: `engines.dsh`, or dsh peer package names → ranges. */
+  requirements: Record<string, string>
+}
+
 /** The service surface the panel drives (base bundle, keyed `pluginManager`). */
 export interface PluginManagerSeam {
   listBundles(): Promise<readonly PluginBundleInfo[]>
@@ -117,6 +127,38 @@ export function pluginChangeNotice(result: PluginChangeResult): string {
     case 'failed': return t('plugins.notice.failed', { target: result.target }) + suffix
     case 'cancelled': return t('plugins.notice.cancelled')
   }
+}
+
+/**
+ * Warning lines for the bundles the host's boot compatibility gate skipped:
+ * the boot preflight denies the entry (stderr-only at boot, invisible once
+ * the TUI owns the terminal) but the bundle row keeps the rejection —
+ * `error.code === 'incompatible-version'` with the exact package, the unmet
+ * requirements and the running dsh version. One line per rejected package;
+ * rows without that rejection (or a malformed payload) render nothing.
+ */
+export function skippedPluginWarnings(bundles: readonly PluginBundleInfo[]): string[] {
+  const lines: string[] = []
+  for (const bundle of bundles) {
+    const error = bundle.error as
+      | { code?: string; incompatible?: readonly IncompatiblePluginInfo[] }
+      | undefined
+    if (error?.code !== 'incompatible-version') continue
+    for (const skip of error.incompatible ?? []) {
+      const requirements = Object.entries(skip.requirements ?? {})
+        .map(([key, range]) => `${key} ${range}`)
+        .join(', ')
+      // The host records the unmet requirements on every real rejection; a
+      // payload without them cannot render a truthful line — stay silent.
+      if (requirements === '') continue
+      lines.push(t('plugins.skip.warning', {
+        name: skip.name ?? bundle.name,
+        requirements,
+        runtime: skip.runtimeVersion ?? '',
+      }))
+    }
+  }
+  return lines
 }
 
 // ---------------------------------------------------------------- the panel --

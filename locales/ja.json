@@ -696,6 +696,7 @@
   "plugins.install.empty": "インストールするパッケージ名を入力してください",
   "plugins.install.inspectFailed": "確認に失敗：{message}",
   "plugins.install.refused": "拒否されました（{problem}）：{reason}",
+  "plugins.skip.warning": "プラグイン {name} をスキップしました: {requirements} が必要（ホスト {runtime}）",
   "tui.cmd.search.description": "保存済みセッションを全文検索",
   "tui.search.unavailable": "このプロファイルではセッション検索を利用できません",
   "tui.search.cancelled": "検索を中断しました",

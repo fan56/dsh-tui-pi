@@ -85,7 +85,7 @@ import { detectNerdFontAvailable } from './font-detect.ts'
 import { openAgentManager } from './agents.ts'
 import { openSettingsBrowser } from './settings.ts'
 import { CustomProviderFlow } from './custom-provider.ts'
-import { openPluginsPanel, type PluginManagerSeam } from './plugins.ts'
+import { openPluginsPanel, skippedPluginWarnings, type PluginManagerSeam } from './plugins.ts'
 import { openSearchOverlay } from './search.ts'
 import { openSkillsManagerPanel } from './skills-manager.ts'
 import { openLoginFlow, openLogoutFlow } from './login.ts'
@@ -778,6 +778,18 @@ export function apply(ctx: Context, config: TuiSettings): void {
     for (const warning of keyBindings.warnings) {
       renderer.renderNotice(t('tui.keys.warningPrefix', { warning }), 'error')
     }
+    // Compatibility-gate report: bundles the host's boot preflight skipped as
+    // incompatible (a stderr line at boot, invisible once the TUI owns the
+    // terminal) surface as persistent ⚠ transcript lines. Best-effort — no
+    // pluginManager service (an embedding host) or a failed listing renders
+    // nothing; a clean profile renders nothing.
+    void (async () => {
+      const manager = ctx.get('pluginManager') as PluginManagerSeam | undefined
+      if (manager === undefined) return
+      for (const line of skippedPluginWarnings(await manager.listBundles())) {
+        renderer.renderNotice(line, 'warning')
+      }
+    })().catch(() => {})
     // Arm the shared notice sink now that the TUI is up. Every operator
     // trace that fired before this point — invalid dsh-tui.retention/resume values, a
     // missing userQuestions service, the janitor's result line — has been

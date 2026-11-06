@@ -11,6 +11,7 @@ import {
   bundleStateText,
   pluginChangeNotice,
   pluginRowViews,
+  skippedPluginWarnings,
 } from '../lib/plugins.js'
 
 const bundle = (over = {}) => ({
@@ -57,4 +58,60 @@ test('pluginChangeNotice phrases every application outcome', () => {
   })
   assert.ok(failed.includes('pnpm missing'), 'the management error message rides along')
   assert.match(pluginChangeNotice({ target: 'x', application: 'cancelled' }), /cancel/i)
+})
+
+test('skippedPluginWarnings renders the compatibility gate rejection with name, requirements, host', () => {
+  const skipped = bundle({
+    name: 'feishu',
+    error: {
+      code: 'incompatible-version',
+      incompatible: [{
+        name: '@aiwayds/feishu',
+        version: '0.17.0',
+        runtimeVersion: '0.2.1-rc.5',
+        requirements: { '@deepseek-ai/dsh-settings': '>=0.2.2-rc.1' },
+      }],
+    },
+  })
+  const lines = skippedPluginWarnings([bundle({ name: 'tui' }), skipped])
+  assert.deepEqual(lines, [
+    'plugin @aiwayds/feishu skipped: requires @deepseek-ai/dsh-settings >=0.2.2-rc.1 (host 0.2.1-rc.5)',
+  ])
+})
+
+test('skippedPluginWarnings joins multiple requirements and renders one line per package', () => {
+  const lines = skippedPluginWarnings([
+    bundle({
+      name: 'duo',
+      error: {
+        code: 'incompatible-version',
+        incompatible: [
+          {
+            name: 'p1',
+            version: '1.0.0',
+            runtimeVersion: '0.2.1-rc.5',
+            requirements: { '@deepseek-ai/dsh-settings': '>=0.2.2-rc.1', '@deepseek-ai/dsh-skill': '^0.2.2' },
+          },
+          { name: 'p2', version: '2.0.0', runtimeVersion: '0.2.1-rc.5', requirements: { '@deepseek-ai/dsh-settings': '>=999.0.0' } },
+        ],
+      },
+    }),
+  ])
+  assert.deepEqual(lines, [
+    'plugin p1 skipped: requires @deepseek-ai/dsh-settings >=0.2.2-rc.1, @deepseek-ai/dsh-skill ^0.2.2 (host 0.2.1-rc.5)',
+    'plugin p2 skipped: requires @deepseek-ai/dsh-settings >=999.0.0 (host 0.2.1-rc.5)',
+  ])
+})
+
+test('skippedPluginWarnings renders nothing without the rejection payload', () => {
+  assert.deepEqual(skippedPluginWarnings([
+    bundle(),
+    bundle({ name: 'broken', error: { code: 'operation-error', message: 'load failed' } }),
+    bundle({ name: 'loose', error: { incompatible: [{ name: 'x', requirements: {} }] } }),
+    bundle({ name: 'empty-incompatible', error: { code: 'incompatible-version', incompatible: [] } }),
+    bundle({
+      name: 'no-requirements',
+      error: { code: 'incompatible-version', incompatible: [{ name: 'x', version: '1.0.0', runtimeVersion: '0.2.1', requirements: {} }] },
+    }),
+  ]), [], 'other error codes, missing code, and requirement-less payloads stay silent')
 })

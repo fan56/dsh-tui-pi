@@ -696,6 +696,7 @@
   "plugins.install.empty": "请输入要安装的包名",
   "plugins.install.inspectFailed": "检查失败：{message}",
   "plugins.install.refused": "被拒绝（{problem}）：{reason}",
+  "plugins.skip.warning": "插件 {name} 已跳过：要求 {requirements}（宿主 {runtime}）",
   "tui.cmd.search.description": "跨会话全文搜索历史会话",
   "tui.search.unavailable": "此 profile 不支持会话搜索",
   "tui.search.cancelled": "已取消搜索",

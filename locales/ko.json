@@ -696,6 +696,7 @@
   "plugins.install.empty": "설치할 패키지 이름을 입력하세요",
   "plugins.install.inspectFailed": "확인 실패: {message}",
   "plugins.install.refused": "거부됨({problem}): {reason}",
+  "plugins.skip.warning": "플러그인 {name} 건너뜀: {requirements} 필요 (호스트 {runtime})",
   "tui.cmd.search.description": "저장된 세션 전체 텍스트 검색",
   "tui.search.unavailable": "이 프로필에선 세션 검색을 사용할 수 없습니다",
   "tui.search.cancelled": "검색을 취소했습니다",

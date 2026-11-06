@@ -696,6 +696,7 @@
   "plugins.install.empty": "name the package to install",
   "plugins.install.inspectFailed": "inspection failed: {message}",
   "plugins.install.refused": "refused ({problem}): {reason}",
+  "plugins.skip.warning": "plugin {name} skipped: requires {requirements} (host {runtime})",
   "tui.cmd.search.description": "full-text search across stored sessions",
   "tui.search.unavailable": "session search is unavailable in this profile",
   "tui.search.cancelled": "search dismissed",
