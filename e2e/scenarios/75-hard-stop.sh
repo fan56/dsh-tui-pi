@@ -52,25 +52,19 @@ fi
 # Install it as a real bundle member, exactly what a real user does.
 if ! grep -qF '@aiwayds/dsh-subagent-registry' "$HOME/.dsh/profiles/tui/package.json" 2>/dev/null \
   || ! grep -qF '@aiwayds/dsh-subagent-registry' <(dsh plugin --profile tui list 2>/dev/null); then
-  # Tarball source: a vendored build of the sibling dsh-subagent-registry
-  # checkout (staged by run-e2e.sh under /e2e/vendor) when present, else the
-  # npm pin. The vendored path exists because npm's 0.18.0 latest predates
-  # the 0.2.2-rc.1 host wave: it statically imports CodeRunFailedError from
-  # @deepseek-ai/dsh-tools, an export that host moved to
-  # @deepseek-ai/dsh-tool-executor-ptc, so the published build dies at load
-  # with an ESM SyntaxError and every use_agent dispatch would fail. The
-  # vendored tarball's version is bumped past the npm copy (0.18.0 → 0.18.1)
-  # because pnpm's hoisted install keeps the existing node_modules copy when
-  # a tarball declares the same name+version — only a distinct version makes
-  # the file: dependency materialize the fixed build. Once npm carries a
-  # fixed latest, the vendored dir is simply absent and the pin below
-  # applies unchanged.
-  REG_TGZ="$(ls /e2e/vendor/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)"
-  if [ -z "$REG_TGZ" ]; then
-    npm pack @aiwayds/dsh-subagent-registry@0.18.0 --registry=https://registry.npmjs.org --pack-destination /tmp >/dev/null 2>&1 \
-      && REG_TGZ="$(ls /tmp/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)"
-  fi
-  if [ -n "$REG_TGZ" ] \
+  # Pin 0.19.0: npm's 0.18.0 predates the 0.2.2-rc.1 host wave — it
+  # statically imports CodeRunFailedError from @deepseek-ai/dsh-tools, an
+  # export that host moved to @deepseek-ai/dsh-tool-executor-ptc, so that
+  # build dies at load with an ESM SyntaxError and every use_agent dispatch
+  # would fail. These scenarios ran a vendored fixed build (version-bumped
+  # past the npm copy so pnpm's hoisting would materialize it) until 0.19.0
+  # shipped the same fix; the released build is pinned again. Hoisting is a
+  # non-issue now: scenario 10 already resolves the host's ^0.18.0 range to
+  # this exact release, so the hoisted copy and the plugin-add'd tarball are
+  # the same content. The old vendored tarball stays in e2e/vendor only as a
+  # historical reference and is no longer installed.
+  if npm pack @aiwayds/dsh-subagent-registry@0.19.0 --registry=https://registry.npmjs.org --pack-destination /tmp >/dev/null 2>&1 \
+    && REG_TGZ="$(ls /tmp/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)" && [ -n "$REG_TGZ" ] \
     && timeout 300 dsh plugin --profile tui add "$REG_TGZ" >/tmp/reg-add.log 2>&1; then
     ok "registry plugin installed into the tui profile ($(basename "$REG_TGZ"))"
   else
