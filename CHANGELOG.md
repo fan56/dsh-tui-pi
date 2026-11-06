@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.37.1] - 2026-11-06
+
+### Changed
+- Bump `@aiwayds/dsh-subagent-registry` to `^0.19.1` — picks up the #9 fix: no more bundle-in-use deadlock / default-preset flip on desktop/web profiles.
+
 ## [2.37.0] - 2026-11-06
 
 ### Added
