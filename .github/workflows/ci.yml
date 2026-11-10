@@ -1,25 +1,19 @@
 # CI: build, typecheck, unit suite, and a real-host boot smoke on every push
-# to main, every pull request, and a daily schedule.
+# to main and every pull request.
 #
 # The dsh CLI version is resolved at runtime from the npm registry's rolling
 # rc/stable line — the newest of the `latest` (stable) and `next` (rc)
 # dist-tags, never hand-pinned and never the retired `alpha` tag (policy
 # 2026-09-03). When a stable 0.1.2+ lands on `latest` it wins over the rc by
-# plain semver compare. The daily schedule re-tests against whatever the
-# closure has become since the last push, so a new dsh release that breaks
-# the plugin surfaces as a red run within a day instead of at the next
-# release. The smoke boots a scratch profile with the plugin mounted via the
-# real dsh CLI (scripts/smoke-boot.mjs) so "loads under real cordis" is a
-# gate, not a hope.
+# plain semver compare. The smoke boots a scratch profile with the plugin
+# mounted via the real dsh CLI (scripts/smoke-boot.mjs) so "loads under real
+# cordis" is a gate, not a hope.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    # Daily at 03:17 UTC — off the top-of-hour congestion.
-    - cron: '17 3 * * *'
 
 permissions:
   contents: read
