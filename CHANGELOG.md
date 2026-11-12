@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Ride the dsh 0.2.2-rc.2 host closure.** devDependencies on the host closure move `0.2.2-rc.1` → `0.2.2-rc.2` (`dsh-settings`, `dsh-skill`, `dsh-user-questions`; the dev-only `@deepseek-ai/cordis` `4.1.0` pin already matches what the rc.2 closure ships). Peer floors stay untouched at `>=0.2.2-rc.1` — under the host's `includePrerelease` precheck the rc.1 floor already matches `0.2.2-rc.2`, and no rc.2-only API is consumed (R3 verdict: zero source changes). The ten bundled `@aiwayds` dependency ranges are leveled to the current release line so every range accepts its package's current npm-latest (9 raised, 1 already current): `dsh-ask-router` `^0.6.1` → `^0.7.0`, `dsh-dcp` `^0.13.1` → `^0.14.0`, `dsh-jev-core` `^0.1.5` → `^0.2.0`, `dsh-llm-proxy` `^0.7.3` → `^0.8.0`, `dsh-llm-stats` `^0.8.0` → `^0.9.0`, `dsh-mcp-adapter` `^0.7.2` → `^0.8.0`, `dsh-model-sync` `^0.8.0` → `^0.9.0`, `dsh-profile-switch` `^0.3.1` → `^0.4.0`, `dsh-web-search-anysearch` `^0.8.1` → `^0.9.0`; `dsh-subagent-registry` stays `^0.19.1`. Under 0.x semver a caret range does not cross a minor, so nine of the ten ranges excluded the version npm resolves today (the lockfile had been pinning older copies). `pnpm-lock.yaml` regenerated against `registry.npmjs.org`. Verified: tsc check clean against the 0.2.2-rc.2 closure, the full unit suite 1495/1495, and the real-host boot smoke (mount, 25s boot, legacy projection-cache-record migration, clean removal) on a 0.2.2-rc.2 scratch closure.
+
 ## [2.37.1] - 2026-11-06
 
 ### Changed

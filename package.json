@@ -67,16 +67,16 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
-    "@aiwayds/dsh-ask-router": "^0.6.1",
-    "@aiwayds/dsh-dcp": "^0.13.1",
-    "@aiwayds/dsh-jev-core": "^0.1.5",
-    "@aiwayds/dsh-llm-proxy": "^0.7.3",
-    "@aiwayds/dsh-llm-stats": "^0.8.0",
-    "@aiwayds/dsh-mcp-adapter": "^0.7.2",
-    "@aiwayds/dsh-model-sync": "^0.8.0",
-    "@aiwayds/dsh-profile-switch": "^0.3.1",
+    "@aiwayds/dsh-ask-router": "^0.7.0",
+    "@aiwayds/dsh-dcp": "^0.14.0",
+    "@aiwayds/dsh-jev-core": "^0.2.0",
+    "@aiwayds/dsh-llm-proxy": "^0.8.0",
+    "@aiwayds/dsh-llm-stats": "^0.9.0",
+    "@aiwayds/dsh-mcp-adapter": "^0.8.0",
+    "@aiwayds/dsh-model-sync": "^0.9.0",
+    "@aiwayds/dsh-profile-switch": "^0.4.0",
     "@aiwayds/dsh-subagent-registry": "^0.19.1",
-    "@aiwayds/dsh-web-search-anysearch": "^0.8.1",
+    "@aiwayds/dsh-web-search-anysearch": "^0.9.0",
     "@earendil-works/pi-tui": "0.85.1"
   },
   "peerDependencies": {
@@ -97,9 +97,9 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.1.0",
-    "@deepseek-ai/dsh-settings": "0.2.2-rc.1",
-    "@deepseek-ai/dsh-skill": "0.2.2-rc.1",
-    "@deepseek-ai/dsh-user-questions": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-settings": "0.2.2-rc.2",
+    "@deepseek-ai/dsh-skill": "0.2.2-rc.2",
+    "@deepseek-ai/dsh-user-questions": "0.2.2-rc.2",
     "@types/node": "^24.0.0",
     "typescript": "~5.9.0"
   },
