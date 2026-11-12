@@ -25,9 +25,19 @@ done
 TOTAL_PASS=0
 TOTAL_FAIL=0
 TOTAL_WARN=0
+MISSING=0
 printf '\n==================================================\n'
 printf '  final results\n'
 printf '==================================================\n'
+# A scenario that dies before summary() (crash, errexit, kill) writes no
+# result file — surface it as a missing row instead of silently dropping its
+# counter from the total table.
+for s in $E2E_SCENARIOS; do
+  if [ ! -f "$RESULTS_DIR/$s.result" ]; then
+    printf '  %-14s %3s pass  %3s fail  %3s warn   (no result file — scenario died before summary)\n' "$s" '-' '-' '-'
+    MISSING=$((MISSING + 1))
+  fi
+done
 for f in "$RESULTS_DIR"/*.result; do
   read -r p fl w < "$f"
   name="$(basename "${f%.result}")"
@@ -39,8 +49,8 @@ done
 printf '  %-14s %3d pass  %3d fail  %3d warn\n' 'TOTAL' \
   "$TOTAL_PASS" "$TOTAL_FAIL" "$TOTAL_WARN"
 
-if (( TOTAL_FAIL > 0 )); then
-  printf '\n  E2E RESULT: FAIL (%d failing assertions)\n' "$TOTAL_FAIL"
+if (( TOTAL_FAIL > 0 || MISSING > 0 )); then
+  printf '\n  E2E RESULT: FAIL (%d failing assertions, %d scenario(s) without a result)\n' "$TOTAL_FAIL" "$MISSING"
   exit 1
 fi
 printf '\n  E2E RESULT: PASS\n'

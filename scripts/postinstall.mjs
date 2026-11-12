@@ -43,7 +43,7 @@ try {
   const { runOnboard } = await import('../bin/onboard-core.mjs')
   const setup = runOnboard({ log: (line) => console.log(line) })
   if (!setup.ok) {
-    console.log(`dsh-tui-pi: setup stopped at "${setup.step}" — ${setup.hint}`)
+    console.log(`dsh-tui-pi: setup stopped at "${setup.step}"${setup.detail ? ` — ${setup.detail}` : ''} — ${setup.hint}`)
     console.log('dsh-tui-pi: it will complete automatically on first launch.')
   } else {
     console.log('dsh-tui-pi: ready — launch with `dsh-tui-pi` (short: `dst`).')

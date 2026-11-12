@@ -14,7 +14,9 @@
  *     step); npm itself is a prerequisite — when it is not on PATH we print
  *     what to install and stop instead of guessing;
  *   - all functions are synchronous and never throw past the boundary:
- *     failures come back as { ok: false, step, hint }.
+ *     failures come back as { ok: false, step, hint, detail } where detail
+ *     carries how the underlying process died (exit code / signal / spawn
+ *     error) — never swallowed behind a bare "stopped".
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -125,14 +127,28 @@ export function dshBinPath() {
 }
 
 // Global installs always go through npm — one predictable path, regardless
-// of which package manager pulled this package in.
+// of which package manager pulled this package in. Returns { ok, detail }:
+// on failure detail carries exactly how the npm child died (spawn error,
+// signal, exit code). npm can die without ever printing an error — the
+// kernel OOM killer SIGKILLs it under memory pressure (observed: exit 137
+// installing @deepseek-ai/dsh on a 2 GiB podman VM) and a spawnSync timeout
+// surfaces as a signal too — so a bare boolean would leave the launcher
+// reporting "setup stopped" with no actionable cause.
 function installGlobal(name) {
   const result = spawnSync('npm', ['install', '-g', name], {
     stdio: 'inherit',
     timeout: INSTALL_TIMEOUT_MS,
     shell: process.platform === 'win32',
   })
-  return result.status === 0
+  if (result.status === 0) return { ok: true, detail: null }
+  const parts = []
+  if (result.error) {
+    parts.push(result.error.code ? `${result.error.code} (${result.error.message})` : result.error.message)
+  }
+  if (result.signal) parts.push(`killed by signal ${result.signal}`)
+  if (result.status !== null) parts.push(`exit code ${result.status}`)
+  if (parts.length === 0) parts.push('npm exited without an exit code or signal')
+  return { ok: false, detail: parts.join(', ') }
 }
 
 // Newest of the `latest` (stable) and `next` (rc) dist-tags — the same
@@ -250,7 +266,7 @@ function approvePrintedBuilds() {
  *   2/3 pnpm        — the host's plugin manager shells out to it; installed
  *                     globally when missing
  *   3/3 tui profile — `dsh plugin --profile tui add` this package (+ companions)
- * Returns { ok: true, dsh } or { ok: false, step, hint }.
+ * Returns { ok: true, dsh } or { ok: false, step, hint, detail }.
  */
 export function runOnboard({ log = () => {} } = {}) {
   let dsh = dshBinPath()
@@ -272,8 +288,9 @@ export function runOnboard({ log = () => {} } = {}) {
       ? `${foundVersion} is older than this plugin requires (>= ${minHostVersion()})`
       : 'not found'
     log(`  [1/3] dsh host              ${reason} — installing ${hostSpec} globally with npm (largest step, a few minutes)…`)
-    if (!installGlobal(hostSpec)) {
-      return { ok: false, step: 'dsh host install', hint: `install it with: npm install -g ${hostSpec} — then re-run dsh-tui-pi` }
+    const hostInstall = installGlobal(hostSpec)
+    if (!hostInstall.ok) {
+      return { ok: false, step: 'dsh host install', hint: `install it with: npm install -g ${hostSpec} — then re-run dsh-tui-pi`, detail: hostInstall.detail }
     }
     dsh = dshBinPath()
     if (!dsh) {
@@ -287,8 +304,9 @@ export function runOnboard({ log = () => {} } = {}) {
     log(`  [2/3] pnpm                  found ${queryVersion(pnpm, ['-v']) ?? ''}`)
   } else {
     log('  [2/3] pnpm                  not found — installing globally…')
-    if (!installGlobal('pnpm')) {
-      return { ok: false, step: 'pnpm install', hint: 'install it with: npm install -g pnpm — then re-run dsh-tui-pi' }
+    const pnpmInstall = installGlobal('pnpm')
+    if (!pnpmInstall.ok) {
+      return { ok: false, step: 'pnpm install', hint: 'install it with: npm install -g pnpm — then re-run dsh-tui-pi', detail: pnpmInstall.detail }
     }
     log(`  [2/3] pnpm                  installed ${queryVersion('pnpm', ['-v']) ?? ''}`)
   }

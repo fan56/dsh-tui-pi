@@ -19,16 +19,21 @@
   `pnpm build && pnpm pack` 出的 tarball（放在镜像 `/dist/`）。
 - 场景执行：`e2e/` 以只读方式挂到容器 `/e2e`，因此改测试脚本不需要
   重建镜像；改 `src/` 或 `package.json` 才需要。
-- subagent-registry 来源：场景 75 直接钉 npm
-  `@aiwayds/dsh-subagent-registry@0.19.0`。0.18.0 曾静态导入
+- subagent-registry 来源：场景 75 优先装 `run-e2e.sh` 从兄弟仓
+  `dsh-subagent-registry` 现打的 vendored 构建（版本 bump 过已发布副本以
+  穿透 pnpm hoisting），无 vendored 产物（fresh clone / CI / 兄弟仓过期）
+  才回退钉 npm 最新版。npm 发布线落后宿主波：0.18.0 曾静态导入
   `@deepseek-ai/dsh-tools` 的 `CodeRunFailedError`，而 0.2.2-rc.1 宿主已把
   该符号迁去 `@deepseek-ai/dsh-tool-executor-ptc`，发布构建在 rc.1 上加载
-  即炸（ESM SyntaxError），75/76 的 use_agent 链路与 77 就绪探针全断——
-  当时场景 75 改装兄弟仓 vendored 构建（版本 bump 过 npm 副本以穿透
-  pnpm hoisting，配 staleness 探针；机制仍留在 `run-e2e.sh`，现已无场景
-  消费）。修复随 npm 0.19.0 发布后钉回 npm 版，`e2e/vendor/` 下的
-  0.18.1.tgz 仅作历史对照保留。子集运行：`E2E_SCENARIOS="75-hard-stop
-  76-attention-early-stop" ./e2e/run-e2e.sh`。
+  即炸（ESM SyntaxError）；0.19.0/0.19.1 均发布于 rc.2 适配提交之前，在
+  0.2.2-rc.2 宿主上仍读 pre-rc.2 子代理接缝——不炸在加载，而是静默断
+  （looper 不上 live board、Ctrl+G picker 不开、jev mock 零派发），
+  75/76 红满 12 条。两代 stale 各有探针：`run-e2e.sh` 打包时拒收
+  （rc.1 查 `CodeRunFailedError` 静态导入、rc.2 查 `lib/host-compat.js`
+  的 `waitForTreeWork` 运行时探针），场景 75 安装后再对 profile 实际
+  resolve 到的副本复检一次，stale 时 fail 得响而不是让 12 条断言瞎红。
+  `e2e/vendor/` 下的 0.18.1.tgz 仅作历史对照保留。子集运行：
+  `E2E_SCENARIOS="75-hard-stop 76-attention-early-stop" ./e2e/run-e2e.sh`。
 - 网络说明：基础镜像走 `docker.m.daocloud.io` 镜像源（本网络环境下
   registry-1.docker.io 被 DNS 污染）；容器内 npmjs.org 可直连，
   nodejs.org 的 CDN 同被污染——Node tarball 默认走 npmmirror 二进制

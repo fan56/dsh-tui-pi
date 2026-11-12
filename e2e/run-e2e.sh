@@ -44,6 +44,17 @@ if [ -n "$RC" ] && node -e '
 fi
 printf '==> dsh closure: %s\n' "$DSH_VERSION"
 
+# The fresh-machine onboarding scenario (80 pass B) installs the dsh host
+# with npm inside this VM. The 0.2.2-rc.2 closure needs more install-time
+# memory than a 2 GiB machine has: npm is SIGKILLed by the kernel OOM killer
+# (exit 137) where the rc.1 closure installed fine. Read-only warning —
+# raising the machine's memory is a host decision, not something the suite
+# should do silently.
+VM_MEM="$(podman machine inspect --format '{{.Resources.Memory}}' 2>/dev/null | head -1)"
+if [ -n "$VM_MEM" ] && [ "$VM_MEM" -gt 0 ] 2>/dev/null && [ "$VM_MEM" -lt 4096 ]; then
+  printf '==> warning: podman machine has %s MiB — 80-onboard pass B (npm install -g of the dsh host) OOMs below ~4 GiB on the 0.2.2-rc.2 closure; expect a SIGKILL/137 there unless the machine memory is raised\n' "$VM_MEM"
+fi
+
 # The mirror defaults (DaoCloud base image, npmmirror node dist) are baked
 # into e2e/Containerfile on this repo, so the only build arg to forward is
 # the resolved dsh version.
@@ -53,16 +64,18 @@ printf '==> building image %s (context: %s)\n' "$IMAGE" "$REPO_ROOT"
 podman build -f "$REPO_ROOT/e2e/Containerfile" -t "$IMAGE" "${BUILD_ARGS[@]}" "$REPO_ROOT"
 
 # Vendor the sibling dsh-subagent-registry build when one sits next to this
-# checkout. npm's dsh-subagent-registry@0.18.0 (latest) statically imports
-# CodeRunFailedError from @deepseek-ai/dsh-tools — an export the 0.2.2-rc.1
-# host moved to the new @deepseek-ai/dsh-tool-executor-ptc package — so the
-# published build dies at plugin load with an ESM SyntaxError and every
-# scenario that dispatches through use_agent (75/76, plus 77's readiness
-# probe) goes red on that host. The fixed source lives in the sibling repo;
-# packing it here lets the scenarios run against the fix while npm still
-# carries the stale build. The tarball reaches the container through the
-# /e2e bind mount; scenarios fall back to the npm pin when nothing is
-# vendored (fresh clone, CI, or a stale sibling).
+# checkout. The npm releases lag the host waves: 0.18.0 (rc.1 wave) died at
+# load — it statically imports CodeRunFailedError from @deepseek-ai/dsh-tools,
+# an export the 0.2.2-rc.1 host moved to @deepseek-ai/dsh-tool-executor-ptc —
+# and 0.19.0/0.19.1 (tagged before the rc.2 adaptation commit) still read the
+# PRE-rc.2 subagent seams, so on an 0.2.2-rc.2 host every scenario that
+# dispatches through use_agent (75/76, plus 77's readiness probe) breaks
+# SILENTLY: the child never surfaces on the live board, the Ctrl+G picker
+# never opens, the mock jev records zero dispatches. The adapted source lives
+# in the sibling repo; packing it here lets the scenarios run against the fix
+# while npm still carries the stale builds. The tarball reaches the container
+# through the /e2e bind mount; scenarios fall back to the npm pin when
+# nothing is vendored (fresh clone, CI, or a stale sibling).
 #
 # The packed version is bumped one patch past the sibling's manifest before
 # repacking: scenario 10's tui-pi install already pulls the published copy
@@ -93,12 +106,20 @@ if [ -d "$REGISTRY_SRC/lib" ] && [ -f "$REGISTRY_SRC/package.json" ]; then
       ' "$PACK_TMP/package/package.json")" \
     && tar czf "$VENDOR_DIR/aiwayds-dsh-subagent-registry-$BUMPED.tgz" -C "$PACK_TMP" package; then
     REG_TGZ="$VENDOR_DIR/aiwayds-dsh-subagent-registry-$BUMPED.tgz"
-    # Staleness probe: a build that still imports the moved symbol would die
-    # at load exactly like the npm build — refuse to vendor it.
+    # Staleness probes — a stale vendored build would fail the scenarios
+    # exactly like the npm copies, so refuse to vendor it:
+    #   rc.1 wave: a build that still imports the moved symbol dies at load.
+    #   rc.2 wave: a build without the waitForTreeWork runtime probe
+    #     (lib/host-compat.js) reads the pre-rc.2 child seams and breaks the
+    #     use_agent chain silently on an 0.2.2-rc.2 host.
     if tar xzOf "$REG_TGZ" package/lib/ptc/runner.js 2>/dev/null \
       | grep -q "import { CodeRunFailedError"; then
       rm -f "$REG_TGZ"
       printf '==> vendored registry build is stale (still imports the moved CodeRunFailedError) — scenarios fall back to the npm pin\n'
+    elif ! tar xzOf "$REG_TGZ" package/lib/host-compat.js 2>/dev/null \
+      | grep -q "waitForTreeWork"; then
+      rm -f "$REG_TGZ"
+      printf '==> vendored registry build is stale (predates the 0.2.2-rc.2 host wave: no waitForTreeWork probe) — scenarios fall back to the npm pin\n'
     else
       printf '==> vendored registry build: %s (sibling %s, version bumped past the stale npm copy)\n' "$(basename "$REG_TGZ")" "$REGISTRY_SRC"
     fi

@@ -54,6 +54,7 @@ console.log('dsh-tui-pi setup (first run / upgrade only):')
 const setup = runOnboard({ log: (line) => console.log(line) })
 if (!setup.ok) {
   console.error(`\ndsh-tui-pi: setup stopped at "${setup.step}".`)
+  if (setup.detail) console.error(`dsh-tui-pi: ${setup.step} — ${setup.detail}`)
   console.error(`dsh-tui-pi: ${setup.hint}`)
   process.exit(1)
 }

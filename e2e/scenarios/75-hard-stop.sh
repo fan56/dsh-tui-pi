@@ -50,22 +50,36 @@ fi
 # tui-pi alone, so the registry package sits in profile node_modules but is
 # never LOADED — use_agent is unknown to the model (ToolNotFoundError).
 # Install it as a real bundle member, exactly what a real user does.
+#
+# Source of the tarball: the VENDORED build first. npm's releases lag the
+# host waves — 0.19.0/0.19.1 were both tagged before the rc.2 adaptation
+# commit in the sibling repo, so on an 0.2.2-rc.2 host they still read the
+# pre-rc.2 subagent seams and the use_agent chain breaks SILENTLY (the child
+# never surfaces on the live board, Ctrl+G never opens the picker — not a
+# load error like the rc.1 wave). run-e2e.sh packs the adapted sibling
+# checkout (version bumped past the published copy so pnpm's hoisting
+# materializes it) and probes it for both waves' staleness markers. Only
+# when nothing is vendored (fresh clone, CI, stale sibling) do we fall back
+# to the newest npm pin — the adaptedness probe below then fails loudly
+# instead of the ladder red-herringing 12 assertions down.
 if ! grep -qF '@aiwayds/dsh-subagent-registry' "$HOME/.dsh/profiles/tui/package.json" 2>/dev/null \
   || ! grep -qF '@aiwayds/dsh-subagent-registry' <(dsh plugin --profile tui list 2>/dev/null); then
-  # Pin 0.19.0: npm's 0.18.0 predates the 0.2.2-rc.1 host wave — it
-  # statically imports CodeRunFailedError from @deepseek-ai/dsh-tools, an
-  # export that host moved to @deepseek-ai/dsh-tool-executor-ptc, so that
-  # build dies at load with an ESM SyntaxError and every use_agent dispatch
-  # would fail. These scenarios ran a vendored fixed build (version-bumped
-  # past the npm copy so pnpm's hoisting would materialize it) until 0.19.0
-  # shipped the same fix; the released build is pinned again. Hoisting is a
-  # non-issue now: scenario 10 already resolves the host's ^0.18.0 range to
-  # this exact release, so the hoisted copy and the plugin-add'd tarball are
-  # the same content. The old vendored tarball stays in e2e/vendor only as a
-  # historical reference and is no longer installed.
-  if npm pack @aiwayds/dsh-subagent-registry@0.19.0 --registry=https://registry.npmjs.org --pack-destination /tmp >/dev/null 2>&1 \
-    && REG_TGZ="$(ls /tmp/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)" && [ -n "$REG_TGZ" ] \
-    && timeout 300 dsh plugin --profile tui add "$REG_TGZ" >/tmp/reg-add.log 2>&1; then
+  REG_TGZ="$(ls /e2e/vendor/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)"
+  if [ -n "$REG_TGZ" ]; then
+    ok "vendored registry build present ($(basename "$REG_TGZ"))"
+  else
+    warn 'no vendored registry build (fresh clone / CI / stale sibling) — falling back to the npm pin'
+    REG_TGZ=''
+    if npm pack @aiwayds/dsh-subagent-registry@0.19.1 --registry=https://registry.npmjs.org --pack-destination /tmp >/dev/null 2>&1; then
+      REG_TGZ="$(ls -t /tmp/aiwayds-dsh-subagent-registry-*.tgz 2>/dev/null | head -1)"
+    fi
+    if [ -z "$REG_TGZ" ]; then
+      bad 'registry tarball unavailable: nothing vendored and npm pack failed'
+      summary
+      exit 0
+    fi
+  fi
+  if timeout 300 dsh plugin --profile tui add "$REG_TGZ" >/tmp/reg-add.log 2>&1; then
     ok "registry plugin installed into the tui profile ($(basename "$REG_TGZ"))"
   else
     bad 'registry plugin install failed; tail:'
@@ -75,6 +89,20 @@ if ! grep -qF '@aiwayds/dsh-subagent-registry' "$HOME/.dsh/profiles/tui/package.
   fi
 else
   ok 'registry plugin already bundled'
+fi
+
+# Adaptedness probe on the copy the profile actually resolves: the 0.2.2-rc.2
+# host reshaped the subagent seams this plugin reads (listChildren →
+# listDirectChildren, waitForChildren → waitForTreeWork, the activation-spec
+# shape, the resume options — all selected behind the waitForTreeWork probe
+# in lib/host-compat.js). A pre-rc.2 build still LOADS on rc.2; the break is
+# downstream and silent, so grep for the probe symbol instead.
+REG_PKG="$(node -e "console.log(require.resolve('@aiwayds/dsh-subagent-registry/package.json', { paths: ['$HOME/.dsh/profiles/tui/node_modules'] }))" 2>/dev/null || true)"
+if [ -n "$REG_PKG" ] \
+  && grep -q 'waitForTreeWork' "$(dirname "$REG_PKG")/lib/host-compat.js" 2>/dev/null; then
+  ok "registry build carries the 0.2.2-rc.2 host adaptation ($(node -e "console.log(require('$REG_PKG').version ?? '?')"))"
+else
+  bad "registry build predates the 0.2.2-rc.2 host wave (no waitForTreeWork probe in ${REG_PKG:-<unresolved>}/lib/host-compat.js) — the use_agent chain breaks silently on rc.2; vendor the adapted sibling build (see e2e/run-e2e.sh)"
 fi
 
 # --- the mock LLM server (same route 68 committed) --------------------------

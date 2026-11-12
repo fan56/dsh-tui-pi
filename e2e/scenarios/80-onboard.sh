@@ -89,7 +89,11 @@ info 'piped boot via dsh-tui-pi (fast path must be silent, boot must survive)'
 set +e
 timeout 25 sh -c 'sleep 40 | dsh --profile tui' >"$BOOT_LOG" 2>&1
 BOOT_RC=$?
-set -e
+# Keep -e OFF past this point: the assert_* helpers return 1 on failure, and
+# with errexit armed a failing assert kills the script before summary() — the
+# scenario then writes no result file and its counter silently vanishes from
+# run-all.sh's total table (observed when pass B died on the host install).
+set +e
 if [[ "$BOOT_RC" == "124" ]]; then
   ok 'boot survived until the timeout kill (healthy, piped)'
 else
@@ -99,6 +103,14 @@ fi
 assert_not_contains 'fast path printed no setup banner' 'setup (first run' "$(cat "$BOOT_LOG")"
 
 # --- pass B: the fresh machine (dsh hidden, separate prefix + home) -------
+# Known environment ceiling (HOST-SIDE, not launcher-fixable): on a 2 GiB
+# podman VM the fresh-machine host install `npm install -g
+# @deepseek-ai/dsh@0.2.2-rc.2` can be SIGKILLed by the kernel OOM killer
+# (exit 137) where 0.2.2-rc.1 installed fine — the rc.2 closure needs more
+# install-time memory than the VM has. The launcher surfaces that death now
+# (signal + step in the failure lines, see bin/onboard-core.mjs) instead of
+# a bare "setup stopped"; this scenario only asserts the launcher's
+# reporting contract, the OOM itself belongs to the environment.
 info 'pass B: hide dsh, separate npm prefix, empty DSH_HOME'
 NODSH=/tmp/onboard-nodsh-bin
 B_PREFIX=/tmp/onboard-prefix
@@ -109,6 +121,8 @@ ln -s "$(command -v node)" "$NODSH/node"
 ln -s "$(command -v npm)" "$NODSH/npm"
 
 B_LOG=/tmp/onboard-fresh.log
+# errexit stays OFF (see pass A): a failed install or a failing assert below
+# must reach summary(), not kill the scenario into a missing result file.
 set +e
 env -i HOME="$HOME" TERM="${TERM:-xterm-256color}" \
   PATH="$NODSH:$B_PREFIX/bin:/usr/bin:/bin" \
@@ -116,8 +130,14 @@ env -i HOME="$HOME" TERM="${TERM:-xterm-256color}" \
   DSH_HOME="$B_HOME" \
   timeout 600 node "$LAUNCHER_PKG/bin/boot.mjs" >"$B_LOG" 2>&1
 B_RC=$?
-set -e
 B_OUT="$(cat "$B_LOG")"
+# The launcher exit itself is a finding: since the failure detail (exit code
+# / signal) is now printed by boot.mjs, surface the tail verbatim when the
+# fresh-machine run died before finishing the three steps.
+if (( B_RC != 0 )); then
+  bad "fresh-machine launcher exited $B_RC (0 expected); log tail:"
+  tail -12 "$B_LOG" | sed 's/^/    | /'
+fi
 assert_matches 'step 1/3 noticed the missing host' '\[1/3\] dsh host +not found' "$B_OUT"
 assert_matches 'step 1/3 installed the host' '\[1/3\] dsh host +installed [0-9]' "$B_OUT"
 assert_matches 'step 2/3 handled pnpm' '\[2/3\] pnpm +(found|installed)' "$B_OUT"
