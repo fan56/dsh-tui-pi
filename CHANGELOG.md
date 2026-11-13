@@ -6,6 +6,9 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- npm packaged upgrade regression test pinning the intentional `postinstall` and the upgrade path from the published baseline to the locally packed tarball (pnpm 11 `strictDepBuilds` background, see `dsh-subagent-registry#10`).
+
 ### Fixed
 - **The 75/76 hard-stop chain breaks silently on the 0.2.2-rc.2 host when the registry plugin comes from npm.** npm's `@aiwayds/dsh-subagent-registry` 0.19.0 and 0.19.1 were both tagged before the sibling repo's rc.2 adaptation commit (`listChildren` → `listDirectChildren`, `waitForChildren` → `waitForTreeWork`, the activation-spec shape, the resume options — all selected behind the `waitForTreeWork` runtime probe), so on an 0.2.2-rc.2 host the plugin still loads but reads the pre-rc.2 seams: the child never surfaces on the live board, the Ctrl+G picker never opens, the mock jev records zero dispatches — 12 red assertions with no load error. Scenario 75 installs the VENDORED sibling build first again (the `run-e2e.sh` packing lane is revived: version bumped past the published copy so pnpm's hoisting materializes it), falls back to the npm pin only when nothing is vendored (fresh clone, CI, stale sibling). Both staleness generations are probed: `run-e2e.sh` refuses to vendor a build that still imports the moved `CodeRunFailedError` (rc.1 wave, dies at load) or lacks the `waitForTreeWork` probe in `lib/host-compat.js` (rc.2 wave, silent break), and scenario 75 re-checks the copy the profile actually resolves after the install — a stale install now fails loudly with the cause instead of red-herringing the ladder assertions.
 
