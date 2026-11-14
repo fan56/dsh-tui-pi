@@ -12,9 +12,9 @@
  * SyntaxError, so the guard stops with the paths and the removal commands.
  *
  * Version follow: after `npm i -g` upgrades this package, the profile still
- * holds the old copy; the next launch (or the package's postinstall) re-runs
- * the add to move the profile to the new version. A profile that is NEWER
- * than the global install (dev-upgraded ahead) is left untouched.
+ * holds the old copy; the next launch re-runs the add to move the profile to
+ * the new version. A profile that is NEWER than the global install
+ * (dev-upgraded ahead) is left untouched.
  *
  * See bin/onboard-core.mjs for the setup logic and its failure contract.
  */

@@ -105,11 +105,11 @@ const manifest = {
     "@deepseek-ai/dsh-base",
     ...Object.keys(deps).filter(name => name.startsWith("@aiwayds/")),
   ] } },
-  // The pnpm 10 default script block is CORRECT for published plugins: their
-  // postinstalls are dev-tree closure linkers that the npm tarball does not
-  // ship (running them fails with MODULE_NOT_FOUND — dsh-vault 0.7.0). Only
-  // the genuinely native deps need the build approval; everything else
-  // stays blocked, exactly like a `dsh plugin add` install leaves them.
+  // The pnpm 10 default script block is CORRECT for published plugins: they
+  // ship no install-class hooks at all (the dev-tree closure linkers are not
+  // wired as hooks in any npm tarball). Only the genuinely native deps need
+  // the build approval; everything else stays blocked, exactly like a
+  // `dsh plugin add` install leaves them.
   pnpm: { onlyBuiltDependencies: ["koffi", "node-pty"] },
 }
 fs.writeFileSync(process.argv[1], JSON.stringify(manifest, null, 2) + "\n")

@@ -3,6 +3,26 @@
 Shared vocabulary for this repo. Definitions only — implementation details
 live in ARCHITECTURE.md / HANDOFF.md.
 
+- **Launcher（bin 启动器）**: `dsh-tui-pi`/`dst` bin shim 背后的 `bin/boot.mjs`
+  ——装件检查、必要时跑 onboarding、然后 `dsh --profile tui` 原样透传启动；
+  host-guard 前置
+  (the `bin/boot.mjs` behind the `dsh-tui-pi`/`dst` bin shims — checks the
+  machine's pieces, runs onboarding when any is missing, then transparently
+  boots `dsh --profile tui`; the host-guard runs first)
+- **Onboarding（首启装机）**: 装机 onboarding 的唯一入口是 bin 首启
+  （`bin/boot.mjs` → `bin/onboard-core.mjs` 的 `runOnboard`）——本包不带任何
+  install 类生命周期钩子，`scripts/postinstall.mjs` 已删除（pnpm 11
+  `strictDepBuilds` 会拒绝带未放行 install 脚本的依赖并让宿主回滚安装，见
+  ADR 0004）。幂等：三件套（dsh 宿主、pnpm、挂载的 `tui` profile）齐了就
+  静默直进 TUI；历史 postinstall 与首启本就共用 `runOnboard`，行为等价
+  (machine setup has exactly one entry point, the bin's first launch
+  (`bin/boot.mjs` → `runOnboard` in `bin/onboard-core.mjs`) — the package
+  declares no install-class lifecycle hook and `scripts/postinstall.mjs` is
+  gone (pnpm 11 `strictDepBuilds` rejects dependencies with unapproved
+  install scripts and the host rolls back the install, see ADR 0004).
+  Idempotent: with all three pieces present (dsh host, pnpm, mounted `tui`
+  profile) it fast-paths silently into the TUI; the historical postinstall
+  and the first launch always shared `runOnboard`, so behavior is equivalent)
 - **Closure（宿主闭包）**: 随 dsh CLI 一起安装的 `@deepseek-ai/*` 子包集合；
   插件类型与运行时的唯一真源——源码 import 的所有 `@deepseek-ai/*` 都经
   `scripts/link-dsh-closure.mjs` 软链解析到同一个 closure 实例，typecheck

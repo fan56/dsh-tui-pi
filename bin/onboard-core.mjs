@@ -1,11 +1,12 @@
 /**
- * One-time onboarding for the `dsh-tui-pi` / `dst` launcher, shared by two
- * entry points:
- *   - scripts/postinstall.mjs — runs at `npm i -g @aiwayds/dsh-tui-pi` time,
- *     so the package is usable the moment the install prints "added 1 package";
- *   - bin/boot.mjs — runs on the first `dsh-tui-pi` invocation, catching up
- *     anything the postinstall could not finish (offline install, pnpm that
- *     does not run postinstall scripts, non-global context, …).
+ * One-time onboarding for the `dsh-tui-pi` / `dst` launcher. The package
+ * carries no install hook — the historical `scripts/postinstall.mjs` was
+ * removed because pnpm 11's strictDepBuilds validation gates dependencies'
+ * install scripts (see docs/adr/0004-onboarding-first-launch-not-postinstall.md)
+ * — so `bin/boot.mjs` is the single entry point: it runs on the first
+ * `dsh-tui-pi` invocation and on any later one that finds the machine
+ * missing a piece (fresh machine, offline first run, profile behind after
+ * an upgrade, …).
  *
  * Contract:
  *   - idempotent: every step checks before it acts, so a re-run only prints
@@ -230,10 +231,11 @@ export function compareVersions(a, b) {
 }
 
 // pnpm ≥10 fails a fresh `add` with ERR_PNPM_IGNORED_BUILDS when the added
-// packages carry lifecycle scripts. The only scripts our packages ship are
-// the closure-linker postinstalls, which no-op on published tarballs (they
-// guard on the repo's src/), so approving them is safe and is what `pnpm
-// approve-builds` would do interactively. pnpm sometimes records an
+// packages carry lifecycle scripts. The packages this suite ships declare
+// none (the dev-tree closure linker is not wired as a hook in any published
+// tarball), so filling the allowBuilds block approves nothing that can run
+// unvetted — it is what `pnpm approve-builds` would do interactively, and it
+// stays safe as companions evolve. pnpm sometimes records an
 // allowBuilds skeleton in the profile's pnpm-workspace.yaml with a
 // "set this to true or false" placeholder — fill those placeholders; when
 // it does not (behavior varies by pnpm build and environment), write the

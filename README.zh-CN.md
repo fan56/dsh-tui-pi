@@ -40,6 +40,8 @@ dsh plugin --profile tui add @aiwayds/dsh-tui-pi
 dsh --profile tui          # 启动（或：dsh-tui-pi）
 ```
 
+本包不带任何安装期钩子——装机在启动器首次运行时完成，每步打一行进度：缺 `@deepseek-ai/dsh` 宿主时经 npm 全局安装（解析 `latest`/`next` 中更新的 dist-tag）、装 pnpm、创建带本插件与自带 companion 的 `tui` profile。首启要下载宿主，可能耗时数分钟；首次没装完的部分（如离线机器）下次启动自动补齐。之后升级本包，profile 的挂载副本在下次启动时随版本前移。
+
 过去需要手工 patch 的一切——画布背景、`@deepseek-ai` 模块闭包、compaction 后端——现在都自动完成。发版后升级现有 profile：
 
 ```sh

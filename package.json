@@ -59,23 +59,23 @@
   "scripts": {
     "link-closure": "node scripts/link-dsh-closure.mjs",
     "build": "tsc -p tsconfig.json",
+    "prebuild": "node scripts/link-dsh-closure.mjs",
     "check": "tsc --noEmit -p tsconfig.json",
     "precheck": "node scripts/link-dsh-closure.mjs",
     "pretest": "npm run build",
     "test": "node --test test/*.test.mjs",
-    "smoke": "node scripts/smoke-boot.mjs",
-    "postinstall": "node scripts/postinstall.mjs"
+    "smoke": "node scripts/smoke-boot.mjs"
   },
   "dependencies": {
     "@aiwayds/dsh-ask-router": "^0.7.0",
     "@aiwayds/dsh-dcp": "^0.14.0",
     "@aiwayds/dsh-jev-core": "^0.2.0",
-    "@aiwayds/dsh-llm-proxy": "^0.8.0",
+    "@aiwayds/dsh-llm-proxy": "^0.8.1",
     "@aiwayds/dsh-llm-stats": "^0.9.0",
-    "@aiwayds/dsh-mcp-adapter": "^0.8.0",
+    "@aiwayds/dsh-mcp-adapter": "^0.8.1",
     "@aiwayds/dsh-model-sync": "^0.9.0",
-    "@aiwayds/dsh-profile-switch": "^0.4.0",
-    "@aiwayds/dsh-subagent-registry": "^0.19.1",
+    "@aiwayds/dsh-profile-switch": "^0.4.1",
+    "@aiwayds/dsh-subagent-registry": "^0.20.1",
     "@aiwayds/dsh-web-search-anysearch": "^0.9.0",
     "@earendil-works/pi-tui": "0.85.1"
   },

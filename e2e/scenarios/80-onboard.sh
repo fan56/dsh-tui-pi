@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Scenario — one-command onboarding: the `dsh-tui-pi`/`dst` launcher must
 # bring a machine up by itself. Two passes:
-#   A. the regular flow — dsh is present; `npm i -g` of the tarball runs the
-#      postinstall onboarding (progress lines, both bins registered, the tui
-#      profile composed, a piped boot with no setup banner = fast path);
+#   A. the regular flow — dsh is present; `npm i -g` of the tarball registers
+#      both bins, and the launcher's FIRST RUN (bin/boot.mjs) performs the
+#      onboarding (progress lines, both bins registered, the tui profile
+#      composed, a piped boot with no setup banner = fast path);
 #   B. the fresh-machine flow — dsh hidden from PATH, a separate npm prefix
 #      and an empty DSH_HOME: the launcher's first run installs the host
 #      itself (always via npm) and still ends in a composable profile.
@@ -11,7 +12,7 @@
 # earlier scenarios built, so nothing after it should depend on that state.
 set -u
 . "$(dirname "$0")/../lib/common.sh"
-scenario 'one-command onboarding (npm i -g → postinstall → dst)'
+scenario 'one-command onboarding (npm i -g → first-run boot → dst)'
 
 TARBALL="$(ls /dist/*.tgz 2>/dev/null | head -1)"
 if [[ -n "${TARBALL:-}" && -f "$TARBALL" ]]; then
@@ -32,26 +33,40 @@ else
   summary
 fi
 
-# Lifecycle-script policy differs across npm lines (npm >=11 gates them),
-# so drive the postinstall explicitly: the assertion targets the script's
-# behavior, not the installer's mood. This mirrors what an npm that does
-# run it would produce.
+# Since 2.38.1 there is no npm postinstall: onboarding moved from install
+# time to the launcher's first run (bin/boot.mjs, the same runOnboard the
+# deleted hook drove). The `npm i -g` above therefore only registers the
+# bins; the first `dsh-tui-pi` invocation must do the rest. Force that first
+# run deterministically: drop the tui profile the earlier scenarios built,
+# so boot.mjs cannot fast-path past the onboarding.
 GLOBAL_ROOT="$(npm prefix -g)"
 LAUNCHER_PKG="$GLOBAL_ROOT/lib/node_modules/@aiwayds/dsh-tui-pi"
-POSTINSTALL_LOG=/tmp/onboard-postinstall.log
-if timeout 420 env npm_config_global=true node "$LAUNCHER_PKG/scripts/postinstall.mjs" >"$POSTINSTALL_LOG" 2>&1; then
-  ok 'postinstall exited 0'
+PROFILE_DIR="$HOME/.dsh/profiles/tui"
+rm -rf "$PROFILE_DIR"
+ONBOARD_LOG=/tmp/onboard-firstboot.log
+info 'first dsh-tui-pi run must run the onboarding, then boot'
+# errexit stays OFF around rc capture (see pass A below / pass B): a failing
+# boot must reach summary(), not kill the scenario into a missing result file.
+set +e
+timeout 600 dsh-tui-pi </dev/null >"$ONBOARD_LOG" 2>&1
+FIRST_RC=$?
+# 0 = the TUI exited cleanly once the closed stdin hit EOF here; 124 = the
+# timeout guard killed a healthy TUI that was still waiting on the (empty)
+# stdin. Both prove the onboarding finished and the launcher reached the
+# boot; anything else is a real failure. (Pass B drives the launcher through
+# an isolated env without a closed stdin, so it does not share this rc
+# reading.)
+if [[ "$FIRST_RC" == "0" || "$FIRST_RC" == "124" ]]; then
+  ok "first-run boot finished the onboarding and booted (rc=$FIRST_RC)"
 else
-  bad "postinstall failed (exit $?)"
-  tail -20 "$POSTINSTALL_LOG" | sed 's/^/    | /'
-  summary
+  bad "first-run boot failed (rc=$FIRST_RC); log tail:"
+  tail -20 "$ONBOARD_LOG" | sed 's/^/    | /'
 fi
-A_LOG="$(cat "$POSTINSTALL_LOG")"
-assert_contains 'postinstall announced the onboarding' 'preparing the dsh host' "$A_LOG"
+A_LOG="$(cat "$ONBOARD_LOG")"
+assert_contains 'first run announced the onboarding' 'dsh-tui-pi setup (first run / upgrade only):' "$A_LOG"
 assert_matches 'step 1/3 found the host' '\[1/3\] dsh host +found [0-9]' "$A_LOG"
 assert_matches 'step 2/3 found pnpm' '\[2/3\] pnpm +found' "$A_LOG"
 assert_matches 'step 3/3 created the profile' '\[3/3\] tui profile +(done|already set up)' "$A_LOG"
-assert_contains 'postinstall reported ready' 'ready — launch' "$A_LOG"
 
 if command -v dsh-tui-pi >/dev/null 2>&1; then
   ok 'dsh-tui-pi bin registered'
@@ -64,7 +79,6 @@ else
   bad 'dst bin missing'
 fi
 
-PROFILE_DIR="$HOME/.dsh/profiles/tui"
 if [[ -f "$PROFILE_DIR/node_modules/@aiwayds/dsh-tui-pi/package.json" ]]; then
   ok 'tui profile has the plugin mounted'
 else
@@ -87,7 +101,7 @@ assert_contains 'dump-config composes the plugin' 'tui-pi' "$DUMP"
 BOOT_LOG=/tmp/onboard-boot.log
 info 'piped boot via dsh-tui-pi (fast path must be silent, boot must survive)'
 set +e
-timeout 25 sh -c 'sleep 40 | dsh --profile tui' >"$BOOT_LOG" 2>&1
+timeout 25 sh -c 'sleep 40 | dsh-tui-pi' >"$BOOT_LOG" 2>&1
 BOOT_RC=$?
 # Keep -e OFF past this point: the assert_* helpers return 1 on failure, and
 # with errexit armed a failing assert kills the script before summary() — the

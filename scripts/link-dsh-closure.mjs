@@ -1,6 +1,6 @@
 /**
- * Postinstall linker: point every `node_modules/@deepseek-ai/*` entry at the
- * global dsh closure.
+ * Dev-tree closure linker: point every `node_modules/@deepseek-ai/*` entry
+ * at the global dsh closure.
  *
  * Why this exists: dsh-tui-pi is a plugin that runs *inside* the installed
  * dsh CLI, and its source imports the `@deepseek-ai/*` packages (cordis,
@@ -17,7 +17,10 @@
  * (`Property 'settings' does not exist on type 'Context'`), so they must stay
  * *undeclared*. pnpm then treats the closure links as extraneous — and, as
  * it prunes entries it once managed, the links can still disappear after an
- * install. This script re-creates them on every `pnpm install` (postinstall).
+ * install. This script re-creates them after an install: in the dev tree it
+ * runs through the `link-closure` / `precheck` scripts — it is not wired as
+ * a lifecycle hook anywhere, and the published tarball carries no hooks at
+ * all (ADR 0004).
  *
  * It is a no-op (exit 0) when no global dsh install is found — a dev machine
  * without dsh simply cannot typecheck against dsh types.
@@ -29,12 +32,13 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
-// Guard: this postinstall is a dev-machine convenience for THIS repo. A
-// published tarball carries scripts/ but no src/, and must never touch a
-// consumer's node_modules (it would delete their @deepseek-ai packages and
-// replace them with symlinks into their global dsh closure). pnpm ≥10 blocks
-// dependency lifecycle scripts by default, but npm would run this — exit
-// silently outside the repo.
+// Guard: this linker is a dev-machine convenience for THIS repo, invoked
+// only through the dev scripts. A published tarball carries scripts/ but no
+// src/, and must never touch a consumer's node_modules (it would delete
+// their @deepseek-ai packages and replace them with symlinks into their
+// global dsh closure). npm would run a script wired under this name as a
+// lifecycle hook — the published package wires none, and the guard stays as
+// a hard boundary: exit silently outside the repo.
 if (!existsSync(join(repoRoot, 'src'))) {
   process.exit(0)
 }
