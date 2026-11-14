@@ -4,7 +4,7 @@
  * refuses dependency install scripts), the bin's first launch is the only
  * onboarding entry point; these tests pin its contract with fake `dsh`,
  * `npm` and `pnpm` shims on a scratch PATH and an isolated DSH_HOME under
- * /private/tmp (a fake host must never touch the real ~/.dsh).
+ * the OS temp dir (a fake host must never touch the real ~/.dsh).
  *
  * Scenarios:
  *   1. profile missing (dsh present)  → runOnboard calls `dsh plugin --profile
@@ -24,6 +24,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import { dirname, join } from 'node:path'
 import { runOnboard } from '../bin/onboard-core.mjs'
 
@@ -105,9 +106,9 @@ function writeFakeTools(dir, { failInstall = '' } = {}) {
   return { ...bins, failInstall }
 }
 
-// Fresh isolated scratch home under /private/tmp (never the real ~/.dsh).
+// Fresh isolated scratch home under the OS temp dir (never the real ~/.dsh).
 function newScratch() {
-  scratch = mkdtempSync('/private/tmp/tui-pi-boot-onboard-')
+  scratch = mkdtempSync(join(os.tmpdir(), 'tui-pi-boot-onboard-'))
   mkdirSync(join(scratch, 'home'), { recursive: true })
   return scratch
 }
