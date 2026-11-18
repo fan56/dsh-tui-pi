@@ -7,6 +7,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Declare companion plugins metadata for host install-time hints.** `package.json` gains a pure-data `dsh.companions` array naming the three sibling plugins: `@aiwayds/dsh-subagent-registry` (required, subagent collaboration), `@aiwayds/dsh-dcp` (optional, dynamic context compaction) and `@aiwayds/dsh-topics-memory` (optional, session memory), each with a one-line purpose description. A host that reads the field can point users at `dsh plugin add <name>` right after adding tui-pi; no install hook is reintroduced, so pnpm 11 `strictDepBuilds` (ADR 0004) and the packaged-upgrade contract stay untouched. No automatic activation is performed.
+
+## [2.38.1] - 2026-11-14
+
+### Added
 - npm packaged upgrade regression test pinning the upgrade path from the published baseline to the locally packed tarball — the published 2.38.0 baseline still carries the hook (historical fixture), and the locally packed tarball asserts the opposite: zero install-class hooks declared, no hook script shipped, bin entry points intact, upgrade exit 0 with no unapproved-build report (pnpm 11 `strictDepBuilds` background, see `dsh-subagent-registry#10`).
 - `test/boot-onboard.test.mjs` — seven scenarios pinning the first-launch onboarding contract of `bin/boot.mjs` + `bin/onboard-core.mjs` with fake `dsh`/`npm`/`pnpm` shims on an isolated `DSH_HOME`: profile missing/behind/current, host install failure (three plain-language lines, exit 1, no stack trace), npm missing (Node.js hint), pnpm missing (step hint), and the fast path booting silently with no setup banner. Decision and full evidence in ADR 0004.
 

@@ -1,6 +1,6 @@
 {
   "name": "@aiwayds/dsh-tui-pi",
-  "version": "2.37.1",
+  "version": "2.38.2",
   "description": "A fully-featured pi-style terminal UI for DeepSeek Harness (dsh) — history look-back & fork-at-turn, guided preset switching, live subagent steering, model profiles & themes",
   "repository": {
     "type": "git",
@@ -106,7 +106,24 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    }
+    },
+    "companions": [
+      {
+        "name": "@aiwayds/dsh-subagent-registry",
+        "description": "提供 subagent 协作能力，启用多代理任务编排与调度。",
+        "required": true
+      },
+      {
+        "name": "@aiwayds/dsh-dcp",
+        "description": "提供上下文动态压缩，长会话自动收敛 token 占用。",
+        "required": false
+      },
+      {
+        "name": "@aiwayds/dsh-topics-memory",
+        "description": "提供会话记忆，跨会话保留长期上下文。",
+        "required": false
+      }
+    ]
   },
   "author": "fan56",
   "publishConfig": {
