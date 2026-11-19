@@ -6,6 +6,8 @@
 
 **要求 dsh >= 0.2.2-rc.1** —— 本插件只跟随 dsh RC/stable 线（CI 与发版在运行时解析 latest/next 中更新的 dist-tag）。**不再支持 alpha 线。**宿主低于下限时，启动守卫会打一行 warning 并干净退出（可用 `DSH_TUI_SKIP_HOST_CHECK=1` 跳过）。alpha 单目标决策的历史见 [ADR 0002](docs/adr/0002-target-dsh-0.1.2-alpha.3-single-target.md)（已被取代）。
 
+**首启/升级 onboard 时的 companion 版本** —— bundled companions 默认钉到 registry 的 `dist-tags.latest`（带跨 major 守卫、装后版本自检和失败自动回退声明范围）。设 `DSH_TUI_COMPANION_LATEST=0`（或 `false`/`off`）改为按 `package.json` 声明范围安装。该开关在 launcher 层、TUI Config 加载前读取；registry 查询失败不会阻塞启动。
+
 https://github.com/user-attachments/assets/67a7c6ca-ff42-4005-b543-437ba61771bb
 
 *一次真实 session 的实况录制（MP4，1.5× 速度）——todos、运行中的 subagents、think/tool 面板和 powerline footer 的实际效果。*

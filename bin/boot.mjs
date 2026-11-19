@@ -32,6 +32,15 @@ import {
 
 const args = process.argv.slice(2)
 
+// Single kill switch for companion-latest onboarding, read once in the bin
+// layer (before the TUI Config exists). Anything other than 0/false/off —
+// including unset — means enabled. Mirrors the DSH_TUI_SKIP_HOST_CHECK style.
+function companionLatestEnabled() {
+  const raw = process.env.DSH_TUI_COMPANION_LATEST
+  if (raw === undefined) return true
+  return !['0', 'false', 'off'].includes(String(raw).trim().toLowerCase())
+}
+
 function boot(dsh) {
   const result = spawnSync(dsh, ['--profile', 'tui', ...args], { stdio: 'inherit' })
   process.exit(result.status ?? 1)
@@ -51,7 +60,10 @@ if (dsh && profileMounted() && !profileBehind()) {
 }
 
 console.log('dsh-tui-pi setup (first run / upgrade only):')
-const setup = runOnboard({ log: (line) => console.log(line) })
+const setup = runOnboard({
+  log: (line) => console.log(line),
+  companionLatest: companionLatestEnabled(),
+})
 if (!setup.ok) {
   console.error(`\ndsh-tui-pi: setup stopped at "${setup.step}".`)
   if (setup.detail) console.error(`dsh-tui-pi: ${setup.step} — ${setup.detail}`)

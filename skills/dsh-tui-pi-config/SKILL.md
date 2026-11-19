@@ -56,6 +56,7 @@ dsh 0.1.5 的 `~/.dsh/settings.yaml` 已移除：其顶层 `dsh-tui:` 段会在�
 | `DSH_TUI_COPY_ON_SELECT` | `0` 让拖选仅视觉选中、不自动复制（默认开） |
 | `DSH_TUI_BTW_CONTEXT_MESSAGES` | `/btw` 侧问快照的最近消息条数 |
 | `DSH_TUI_SKIP_HOST_CHECK` | `1` 跳过宿主版本下限检查（测试用） |
+| `DSH_TUI_COMPANION_LATEST` | 首次/升级 onboard 时是否把 bundled companions 钉到 registry 的 `dist-tags.latest`（默认开）；`0`/`false`/`off` 关闭，关闭后按 `package.json` 声明范围安装。在 bin 层读取，早于 TUI Config；查询失败/跨 major 自动回退声明范围，不阻塞启动 |
 
 retention/resume/askUser 组的优先级：**显式配置值 > env > 默认**（只看 entry `config:` 段里
 实际写下的键，未写的键回落 env，再回落默认）。

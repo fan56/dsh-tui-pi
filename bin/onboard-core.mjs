@@ -22,9 +22,12 @@
 
 import { execFileSync, spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { decideCompanionInstall, normalizeVersion } from './companion-policy.mjs'
+import { queryDistTagLatest } from './registry-dist-tag.mjs'
 
 const PKG = '@aiwayds/dsh-tui-pi'
 const HOST = '@deepseek-ai/dsh'
@@ -75,6 +78,70 @@ export function companions() {
     return Object.keys(deps).filter((name) => name.startsWith('@aiwayds/') && name !== PKG)
   } catch {
     return []
+  }
+}
+
+// Same companions, but with their declared caret ranges — the policy guard
+// needs the range to reject a cross-major latest. The declaration is read
+// from this package, never from the profile (which only holds resolved pins).
+export function companionRanges() {
+  try {
+    const deps = readSelfPackage().dependencies ?? {}
+    const ranges = {}
+    for (const [name, range] of Object.entries(deps)) {
+      if (name.startsWith('@aiwayds/') && name !== PKG) ranges[name] = range
+    }
+    return ranges
+  } catch {
+    return {}
+  }
+}
+
+function profileCompanionDir(name) {
+  return join(dshHome(), 'profiles', PROFILE, 'node_modules', name)
+}
+
+// The version currently mounted in the profile, or null when absent. Used
+// only for the idempotent / no-downgrade guard, never to change a user pin.
+export function profileCompanionVersion(name) {
+  try {
+    return JSON.parse(readFileSync(join(profileCompanionDir(name), 'package.json'), 'utf8')).version ?? null
+  } catch {
+    return null
+  }
+}
+
+// The spec recorded for a companion in the profile's own package.json
+// `dependencies`. `dsh plugin add pkg@<spec>` writes that line verbatim, so
+// re-reading it is how the fallback verifies an exact pin was really replaced
+// by the declared range (a bare add leaves the exact pin untouched).
+export function profileCompanionSpec(name) {
+  try {
+    const manifest = JSON.parse(readFileSync(join(dshHome(), 'profiles', PROFILE, 'package.json'), 'utf8'))
+    return manifest.dependencies?.[name] ?? null
+  } catch {
+    return null
+  }
+}
+
+// Post-install self-check: resolve the freshly installed companion from the
+// profile and compare its package.json version with the exact spec we asked
+// for. A load failure or a version mismatch means the pin did not land and
+// the caller must fall back to the declared range (today's path).
+function companionSelfCheck(name, expectedVersion) {
+  try {
+    const req = createRequire(join(profileCompanionDir(name), 'noop.js'))
+    let manifest
+    try {
+      manifest = req.resolve(`${name}/package.json`)
+    } catch {
+      // Some companions do not export ./package.json; fall back to the
+      // profile's physical path, which is where `dsh plugin add` mounts it.
+      manifest = join(profileCompanionDir(name), 'package.json')
+    }
+    return JSON.parse(readFileSync(manifest, 'utf8')).version === expectedVersion
+  } catch {
+    return false
   }
 }
 
@@ -267,10 +334,18 @@ function approvePrintedBuilds() {
  *                     itself is not on PATH, print what to install and stop
  *   2/3 pnpm        — the host's plugin manager shells out to it; installed
  *                     globally when missing
- *   3/3 tui profile — `dsh plugin --profile tui add` this package (+ companions)
+ *   3/3 tui profile — `dsh plugin --profile tui add` this package (+ companions).
+ *       With companion latest enabled (the default), each companion's
+ *       `dist-tags.latest` is resolved and guarded before the add, so the
+ *       exact version is pinned; a failed query/guard falls back to the
+ *       declared range (today's path) without blocking onboard.
  * Returns { ok: true, dsh } or { ok: false, step, hint, detail }.
+ *
+ * `companionLatest` comes from the bin-layer DSH_TUI_COMPANION_LATEST switch;
+ * it is an explicit parameter, not an env read here, so the decision stays
+ * testable and the TUI Config layer never gets a second source of truth.
  */
-export function runOnboard({ log = () => {} } = {}) {
+export function runOnboard({ log = () => {}, companionLatest = true } = {}) {
   let dsh = dshBinPath()
   const wanted = resolveHostVersion()
   const hostSpec = wanted ? `${HOST}@${wanted}` : HOST
@@ -320,25 +395,108 @@ export function runOnboard({ log = () => {} } = {}) {
     const list = companions()
     log(`  [3/3] tui profile           ${verb}: installing ${PKG}${list.length ? ` + ${list.length} bundled companions` : ''}…`)
     if (list.length) log(`        ${list.join(', ')}`)
-    const result = spawnSync(dsh, ['plugin', '--profile', PROFILE, 'add', PKG], {
-      stdio: 'inherit',
-      timeout: INSTALL_TIMEOUT_MS,
-    })
-    if (result.status !== 0) {
-      if (!approvePrintedBuilds()) {
-        return { ok: false, step: 'tui profile setup', hint: `run it manually with: dsh plugin --profile ${PROFILE} add ${PKG} — then re-run dsh-tui-pi` }
+
+    // Resolve → guard → decide, one line per companion. The registry query
+    // inherits the install's env and runs from the profile dir when present,
+    // so a profile-level .npmrc (private registry) is seen by both sides.
+    const profileDir = join(dshHome(), 'profiles', PROFILE)
+    const registryCwd = existsSync(profileDir) ? profileDir : process.cwd()
+    const ranges = companionRanges()
+    const decisions = list.map((name) => {
+      const declaredRange = ranges[name] ?? null
+      const queried = companionLatest && declaredRange
+        ? queryDistTagLatest(name, { cwd: registryCwd, env: process.env })
+        : null
+      // Normalise once so the spec handed to plugin add and the version the
+      // self-check expects are the same string (a `v`-prefixed dist-tag would
+      // otherwise make the installed manifest compare unequal to the spec).
+      const resolved = queried ? normalizeVersion(queried) : null
+      const currentPin = profileCompanionVersion(name)
+      const decision = decideCompanionInstall({ packageName: name, declaredRange, resolved, currentPin, enabled: companionLatest })
+      if (decision.action === 'latest') {
+        log(`        ${name}: ${declaredRange} → ${resolved} (latest)`)
+      } else if (decision.action === 'skip') {
+        log(`        ${name}: skip ${declaredRange ?? '(no range)'} (${decision.reason})`)
+      } else {
+        log(`        ${name}: fallback ${declaredRange ?? '(no range)'} (${decision.reason})`)
       }
-      // pnpm's skeleton is filled; the same idempotent add now succeeds
-      // (everything is already downloaded).
-      log('  [3/3] tui profile           approved the printed build scripts (our closure-linker no-ops) — retrying…')
-      const retry = spawnSync(dsh, ['plugin', '--profile', PROFILE, 'add', PKG], {
-        stdio: 'inherit',
-        timeout: INSTALL_TIMEOUT_MS,
-      })
-      if (retry.status !== 0) {
-        return { ok: false, step: 'tui profile setup', hint: `run it manually with: dsh plugin --profile ${PROFILE} add ${PKG} — then re-run dsh-tui-pi` }
+      return { name, resolved, decision }
+    })
+
+    // Only guarded, resolved companions get an explicit exact spec; every
+    // fallback / skip leaves the declared-range resolution to the host, which
+    // is byte-for-byte today's `dsh plugin add PKG` behaviour.
+    const specDecisions = decisions.filter((entry) => entry.decision.action === 'latest')
+    const declaredArgs = ['plugin', '--profile', PROFILE, 'add', PKG]
+    const addArgs = [...declaredArgs, ...specDecisions.map((entry) => entry.decision.spec)]
+    const profileFail = {
+      ok: false,
+      step: 'tui profile setup',
+      hint: `run it manually with: dsh plugin --profile ${PROFILE} add ${PKG} — then re-run dsh-tui-pi`,
+    }
+
+    // One add attempt, keeping the existing build-approval retry: pnpm ≥10 can
+    // fail a fresh add with ERR_PNPM_IGNORED_BUILDS, which filling its
+    // allowBuilds skeleton fixes. When approvePrintedBuilds changes nothing we
+    // do not retry — that is today's behaviour. Returns the final spawn result.
+    function pluginAdd(args) {
+      let res = spawnSync(dsh, args, { stdio: 'inherit', timeout: INSTALL_TIMEOUT_MS })
+      if (res.status !== 0) {
+        if (!approvePrintedBuilds()) return res
+        log('  [3/3] tui profile           approved the printed build scripts (our closure-linker no-ops) — retrying…')
+        res = spawnSync(dsh, args, { stdio: 'inherit', timeout: INSTALL_TIMEOUT_MS })
+      }
+      return res
+    }
+
+    let result = pluginAdd(addArgs)
+
+    // An exact-spec add can be rejected for reasons the build-approval retry
+    // does not address: the host's pre-install compatibility preflight, a
+    // dist-tag that moved between query and add, or its post-install rollback
+    // (all exit 1). Downgrade to the declared range once; only a second failure
+    // falls into today's abort semantics. The log states the observed exit and
+    // the likely causes so this retry is distinguishable from the one above.
+    let specAddFellBack = false
+    if (result.status !== 0 && specDecisions.length > 0) {
+      const cause = result.signal ? `signal ${result.signal}` : `exit ${result.status ?? 'unknown'}`
+      log(`        companion spec add failed (${cause}; e.g. host compatibility preflight / dist-tag moved / post-install rollback) — retrying declared range`)
+      specAddFellBack = true
+      result = pluginAdd(declaredArgs)
+    }
+    if (result.status !== 0) return profileFail
+
+    // Post-install self-check on the exact specs only. When a pinned companion
+    // did not land at the requested version, reinstall its declared range with
+    // an EXPLICIT spec — a bare add would leave the bad exact pin in the
+    // profile's package.json (P1-2). Read that line back after the fallback and
+    // report only what actually happened. Skipped entirely if the add already
+    // fell back.
+    const broken = specAddFellBack
+      ? []
+      : specDecisions.filter((entry) => !companionSelfCheck(entry.name, entry.resolved))
+    if (broken.length) {
+      log(`        ${broken.map((entry) => entry.name).join(', ')}: self-check failed — reinstalling declared range with explicit specs`)
+      const fallbackSpecs = broken.map((entry) => `${entry.name}@${ranges[entry.name]}`)
+      const fallback = pluginAdd([...declaredArgs, ...fallbackSpecs])
+      if (fallback.status !== 0) return profileFail
+      // Verified only when the line now holds exactly the declared range we
+      // asked for — not merely a value that changed from the bad pin.
+      const verified = broken.filter((entry) => profileCompanionSpec(entry.name) === ranges[entry.name])
+      if (verified.length) {
+        log(`        ${verified.map((entry) => entry.name).join(', ')}: declared spec restored and verified in profile manifest`)
+      }
+      const unverified = broken.filter((entry) => !verified.includes(entry))
+      if (unverified.length) {
+        log(`        ${unverified.map((entry) => entry.name).join(', ')}: fallback re-check inconclusive — declared spec not reflected in profile manifest`)
       }
     }
+
+    const latestCount = specAddFellBack ? 0 : specDecisions.length - broken.length
+    const fallbackCount = decisions.filter((entry) => entry.decision.action === 'fallback').length
+      + (specAddFellBack ? specDecisions.length : broken.length)
+    const skipCount = decisions.filter((entry) => entry.decision.action === 'skip').length
+    log(`        companions: ${latestCount} latest, ${fallbackCount} fallback, ${skipCount} skipped`)
     log(`  [3/3] tui profile           ${verb === 'updating' ? 'updated' : 'done'}`)
   }
 
