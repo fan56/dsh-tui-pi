@@ -1,6 +1,6 @@
 ---
 name: dsh-tui-pi-config
-description: "dsh TUI 增强套件配置指南。凡涉及 TUI 主题/面板/footer、界面语言、子代理并发与轮数限制、模型收藏与隐藏、会话保留与 /resume 过滤、ask_user 超时、空闲放锁、preset 记忆，或要配置 dsh-tui 段时先读本指南：entry `dsh-tui` 的 18 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser/idleReleaseSec）、DSH_TUI_* 环境变量、快速上手、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、language、收藏模型、隐藏模型、保留策略、resume、preset、idleReleaseSec。"
+description: "dsh TUI 增强套件配置指南。凡涉及 TUI 主题/面板/footer、语言、子代理并发与轮数、模型收藏与隐藏、会话保留与 /resume、ask_user 超时、空闲放锁、preset 记忆，或配置 dsh-tui 段时先读本指南：entry `dsh-tui` 的 20 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/jevAttention/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser/idleReleaseSec/muteModelListing）、DSH_TUI_* 环境变量、快速上手、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、language、收藏模型、隐藏模型、保留策略、resume、preset。"
 ---
 
 # dsh-tui-pi 使用指南（TUI 主题 / 子代理治理 / 会话管理）
@@ -27,6 +27,7 @@ dsh 0.1.5 的 `~/.dsh/settings.yaml` 已移除：其顶层 `dsh-tui:` 段会在�
 | `maxRoundsGrace` | 非负整数 | `7` | 收尾请求后的宽限轮数，超出即强制终止（one-shot cancel / continuable 保留会话可续聊）；`0` = 仅警告不终止 |
 | `disableSubagent` | 布尔 | `true` | 禁原生 `subagent` 工具，委派改走 `~/.dsh/agents/*.md` 注册代理（`use_agent`）；`subagent_fork`/`workflow`/`ralph` 不受影响 |
 | `registeredOnly` | 布尔 | `false` | 仅 `use_agent` 可派生（子代理必须由 `~/.dsh/agents/*.md` 注册代理承载）；`subagent`/`subagent_fork`/`workflow`/`ralph` 全部拒绝 |
+| `jevAttention` | `'auto'\|'off'` | `auto` | 子代理关注度排名的 jev 层：`auto` 在已配置 key 时用 jev 判断升级常开的启发式排名；`off` 强制纯启发式、不向外发送任何内容（排名本身始终生效） |
 | `footerHints` | 7 个布尔 | 全 `true` | footer 快捷键提示分段开关：`send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
 | `cacheHitMode` | `'lastMessage'\|'session'` | `lastMessage` | footer CH 段口径：最新一条消息的命中率（pi-tui 语义）或全会话累计 |
 | `iconSet` | `'auto'\|'nerdfont'\|'plain'` | `auto` | 风险字形集；`auto` 按启动时字体探测选 nerdfont/plain |
@@ -41,6 +42,7 @@ dsh 0.1.5 的 `~/.dsh/settings.yaml` 已移除：其顶层 `dsh-tui:` 段会在�
 | `askUser.idleMinutes` | 数字 | `5` | ask_user_question 面板：聚焦题目无按键超过这么多分钟即自动应答（推荐项，计划不自动批准）；`<= 0` 关闭该规则；每次打开面板生效 |
 | `askUser.absoluteMinutes` | 数字 | `10` | ask_user_question 面板：单题硬上限，有操作也强制自动应答；`<= 0` 关闭该规则；每次打开面板生效 |
 | `idleReleaseSec` | 数字 | `600` | 空闲放锁：无输入且无运行中回合持续这么多秒后释放本 TUI 的会话写锁（手机 /resume 等其他端即可接管）；下次发消息/命令自动重取同一会话并补齐期间其他端写入的轮次；`0` 永不放锁；负数/非法值回落默认 |
+| `muteModelListing` | 布尔 | `true` | 吞掉 core 周期性写到 raw stderr 的 `model listing from … loaded N model(s)` 成功行（画屏噪音）；整行完全匹配才吞，失败行与一切其他 stderr 输出原样放行；优先级：显式值 > `DSH_TUI_MUTE_MODEL_LISTING` > 默认 |
 
 ### DSH_TUI_* 环境变量
 
@@ -50,6 +52,7 @@ dsh 0.1.5 的 `~/.dsh/settings.yaml` 已移除：其顶层 `dsh-tui:` 段会在�
 | `DSH_TUI_RESUME_MAX_AGE_DAYS` / `_MIN_BYTES` | resume 两键的 env 兜底 |
 | `DSH_TUI_ASK_USER_IDLE_MINUTES` / `_ABSOLUTE_MINUTES` | askUser 两键的 env 兜底 |
 | `DSH_TUI_IDLE_RELEASE_SEC` | idleReleaseSec 的 env 兜底 |
+| `DSH_TUI_MUTE_MODEL_LISTING` | `muteModelListing` 的 env 逃生阀（默认开）；`0`/`false`/`off` 关闭，其他值开；显式配置值优先 |
 | `DSH_TUI_THEME` | `light`/`dark` 或任意已注册主题名硬钉显示配色（优先于偏好设置） |
 | `DSH_TUI_TRANSPARENT` | `1` 恢复透明终端背景 |
 | `DSH_TUI_MOUSE` | `buttons`（默认）\|`all`\|`off`，鼠标跟踪模式 |

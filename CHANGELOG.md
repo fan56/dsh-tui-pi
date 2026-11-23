@@ -6,6 +6,27 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **New `dsh-tui.muteModelListing` setting (default `true`) silences the
+  periodic model-listing success line the dsh core paints on raw stderr**
+  (issue #5, new `src/stderr-quiet.ts`). Every refresh cycle (~10 min) the
+  core writes `model listing from … loaded N model(s)` straight to
+  `process.stderr`; in-process that lands as raw bytes over the pi-tui
+  alt-screen frame (it never touches the notice bridge). An idempotent
+  `process.stderr.write` wrapper swallows a write only when its ENTIRE text
+  matches that one success line (both `[llm-deepseek-account]` and
+  `[llm-deepseek-api-key]` tags, LF and CRLF); failure lines, half lines,
+  multi-line blocks and every other byte stream forward unchanged with the
+  original signature and return value. The key is `volatile` (default on):
+  an explicit settings value beats `DSH_TUI_MUTE_MODEL_LISTING`
+  (`0`/`false`/`off` disables, anything else enables) which beats the
+  default. A `/settings` panel commit hot-applies the switch through the
+  existing `settings/document-updated` subscription — no `/reload` or
+  restart required. Documented in README and the bundled
+  `dsh-tui-pi-config` skill (key table + `DSH_TUI_*` env table). Regression
+  tests: `test/stderr-quiet.test.mjs` (10 cases) plus a live document-update
+  flip in `test/theme-settings.test.mjs`.
+
 ## [2.38.2] - 2026-11-19
 
 ### Added

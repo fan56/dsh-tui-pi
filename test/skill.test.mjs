@@ -12,7 +12,34 @@ import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { apply, inject, name, stripFrontmatter } from '../lib/index.js'
+import { apply, Config, inject, name, stripFrontmatter } from '../lib/index.js'
+
+/**
+ * The dsh-tui Config schema's own field names — the source of truth for what
+ * SKILL_DESCRIPTION and SKILL.md must enumerate. Derived from the exported
+ * Config (a schemastery `z.object` node), never hardcoded, so adding a config
+ * key can no longer silently drift the routing description (review C3/S1).
+ */
+function configKeys() {
+  // schemastery object nodes expose their fields as `.dict`; materializing the
+  // resolved defaults is the fallback if that internal shape ever changes.
+  const keys = Object.keys(Config.dict ?? {})
+  return keys.length > 0 ? keys : Object.keys(Config({}))
+}
+
+/**
+ * Per-key existence check: every Config key must appear in the given routing
+ * description. The failure message lists the missing keys so a future config
+ * addition cannot hide behind the heuristic length budget.
+ */
+function assertEnumeratesConfigKeys(description, label, keys) {
+  const missing = keys.filter(key => !description.includes(key))
+  assert.deepEqual(
+    missing,
+    [],
+    `${label} is missing ${missing.length} Config key(s): ${missing.join(', ')}. Add them to BOTH SKILL_DESCRIPTION and the SKILL.md frontmatter description.`,
+  )
+}
 
 // Minimal cordis-like context: the bundled-skill registration path needs
 // ctx.skills; the render effect (startTui and friends) must NOT run, so
@@ -98,7 +125,21 @@ test('apply registers the bundled skill provider on ctx.skills', async () => {
   assert.deepEqual(candidate.invocation, { modelInvocable: true, userInvocable: true })
   assert.match(candidate.name, /^[a-z0-9]+(?:-[a-z0-9]+)*$/)
   assert.ok(candidate.description.length > 0)
-  assert.ok(candidate.description.length <= 500, 'description must stay within the 500-char routing budget')
+  // 500 is not a private magic number: dsh-tool-skill's catalog renderer caps
+  // a skill's routing description at DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH
+  // (500, configurable via catalogDescriptionMaxLength) and truncates longer
+  // text with "...", which can silently drop keys from the catalog. The
+  // structural per-key check below is the real guard; this budget only keeps
+  // the description intact in the default catalog. Report the actual length
+  // on failure so the editor knows how much to trim without dropping a key.
+  assert.ok(
+    candidate.description.length <= 500,
+    `description is ${candidate.description.length} chars; dsh-tool-skill truncates at 500 (catalogDescriptionMaxLength) — trim to <=500 without dropping any Config key (see the per-key assertion)`,
+  )
+  // Structural parity with the schema: every key the loader exposes must be
+  // enumerated in the routing description (review C3/S1). This replaces the
+  // old reliance on the length budget alone, which let a missing key slip by.
+  assertEnumeratesConfigKeys(candidate.description, 'SKILL_DESCRIPTION', configKeys())
   // The directory resource base must point at the packaged skills/ directory
   // (fileURLToPath keeps the trailing slash of the URL path).
   assert.equal(candidate.resourceBase.kind, 'directory')
@@ -127,6 +168,15 @@ test('provider.get loads the packaged SKILL.md with matching metadata', async ()
   const markdown = await readFile(new URL('../skills/dsh-tui-pi-config/SKILL.md', import.meta.url), 'utf8')
   assert.equal(frontmatterValue(markdown, 'name'), 'dsh-tui-pi-config')
   assert.equal(frontmatterValue(markdown, 'description'), candidate.description)
+  // Same structural check against the frontmatter copy (not just the
+  // hardcoded description) — the two are byte-identical by the assertion
+  // above, but checking both keeps the failure message precise about which
+  // artifact drifted if they ever diverge.
+  assertEnumeratesConfigKeys(
+    frontmatterValue(markdown, 'description'),
+    'SKILL.md frontmatter description',
+    configKeys(),
+  )
 })
 
 test('stripFrontmatter tolerates missing or unclosed frontmatter', () => {
