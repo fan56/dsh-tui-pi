@@ -127,7 +127,7 @@ Remap any app key through `~/.dsh/keybindings.json` (a partial JSON map, live-ap
 
 ## Configuration
 
-Everything lives in the plugin's `dsh-tui` entry config inside your profile's `cordis.patch.yml` (dsh 0.1.7 projects every volatile field of a plugin's declared Config schema into the settings surface) — but you rarely touch the file: **`/settings` browses and edits it in place** (searchable categories — Agent Presets / General / Models / Plugins / TUI — with live values, per-field descriptions, and an add-provider flow under Models). Language, theme, panel height, footer hints and icon set hot-apply on change; the rest reads at the next launch.
+Everything lives in the plugin's `dsh-tui` entry config inside your profile's `cordis.patch.yml` (dsh 0.1.7 projects every volatile field of a plugin's declared Config schema into the settings surface) — but you rarely touch the file: **`/settings` browses and edits it in place** (searchable categories — Agent Presets / General / Models / Plugins / TUI — with live values, per-field descriptions, and an add-provider flow under Models). Language, theme, panel height, footer hints, icon set and `muteModelListing` hot-apply on change; the rest reads at the next launch.
 
 Most knobs have sensible defaults and need no configuration. The few you might actually set:
 
@@ -144,6 +144,8 @@ Most knobs have sensible defaults and need no configuration. The few you might a
 Upgrading from dsh 0.1.5? Your old `~/.dsh/settings.yaml` `dsh-tui:` section is imported into the profile automatically on the first 0.1.7 boot (the original file is kept next to it as `settings.yaml.imported`).
 
 Adding a UI language is one JSON file in `~/.dsh/locales/` — a same-id file merges per key over the bundled one, a new id registers (details: [Settings browser & UI languages](docs/features/settings-i18n.md)). The session-store janitors (`retention` / `resume`) and ask-user timeouts (`askUser`) live in the same entry config with documented defaults.
+
+The core writes a `model listing from … loaded N model(s)` success line to raw stderr every refresh cycle; in the alt-screen TUI that paints over the frame (it never goes through the notice bridge). `dsh-tui.muteModelListing` (boolean, default `true`) swallows exactly that one complete line — failure lines and all other stderr output pass through byte-for-byte. It hot-applies from `/settings` with no reload. To see the lines again without touching settings, set the escape hatch `DSH_TUI_MUTE_MODEL_LISTING=0` (also accepts `false`/`off`; unset means on); an explicit `muteModelListing` setting value takes precedence over the env var.
 
 The plugin ships a bundled skill (`dsh-tui-pi-config`): ask the agent to "configure the TUI" and it collects your choices interactively and writes the section for you. **The full key table and the `DSH_TUI_*` env var list live in [skills/dsh-tui-pi-config/SKILL.md](skills/dsh-tui-pi-config/SKILL.md).**
 

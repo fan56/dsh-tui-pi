@@ -50,6 +50,7 @@ import {
 } from '../lib/theme-settings.js'
 import { DEFAULT_FOOTER_HINTS } from '../lib/footer.js'
 import { RETENTION_MAX_AGE_DAYS, RETENTION_MAX_COUNT, resolveRetentionConfig } from '../lib/retention.js'
+import { installStderrQuiet, resetStderrQuiet } from '../lib/stderr-quiet.js'
 import { resetNoticeBridge, setNoticeSink } from '../lib/notice-bridge.js'
 
 /**
@@ -236,6 +237,39 @@ test('subscription forwards custom theme names and narrows a missing key to auto
   // references then narrow to auto.
   await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'unset', path: ['theme'] }])
   assert.deepEqual(sink, ['neon', 'dark', 'auto'], 'missing theme key narrows to auto')
+})
+
+test('muteModelListing hot-applies on a committed document update (no /reload)', async t => {
+  // Review C1: the /settings panel writes muteModelListing into the entry's
+  // USER layer and the loader fires `settings/document-updated`. The same
+  // subscription that forwards the five theme keys must flip the raw-stderr
+  // quiet switch immediately — proved here by what reaches a fake stderr
+  // write, not by reading the switch directly.
+  const { ctx, settings } = boot(() => {})
+
+  const LINE = '[llm-deepseek-account] model listing from https://api.deepseek.com/models loaded 2 model(s), skipped 0 row(s)\n'
+  const seen = []
+  const realWrite = process.stderr.write
+  process.stderr.write = function (chunk) { seen.push(chunk); return true }
+  installStderrQuiet()
+  t.after(() => { resetStderrQuiet(); process.stderr.write = realWrite })
+
+  // No explicit value: env/default resolve to on → the success line is eaten.
+  process.stderr.write(LINE)
+  assert.deepEqual(seen, [], 'default-on swallows the listing line')
+
+  // A /settings commit sets muteModelListing=false in the USER layer, swaps
+  // the volatile refs and fires document-updated. The switch must flip live.
+  settings.user = { muteModelListing: false }
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['muteModelListing'], value: false }])
+  process.stderr.write(LINE)
+  assert.deepEqual(seen, [LINE], 'false → passthrough right after the commit, no /reload')
+
+  // A second commit flips it back to true; the next write is eaten again.
+  settings.user = { muteModelListing: true }
+  await settings.mutate(THEME_SETTINGS_NAMESPACE, [{ op: 'set', path: ['muteModelListing'], value: true }])
+  process.stderr.write(LINE)
+  assert.equal(seen.length, 1, 'true → swallow again on the next commit')
 })
 
 test('committed panelHeight changes flow the same chain, narrowed', async () => {

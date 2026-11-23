@@ -41,6 +41,7 @@ import {
 } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { DEFAULT_FOOTER_HINTS, type FooterHints } from './footer.ts'
+import { setStderrQuietEnabled } from './stderr-quiet.ts'
 import { t } from './i18n/index.ts'
 import { DEFAULT_PANEL_HEIGHT, isPanelHeight, type PanelHeight } from './activity.ts'
 import { narrowStringList } from './model-list.ts'
@@ -436,18 +437,29 @@ function narrowTheme(value: unknown): ThemePreference {
  * self-write is a no-op. The whole commit → references → event → `.get()`
  * → sink chain is synchronous per event.
  *
+ * Besides the five theme keys, the same event hot-applies `muteModelListing`:
+ * a /settings panel commit flips the raw-stderr quiet switch immediately
+ * (same `settings > env > default` resolution as `apply()`), no /reload or
+ * restart needed. The switch is an idempotent global state write, so an
+ * echoed self-write is a no-op here too.
+ *
  * @param ctx - plugin context; the subscription dies with the plugin fiber.
  * @param onPreferenceChange - hot-reload sink for committed `dsh-tui` theme,
  * panel-height, footer-hints, icon-set and language changes; `undefined`
- * registers nothing.
+ * skips the theme sinks but the muteModelListing hot-apply still registers.
  */
 export function subscribeThemeSettings(
   ctx: Context,
   onPreferenceChange?: (pref: ThemePreference, panelHeight: PanelHeight, footerHints: FooterHints, iconSet: IconSet, language: string) => void,
 ): void {
-  if (onPreferenceChange === undefined) return
   ctx.on('settings/document-updated', (ns) => {
     if (ns !== THEME_SETTINGS_NAMESPACE) return
+    // Hot-apply the raw-stderr quiet switch on every committed dsh-tui change
+    // (the /settings browser writes it in place). Read the USER-layer explicit
+    // value — NOT the resolved volatile one, which bakes in the default `true`
+    // and would shadow the DSH_TUI_MUTE_MODEL_LISTING escape hatch.
+    setStderrQuietEnabled(readMuteModelListing(process.env, readMuteModelListingExplicit(ctx)))
+    if (onPreferenceChange === undefined) return
     const section = tuiConfig()
     onPreferenceChange(
       narrowTheme(section.theme.get()),

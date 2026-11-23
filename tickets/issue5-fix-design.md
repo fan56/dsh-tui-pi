@@ -55,12 +55,13 @@ export const MODEL_LISTING_SUCCESS =
 | 1 | `src/stderr-quiet.ts`（新增） | `MODEL_LISTING_SUCCESS` 正则导出；`installStderrQuiet()`（幂等装 patch，读 globalThis 状态）；`setStderrQuietEnabled(v)`；`resetStderrQuiet()` 测试缝 |
 | 2 | `src/theme-settings.ts:201` `Config` | `idleReleaseSec`（`:339-345`）之后加 `muteModelListing: z.boolean().default(true).volatile().description(t('settings.muteModelListing.description'))` |
 | 3 | `src/theme-settings.ts` | 新 reader `readMuteModelListing(env, settings)`：settings 显式值 > env > 默认 true（见 §4） |
-| 4 | `src/index.ts:253` | `apply()` 内 `bindTuiConfig(config)` 之后**立即**：`setStderrQuietEnabled(readMuteModelListing(process.env, config))` + `installStderrQuiet()`。注意顺序：先设状态再装（装后第一条 write 即按最终状态走） |
+| 4 | `src/index.ts:256` `apply()` | `bindTuiConfig(config)` 之后**立即**：`setStderrQuietEnabled(readMuteModelListing(process.env, readMuteModelListingExplicit(ctx)))` + `installStderrQuiet()`；注意顺序先设状态再装（装后第一条 write 即按最终状态走）。**显式值必须走 `readMuteModelListingExplicit(ctx)`（settings 文档 USER 层原始值），不能传 resolved `config`**：volatile resolved 值已烤入 schema 默认 `true`，会把 `DSH_TUI_MUTE_MODEL_LISTING` 逃生阀永久遮蔽——本行是落地时对原始设计表述的必要修正。 |
+| 4b | `src/theme-settings.ts:444` `subscribeThemeSettings` | 热生效补接：现有 `settings/document-updated` 订阅回调（原只转发 theme/panelHeight/footerHints/iconSet/language 五键）每次事件追加一行 `setStderrQuietEnabled(readMuteModelListing(process.env, readMuteModelListingExplicit(ctx)))`（与 apply 同式、幂等），面板提交即生效，无需 /reload。评审 C1 跟进项。 |
 | 5 | `locale/`（i18n） | 新键 `settings.muteModelListing.description`（中英） |
-| 6 | `src/index.ts:198` `SKILL_DESCRIPTION` | 「18 键」→「19 键」，枚举加 `muteModelListing`；**同步 SKILL.md frontmatter**（有测试断言二者一致，不同步必挂测试） |
+| 6 | `src/index.ts:198` `SKILL_DESCRIPTION` | 「18 键」→「20 键」，枚举加 `muteModelListing` + 预存遗漏的 `jevAttention`（评审 C3）；**同步 SKILL.md frontmatter 与键表**（有测试断言二者一致，不同步必挂测试）；`test/skill.test.mjs` 断言改为从导出 Config schema 派生 20 键逐键核对，长度上限降级为辅助预算检查（评审 S1） |
 | 7 | `test/stderr-quiet.test.mjs`（新增） | 见 §6 |
 | 8 | `e2e/scenarios/67-stderr-quiet.sh`（新增，可选但建议） | 见 §6 |
-| 9 | `README.md` / `CHANGELOG.md` | 记录键与行为 |
+| 9 | `README.md` / `CHANGELOG.md` | 记录键与行为：默认 `true`、`DSH_TUI_MUTE_MODEL_LISTING` 逃生阀、面板提交热生效、issue #5（评审 C2 跟进项，已交付） |
 
 ### 已知限制（如实记录）
 
@@ -88,7 +89,7 @@ export const MODEL_LISTING_SUCCESS =
 - **键名**：`dsh-tui.muteModelListing`，`boolean`，`.volatile()`，**默认 true（开）**。理由：issue 即本仓用户诉求，静音成功行是修复意图；匹配策略极保守（整块正则），默认开的误伤面接近零。
 - **env 逃生阀**：`DSH_TUI_MUTE_MODEL_LISTING`（非 `0/false/off` 即开——照抄 `bin/boot.mjs:38-42` `DSH_TUI_COMPANION_LATEST` 的解析风格）。
 - **三层优先级**：settings 显式值 > env > 默认 true（范式：`src/retention.ts:189-207` `resolveRetentionConfig` 的 settings>env>default）。
-- **热生效**：volatile 键 + patch 每次写时读 globalThis 状态 → 设置面板提交即生效，无需重启。优于 issue 里「改 `modelsMaxAgeMs` 拉到 24h + 重启」的临时规避（后者牺牲模型上下架可见时延）。
+- **热生效**：volatile 键 + patch 每次写时读 globalThis 状态 → 设置面板提交即生效，无需重启。**落地接线**：`subscribeThemeSettings`（`src/theme-settings.ts`，清单 #4b）的 `settings/document-updated` 回调在转发五个 theme 键之外，同事件调用 `setStderrQuietEnabled(readMuteModelListing(process.env, readMuteModelListingExplicit(ctx)))`；patch 闭包每次 write 读 globalThis 状态，所以下一次 listing 行即按新值走。评审 C1 指出初版只有 apply() 设一次（需 /reload），跟进补丁已补此接线。优于 issue 里「改 `modelsMaxAgeMs` 拉到 24h + 重启」的临时规避（后者牺牲模型上下架可见时延）。
 - **i18n 与 SKILL_DESCRIPTION**：都要做（§2 清单 #5/#6）。SKILL.md frontmatter 必须同步，否则一致性测试挂。
 - **附加行为（压制计数合并成低频 notice）不做**。理由：成功刷新信息量为零（失败才是信号），静默即目标；计数器+定时器+新文案+新 i18n 全是为呈现「无事件」的事件，扩大维护面。同意任务方倾向。
 

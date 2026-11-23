@@ -1,6 +1,6 @@
 ---
 name: dsh-tui-pi-config
-description: "dsh TUI 增强套件配置指南。凡涉及 TUI 主题/面板/footer、语言、子代理并发与轮数、模型收藏与隐藏、会话保留与 /resume、ask_user 超时、空闲放锁、preset 记忆，或配置 dsh-tui 段时先读本指南：entry `dsh-tui` 的 19 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser/idleReleaseSec/muteModelListing）、DSH_TUI_* 环境变量、快速上手、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、language、收藏模型、隐藏模型、保留策略、resume、preset、idleReleaseSec。"
+description: "dsh TUI 增强套件配置指南。凡涉及 TUI 主题/面板/footer、语言、子代理并发与轮数、模型收藏与隐藏、会话保留与 /resume、ask_user 超时、空闲放锁、preset 记忆，或配置 dsh-tui 段时先读本指南：entry `dsh-tui` 的 20 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/jevAttention/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser/idleReleaseSec/muteModelListing）、DSH_TUI_* 环境变量、快速上手、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、language、收藏模型、隐藏模型、保留策略、resume、preset。"
 ---
 
 # dsh-tui-pi 使用指南（TUI 主题 / 子代理治理 / 会话管理）
@@ -27,6 +27,7 @@ dsh 0.1.5 的 `~/.dsh/settings.yaml` 已移除：其顶层 `dsh-tui:` 段会在�
 | `maxRoundsGrace` | 非负整数 | `7` | 收尾请求后的宽限轮数，超出即强制终止（one-shot cancel / continuable 保留会话可续聊）；`0` = 仅警告不终止 |
 | `disableSubagent` | 布尔 | `true` | 禁原生 `subagent` 工具，委派改走 `~/.dsh/agents/*.md` 注册代理（`use_agent`）；`subagent_fork`/`workflow`/`ralph` 不受影响 |
 | `registeredOnly` | 布尔 | `false` | 仅 `use_agent` 可派生（子代理必须由 `~/.dsh/agents/*.md` 注册代理承载）；`subagent`/`subagent_fork`/`workflow`/`ralph` 全部拒绝 |
+| `jevAttention` | `'auto'\|'off'` | `auto` | 子代理关注度排名的 jev 层：`auto` 在已配置 key 时用 jev 判断升级常开的启发式排名；`off` 强制纯启发式、不向外发送任何内容（排名本身始终生效） |
 | `footerHints` | 7 个布尔 | 全 `true` | footer 快捷键提示分段开关：`send`/`stop`/`quit`/`quitEmpty`/`subagents`/`search`/`history` |
 | `cacheHitMode` | `'lastMessage'\|'session'` | `lastMessage` | footer CH 段口径：最新一条消息的命中率（pi-tui 语义）或全会话累计 |
 | `iconSet` | `'auto'\|'nerdfont'\|'plain'` | `auto` | 风险字形集；`auto` 按启动时字体探测选 nerdfont/plain |
