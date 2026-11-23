@@ -721,5 +721,6 @@
   "hotkeys.action.workflowWidgetPanRight": "ワークフローウィジェットを右へパン",
   "tui.workflowOverlay.none": "ワークフロー実行が見つかりません（/workflow run で実行 · dsh-workflow）",
   "tui.idleRelease.reattached": "アイドルでロック解放済み — セッションを再取得し、表示を同期しました。",
-  "settings.idleReleaseSec.description": "他サーフェス（スマホ等）へ書き込みロックを解放するまでの無通信秒数（0 = 解放しない）"
+  "settings.idleReleaseSec.description": "他サーフェス（スマホ等）へ書き込みロックを解放するまでの無通信秒数（0 = 解放しない）",
+  "settings.muteModelListing.description": "core が raw stderr に周期的に出すモデル一覧の成功行（画面汚れ）を抑制する。DSH_TUI_MUTE_MODEL_LISTING=0/false/off で表示"
 }

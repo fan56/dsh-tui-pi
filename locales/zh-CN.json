@@ -721,5 +721,6 @@
   "hotkeys.action.workflowWidgetPanRight": "工作流面板视口右移",
   "tui.workflowOverlay.none": "未找到工作流 run（用 /workflow run 跑一个 · dsh-workflow）",
   "tui.idleRelease.reattached": "空闲已放锁——会话已重新接管，显示已补齐。",
-  "settings.idleReleaseSec.description": "空闲多少秒后把写锁让给其他端，如手机（0 = 永不放）"
+  "settings.idleReleaseSec.description": "空闲多少秒后把写锁让给其他端，如手机（0 = 永不放）",
+  "settings.muteModelListing.description": "吞掉 core 周期性写到 raw stderr 的模型列表成功行（画屏噪音）；DSH_TUI_MUTE_MODEL_LISTING=0/false/off 可放行"
 }

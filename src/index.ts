@@ -56,6 +56,8 @@ import {
   readIconSetPreference,
   readJevAttentionMode,
   readLanguagePreference,
+  readMuteModelListing,
+  readMuteModelListingExplicit,
   readPanelHeightPreference,
   readRememberPreset,
   readSessionManagementExplicit,
@@ -156,6 +158,7 @@ import { DialogQueue } from './dialog-queue.ts'
 import { registerApprovalProvider } from './approval.ts'
 import { askLanguageChoice, type AskSeam, type LanguageOutcome } from './language-ask.ts'
 import { checkHostSupport } from './host-version.ts'
+import { installStderrQuiet, setStderrQuietEnabled } from './stderr-quiet.ts'
 
 export const name = 'dsh-tui-pi'
 
@@ -195,7 +198,7 @@ const SKILL_RESOURCE_BASE = {
 const SKILL_INVOCATION = { modelInvocable: true, userInvocable: true } as const
 
 /** Routing description; must stay identical to the SKILL.md frontmatter (asserted in tests). */
-const SKILL_DESCRIPTION = 'dsh TUI 增强套件配置指南。凡涉及 TUI 主题/面板/footer、界面语言、子代理并发与轮数限制、模型收藏与隐藏、会话保留与 /resume 过滤、ask_user 超时、空闲放锁、preset 记忆，或要配置 dsh-tui 段时先读本指南：entry `dsh-tui` 的 18 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser/idleReleaseSec）、DSH_TUI_* 环境变量、快速上手、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、language、收藏模型、隐藏模型、保留策略、resume、preset、idleReleaseSec。'
+const SKILL_DESCRIPTION = 'dsh TUI 增强套件配置指南。凡涉及 TUI 主题/面板/footer、语言、子代理并发与轮数、模型收藏与隐藏、会话保留与 /resume、ask_user 超时、空闲放锁、preset 记忆，或配置 dsh-tui 段时先读本指南：entry `dsh-tui` 的 19 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser/idleReleaseSec/muteModelListing）、DSH_TUI_* 环境变量、快速上手、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、language、收藏模型、隐藏模型、保留策略、resume、preset、idleReleaseSec。'
 
 const SKILL_CANDIDATE: SkillCandidate = {
   name: SKILL_PROVIDER_NAME,
@@ -258,6 +261,12 @@ export function apply(ctx: Context, config: TuiSettings): void {
   // `apply(ctx)` without a loader passes nothing — the readers then degrade
   // to the schema defaults.
   bindTuiConfig(config)
+  // Quiet the core's periodic model-listing success line at the raw stderr
+  // exit (it bypasses the notice bridge and paints over the alt-screen).
+  // Set the state BEFORE installing so the very first intercepted write
+  // already sees the final switch. Re-applying on /reload is idempotent.
+  setStderrQuietEnabled(readMuteModelListing(process.env, readMuteModelListingExplicit(ctx)))
+  installStderrQuiet()
   // Host floor guard, before any side effect: a host older than the peer
   // floor would only crash deeper in boot with raw TypeErrors (the
   // alpha-era and rc/stable-era host APIs diverged), so warn in plain

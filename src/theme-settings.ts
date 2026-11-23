@@ -178,6 +178,8 @@ export interface TuiSettings {
   askUser: Volatile<AskUserSettings>
   /** Seconds of silence before the write handle is freed for other surfaces (0 = never). */
   idleReleaseSec: Volatile<number>
+  /** Swallow the periodic model-listing success line on raw stderr (default on). */
+  muteModelListing: Volatile<boolean>
 }
 
 /**
@@ -346,6 +348,15 @@ export const Config = z.object({
     .default(600)
     .volatile()
     .description(t('settings.idleReleaseSec.description')),
+  // Raw stderr is outside the notice bridge: the core's periodic
+  // "model listing from … loaded N model(s)" success line paints over the
+  // alt-screen frame. Default ON (silence it); the anchored match in
+  // stderr-quiet.ts only eats that one line, never a failure line.
+  muteModelListing: z
+    .boolean()
+    .default(true)
+    .volatile()
+    .description(t('settings.muteModelListing.description')),
 })
 
 /**
@@ -589,6 +600,38 @@ export function readAskUserExplicit(ctx: Context): AskUserTimeoutExplicit | unde
   return section !== null && typeof section === 'object'
     ? section as AskUserTimeoutExplicit
     : undefined
+}
+
+/**
+ * Explicit `dsh-tui.muteModelListing` from the settings document's USER layer
+ * (same seam as `readSessionManagementExplicit`): the resolved volatile value
+ * bakes in the schema default `true`, so reading it would shadow the
+ * `DSH_TUI_MUTE_MODEL_LISTING` env escape hatch. `undefined` = nothing
+ * explicitly configured (env/defaults govern).
+ */
+export function readMuteModelListingExplicit(ctx: Context): boolean | undefined {
+  const settings = ctx.get('settings') as SettingsForms | undefined
+  const user = settings?.describe().find((descriptor) => descriptor.ns === THEME_SETTINGS_NAMESPACE)?.user
+  if (user === null || typeof user !== 'object') return undefined
+  const value = (user as { muteModelListing?: unknown }).muteModelListing
+  return typeof value === 'boolean' ? value : undefined
+}
+
+/**
+ * Resolve the raw-stderr quiet switch through `settings > env > default`:
+ * an explicit settings boolean wins, else the env kill switch (anything
+ * other than `0`/`false`/`off`, trimmed and case-insensitive — the
+ * `DSH_TUI_COMPANION_LATEST` parsing style from bin/boot.mjs), else true.
+ * Pure: env and the explicit value are passed in so tests can pin them.
+ */
+export function readMuteModelListing(
+  env: Record<string, string | undefined> = process.env,
+  explicit?: boolean,
+): boolean {
+  if (explicit !== undefined) return explicit
+  const raw = env.DSH_TUI_MUTE_MODEL_LISTING
+  if (raw !== undefined) return !['0', 'false', 'off'].includes(String(raw).trim().toLowerCase())
+  return true
 }
 
 /**
