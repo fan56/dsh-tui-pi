@@ -117,3 +117,47 @@
 上轮 C1/C2/C3 全部闭环且实现正确；新增面无阻断项、无 concern 级问题；余下均为 suggestion（includes 匹配硬化、env 组合热路径补测），可随日常迭代处理。
 
 GREEN
+
+---
+
+# 增量复核 18f1bff（trigger words 恢复 + 断言硬化 + env 热路径补测）
+
+评审人：oldfox。日期：2026-11-23。只读复核，未改任何代码。对象：worktree `/Users/qingguee/repo/dsh-tui-pi-wt-issue5-polish`（分支 `fix/issue5-polish`）commit `18f1bff`（相对 `68dc7f6`，4 文件 +89/−12），针对上轮 8741791 复核所留 3 条 suggestion 的跟进交付。所有关键结论经本机实测（非转述）：lib 构建新鲜（`lib/index.js` 12:13 晚于 `src/index.ts` 12:12，内含新描述文本），实测脚本从构建产物与 SKILL.md 原文提取字符串比对。
+
+## 1. 上轮 suggestion 闭环核对
+
+### S1' includes 匹配硬化（枚举段 + 集合相等）— 已解决，实测证实
+
+- **解析正确性（对真实文本跑过，非只看代码）**：复制 `enumeratedKeys`（`test/skill.test.mjs:36-41`，正则 `/键（([^）]*)）/')` split `/`）对构建产物中的实际 `SKILL_DESCRIPTION` 执行——解析出恰好 20 键，与 `Config.dict` 的 20 键**集合相等，missing/extra 双向皆空**。「键（」在描述全文仅出现 1 次（first-match 无歧义）；枚举段内实测无顿号、无逗号，`/` 分隔假设对当前文本成立；段外的 `/resume`、`/hotkeys` 不在捕获范围内。
+- **变异复现（commit 声称属实）**：把描述中枚举段的 `idleReleaseSec/` 删掉、保留触发词区的 `idleReleaseSec`，本机复现：旧 `includes` 断言 missing=[] **不挂（漏报）**；新集合相等断言报 `missing: ['idleReleaseSec']` **挂**。声称的「新断言报 missing: idleReleaseSec，旧 includes 不漏」逐字证实。另做两个补充变异：枚举塞 ghost 键 → extra 侧捕获；分隔符 `/` 全换顿号 → 解析为单 blob、missing=20 挂（fail 方向，不是漏）。
+- **frontmatter 同处理**：`frontmatterValue` 提取后过同一个 `assertEnumeratesConfigKeys`（`test/skill.test.mjs:199-203`），失败信息区分是哪个 artifact 漂移并指示双改。
+- **500 上限断言仍在**：`test/skill.test.mjs:145-151` 原样保留，本次 diff 只改了其上方注释。
+
+### S2' 热路径 env 组合补测 — 已解决，语义逐条核对
+
+- 新用例 `muteModelListing hot-path honors settings > env > default on every commit`（`test/theme-settings.test.mjs:275-325`）四组合逐一对照 `readMuteModelListing`（`src/theme-settings.ts:639-648`）：
+  - (a) env=`'0'` + USER 层无显式 → `!['0','false','off'].includes('0')` = false → 透传。断言 passthrough，一致。
+  - (b) env=`'0'` + 显式 true → `explicit !== undefined` 提前返回 true → 吞。一致。
+  - (c) 显式 false + env 未设 → false → 透传（默认 true 被显式压制）。一致。
+  - (c-variant) 显式 false + env=`'1'` → false → 透传（settings 压 env）。一致。
+  - 四条与 doc 注释（`theme-settings.ts:631-638`）声明的 settings > env > default 三层链完全吻合，且与 `apply()`（`src/index.ts:268`）同式。
+- **走的是真实订阅回调**：`boot()` 用 lib 导出的真实 `subscribeThemeSettings`；fake service `mutate` 复刻 loader 提交序列（ops → `bindTuiConfig` → `ctx.emit('settings/document-updated')`），回调内 `readMuteModelListingExplicit(ctx)` 经 `ctx.get('settings').describe()[0].user` getter 读 `service.user`（测试直赋模拟外部 USER 层编辑 + 任意键提交触发事件）。断言以 fake stderr write 实际收到的字节为准，非读开关自证。
+- **恢复干净**：`t.after` 记录 `prevEnv`（undefined → delete 恢复）、`resetStderrQuiet()`（实测读 `src/stderr-quiet.ts:90-98`：恢复 write 引用、`installed=false`、`enabled=true` 复位，跨用例无状态泄漏）、write 引用恢复。上一用例（explicit-toggle）与本用例相邻且同范式，`installStderrQuiet` 守卫经 `process.stderr.write !== state.patchedWrite` 判定重装，不叠层。
+
+### S3' 触发词恢复 — 已解决，一致性实测
+
+- `idleReleaseSec` 加回触发词段末尾（`preset、idleReleaseSec`）；键枚举段本就完整（集合相等实测）；SKILL.md 正文键表 `:44` 与 env 表 `:54` 未动。
+- **两 artifact 逐字节一致（亲测）**：从 `lib/index.js` 提取的 `SKILL_DESCRIPTION` 与 SKILL.md frontmatter 提取值 `===` 为 true；实测长度 **498/500**（JS 字符计）。测试另有 `assert.equal(frontmatterValue(...), candidate.description)` 兜底。
+- **压缩 6 处语义评估**：增强套件配置指南→配置指南（丢品牌词「增强套件」，触发词区亦无该词——轻微召回面损失，产品决策，记录在案）；凡涉及→涉及、先读本指南→读本指南、的 20 键→20 键、与 /resume→/resume、与 /hotkeys→、/hotkeys（均无实质语义损失，并列结构保留）。
+
+## 2. 新引入风险核查
+
+- **无阻断、无 concern**。`src/index.ts` 仅改字符串字面量（skill 路由文案），不触及任何运行时逻辑路径；两测试文件为纯增改。
+- Suggestion 级记录（可忽略/随迭代）：正则 `/键（([^）]*)）/` 未锚定「20 键」——若未来文案在枚举段之前新增另一处「键（…」会取错段，但取错段的失败方向是集合不等报错（fail），不是漏；枚举内重复键经 Set 化不会被 extra 报，但重复意味着少一个真键、由 missing 侧闭环；498/500 仅余 2 字符，下次加键必超预算，需再压缩（上轮已提示的预算压力，本次压缩正是为其腾位）。
+- 测试复测（本机实测）：定向三文件 `skill` + `theme-settings` + `stderr-quiet` 单进程 **38/38 通过**（较上轮 37 例 +1，即新 env 组合用例）。全量未跑：diff 面仅 4 文件且 src 侧只有文案字符串，与已知 flake（history-viewer）及任何渲染路径无交集，上轮已双基线；增量风险由定向覆盖。
+
+## 3. 结论
+
+上轮 3 条 suggestion 全部闭环：枚举段集合相等断言经变异测试证实补上了 includes 的漏报面；env/settings 四组合热路径语义与定义逐条一致且走真实订阅链；触发词恢复且两 artifact 逐字节一致（498/500）。无新引入阻断项或 concern，余下均为可忽略的 suggestion 记录。
+
+GREEN
