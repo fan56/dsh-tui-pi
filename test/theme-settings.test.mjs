@@ -272,6 +272,61 @@ test('muteModelListing hot-applies on a committed document update (no /reload)',
   assert.equal(seen.length, 1, 'true → swallow again on the next commit')
 })
 
+test('muteModelListing hot-path honors settings > env > default on every commit', async t => {
+  // Review follow-up: the live subscription must re-read BOTH the env kill
+  // switch and the settings USER layer on each document-updated event. Cover
+  // the combinations the explicit-toggle test above does not: env-only off,
+  // settings beating env, and explicit-off with no (or an on) env override.
+  // Assertions use the bytes reaching a fake stderr write, not the switch.
+  const { settings } = boot(() => {})
+
+  const LINE = '[llm-deepseek-account] model listing from https://api.deepseek.com/models loaded 2 model(s), skipped 0 row(s)\n'
+  const seen = []
+  const realWrite = process.stderr.write
+  process.stderr.write = function (chunk) { seen.push(chunk); return true }
+  installStderrQuiet()
+  const prevEnv = process.env.DSH_TUI_MUTE_MODEL_LISTING
+  t.after(() => {
+    resetStderrQuiet()
+    process.stderr.write = realWrite
+    if (prevEnv === undefined) delete process.env.DSH_TUI_MUTE_MODEL_LISTING
+    else process.env.DSH_TUI_MUTE_MODEL_LISTING = prevEnv
+  })
+
+  const commit = () => settings.mutate(THEME_SETTINGS_NAMESPACE, [
+    { op: 'set', path: ['theme'], value: 'auto' },
+  ])
+
+  // (a) env=0, no explicit settings value → the escape hatch keeps it off.
+  process.env.DSH_TUI_MUTE_MODEL_LISTING = '0'
+  settings.user = undefined
+  await commit()
+  process.stderr.write(LINE)
+  assert.deepEqual(seen, [LINE], 'env=0 with no explicit settings value → passthrough')
+
+  // (b) env=0 but the USER layer explicitly says true → settings wins, swallow.
+  seen.length = 0
+  settings.user = { muteModelListing: true }
+  await commit()
+  process.stderr.write(LINE)
+  assert.deepEqual(seen, [], 'explicit true beats env=0 → swallow')
+
+  // (c) explicit false with no env override → off despite the default being on.
+  delete process.env.DSH_TUI_MUTE_MODEL_LISTING
+  seen.length = 0
+  settings.user = { muteModelListing: false }
+  await commit()
+  process.stderr.write(LINE)
+  assert.deepEqual(seen, [LINE], 'explicit false with env unset → passthrough')
+
+  // (c-variant) env=1 (on) still loses to the explicit false in the USER layer.
+  process.env.DSH_TUI_MUTE_MODEL_LISTING = '1'
+  seen.length = 0
+  await commit()
+  process.stderr.write(LINE)
+  assert.deepEqual(seen, [LINE], 'explicit false beats env=1 → passthrough')
+})
+
 test('committed panelHeight changes flow the same chain, narrowed', async () => {
   const sink = []
   const { ctx, settings } = boot((pref, height) => { sink.push({ pref, height }) })

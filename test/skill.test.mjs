@@ -28,16 +28,37 @@ function configKeys() {
 }
 
 /**
- * Per-key existence check: every Config key must appear in the given routing
- * description. The failure message lists the missing keys so a future config
- * addition cannot hide behind the heuristic length budget.
+ * Pull ONLY the config-key enumeration segment out of a routing description.
+ * The text spells it `... 20 键（key1/key2/.../keyN）...`; matching just that
+ * span (instead of `description.includes(key)` over the WHOLE string) makes the
+ * parity check structural: a key mentioned elsewhere — e.g. as a trigger word
+ * — can no longer satisfy the assertion for the enumeration itself.
+ */
+function enumeratedKeys(description) {
+  const match = description.match(/键（([^）]*)）/)
+  assert.ok(match, 'routing description must contain a 键（...） config-key enumeration segment')
+  return match[1].split('/').map(key => key.trim()).filter(Boolean)
+}
+
+/**
+ * Set-equality check: the enumerated keys must be EXACTLY the Config schema's
+ * keys — no omission (a new config key left out of the routing text) and no
+ * extra (a stale key the schema no longer has). The failure message lists BOTH
+ * sides of the difference so the drift is unambiguous.
  */
 function assertEnumeratesConfigKeys(description, label, keys) {
-  const missing = keys.filter(key => !description.includes(key))
+  const enumerated = enumeratedKeys(description)
+  const expected = new Set(keys)
+  const actual = new Set(enumerated)
+  const missing = keys.filter(key => !actual.has(key)) // in schema, not enumerated
+  const extra = enumerated.filter(key => !expected.has(key)) // enumerated, not in schema
   assert.deepEqual(
-    missing,
-    [],
-    `${label} is missing ${missing.length} Config key(s): ${missing.join(', ')}. Add them to BOTH SKILL_DESCRIPTION and the SKILL.md frontmatter description.`,
+    { missing, extra },
+    { missing: [], extra: [] },
+    `${label} key enumeration differs from the Config schema. ` +
+      `missing (in schema, not enumerated): ${missing.length ? missing.join(', ') : 'none'}; ` +
+      `extra (enumerated, not in schema): ${extra.length ? extra.join(', ') : 'none'}. ` +
+      `Update BOTH SKILL_DESCRIPTION and the SKILL.md frontmatter description.`,
   )
 }
 
@@ -136,9 +157,10 @@ test('apply registers the bundled skill provider on ctx.skills', async () => {
     candidate.description.length <= 500,
     `description is ${candidate.description.length} chars; dsh-tool-skill truncates at 500 (catalogDescriptionMaxLength) — trim to <=500 without dropping any Config key (see the per-key assertion)`,
   )
-  // Structural parity with the schema: every key the loader exposes must be
-  // enumerated in the routing description (review C3/S1). This replaces the
-  // old reliance on the length budget alone, which let a missing key slip by.
+  // Structural parity with the schema: the enumerated key set must equal the
+  // keys the loader exposes (review C3/S1). Set equality — not substring
+  // matching over the whole text — so a key appearing only as a trigger word
+  // cannot mask an omission from the enumeration.
   assertEnumeratesConfigKeys(candidate.description, 'SKILL_DESCRIPTION', configKeys())
   // The directory resource base must point at the packaged skills/ directory
   // (fileURLToPath keeps the trailing slash of the URL path).
