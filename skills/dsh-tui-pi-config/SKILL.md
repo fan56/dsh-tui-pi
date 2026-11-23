@@ -1,6 +1,6 @@
 ---
 name: dsh-tui-pi-config
-description: "dsh TUI 增强套件配置指南。凡涉及 TUI 主题/面板/footer、语言、子代理并发与轮数、模型收藏与隐藏、会话保留与 /resume、ask_user 超时、空闲放锁、preset 记忆，或配置 dsh-tui 段时先读本指南：entry `dsh-tui` 的 20 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/jevAttention/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser/idleReleaseSec/muteModelListing）、DSH_TUI_* 环境变量、快速上手、keybindings.json 与 /hotkeys。触发词：tui、主题、theme、面板、footer、language、收藏模型、隐藏模型、保留策略、resume、preset。"
+description: "dsh TUI 配置指南。涉及 TUI 主题/面板/footer、语言、子代理并发与轮数、模型收藏与隐藏、会话保留/resume、ask_user 超时、空闲放锁、preset 记忆，或配置 dsh-tui 段时读本指南：entry `dsh-tui` 20 键（language/theme/panelHeight/maxAgents/maxRounds/maxRoundsGrace/disableSubagent/registeredOnly/jevAttention/footerHints/cacheHitMode/iconSet/rememberPreset/favoriteModels/hiddenModels/retention/resume/askUser/idleReleaseSec/muteModelListing）、DSH_TUI_* 环境变量、快速上手、keybindings.json、/hotkeys。触发词：tui、主题、theme、面板、footer、language、收藏模型、隐藏模型、保留策略、resume、preset、idleReleaseSec。"
 ---
 
 # dsh-tui-pi 使用指南（TUI 主题 / 子代理治理 / 会话管理）
