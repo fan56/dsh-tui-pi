@@ -32,3 +32,6 @@ docs/market-submissions.md
 
 # --- e2e vendored sibling builds (staged by e2e/run-e2e.sh, never committed) ---
 e2e/vendor/
+
+# local verification/proof artifacts — never commit, never upload
+.proof/
