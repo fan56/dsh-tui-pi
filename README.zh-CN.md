@@ -109,6 +109,24 @@ dsh plugin --profile tui add @aiwayds/dsh-topics-memory
 
 ---
 
+## 面板中的外部子代理
+
+由本 TUI 之外派出的子代理——例如 dsh registry 插件拉起的 `agy`/ACP 进程——会在
+`Ctrl+G` 面板里以「外部 · 无 transcript」行显示。面板从宿主的 subagent 目录
+reconcile 出这些行，因此能看到状态并允许单独停止。外部成员**没有本地
+transcript**：详情页是空态，无 transcript、无 token/轮次统计、不可 steer
+（`Enter` 无效）。在行上按两次 `x` 停止它——外部行走宿主的
+`subagents.interruptByUser(childId)`，本地行仍走 `agent.cancel()`——并给出可见
+反馈：`local-cancelled`、`external-accepted` 或 `rejected`（成员可能已结束）。
+
+外部行不占用面板本地的 `maxAgents` 配额。它们只在 dsh 宿主为 `rc.5` 及以上、
+**且** provider 以 `delivery: 'parent'` 派活时才会出现（如
+dsh-subagent-registry 0.24.0 的 agy provider）；两者缺一，面板只显示本地
+子代理。运行结束时宿主发出 `subagent/end`，其 `stopReason` 成为该行的 outcome；
+若结束事件始终未到，30 秒过期兜底会清掉该行，避免留下幽灵行。
+
+---
+
 ## 配置
 
 所有配置都在 profile 的 `cordis.patch.yml` 里本插件 `dsh-tui` entry 的 `config:` 段（dsh 0.1.7 会把插件声明的 Config schema 中所有 volatile 字段投影进设置面）——但你很少需要直接碰文件：**`/settings` 就地浏览修改**（可搜索的一级分类——Agent Presets / General / Models / Plugins / TUI——实时值、逐字段描述，Models 下还有 add-provider 流程）。语言、主题、面板高度、footer 提示、图标集改动即热生效；其余下次启动读取。
