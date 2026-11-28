@@ -373,6 +373,9 @@ export function pickerItems(
     .sort((a, b) => b.endedAt - a.endedAt)
     .slice(0, SETTLED_CAP)
   return [...running, ...settled].map(view => {
+    // External rows are directory-only: no transcript, no stats, no route.
+    // Show the explicit tag instead of a misleading `rounds 0` / fake elapsed.
+    const external = view.mode === 'external' || view.noTranscript === true
     const rounds = getRoundCount(view.childId)
     const roundsText = t('viewer.rounds', { count: rounds, cap: maxRounds > 0 ? `/${maxRounds}` : '' })
     const mode = view.mode === undefined ? '' : ` [${view.mode}]`
@@ -380,10 +383,10 @@ export function pickerItems(
     // provider slash; a slash-less route shows whole). List rows scan, so
     // the provider half is deliberately dropped here (the viewer header
     // carries the full route).
-    const modelShort = shortModelName(view.modelRoute)
+    const modelShort = external ? undefined : shortModelName(view.modelRoute)
     const elapsedMs = (view.outcome === undefined ? Date.now() : view.endedAt ?? Date.now()) - view.startedAt
     const compactions = getCompactionCount(view.childId)
-    const description = [
+    const description = external ? '' : [
       ...(view.tokens > 0 ? [formatTokens(view.tokens)] : []),
       ...(compactions > 0 ? [`🧹 ${compactions}×`] : []),
       `${(elapsedMs / 1000).toFixed(1)}s`,
@@ -399,9 +402,12 @@ export function pickerItems(
       : ''
     const attentionMark = attention?.(view.childId)?.tier === 'critical' ? ' ⚠' : ''
     const resumableMark = view.outcome !== undefined && view.mode === 'continuable' ? ' ↻' : ''
+    const detail = external
+      ? t('viewer.external.tag')
+      : `${roundsText}${stopped}${injected}${attentionMark}${resumableMark}${modelShort !== undefined ? ` · ${modelShort}` : ''}`
     return {
       value: view.childId,
-      label: `${statusGlyph(view)} ${view.label}${mode}: ${roundsText}${stopped}${injected}${attentionMark}${resumableMark}${modelShort !== undefined ? ` · ${modelShort}` : ''}`,
+      label: `${statusGlyph(view)} ${view.label}${mode}: ${detail}`,
       ...(description !== '' ? { description } : {}),
     }
   })
@@ -681,7 +687,11 @@ export class SubagentViewerPanel implements Component {
     }
     const slice = lines.slice(this.scrollTop, this.scrollTop + this.bodyRows)
     if (slice.length === 0) {
-      out.push(fns.subtle(t('viewer.noEvents')))
+      // External rows have no local Session: an empty log is EXPECTED, not a
+      // stall. Say so explicitly instead of the local child's `no events`.
+      out.push(fns.subtle(view?.mode === 'external'
+        ? t('viewer.external.empty')
+        : t('viewer.noEvents')))
     } else {
       for (const line of slice) out.push(fns.muted(clipToWidth(line === '' ? ' ' : line, wrap)))
     }
@@ -713,11 +723,23 @@ export class SubagentViewerPanel implements Component {
         // raced to idle-and-settled between the render and the press, or its
         // handle is not in this process) closes too — a dead key would feel
         // broken.
-        const running = this.bridge.getAgentViews().some(
-          view => view.childId === this.childId && view.outcome === undefined,
+        const view = this.bridge.getAgentViews().find(
+          candidate => candidate.childId === this.childId && candidate.outcome === undefined,
         )
-        if (running && this.bridge.cancelChild(this.childId)) {
-          this.showNotice(t('viewer.canceling'))
+        if (view === undefined) {
+          this.onClose()
+          return
+        }
+        // The bridge reports which channel it used; minimal bridge stubs only
+        // expose the boolean `cancelChild`, so fall back to that.
+        const status = this.bridge.cancelChildStatus?.(this.childId)
+        const accepted = status === undefined ? this.bridge.cancelChild(this.childId) : status !== 'rejected'
+        if (accepted) {
+          this.showNotice(view.mode === 'external'
+            ? t('viewer.external.stopping')
+            : t('viewer.canceling'))
+        } else if (status === 'rejected' && view.mode === 'external') {
+          this.showNotice(t('viewer.stopRejected'))
         } else {
           this.onClose()
         }
@@ -762,6 +784,21 @@ export class SubagentViewerPanel implements Component {
     const p = this.theme.palette
     if (view === undefined) {
       return [ansiFg(p.accent) + BOLD + t('viewer.header.child', { id: clipToWidth(this.childId, 8) }) + RESET]
+    }
+    // External members have no route/stats/elapsed baseline to render. Two
+    // lines only: identity + status, then the explicit no-transcript tag.
+    if (view.mode === 'external') {
+      const status = view.outcome === undefined ? t('viewer.status.running')
+        : view.outcome === 'completed' ? t('viewer.status.completed')
+        : view.outcome === 'failed' ? t('viewer.status.failed')
+        : t('viewer.status.cancelled')
+      const statusColor = view.outcome === undefined ? p.accent
+        : view.outcome === 'completed' ? p.success
+        : view.outcome === 'failed' ? p.danger
+        : p.fgMuted
+      const identity = ansiFg(p.accent) + BOLD + clipToWidth(view.label, 120) + RESET
+        + ' · ' + ansiFg(statusColor) + status + RESET
+      return [identity, ansiFg(p.fgMuted) + t('viewer.external.tag') + RESET]
     }
     const status = view.outcome === undefined ? t('viewer.status.running')
       : view.outcome === 'completed' ? t('viewer.status.completed')

@@ -117,6 +117,44 @@ const CHILD_LOG_CAP = 2000
 const ROUND_RECONCILE_MS = 600
 
 /**
+ * Fallback expiry for a directory-discovered EXTERNAL member that never got a
+ * `subagent/start` or `subagent/end` corroboration while this bridge was alive.
+ * The host catalog row is durable and external members have no local Session,
+ * so such a row would otherwise linger on the live board forever. Overridable
+ * via the constructor `externalStaleMs` option (test seam).
+ */
+const EXTERNAL_STALE_MS = 30_000
+
+/** Minimal cordis `subagent/start` / `subagent/end` payloads (host lifecycle events). */
+interface SubagentLifecycleInfo {
+  readonly id: { toString(): string }
+  readonly local: boolean
+  readonly stopReason?: string
+}
+
+// The host dispatches these lifecycle edges through the shared cordis event
+// bus; `ctx.on` is typed against the augmented Events map, so declare them
+// here (the declaring @deepseek-ai/dsh-subagent package is not installed in
+// this plugin's type environment).
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'subagent/start'(info: SubagentLifecycleInfo): void
+    'subagent/end'(info: SubagentLifecycleInfo): void
+  }
+}
+
+/** Map the host's `subagent/end` stop reason onto the viewer's outcome triad. */
+function externalStopOutcome(stopReason: string | undefined): 'completed' | 'failed' | 'cancelled' {
+  if (stopReason === 'completed') return 'completed'
+  if (stopReason === 'aborted') return 'cancelled'
+  // error / max-tokens / refusal / unknown: the run did not complete cleanly.
+  return 'failed'
+}
+
+/** Which channel a per-child stop used — the viewer turns this into feedback. */
+export type ChildCancelStatus = 'local-cancelled' | 'external-accepted' | 'rejected'
+
+/**
  * One-shot cold-start re-seed delay (see the constructor's late-seed leg 2):
  * the first-boot legacy settings.yaml import is fs-local and runs right
  * after the loader settles, so by this point the composed default is final.
@@ -417,6 +455,17 @@ export class DshSessionBridge {
   /** Child session ids whose own events we fold into the agent views. */
   private readonly childSessions = new Set<string>()
   /**
+   * External ids corroborated by a `subagent/start` seen while this bridge was
+   * alive. An external row discovered from the durable catalog but never
+   * corroborated (and never settled) is a ghost from a run that finished
+   * before the TUI mounted — expired by {@link expireStaleExternal}.
+   */
+  private readonly externalCorroborated = new Set<string>()
+  /** Expired external ids suppressed from re-discovery (the catalog row persists). */
+  private readonly expiredExternal = new Set<string>()
+  /** Fallback expiry window for uncorroborated external rows (test seam). */
+  private readonly externalStaleMs: number
+  /**
    * Per-child event ring buffer — the raw transcript the subagent viewer
    * renders. Capped so a runaway child cannot grow the process unboundedly;
    * the oldest events drop off (the viewer shows a "history truncated" hint
@@ -495,12 +544,15 @@ export class DshSessionBridge {
     lateSeedMs?: number
     /** Live `idleReleaseSec` knob (settings volatile read). */
     idleReleaseSec?: () => number | undefined
+    /** Fallback expiry for uncorroborated external rows (test seam). */
+    externalStaleMs?: number
   } = {}) {
     this.ctx = ctx
     this.callbacks = callbacks
     this.remoteTailOptions = options.remoteTailOptions ?? {}
     this.promoteIntervalMs = options.promoteIntervalMs ?? 1000
     this.idleReleaseSecSource = options.idleReleaseSec
+    this.externalStaleMs = options.externalStaleMs ?? EXTERNAL_STALE_MS
     // Footer cold start: seed ONLY the cwd `.dsh-profile` pin here — the pin
     // reads local files, so it is stable from the very first frame. The
     // composed default (`agentDefaultModel`) is deliberately NOT read yet: on
@@ -582,6 +634,29 @@ export class DshSessionBridge {
       if (this.running) this.disarmIdleRelease()
       else if (wasRunning && !this.hasRunningWork()) this.armIdleRelease()
     }))
+    // External members have no local Session, so none of the firehose folds
+    // can settle them. The host's cordis lifecycle events are the only source
+    // of truth: `start` corroborates a catalog-discovered row, `end` settles
+    // it with the real outcome. Both are `ctx.events.dispatch('emit', …)`
+    // events; `ctx.on(name, cb)` receives the payload as its first argument.
+    this.disposers.push(ctx.on('subagent/start', (info: SubagentLifecycleInfo) => {
+      if (info.local) return
+      const childKey = String(info.id)
+      this.expiredExternal.delete(childKey)
+      this.externalCorroborated.add(childKey)
+    }))
+    this.disposers.push(ctx.on('subagent/end', (info: SubagentLifecycleInfo) => {
+      const childKey = String(info.id)
+      this.externalCorroborated.delete(childKey)
+      const view = this.agentViews.get(childKey)
+      if (view === undefined || view.mode !== 'external' || view.outcome !== undefined) return
+      this.agentViews.set(childKey, {
+        ...view,
+        outcome: externalStopOutcome(info.stopReason),
+        endedAt: Date.now(),
+      })
+      this.emitLive()
+    }))
     // Round-count reconcile fallback: keep "rounds" and the maxRounds policy
     // live even when a child's own events never bubble to this plugin (see
     // ROUND_RECONCILE_MS). Runs regardless of whether the viewer is open — the
@@ -593,6 +668,9 @@ export class DshSessionBridge {
         // recovered child gets its rounds the same tick.
         this.reconcileLiveFromStore()
         this.reconcileChildRounds()
+        // Ghost-row guard: a catalog-discovered external row with no start/end
+        // corroboration is dropped after the fallback window.
+        this.expireStaleExternal()
         // The projection-backed reconciliation rides the same cadence but is
         // async and self-guarded (never overlaps itself).
         void this.reconcileLiveWithProjection()
@@ -733,8 +811,9 @@ export class DshSessionBridge {
                   readonly kind: 'child'
                   readonly id: SessionId
                   readonly activity: 'running' | 'inactive'
-                  readonly mode?: 'one-shot' | 'continuable'
+                  readonly mode?: 'one-shot' | 'continuable' | 'external'
                   readonly label?: string
+                  readonly name?: string
                   readonly hasChildren?: boolean
                   readonly parentId?: SessionId
                   readonly depth?: number
@@ -760,6 +839,35 @@ export class DshSessionBridge {
         if (entry.kind === 'diagnostic') continue
         const childKey = String(entry.id)
         if (childKey === rootKey) continue
+        // External members are directory-only: no local Session, no event
+        // fold, no transcript. Reconcile them straight from the catalog row
+        // and NEVER into childSessions/trackedSessions — foldTracked and
+        // reconcileChildRounds would otherwise chase a session that does not
+        // exist (T23 §1.2). They are also excluded from getLiveChildren so
+        // the local capacity guard / attention / hasRunningWork keep their
+        // local-only semantics; the panel reads them via getExternalChildren.
+        // The expired set suppresses re-adding a ghost after its fallback
+        // expiry (the catalog row itself is durable).
+        if (entry.mode === 'external') {
+          if (this.agentViews.has(childKey) || this.expiredExternal.has(childKey)) continue
+          this.agentViews.set(childKey, {
+            childId: childKey,
+            parentSession: entry.parentId !== undefined ? String(entry.parentId) : undefined,
+            mode: 'external',
+            noTranscript: true,
+            label: entry.label ?? entry.name ?? `external ${childKey.slice(0, 8)}`,
+            // The host deliberately drops `createdAt` from catalog rows, so
+            // this is the discovery time, NOT the real start (no fake elapsed
+            // is rendered for external rows — see subagent-viewer).
+            startedAt: Date.now(),
+            tokens: 0,
+            rounds: 0,
+            retries: 0,
+            contextTokens: 0,
+          })
+          changed = true
+          continue
+        }
         // A running child this bridge never discovered (burst, or its events
         // never bubbled). Register it header-discovery-shaped; descriptor
         // refinement (label/mode/route) follows from the listing itself. A
@@ -805,6 +913,27 @@ export class DshSessionBridge {
     } finally {
       this.projectionReconcileInFlight = false
     }
+  }
+
+  /**
+   * Drop external rows discovered from the durable catalog that never got a
+   * `subagent/start` / `subagent/end` corroboration. Such a row belongs to a
+   * run that finished before this bridge mounted; keeping it would leave a
+   * permanent ghost in the picker. Expired ids are suppressed from
+   * re-discovery because the catalog entry itself never disappears.
+   */
+  private expireStaleExternal(): void {
+    const now = Date.now()
+    let changed = false
+    for (const view of this.agentViews.values()) {
+      if (view.mode !== 'external' || view.outcome !== undefined) continue
+      if (this.externalCorroborated.has(view.childId)) continue
+      if (now - view.startedAt < this.externalStaleMs) continue
+      this.agentViews.delete(view.childId)
+      this.expiredExternal.add(view.childId)
+      changed = true
+    }
+    if (changed) this.emitLive()
   }
 
   /**
@@ -1002,9 +1131,19 @@ export class DshSessionBridge {
     return this.attentionBoard.topHint()
   }
 
-  /** Children still running (`outcome` unset) — the live count the guard caps. */
+  /**
+   * LOCAL children still running (`outcome` unset) — the live count the
+   * capacity guard, attention ranking and hasRunningWork gate cap. External
+   * members are deliberately excluded: they have no local Agent/session and
+   * must not consume a maxAgents slot or hold the Esc gate open.
+   */
   getLiveChildren(): readonly AgentView[] {
-    return this.getAgentViews().filter(view => view.outcome === undefined)
+    return this.getAgentViews().filter(view => view.outcome === undefined && view.mode !== 'external')
+  }
+
+  /** Live EXTERNAL members — the panel's separate display channel. */
+  getExternalChildren(): readonly AgentView[] {
+    return this.getAgentViews().filter(view => view.mode === 'external' && view.outcome === undefined)
   }
 
   /** The buffered transcript of one child, in log order (capped, maybe truncated). */
@@ -1359,18 +1498,41 @@ export class DshSessionBridge {
    *   call threw; true once the cancellation was issued.
    */
   cancelChild(childId: string): boolean {
+    return this.cancelChildStatus(childId) !== 'rejected'
+  }
+
+  /**
+   * Per-child stop with channel feedback. Local children go through the
+   * in-process agents registry; EXTERNAL children have no local Agent and go
+   * through the host's `interruptByUser` (an external activation is resident
+   * and aborts on interrupt — T23 §2). Keep this split inside the bridge so
+   * every caller (viewer row, stop-all, policy hard-stop) shares it.
+   */
+  cancelChildStatus(childId: string): ChildCancelStatus {
+    if (this.agentViews.get(childId)?.mode === 'external') {
+      try {
+        const subagents = this.ctx.get('subagents') as
+          | { interruptByUser?(childSessionId: string): unknown }
+          | undefined
+        if (subagents?.interruptByUser === undefined) return 'rejected'
+        subagents.interruptByUser(childId)
+        return 'external-accepted'
+      } catch {
+        return 'rejected'
+      }
+    }
     let agent: { cancel(cause: unknown, options?: { keepInbox?: boolean }): void } | undefined
     try {
       agent = this.ctx.agents.get(SessionId(childId))
     } catch {
-      return false // foreign/missing registry — nothing to stop
+      return 'rejected' // foreign/missing registry — nothing to stop
     }
-    if (agent === undefined) return false
+    if (agent === undefined) return 'rejected'
     try {
       agent.cancel({ kind: 'user' }, { keepInbox: true })
-      return true
+      return 'local-cancelled'
     } catch {
-      return false
+      return 'rejected'
     }
   }
 
@@ -1385,6 +1547,11 @@ export class DshSessionBridge {
   cancelAllChildren(): number {
     let stopped = 0
     for (const view of this.getLiveChildren()) {
+      if (this.cancelChild(view.childId)) stopped += 1
+    }
+    // External rows are outside the LOCAL capacity gate, but the everything-
+    // stop still reaches them through the same cancelChild channel split.
+    for (const view of this.getExternalChildren()) {
       if (this.cancelChild(view.childId)) stopped += 1
     }
     return stopped
@@ -1441,6 +1608,8 @@ export class DshSessionBridge {
     this.running = false
     this.agentViews.clear()
     this.childSessions.clear()
+    this.externalCorroborated.clear()
+    this.expiredExternal.clear()
     this.childLogs.clear()
     this.childStreams.clear()
     this.roundCounts.clear()
@@ -1488,6 +1657,8 @@ export class DshSessionBridge {
     this.routeUsage.clear()
     this.agentViews.clear()
     this.childSessions.clear()
+    this.externalCorroborated.clear()
+    this.expiredExternal.clear()
     this.childLogs.clear()
     this.childStreams.clear()
     this.roundCounts.clear()

@@ -715,3 +715,48 @@ test('pickerItems flags a child that received an injection with ⚡ injected', (
   const plain = pickerItems([running('b')], () => 3, 50)
   assert.ok(!plain[0].label.includes('⚡'), 'no marker without an injection')
 })
+
+// External members (T25): directory-only rows with no local transcript. The
+// row and the detail view must say so instead of rendering misleading zeros.
+
+function externalView(childId = 'ext-1') {
+  return {
+    childId, label: 'agy-runner', startedAt: 1000, tokens: 0,
+    mode: 'external', noTranscript: true,
+  }
+}
+
+test('pickerItems marks an external row and drops its misleading stats', () => {
+  const item = pickerItems([externalView()], () => 7, 50)[0]
+  assert.match(item.label, /external · no transcript/, 'the row carries the explicit tag')
+  assert.doesNotMatch(item.label, /rounds 7/, 'no fake rounds for a child with no transcript')
+  assert.equal(item.description, undefined, 'no fake elapsed/tokens description')
+})
+
+test('the external detail view explains the empty transcript and shows no stats', () => {
+  const panel = new SubagentViewerPanel(
+    makeTheme(), makeBridge([externalView()]), 'ext-1',
+    () => 50, () => {}, () => {}, () => {},
+  )
+  const lines = panel.render(80)
+  assert.ok(lines.some(line => line.includes('external · no transcript')), 'the header tags it external')
+  assert.ok(lines.some(line => line.includes('no local transcript')), 'the empty state says why')
+  assert.ok(!lines.some(line => line.includes('no events yet')), 'not the local child stall message')
+  assert.ok(!lines.some(line => line.includes('rounds')), 'no rounds/token stats line')
+  panel.dispose()
+})
+
+test('double-x on an external row reports the host interrupt channel', async () => {
+  const statuses = []
+  const bridge = {
+    ...makeBridge([externalView()]),
+    cancelChildStatus: id => { statuses.push(id); return 'external-accepted' },
+  }
+  const panel = new SubagentViewerPanel(
+    makeTheme(), bridge, 'ext-1', () => 0, () => {}, () => {}, () => {},
+  )
+  await doubleX(panel)
+  assert.deepEqual(statuses, ['ext-1'], 'the external stop used the bridge channel')
+  assert.ok(panel.render(80).some(line => line.includes('stop requested for the external member')))
+  panel.dispose()
+})

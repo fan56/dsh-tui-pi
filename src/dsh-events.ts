@@ -159,7 +159,14 @@ export interface AgentView {
    * arm (v0 emitted known modes only): a child folded from catalog evidence
    * rather than a descriptor renders tolerantly instead of dropping the tag.
    */
-  readonly mode?: 'one-shot' | 'continuable' | 'unknown'
+  readonly mode?: 'one-shot' | 'continuable' | 'unknown' | 'external'
+  /**
+   * Set for a directory-discovered EXTERNAL member (the host has no local
+   * Session for it): no transcript, no token/round/context stats and no
+   * steer input. The viewer marks such rows and renders an explanatory empty
+   * state instead of the misleading `no events` line.
+   */
+  readonly noTranscript?: true
   /** Subagent type name from the child's `subagent/descriptor.provider`, when known. */
   readonly provider?: string
   /** Delegation label from `tool-workflow/agent-start` or the child's descriptor. */
