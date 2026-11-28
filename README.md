@@ -125,6 +125,28 @@ Remap any app key through `~/.dsh/keybindings.json` (a partial JSON map, live-ap
 
 ---
 
+## External subagents in the panel
+
+Subagents dispatched outside this TUI — for example an `agy`/ACP process
+launched by a dsh registry plugin — appear in the `Ctrl+G` panel as
+`external · no transcript` rows. The panel reconciles them from the host's
+subagent directory, so it can show their status and let you stop them. An
+external member has **no local transcript**: its detail view is an empty state
+with no transcript, no token/round stats and no steering (`Enter` is inert).
+Press `x` twice on the row to stop it — external rows go through the host's
+`subagents.interruptByUser(childId)` while local rows still use
+`agent.cancel()` — with visible feedback: `local-cancelled`,
+`external-accepted`, or `rejected` (the member may have already ended).
+
+External rows do not count toward the panel's local `maxAgents` quota. They only
+appear on a dsh host at `rc.5` or newer **and** when the provider dispatches with
+`delivery: 'parent'` (as the agy provider in dsh-subagent-registry 0.24.0 does);
+without both, the panel shows only local subagents. A run's outcome settles when
+the host emits `subagent/end` (its `stopReason` becomes the outcome); a 30-second
+expiry clears any row whose end event never arrived, so no ghost rows linger.
+
+---
+
 ## Configuration
 
 Everything lives in the plugin's `dsh-tui` entry config inside your profile's `cordis.patch.yml` (dsh 0.1.7 projects every volatile field of a plugin's declared Config schema into the settings surface) — but you rarely touch the file: **`/settings` browses and edits it in place** (searchable categories — Agent Presets / General / Models / Plugins / TUI — with live values, per-field descriptions, and an add-provider flow under Models). Language, theme, panel height, footer hints, icon set and `muteModelListing` hot-apply on change; the rest reads at the next launch.

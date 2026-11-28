@@ -767,10 +767,15 @@ export function apply(ctx: Context, config: TuiSettings): void {
       // The stop gesture is the everything-stop: side calls die with the turn.
       btwController.cancelAll()
       const cancelled = await bridge.cancelActiveTurn()
+      // External members are outside the local capacity gate but the
+      // everything-stop still reaches them (bridge.cancelChild's channel
+      // split); capture them for a distinct acknowledgement.
+      const externalBefore = bridge.getExternalChildren?.().length ?? 0
       const stoppedChildren = bridge.cancelAllChildren()
       // State raced idle between the decision and the cancel calls — nothing
       // to cancel (e.g. the task settled while the dialog was up).
       if (!cancelled && stoppedChildren === 0) renderer.renderNotice(t('tui.stop.nothingRunning'), 'info')
+      else if (externalBefore > 0) renderer.renderNotice(t('tui.stop.externalStopped', { n: externalBefore }), 'info')
     }
     // Arm the settings hot-reload sink now that the renderer exists (see apply()).
     applyThemeRef = (pref: ThemePreference): void => {

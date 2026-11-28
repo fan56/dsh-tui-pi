@@ -127,3 +127,65 @@ test('hasRunningWork: live children keep the gate on after the parent went idle'
   emit(handlers, { id: 'child-bg', header: {} }, { type: 'turn/end', seq: 9, time: 2 })
   assert.equal(bridge.hasRunningWork(), false, '…and a settled child does not')
 })
+
+// ---------------------------------------------------------------------------
+// External stop channel (T25): an external member has no local Agent, so
+// cancelChild must branch to the host's `interruptByUser` instead of silently
+// returning false. Local children keep the registry cancel path.
+
+function makeExternalStopHarness({ reject = false, registeredChildren = [] } = {}) {
+  const base = makeHarness(registeredChildren)
+  const interrupts = []
+  const externalRows = []
+  const subCtx = {
+    ...base.ctx,
+    get(key) {
+      if (key === 'subagents') return {
+        listDescendants: async () => externalRows,
+        interruptByUser(id) {
+          if (reject) throw new Error('gateway/internal')
+          interrupts.push(id)
+          return { accepted: true }
+        },
+      }
+      return base.ctx.get(key)
+    },
+  }
+  return { ...base, ctx: subCtx, interrupts, externalRows }
+}
+
+async function addExternal(harness, id) {
+  harness.externalRows.push({ kind: 'child', id, activity: 'inactive', mode: 'external', label: id })
+  const bridge = makeBridge(harness.ctx)
+  await bridge.ensureAgent()
+  await bridge.reconcileLiveWithProjection()
+  return bridge
+}
+
+test('cancelChild routes an external row to interruptByUser, never the local registry', async () => {
+  const harness = makeExternalStopHarness()
+  const bridge = await addExternal(harness, 'ext-1')
+  assert.equal(bridge.cancelChild('ext-1'), true)
+  assert.deepEqual(harness.interrupts, ['ext-1'], 'the host interrupt was called with the child id')
+  assert.deepEqual(harness.cancels, [], 'no local Agent cancel was attempted for the external row')
+  assert.equal(bridge.cancelChildStatus('ext-1'), 'external-accepted', 'the channel is reported for UI feedback')
+  await bridge.dispose()
+})
+
+test('a rejected external interrupt reads as false / rejected without throwing', async () => {
+  const harness = makeExternalStopHarness({ reject: true })
+  const bridge = await addExternal(harness, 'ext-2')
+  assert.equal(bridge.cancelChild('ext-2'), false)
+  assert.equal(bridge.cancelChildStatus('ext-2'), 'rejected')
+  await bridge.dispose()
+})
+
+test('cancelAllChildren stops local and external rows through their own channels', async () => {
+  const harness = makeExternalStopHarness({ registeredChildren: [{ id: 'child-1' }] })
+  const bridge = await addExternal(harness, 'ext-3')
+  discoverChild(harness.handlers, 'child-1')
+  assert.equal(bridge.cancelAllChildren(), 2, 'both the local and the external row are stopped')
+  assert.deepEqual(harness.interrupts, ['ext-3'])
+  assert.deepEqual(harness.cancels.map(([id]) => id), ['child-1'])
+  await bridge.dispose()
+})

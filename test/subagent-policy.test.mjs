@@ -27,6 +27,7 @@ import {
 } from '../lib/subagent-policy.js'
 import { bindTuiConfig, resolveTuiSettings } from '../lib/theme-settings.js'
 import { createVolatile } from '@deepseek-ai/cosmokit'
+import { DshSessionBridge } from '../lib/session.js'
 
 /**
  * Fake settings service + entry-config binding for the given limits. Under
@@ -1196,4 +1197,37 @@ test('a settled child complying mid-flight is never early-stopped', async () => 
   policy.onRoundCount('child-1', 11)
   assert.deepEqual(stopped, [], 'a complied child settles, it is not stopped')
   policy.dispose()
+})
+
+test('an external member does not consume a local maxAgents slot', async () => {
+  // The guard is wired to bridge.getLiveChildren(); external rows live in the
+  // separate getExternalChildren() channel so an agy run cannot block a local
+  // spawn (nor be pruned by the fan-out backstop).
+  const rows = [{ kind: 'child', id: 'ext-1', activity: 'inactive', mode: 'external', label: 'agy' }]
+  const handlers = new Map()
+  const bridgeCtx = {
+    on(evt, fn) { handlers.set(evt, fn); return () => handlers.delete(evt) },
+    get(key) { return key === 'subagents' ? { listDescendants: async () => rows } : undefined },
+    agents: {
+      async create() { return { agent: { id: 'root-agent', session: { id: 'root' } }, async dispose() {} } },
+      get() { return undefined },
+    },
+  }
+  const bridge = new DshSessionBridge(bridgeCtx, { onLive() {}, onStatus() {}, onEvent() {} })
+  await bridge.ensureAgent()
+  await bridge.reconcileLiveWithProjection()
+  assert.equal(bridge.getExternalChildren().length, 1, 'the external row is visible to the panel')
+  assert.equal(bridge.getLiveChildren().length, 0, 'it is invisible to the local capacity gate')
+
+  const { ctx, captured } = makeCtx({ settings: makeSettings({ maxAgents: 1, maxRounds: 50 }) })
+  const policy = applySubagentPolicy(ctx, {
+    getLive: () => bridge.getLiveChildren(),
+    getRoundCount: () => 0,
+    isSettled: () => false,
+    cancelChild: () => true,
+  })
+  assert.equal(captured.guard({ name: 'subagent', agent: tuiAgent() }), undefined,
+    'one external row with maxAgents 1 still allows the local spawn')
+  policy.dispose()
+  await bridge.dispose()
 })

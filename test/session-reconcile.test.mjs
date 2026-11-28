@@ -1117,3 +1117,98 @@ test('reconcileLiveWithProjection settles an inactive one-shot the listing repor
   assert.equal(bridge.getAgentViews().find((v) => v.childId === 'child-1').outcome, 'completed', 'the listing settles the stale one-shot view')
   await bridge.dispose()
 })
+
+// ---------------------------------------------------------------------------
+// External members (T25): directory-only rows with no local Session. They
+// must be reachable from the catalog, settled from the host's cordis
+// `subagent/end`, and expired when neither start nor end ever corroborates
+// them (a ghost left by a run that finished before the TUI mounted).
+
+function makeExternalHarness(rows) {
+  const { ctx, handlers } = makeHarness()
+  const subCtx = {
+    ...ctx,
+    get: (key) => (key === 'subagents'
+      ? { listDescendants: async () => rows }
+      : key === 'agents' ? ctx.agents : ctx.get(key)),
+  }
+  return {
+    handlers,
+    ctx: subCtx,
+    bridge: new DshSessionBridge(subCtx, {
+      onLive: () => {}, onStatus: () => {}, onEvent: () => {},
+    }),
+  }
+}
+
+test('an external member is reconciled from the catalog into its own getter only', async () => {
+  const rows = [{ kind: 'child', id: 'ext-1', activity: 'inactive', mode: 'external', label: 'agy', parentId: 'root-session', depth: 1 }]
+  const { ctx, bridge } = makeExternalHarness(rows)
+  await bridge.ensureAgent()
+  await bridge.reconcileLiveWithProjection()
+
+  const view = bridge.getAgentViews().find(v => v.childId === 'ext-1')
+  assert.ok(view, 'the external catalog row becomes a view')
+  assert.equal(view.mode, 'external')
+  assert.equal(view.noTranscript, true)
+  assert.equal(view.label, 'agy')
+  assert.equal(view.parentSession, 'root-session')
+  assert.deepEqual(bridge.getExternalChildren().map(v => v.childId), ['ext-1'])
+  assert.deepEqual(bridge.getLiveChildren(), [], 'external is excluded from the local capacity/liveness gate')
+  // The critical pollution guard: foldTracked/reconcileChildRounds must never
+  // chase a local Session that does not exist for an external member.
+  assert.equal(bridge.childSessions.has('ext-1'), false)
+  assert.equal(bridge.trackedSessions.has('ext-1'), false)
+  await bridge.dispose()
+})
+
+test('an external label falls back from name, then to the id8 form', async () => {
+  const rows = [
+    { kind: 'child', id: 'ext-name', activity: 'inactive', mode: 'external', name: 'named-agy' },
+    { kind: 'child', id: 'external-abcdef123456', activity: 'inactive', mode: 'external' },
+  ]
+  const { bridge } = makeExternalHarness(rows)
+  await bridge.ensureAgent()
+  await bridge.reconcileLiveWithProjection()
+  assert.equal(bridge.getAgentViews().find(v => v.childId === 'ext-name').label, 'named-agy')
+  assert.equal(bridge.getAgentViews().find(v => v.childId === 'external-abcdef123456').label, 'external external')
+  await bridge.dispose()
+})
+
+test('subagent/end settles the external row with the mapped outcome', async () => {
+  const rows = [
+    { kind: 'child', id: 'ext-ok', activity: 'inactive', mode: 'external', label: 'ok' },
+    { kind: 'child', id: 'ext-abort', activity: 'inactive', mode: 'external', label: 'abort' },
+    { kind: 'child', id: 'ext-err', activity: 'inactive', mode: 'external', label: 'err' },
+  ]
+  const { handlers, bridge } = makeExternalHarness(rows)
+  await bridge.ensureAgent()
+  await bridge.reconcileLiveWithProjection()
+  const end = handlers.get('subagent/end')
+  end({ id: 'ext-ok', local: false, stopReason: 'completed' })
+  end({ id: 'ext-abort', local: false, stopReason: 'aborted' })
+  end({ id: 'ext-err', local: false, stopReason: 'error' })
+  assert.equal(bridge.getAgentViews().find(v => v.childId === 'ext-ok').outcome, 'completed')
+  assert.equal(bridge.getAgentViews().find(v => v.childId === 'ext-abort').outcome, 'cancelled')
+  assert.equal(bridge.getAgentViews().find(v => v.childId === 'ext-err').outcome, 'failed')
+  assert.deepEqual(bridge.getExternalChildren(), [], 'settled rows leave the external live getter')
+  await bridge.dispose()
+})
+
+test('an uncorroborated external row expires and is not re-added from the durable catalog', async () => {
+  const rows = [{ kind: 'child', id: 'ext-ghost', activity: 'inactive', mode: 'external', label: 'ghost' }]
+  const { handlers, bridge } = makeExternalHarness(rows)
+  await bridge.ensureAgent()
+  await bridge.reconcileLiveWithProjection()
+  // Force the fallback window past without sleeping.
+  bridge.agentViews.get('ext-ghost').startedAt = Date.now() - 60_000
+  bridge.expireStaleExternal()
+  assert.equal(bridge.getAgentViews().find(v => v.childId === 'ext-ghost'), undefined, 'the ghost is dropped')
+  await bridge.reconcileLiveWithProjection()
+  assert.equal(bridge.getAgentViews().find(v => v.childId === 'ext-ghost'), undefined, 'the catalog row cannot resurrect it')
+  // A start corroboration clears the suppression when a real run is observed.
+  handlers.get('subagent/start')({ id: 'ext-ghost', local: false })
+  await bridge.reconcileLiveWithProjection()
+  assert.ok(bridge.getAgentViews().find(v => v.childId === 'ext-ghost'), 'a corroborated run returns to the board')
+  await bridge.dispose()
+})

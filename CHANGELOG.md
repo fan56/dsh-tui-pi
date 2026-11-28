@@ -4,6 +4,30 @@ All notable changes to dsh-tui-pi are documented here, grouped by release.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.39.0] - 2026-11-28
+
+### Added
+- **External subagents now show up in the subagent panel.** The panel reconciles
+  `mode: 'external'` rows from the host's subagent directory — child agents
+  launched outside this TUI, such as an `agy`/ACP process dispatched by a dsh
+  registry plugin. They are tagged `external · no transcript`, and their detail
+  view is an explicit empty state: no local transcript, no token/round stats and
+  no steering (`Enter` is inert). **Requires a dsh host at `rc.5` or newer and a
+  provider that dispatches with `delivery: 'parent'` (as the agy provider in
+  dsh-subagent-registry 0.24.0 does); without both, no external rows appear.**
+- **Individual stop works on external rows.** `x ×2` in the viewer keeps using
+  `agent.cancel()` for local children but routes external members through the
+  host's `subagents.interruptByUser(childId)`. The outcome is one of
+  `local-cancelled | external-accepted | rejected` and is surfaced visibly
+  (a rejected request usually means the external member had already ended).
+- **`subagent/end` settles external outcomes, with an expiry fallback.** The
+  bridge subscribes to the host's cordis `subagent/start` / `subagent/end`
+  events; the end event's `stopReason` closes the row's outcome, and a 30-second
+  expiry clears rows whose end event never arrived so no ghost rows linger.
+- **External rows do not consume the local subagent capacity quota.** They are
+  exposed through `getExternalChildren()` and stay out of the panel's local
+  `maxAgents` guard. Documented in README (EN + zh-CN).
+
 ## [Unreleased]
 
 ### Added

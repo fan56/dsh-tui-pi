@@ -715,3 +715,68 @@ test('pickerItems flags a child that received an injection with ⚡ injected', (
   const plain = pickerItems([running('b')], () => 3, 50)
   assert.ok(!plain[0].label.includes('⚡'), 'no marker without an injection')
 })
+
+// External members (T25): directory-only rows with no local transcript. The
+// row and the detail view must say so instead of rendering misleading zeros.
+
+function externalView(childId = 'ext-1') {
+  return {
+    childId, label: 'agy-runner', startedAt: 1000, tokens: 0,
+    mode: 'external', noTranscript: true,
+  }
+}
+
+test('pickerItems marks an external row with a short, fully readable tag', () => {
+  const item = pickerItems([externalView()], () => 7, 50)[0]
+  // T30 P3: the full `external · no transcript` detail overflows the
+  // 40-column SUB-AGENT label and truncated to `exte…` on a real picker row.
+  assert.match(item.label, /\[external\]: ext$/, 'the short marker fits the label column whole')
+  assert.doesNotMatch(item.label, /external · no transcript/, 'no long tag that would truncate')
+  assert.doesNotMatch(item.label, /exte…/, 'no truncated marker')
+  assert.doesNotMatch(item.label, /rounds 7/, 'no fake rounds for a child with no transcript')
+  assert.equal(item.description, undefined, 'no fake elapsed/tokens description')
+})
+
+test('the external detail view explains the empty transcript and shows no stats', () => {
+  const panel = new SubagentViewerPanel(
+    makeTheme(), makeBridge([externalView()]), 'ext-1',
+    () => 50, () => {}, () => {}, () => {},
+  )
+  const lines = panel.render(80)
+  assert.ok(lines.some(line => line.includes('external · no transcript')), 'the header tags it external')
+  assert.ok(lines.some(line => line.includes('no local transcript')), 'the empty state says why')
+  assert.ok(!lines.some(line => line.includes('no events yet')), 'not the local child stall message')
+  assert.ok(!lines.some(line => line.includes('rounds')), 'no rounds/token stats line')
+  // T30 P3: no `Enter steer` hint on an external detail footer — Enter only
+  // yields the `ended` notice. The footer reuses the existing external tag.
+  assert.ok(!lines.some(line => line.includes('Enter steer')), 'external footer hides the steer hint')
+  const externalFooter = viewerFooter(true, true)
+  assert.ok(lines.some(line => line.includes(externalFooter)), 'the external footer renders')
+  panel.dispose()
+})
+
+test('viewerFooter drops steer for external but keeps it for local children', () => {
+  for (const running of [true, false]) {
+    const footer = viewerFooter(running, true)
+    assert.ok(!footer.includes('Enter steer'), 'no steer hint for external')
+    assert.ok(footer.includes('external · no transcript'), 'reuses existing external tag')
+    assert.match(footer, running ? /x ×2 stop/ : /x ×2 close/, 'stop/close hint survives')
+  }
+  assert.match(viewerFooter(true), /Enter steer/, 'local running child unchanged')
+  assert.match(viewerFooter(false), /Enter steer/, 'local settled child unchanged')
+})
+
+test('double-x on an external row reports the host interrupt channel', async () => {
+  const statuses = []
+  const bridge = {
+    ...makeBridge([externalView()]),
+    cancelChildStatus: id => { statuses.push(id); return 'external-accepted' },
+  }
+  const panel = new SubagentViewerPanel(
+    makeTheme(), bridge, 'ext-1', () => 0, () => {}, () => {}, () => {},
+  )
+  await doubleX(panel)
+  assert.deepEqual(statuses, ['ext-1'], 'the external stop used the bridge channel')
+  assert.ok(panel.render(80).some(line => line.includes('stop requested for the external member')))
+  panel.dispose()
+})
