@@ -726,9 +726,13 @@ function externalView(childId = 'ext-1') {
   }
 }
 
-test('pickerItems marks an external row and drops its misleading stats', () => {
+test('pickerItems marks an external row with a short, fully readable tag', () => {
   const item = pickerItems([externalView()], () => 7, 50)[0]
-  assert.match(item.label, /external · no transcript/, 'the row carries the explicit tag')
+  // T30 P3: the full `external · no transcript` detail overflows the
+  // 40-column SUB-AGENT label and truncated to `exte…` on a real picker row.
+  assert.match(item.label, /\[external\]: ext$/, 'the short marker fits the label column whole')
+  assert.doesNotMatch(item.label, /external · no transcript/, 'no long tag that would truncate')
+  assert.doesNotMatch(item.label, /exte…/, 'no truncated marker')
   assert.doesNotMatch(item.label, /rounds 7/, 'no fake rounds for a child with no transcript')
   assert.equal(item.description, undefined, 'no fake elapsed/tokens description')
 })
@@ -743,7 +747,23 @@ test('the external detail view explains the empty transcript and shows no stats'
   assert.ok(lines.some(line => line.includes('no local transcript')), 'the empty state says why')
   assert.ok(!lines.some(line => line.includes('no events yet')), 'not the local child stall message')
   assert.ok(!lines.some(line => line.includes('rounds')), 'no rounds/token stats line')
+  // T30 P3: no `Enter steer` hint on an external detail footer — Enter only
+  // yields the `ended` notice. The footer reuses the existing external tag.
+  assert.ok(!lines.some(line => line.includes('Enter steer')), 'external footer hides the steer hint')
+  const externalFooter = viewerFooter(true, true)
+  assert.ok(lines.some(line => line.includes(externalFooter)), 'the external footer renders')
   panel.dispose()
+})
+
+test('viewerFooter drops steer for external but keeps it for local children', () => {
+  for (const running of [true, false]) {
+    const footer = viewerFooter(running, true)
+    assert.ok(!footer.includes('Enter steer'), 'no steer hint for external')
+    assert.ok(footer.includes('external · no transcript'), 'reuses existing external tag')
+    assert.match(footer, running ? /x ×2 stop/ : /x ×2 close/, 'stop/close hint survives')
+  }
+  assert.match(viewerFooter(true), /Enter steer/, 'local running child unchanged')
+  assert.match(viewerFooter(false), /Enter steer/, 'local settled child unchanged')
 })
 
 test('double-x on an external row reports the host interrupt channel', async () => {

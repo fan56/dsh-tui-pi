@@ -93,10 +93,18 @@ export const STEER_ENDED_NOTICE = 'This subagent has ended — steering unavaila
  * per-subagent STOP (cancel this child), on a settled one — nothing left to
  * stop — it keeps its old close shortcut. The footer always names which one
  * a press will do. Resolved through t() per call (never freeze the language
- * in a module constant).
+ * in a module constant). External children pass `external` to omit the
+ * inapplicable steer hint.
  */
-export function viewerFooter(running: boolean): string {
-  return running ? t('viewer.footer.running') : t('viewer.footer.settled')
+export function viewerFooter(running: boolean, external = false): string {
+  const footer = running ? t('viewer.footer.running') : t('viewer.footer.settled')
+  if (!external) return footer
+  // External members cannot be steered — Enter only produces the `ended`
+  // notice. Drop the trailing steer hint (the last " · " segment in every
+  // locale) and reuse the existing no-transcript tag in its place, keeping
+  // the scroll/close/x ×2 stop hints intact.
+  const cut = footer.lastIndexOf(' · ')
+  return `${cut < 0 ? footer : footer.slice(0, cut)} · ${t('viewer.external.tag')}`
 }
 /** Steer input footer: hardcoded like every other in-panel key hint. */
 export const STEER_FOOTER = 'Enter send · Shift+Enter newline · Esc cancel'
@@ -402,8 +410,13 @@ export function pickerItems(
       : ''
     const attentionMark = attention?.(view.childId)?.tier === 'critical' ? ' ⚠' : ''
     const resumableMark = view.outcome !== undefined && view.mode === 'continuable' ? ' ↻' : ''
+    // The `[external]` mode token already names the source. Rendering the
+    // full `external · no transcript` tag here overflows the 40-column label
+    // and truncates to `exte…`; the short `ext` marker (language-neutral,
+    // like the hardcoded `[external]` token) keeps the whole detail readable
+    // without squeezing out the label. The full tag stays in the detail view.
     const detail = external
-      ? t('viewer.external.tag')
+      ? 'ext'
       : `${roundsText}${stopped}${injected}${attentionMark}${resumableMark}${modelShort !== undefined ? ` · ${modelShort}` : ''}`
     return {
       value: view.childId,
@@ -697,7 +710,10 @@ export class SubagentViewerPanel implements Component {
     }
     out.push('')
     if (this.notice !== undefined) out.push(fns.subtle(clipToWidth(this.notice, wrap)))
-    out.push(fns.subtle(clipToWidth(viewerFooter(view?.outcome === undefined), wrap)))
+    out.push(fns.subtle(clipToWidth(
+      viewerFooter(view?.outcome === undefined, view?.mode === 'external'),
+      wrap,
+    )))
     return out
   }
 
